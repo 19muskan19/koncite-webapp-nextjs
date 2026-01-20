@@ -15,8 +15,11 @@ const Workouts: React.FC = () => {
     try {
       const plan = await generateWorkoutPlan(goal);
       setAiResult(plan);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      alert(err?.message?.includes('API key') 
+        ? 'AI features require a Gemini API key. This feature is currently unavailable.'
+        : 'Failed to generate workout plan. Please try again later.');
     } finally {
       setIsGenerating(false);
     }

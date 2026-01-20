@@ -1,9 +1,17 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Get API key from environment variable (set in vite.config.ts from .env.local)
+const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || '';
+
+// Initialize AI client only if API key is available
+const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 export async function generateHealthAdvice(prompt: string) {
+  if (!ai) {
+    throw new Error('Gemini API key is not configured. Please set GEMINI_API_KEY in your .env.local file.');
+  }
+  
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
     contents: prompt,
@@ -18,6 +26,10 @@ export async function generateHealthAdvice(prompt: string) {
 }
 
 export async function generateWorkoutPlan(goals: string) {
+  if (!ai) {
+    throw new Error('Gemini API key is not configured. Please set GEMINI_API_KEY in your .env.local file.');
+  }
+  
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
     contents: `Generate a detailed workout plan for: ${goals}`,

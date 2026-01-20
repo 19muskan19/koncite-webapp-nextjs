@@ -8,7 +8,6 @@ import {
   ClipboardCheck, 
   BarChart3, 
   UserCog,
-  MessageSquare,
   Bell,
   ChevronDown,
   Menu,
@@ -24,7 +23,6 @@ import {
   UsersRound
 } from 'lucide-react';
 import Dashboard from './components/Dashboard';
-import AICoach from './components/AICoach';
 import Masters from './components/Masters';
 import GenericView from './components/GenericView';
 import HomePage from './components/HomePage';
@@ -161,7 +159,6 @@ const AppContent: React.FC = () => {
     { id: ViewType.LABOUR_STRENGTH, label: 'LABOUR STRENGTH', icon: UsersRound },
     { id: ViewType.WORK_CONTRACTOR, label: 'WORK CONTRACTOR', icon: Briefcase },
     { id: ViewType.SUBSCRIPTION, label: 'SUBSCRIPTION', icon: CreditCard },
-    { id: ViewType.AI_COACH, label: 'KONCITE AI COACH', icon: MessageSquare },
   ];
 
   const getThemeClass = (prefix: string) => `${prefix}-${theme}`;
@@ -290,8 +287,6 @@ const AppContent: React.FC = () => {
           <div className="max-w-[1400px] mx-auto fade-in-premium">
             {currentView === ViewType.DASHBOARD ? (
               <Dashboard theme={theme} />
-            ) : currentView === ViewType.AI_COACH ? (
-              <AICoach />
             ) : [
               ViewType.MASTERS,
               ViewType.COMPANIES,
@@ -323,7 +318,7 @@ const AppContent: React.FC = () => {
             ].includes(currentView) ? (
               <GenericView theme={theme} currentView={currentView} />
             ) : (
-              <AICoach />
+              <Dashboard theme={theme} />
             )}
           </div>
         </div>

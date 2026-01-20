@@ -30,9 +30,12 @@ const AICoach: React.FC = () => {
     try {
       const response = await generateHealthAdvice(input);
       setMessages(prev => [...prev, { role: 'assistant', content: response || "I'm sorry, I couldn't process that. Try again?" }]);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setMessages(prev => [...prev, { role: 'assistant', content: "Oops, looks like there was an issue processing your request. Please try again later." }]);
+      const errorMessage = err?.message?.includes('API key') 
+        ? "⚠️ Gemini API key is not configured. Please create a .env.local file in the project root and add: GEMINI_API_KEY=your_api_key_here"
+        : "Oops, looks like there was an issue processing your request. Please try again later.";
+      setMessages(prev => [...prev, { role: 'assistant', content: errorMessage }]);
     } finally {
       setIsLoading(false);
     }
