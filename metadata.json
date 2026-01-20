@@ -1,0 +1,8 @@
+{
+  "name": "PulseAI Health",
+  "description": "An AI-powered fitness and longevity platform providing personalized health coaching, workout generation, and nutrition analysis.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
