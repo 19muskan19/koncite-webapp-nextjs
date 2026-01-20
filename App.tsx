@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   LayoutDashboard, 
   Database, 
@@ -16,16 +16,88 @@ import {
   Sun,
   Search,
   Zap,
-  Plus
+  Plus,
+  LogOut,
+  UserPlus,
+  Briefcase,
+  CreditCard,
+  UsersRound
 } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import AICoach from './components/AICoach';
+import Masters from './components/Masters';
+import GenericView from './components/GenericView';
+import HomePage from './components/HomePage';
+import AboutPage from './components/AboutPage';
+import LoginModal from './components/LoginModal';
+import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { ViewType, ThemeType } from './types';
 
-const App: React.FC = () => {
+type PublicPage = 'home' | 'about';
+
+const AppContent: React.FC = () => {
+  const { theme, toggleTheme } = useTheme();
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
   const [currentView, setCurrentView] = useState<ViewType>(ViewType.DASHBOARD);
-  const [theme, setTheme] = useState<ThemeType>('dark');
+  const [currentPage, setCurrentPage] = useState<PublicPage>('home');
   const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // Check if user is already logged in (from localStorage)
+  useEffect(() => {
+    const savedAuth = localStorage.getItem('isAuthenticated');
+    if (savedAuth === 'true') {
+      setIsAuthenticated(true);
+    }
+  }, []);
+
+  const handleLogin = (email: string, password: string) => {
+    // Credentials are validated in LoginModal
+    setIsAuthenticated(true);
+    localStorage.setItem('isAuthenticated', 'true');
+    localStorage.setItem('userEmail', email);
+  };
+
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    localStorage.removeItem('isAuthenticated');
+    localStorage.removeItem('userEmail');
+  };
+
+  // Show landing page if not authenticated
+  if (!isAuthenticated) {
+    return (
+      <>
+        {currentPage === 'home' ? (
+          <HomePage 
+            onLoginClick={() => setShowLoginModal(true)} 
+            onBookDemo={() => setShowLoginModal(true)}
+            onNavigateToAbout={() => setCurrentPage('about')}
+          />
+        ) : (
+          <AboutPage
+            onBookDemo={() => setShowLoginModal(true)}
+            onContact={() => {
+              setCurrentPage('home');
+              setTimeout(() => {
+                const contactSection = document.getElementById('contact');
+                if (contactSection) {
+                  contactSection.scrollIntoView({ behavior: 'smooth' });
+                }
+              }, 100);
+            }}
+            onNavigateToHome={() => setCurrentPage('home')}
+            onLoginClick={() => setShowLoginModal(true)}
+          />
+        )}
+        <LoginModal 
+          isOpen={showLoginModal} 
+          onClose={() => setShowLoginModal(false)}
+          onLogin={handleLogin}
+        />
+      </>
+    );
+  }
 
   const navItems = [
     { 
@@ -38,26 +110,61 @@ const App: React.FC = () => {
       id: ViewType.MASTERS, 
       label: 'MASTER DATA', 
       icon: Database, 
-      children: [{ label: 'Global Health Standards', id: ViewType.MASTERS }] 
+      children: [
+        { label: 'Companies', id: ViewType.COMPANIES },
+        { label: 'Projects', id: ViewType.PROJECTS },
+        { label: 'Subproject', id: ViewType.SUBPROJECT },
+        { label: 'Units', id: ViewType.UNITS },
+        { label: 'Warehouses', id: ViewType.WAREHOUSES },
+        { label: 'Labours', id: ViewType.LABOURS },
+        { label: 'Assets Equipments', id: ViewType.ASSETS_EQUIPMENTS },
+        { label: 'Vendors', id: ViewType.VENDORS },
+        { label: 'Activities', id: ViewType.ACTIVITIES },
+        { label: 'Materials', id: ViewType.MATERIALS }
+      ] 
     },
     { 
-      id: ViewType.USER_MANAGEMENT, 
-      label: 'PATIENT PORTAL', 
+      id: ViewType.COMPANY_USERS, 
+      label: 'COMPANY USERS', 
       icon: Users, 
-      children: [{ label: 'User Directory', id: ViewType.USER_MANAGEMENT }] 
+      children: [
+        { label: 'Manage Teams', id: ViewType.MANAGE_TEAMS },
+        { label: 'User Roles and Permissions', id: ViewType.USER_ROLES_PERMISSIONS }
+      ] 
     },
-    { id: ViewType.PROJECT_PERMISSIONS, label: 'ACCESS CONTROL', icon: ShieldCheck },
-    { id: ViewType.PR_MANAGEMENT, label: 'PROTOCOLS', icon: ClipboardCheck },
-    { id: ViewType.REPORTS, label: 'ANALYTICS', icon: BarChart3 },
-    { id: ViewType.LABOUR_MANAGEMENT, label: 'SYSTEM OPS', icon: UserCog },
-    { id: ViewType.AI_COACH, label: 'PULSE AI COACH', icon: MessageSquare },
+    { 
+      id: ViewType.PROJECT_PERMISSIONS, 
+      label: 'PROJECT PERMISSIONS', 
+      icon: ShieldCheck, 
+      children: [
+        { label: 'Project Permissions', id: ViewType.PROJECT_PERMISSIONS }
+      ] 
+    },
+    { 
+      id: ViewType.PR_MANAGEMENT, 
+      label: 'PR MANAGEMENT', 
+      icon: ClipboardCheck, 
+      children: [
+        { label: 'PR Approval Manage', id: ViewType.PR_APPROVAL_MANAGE },
+        { label: 'PR', id: ViewType.PR }
+      ] 
+    },
+    { 
+      id: ViewType.REPORTS, 
+      label: 'REPORTS', 
+      icon: BarChart3, 
+      children: [
+        { label: 'Work Progress Reports', id: ViewType.WORK_PROGRESS_REPORTS },
+        { label: 'Inventory Reports', id: ViewType.INVENTORY_REPORTS }
+      ] 
+    },
+    { id: ViewType.LABOUR_STRENGTH, label: 'LABOUR STRENGTH', icon: UsersRound },
+    { id: ViewType.WORK_CONTRACTOR, label: 'WORK CONTRACTOR', icon: Briefcase },
+    { id: ViewType.SUBSCRIPTION, label: 'SUBSCRIPTION', icon: CreditCard },
+    { id: ViewType.AI_COACH, label: 'KONCITE AI COACH', icon: MessageSquare },
   ];
 
   const getThemeClass = (prefix: string) => `${prefix}-${theme}`;
-
-  const toggleTheme = () => {
-    setTheme(prev => prev === 'dark' ? 'light' : 'dark');
-  };
 
   return (
     <div className={`flex h-screen overflow-hidden theme-${theme} transition-colors duration-500`}>
@@ -131,8 +238,8 @@ const App: React.FC = () => {
                   <Zap className="text-white w-4 h-4" />
                 </div>
                 <div className="flex flex-col">
-                  <span className="font-black text-sm tracking-tight leading-none">PULSE AI</span>
-                  <span className="text-[9px] font-bold opacity-50 tracking-[0.2em] uppercase">Intelligence Platform</span>
+                  <span className="font-black text-sm tracking-tight leading-none">KONCITE</span>
+                  <span className="text-[9px] font-bold opacity-50 tracking-[0.2em] uppercase">Construction Platform</span>
                 </div>
              </div>
              
@@ -154,7 +261,7 @@ const App: React.FC = () => {
             </button>
 
             <button onClick={toggleTheme} className="p-2 hover:bg-white/10 rounded-lg transition-colors flex items-center gap-2 border border-white/5">
-              {theme === 'dark' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
+              {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             </button>
 
             <button className="p-2 hover:bg-white/10 rounded-lg transition-colors relative border border-white/5">
@@ -162,23 +269,74 @@ const App: React.FC = () => {
               <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border border-[#1e293b]"></span>
             </button>
 
-            <div className="flex items-center gap-3 pl-4 border-l border-white/10 cursor-pointer hover:opacity-80 transition-opacity">
+            <div className="flex items-center gap-3 pl-4 border-l border-white/10">
               <div className="text-right hidden md:block">
                 <p className="text-[12px] font-black leading-none">Dr. Niharika V.</p>
                 <p className="text-[9px] font-bold opacity-50 uppercase tracking-tighter">System Administrator</p>
               </div>
-              <ChevronDown className="w-3 h-3 opacity-30" />
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/10 rounded-lg transition-colors border border-white/5"
+                title="Logout"
+              >
+                <LogOut className="w-4 h-4" />
+                <span className="hidden sm:inline text-[11px] font-bold">Logout</span>
+              </button>
             </div>
           </div>
         </header>
 
         <div className={`flex-1 overflow-y-auto p-6 custom-scrollbar ${getThemeClass('theme')}`}>
           <div className="max-w-[1400px] mx-auto fade-in-premium">
-            {currentView === ViewType.DASHBOARD ? <Dashboard theme={theme} /> : <AICoach />}
+            {currentView === ViewType.DASHBOARD ? (
+              <Dashboard theme={theme} />
+            ) : currentView === ViewType.AI_COACH ? (
+              <AICoach />
+            ) : [
+              ViewType.MASTERS,
+              ViewType.COMPANIES,
+              ViewType.PROJECTS,
+              ViewType.SUBPROJECT,
+              ViewType.UNITS,
+              ViewType.WAREHOUSES,
+              ViewType.LABOURS,
+              ViewType.ASSETS_EQUIPMENTS,
+              ViewType.VENDORS,
+              ViewType.ACTIVITIES,
+              ViewType.MATERIALS
+            ].includes(currentView) ? (
+              <Masters theme={theme} currentView={currentView} />
+            ) : [
+              ViewType.COMPANY_USERS,
+              ViewType.MANAGE_TEAMS,
+              ViewType.USER_ROLES_PERMISSIONS,
+              ViewType.PROJECT_PERMISSIONS,
+              ViewType.PR_MANAGEMENT,
+              ViewType.PR_APPROVAL_MANAGE,
+              ViewType.PR,
+              ViewType.REPORTS,
+              ViewType.WORK_PROGRESS_REPORTS,
+              ViewType.INVENTORY_REPORTS,
+              ViewType.LABOUR_STRENGTH,
+              ViewType.WORK_CONTRACTOR,
+              ViewType.SUBSCRIPTION
+            ].includes(currentView) ? (
+              <GenericView theme={theme} currentView={currentView} />
+            ) : (
+              <AICoach />
+            )}
           </div>
         </div>
       </div>
     </div>
+  );
+};
+
+const App: React.FC = () => {
+  return (
+    <ThemeProvider>
+      <AppContent />
+    </ThemeProvider>
   );
 };
 

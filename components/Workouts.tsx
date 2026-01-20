@@ -42,7 +42,7 @@ const Workouts: React.FC = () => {
           </div>
           <h2 className="text-2xl font-bold mb-4">Personalized Training on Demand</h2>
           <p className="text-indigo-100 mb-6 opacity-90">
-            Tell PulseAI your goals, available equipment, and time. We'll build a science-backed routine tailored just for you.
+            Tell Koncite AI your project requirements, available resources, and timeline. We'll build a comprehensive plan tailored just for your construction project.
           </p>
           <div className="flex gap-3">
             <input 

@@ -1,6 +1,6 @@
 {
-  "name": "PulseAI Health",
-  "description": "An AI-powered fitness and longevity platform providing personalized health coaching, workout generation, and nutrition analysis.",
+  "name": "Koncite",
+  "description": "An AI-powered construction management platform providing document management, labour management, daily progress reports, and intelligent project assistance.",
   "requestFramePermissions": [
     "camera",
     "microphone"

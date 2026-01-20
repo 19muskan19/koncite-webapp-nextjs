@@ -69,7 +69,7 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
       <div className="flex items-center justify-between mb-2">
         <div>
           <h1 className="text-2xl font-black tracking-tight">System Performance Overview</h1>
-          <p className="text-[11px] font-bold opacity-50 uppercase tracking-widest mt-1">Real-time health intelligence analytics</p>
+          <p className="text-[11px] font-bold opacity-50 uppercase tracking-widest mt-1">Real-time construction management analytics</p>
         </div>
         <div className="flex items-center gap-2">
            <span className="text-[10px] font-black opacity-40">AUTO-REFRESH IN 12S</span>

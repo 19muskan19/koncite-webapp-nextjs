@@ -7,7 +7,7 @@ import { Message } from '../types';
 
 const AICoach: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([
-    { role: 'assistant', content: "Hello Alex! I'm PulseAI, your health intelligence coach. How can I help you optimize your wellness today?" }
+    { role: 'assistant', content: "Hello! I'm Koncite AI, your construction management assistant. How can I help you manage your construction projects today?" }
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -32,7 +32,7 @@ const AICoach: React.FC = () => {
       setMessages(prev => [...prev, { role: 'assistant', content: response || "I'm sorry, I couldn't process that. Try again?" }]);
     } catch (err) {
       console.error(err);
-      setMessages(prev => [...prev, { role: 'assistant', content: "Oops, looks like my neural circuits are a bit tangled. Please try again later." }]);
+      setMessages(prev => [...prev, { role: 'assistant', content: "Oops, looks like there was an issue processing your request. Please try again later." }]);
     } finally {
       setIsLoading(false);
     }
@@ -43,9 +43,9 @@ const AICoach: React.FC = () => {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-3">
-            PulseAI Coach <Sparkles className="w-6 h-6 text-indigo-500" />
+            Koncite AI Coach <Sparkles className="w-6 h-6 text-indigo-500" />
           </h1>
-          <p className="text-slate-500 mt-1">24/7 expert guidance powered by multimodal AI.</p>
+          <p className="text-slate-500 mt-1">24/7 construction management assistance powered by AI.</p>
         </div>
         <div className="flex gap-2">
           <button className="p-2 text-slate-400 hover:bg-slate-100 rounded-lg transition-all" title="Reset Session">
@@ -106,7 +106,7 @@ const AICoach: React.FC = () => {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-                placeholder="Ask about training, nutrition, or wellness tips..." 
+                placeholder="Ask about construction management, documents, labour, or project operations..." 
                 className="w-full pl-6 pr-12 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-2 focus:ring-indigo-500 focus:bg-white outline-none transition-all text-sm"
               />
               <button 
