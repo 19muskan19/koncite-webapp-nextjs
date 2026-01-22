@@ -26,19 +26,15 @@ import Dashboard from './components/Dashboard';
 import Masters from './components/Masters';
 import GenericView from './components/GenericView';
 import HomePage from './components/HomePage';
-import AboutPage from './components/AboutPage';
 import LoginModal from './components/LoginModal';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { ViewType, ThemeType } from './types';
-
-type PublicPage = 'home' | 'about';
 
 const AppContent: React.FC = () => {
   const { theme, toggleTheme } = useTheme();
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
   const [currentView, setCurrentView] = useState<ViewType>(ViewType.DASHBOARD);
-  const [currentPage, setCurrentPage] = useState<PublicPage>('home');
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
   // Check if user is already logged in (from localStorage)
@@ -66,28 +62,18 @@ const AppContent: React.FC = () => {
   if (!isAuthenticated) {
     return (
       <>
-        {currentPage === 'home' ? (
-          <HomePage 
-            onLoginClick={() => setShowLoginModal(true)} 
-            onBookDemo={() => setShowLoginModal(true)}
-            onNavigateToAbout={() => setCurrentPage('about')}
-          />
-        ) : (
-          <AboutPage
-            onBookDemo={() => setShowLoginModal(true)}
-            onContact={() => {
-              setCurrentPage('home');
-              setTimeout(() => {
-                const contactSection = document.getElementById('contact');
-                if (contactSection) {
-                  contactSection.scrollIntoView({ behavior: 'smooth' });
-                }
-              }, 100);
-            }}
-            onNavigateToHome={() => setCurrentPage('home')}
-            onLoginClick={() => setShowLoginModal(true)}
-          />
-        )}
+        <HomePage 
+          onLoginClick={() => setShowLoginModal(true)} 
+          onBookDemo={() => setShowLoginModal(true)}
+          onNavigateToAbout={() => {
+            setTimeout(() => {
+              const aboutSection = document.getElementById('about');
+              if (aboutSection) {
+                aboutSection.scrollIntoView({ behavior: 'smooth' });
+              }
+            }, 100);
+          }}
+        />
         <LoginModal 
           isOpen={showLoginModal} 
           onClose={() => setShowLoginModal(false)}

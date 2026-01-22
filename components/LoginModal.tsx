@@ -48,8 +48,8 @@ const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin }) => 
         </button>
 
         <div className="text-center mb-6">
-          <div className={`inline-flex items-center justify-center w-16 h-16 ${isDark ? 'bg-indigo-900/30' : 'bg-indigo-100'} rounded-full mb-4`}>
-            <LogIn className={`w-8 h-8 ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`} />
+          <div className={`inline-flex items-center justify-center w-16 h-16 ${isDark ? 'bg-[#6B8E23]/20' : 'bg-[#6B8E23]/10'} rounded-full mb-4`}>
+            <LogIn className="w-8 h-8 text-[#6B8E23]" />
           </div>
           <h2 className={`text-2xl font-black ${textPrimary} mb-2`}>Welcome Back</h2>
           <p className={`text-sm ${textSecondary}`}>Sign in to your account</p>
@@ -72,7 +72,7 @@ const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin }) => 
                 type="text"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className={`w-full pl-10 pr-4 py-3 border ${borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none`}
+                className={`w-full pl-10 pr-4 py-3 border ${borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#6B8E23] focus:border-transparent outline-none`}
                 placeholder="Enter your email"
                 required
               />
@@ -89,7 +89,7 @@ const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin }) => 
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className={`w-full pl-10 pr-4 py-3 border ${borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none`}
+                className={`w-full pl-10 pr-4 py-3 border ${borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#6B8E23] focus:border-transparent outline-none`}
                 placeholder="Enter your password"
                 required
               />
@@ -98,17 +98,17 @@ const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin }) => 
 
           <div className="flex items-center justify-between text-sm">
             <label className="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" className="w-4 h-4 text-indigo-600 rounded" />
+              <input type="checkbox" className="w-4 h-4 text-[#6B8E23] rounded" />
               <span className={textSecondary}>Remember me</span>
             </label>
-            <button type="button" className={`${isDark ? 'text-indigo-400' : 'text-indigo-600'} hover:underline font-semibold`}>
+            <button type="button" className="text-[#6B8E23] hover:underline font-semibold">
               Forgot password?
             </button>
           </div>
 
           <button
             type="submit"
-            className="w-full px-4 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-semibold transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
+            className="w-full px-4 py-3 bg-[#6B8E23] hover:bg-[#5a7a1d] text-white rounded-lg font-semibold transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
           >
             <LogIn className="w-5 h-5" />
             Sign In
