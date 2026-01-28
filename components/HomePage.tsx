@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import { ArrowRight, Check, Zap, Shield, FileText, Users, ClipboardList, Sparkles, Search, MessageSquare, FileCheck, TrendingUp, Package, BarChart, Download } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';

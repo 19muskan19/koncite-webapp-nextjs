@@ -1,3 +1,5 @@
+'use client';
+
 import React, { useState } from 'react';
 import { Menu, X, Moon, Sun } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';

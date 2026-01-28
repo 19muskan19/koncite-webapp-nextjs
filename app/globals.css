@@ -1,0 +1,125 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --foreground-rgb: 0, 0, 0;
+    --background-start-rgb: 214, 219, 220;
+    --background-end-rgb: 255, 255, 255;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --foreground-rgb: 255, 255, 255;
+      --background-start-rgb: 0, 0, 0;
+      --background-end-rgb: 0, 0, 0;
+    }
+  }
+
+  body {
+    @apply antialiased;
+  }
+}
+
+/* Custom scrollbar styles */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(107, 142, 35, 0.3);
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(107, 142, 35, 0.5);
+}
+
+/* Theme classes */
+.theme-dark {
+  background: #0a0a0a;
+  color: #f1f5f9;
+}
+
+.theme-light {
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.sidebar-dark {
+  background: #0f172a;
+  border-right: 1px solid #1e293b;
+}
+
+.sidebar-light {
+  background: #ffffff;
+  border-right: 1px solid #e2e8f0;
+}
+
+.header-dark {
+  background: #0f172a;
+  border-bottom: 1px solid #1e293b;
+}
+
+.header-light {
+  background: #ffffff;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.card-dark {
+  background: #1e293b;
+  border-color: #334155;
+}
+
+.card-light {
+  background: #ffffff;
+  border-color: #e2e8f0;
+}
+
+.fade-in-premium {
+  animation: fadeIn 0.5s ease-in;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* Toast animations - slide up from bottom */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slide-in {
+  animation: slideUp 0.3s ease-out;
+}

@@ -1,3 +1,5 @@
+'use client';
+
 import React, { useState } from 'react';
 import { X, LogIn, Mail, Lock } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';

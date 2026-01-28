@@ -1,3 +1,5 @@
+'use client';
+
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { ThemeType } from '../types';
 
@@ -10,17 +12,25 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [theme, setTheme] = useState<ThemeType>(() => {
-    // Check localStorage first, then default to 'dark'
-    const savedTheme = localStorage.getItem('theme') as ThemeType;
-    return savedTheme === 'dark' || savedTheme === 'light' ? savedTheme : 'dark';
-  });
+  const [theme, setTheme] = useState<ThemeType>('dark');
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    localStorage.setItem('theme', theme);
-    // Apply theme class to body for global styling
-    document.body.className = `theme-${theme}`;
-  }, [theme]);
+    setMounted(true);
+    // Check localStorage after mount
+    const savedTheme = localStorage.getItem('theme') as ThemeType;
+    if (savedTheme === 'dark' || savedTheme === 'light') {
+      setTheme(savedTheme);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mounted) {
+      localStorage.setItem('theme', theme);
+      // Apply theme class to body for global styling
+      document.body.className = `theme-${theme}`;
+    }
+  }, [theme, mounted]);
 
   const toggleTheme = () => {
     setTheme(prev => prev === 'dark' ? 'light' : 'dark');

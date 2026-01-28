@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import { ThemeType, ViewType } from '../types';
 import { 
@@ -144,6 +146,8 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
             { planName: 'Professional Plan', features: 'Standard Features', price: '$499/month', users: '50', status: 'Active' },
           ]
         };
+      case ViewType.AI_AGENTS:
+        return null; // Handle AI Agents separately
       default:
         return {
           title: 'View',
@@ -156,6 +160,12 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
   };
 
   const config = getViewConfig();
+  
+  // Handle AI Agents separately - return null as it's handled by the page component
+  if (currentView === ViewType.AI_AGENTS) {
+    return null;
+  }
+  
   const Icon = config.icon;
 
   return (
@@ -163,8 +173,8 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
       {/* Header */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-4">
-          <div className={`p-3 rounded-xl ${isDark ? 'bg-indigo-500/10' : 'bg-indigo-500/5'}`}>
-            <Icon className="w-6 h-6 text-indigo-500" />
+          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5'}`}>
+            <Icon className="w-6 h-6 text-[#6B8E23]" />
           </div>
           <div>
             <h1 className={`text-2xl font-black tracking-tight ${textPrimary}`}>{config.title}</h1>
@@ -174,7 +184,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-indigo-600 hover:bg-indigo-700 text-white' : 'bg-indigo-600 hover:bg-indigo-700 text-white'} shadow-md`}>
+          <button className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md`}>
             <Plus className="w-4 h-4" /> Add New
           </button>
         </div>
@@ -187,7 +197,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
           <input 
             type="text" 
             placeholder="Search..." 
-            className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-indigo-500/20 outline-none`}
+            className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
           />
         </div>
         <button className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'} border ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>

@@ -1,3 +1,5 @@
+'use client';
+
 import React from 'react';
 import { Facebook, Twitter, Linkedin } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
