@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
+import { useToast } from '../../contexts/ToastContext';
 import { 
   Layers,
   FolderKanban,
@@ -10,7 +11,11 @@ import {
   Search,
   Filter,
   X,
-  Download
+  Download,
+  ChevronUp,
+  ChevronDown,
+  Edit,
+  Trash2
 } from 'lucide-react';
 
 interface Subproject {
@@ -31,11 +36,14 @@ interface SubprojectProps {
 }
 
 const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
+  const toast = useToast();
   const [selectedProject, setSelectedProject] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [sortFilter, setSortFilter] = useState<'recent' | 'oldest' | 'none'>('none');
   const [showFilterDropdown, setShowFilterDropdown] = useState<boolean>(false);
   const [showSubprojectModal, setShowSubprojectModal] = useState<boolean>(false);
+  const [editingSubprojectId, setEditingSubprojectId] = useState<string | null>(null);
+  const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
   const [userSubprojects, setUserSubprojects] = useState<Subproject[]>([]);
   const [formData, setFormData] = useState({
     project: '',
@@ -96,7 +104,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
       } catch (error) {
         console.error('Error saving to localStorage:', error);
         if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-          alert('Storage limit exceeded. Some data may not be saved.');
+          toast.showWarning('Storage limit exceeded. Some data may not be saved.');
         }
       }
     } else {
@@ -144,6 +152,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
 
   const handleCloseModal = () => {
     setShowSubprojectModal(false);
+    setEditingSubprojectId(null);
     setFormData({
       project: '',
       subprojectName: '',
@@ -152,38 +161,89 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
     });
   };
 
+  const handleToggleCard = (subprojectId: string) => {
+    setExpandedCards(prev => {
+      const newSet = new Set();
+      // If clicking the same card, close it. Otherwise, open only the clicked card
+      if (prev.has(subprojectId)) {
+        // Close the card
+        return newSet;
+      } else {
+        // Open only this card (close all others)
+        newSet.add(subprojectId);
+        return newSet;
+      }
+    });
+  };
+
+  const handleEditSubproject = (subproject: Subproject) => {
+    setEditingSubprojectId(subproject.id);
+    setFormData({
+      project: subproject.project,
+      subprojectName: subproject.name,
+      plannedStartDate: subproject.startDate,
+      plannedEndDate: subproject.endDate
+    });
+    setShowSubprojectModal(true);
+  };
+
+  const handleDeleteSubproject = (subprojectId: string) => {
+    if (window.confirm('Are you sure you want to delete this subproject?')) {
+      setUserSubprojects(prev => prev.filter(s => s.id !== subprojectId));
+      toast.showSuccess('Subproject deleted successfully');
+    }
+  };
+
   const handleCreateSubproject = () => {
-    if (!formData.project || !formData.subprojectName || !formData.plannedStartDate || !formData.plannedEndDate) {
-      alert('Please fill in all required fields');
+    const missingFields: string[] = [];
+    
+    if (!formData.project) missingFields.push('Select Project');
+    if (!formData.subprojectName) missingFields.push('Subproject Name');
+    if (!formData.plannedStartDate) missingFields.push('Planned Start Date');
+    if (!formData.plannedEndDate) missingFields.push('Planned End Date');
+    
+    if (missingFields.length > 0) {
+      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
       return;
     }
 
-    // Generate a code from the subproject name
-    const code = formData.subprojectName
-      .split(' ')
-      .map(word => word.charAt(0).toUpperCase())
-      .join('')
-      .substring(0, 6) + String(defaultSubprojects.length + userSubprojects.length + 1).padStart(3, '0');
+    if (editingSubprojectId) {
+      // Update existing subproject
+      setUserSubprojects(prev => prev.map(s => 
+        s.id === editingSubprojectId 
+          ? {
+              ...s,
+              name: formData.subprojectName,
+              project: formData.project,
+              startDate: formData.plannedStartDate,
+              endDate: formData.plannedEndDate
+            }
+          : s
+      ));
+    } else {
+      // Generate a code from the subproject name
+      const code = formData.subprojectName
+        .split(' ')
+        .map(word => word.charAt(0).toUpperCase())
+        .join('')
+        .substring(0, 6) + String(defaultSubprojects.length + userSubprojects.length + 1).padStart(3, '0');
 
-    const newSubproject: Subproject = {
-      id: Date.now().toString(),
-      name: formData.subprojectName,
-      code: code,
-      project: formData.project,
-      status: 'Pending',
-      progress: 0,
-      startDate: formData.plannedStartDate,
-      endDate: formData.plannedEndDate,
-      createdAt: new Date().toISOString()
-    };
+      const newSubproject: Subproject = {
+        id: Date.now().toString(),
+        name: formData.subprojectName,
+        code: code,
+        project: formData.project,
+        status: 'Pending',
+        progress: 0,
+        startDate: formData.plannedStartDate,
+        endDate: formData.plannedEndDate,
+        createdAt: new Date().toISOString()
+      };
 
-    try {
       setUserSubprojects(prev => [...prev, newSubproject]);
-      handleCloseModal();
-    } catch (error) {
-      console.error('Error saving subproject:', error);
-      alert('Error saving subproject. Please try again.');
     }
+
+    handleCloseModal();
   };
 
   // Memoize filtered and sorted subprojects
@@ -405,7 +465,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
         </>
       )}
 
-      {/* Subprojects Table */}
+      {/* Subprojects Cards */}
       {!selectedProject ? (
         <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
           <FolderKanban className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
@@ -413,37 +473,153 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
           <p className={`text-sm ${textSecondary}`}>Please select a project from the dropdown above to view its subprojects</p>
         </div>
       ) : filteredAndSortedSubprojects.length > 0 ? (
-        <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
-                <tr>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Subproject Name</th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Code</th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Project</th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Manager</th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Status</th>
-                  <th className={`px-6 py-4 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-inherit">
-                {filteredAndSortedSubprojects.map((row) => (
-                  <tr key={row.id} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.name}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.code}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.project}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.manager}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.status}</td>
-                    <td className="px-6 py-4 text-right">
-                      <button className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}>
-                        <MoreVertical className={`w-4 h-4 ${textSecondary}`} />
+        <div className="space-y-3">
+          {filteredAndSortedSubprojects.map((subproject) => {
+            const isExpanded = expandedCards.has(subproject.id);
+            return (
+              <div 
+                key={subproject.id} 
+                className={`rounded-lg border overflow-hidden transition-all shadow-sm ${
+                  isExpanded 
+                    ? isDark 
+                      ? 'border-[#6B8E23]/50 bg-slate-800/50' 
+                      : 'border-[#6B8E23]/30 bg-white'
+                    : isDark 
+                      ? 'border-slate-700 bg-slate-800/30 hover:border-slate-600' 
+                      : 'border-slate-200 bg-white hover:border-slate-300'
+                }`}
+              >
+                {/* Card Header */}
+                <div 
+                  className={`px-5 py-4 flex items-center justify-between cursor-pointer transition-colors ${
+                    isDark 
+                      ? isExpanded 
+                        ? 'bg-slate-700' 
+                        : 'bg-slate-800 hover:bg-slate-750'
+                      : isExpanded
+                        ? 'bg-slate-700'
+                        : 'bg-slate-700 hover:bg-slate-600'
+                  }`}
+                  onClick={() => handleToggleCard(subproject.id)}
+                >
+                  <div className="flex items-center gap-4 flex-1 min-w-0">
+                    <div className={`w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0 transition-all ${
+                      isExpanded 
+                        ? 'bg-[#6B8E23]/20' 
+                        : 'bg-white/10'
+                    }`}>
+                      <Layers className={`w-6 h-6 ${isExpanded ? 'text-[#6B8E23]' : 'text-white'}`} />
+                    </div>
+                    <h3 className={`text-lg font-bold text-white truncate`}>{subproject.name}</h3>
+                    {subproject.status && !isExpanded && (
+                      <span className={`ml-auto px-3 py-1 rounded-full text-xs font-bold flex-shrink-0 ${
+                        subproject.status === 'Active' || subproject.status === 'In Progress'
+                          ? 'bg-emerald-500/30 text-emerald-300'
+                          : subproject.status === 'Completed'
+                          ? 'bg-blue-500/30 text-blue-300'
+                          : 'bg-slate-500/30 text-slate-300'
+                      }`}>
+                        {subproject.status}
+                      </span>
+                    )}
+                  </div>
+                  <div className="ml-3 flex-shrink-0">
+                    {isExpanded ? (
+                      <ChevronUp className="w-5 h-5 text-white" />
+                    ) : (
+                      <ChevronDown className="w-5 h-5 text-white" />
+                    )}
+                  </div>
+                </div>
+
+                {/* Card Body */}
+                {isExpanded && (
+                  <div className={`p-5 space-y-4 animate-in slide-in-from-top-2 duration-200 ${
+                    isDark ? 'bg-slate-800/80' : 'bg-slate-50'
+                  }`}>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>
+                          Project Name
+                        </p>
+                        <p className={`text-sm font-bold ${textPrimary}`}>{subproject.project}</p>
+                      </div>
+                      <div>
+                        <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>
+                          Sub-Project Name
+                        </p>
+                        <p className={`text-sm font-bold ${textPrimary}`}>{subproject.name}</p>
+                      </div>
+                      <div>
+                        <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>
+                          Start Date
+                        </p>
+                        <p className={`text-sm font-bold ${textPrimary}`}>{subproject.startDate}</p>
+                      </div>
+                      <div>
+                        <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>
+                          End Date
+                        </p>
+                        <p className={`text-sm font-bold ${textPrimary}`}>{subproject.endDate}</p>
+                      </div>
+                      {subproject.code && (
+                        <div>
+                          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>
+                            Code
+                          </p>
+                          <p className={`text-sm font-bold ${textPrimary}`}>{subproject.code}</p>
+                        </div>
+                      )}
+                      {subproject.status && (
+                        <div>
+                          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>
+                            Status
+                          </p>
+                          <span className={`inline-block px-3 py-1.5 rounded-full text-xs font-bold ${
+                            subproject.status === 'Active' || subproject.status === 'In Progress'
+                              ? 'bg-emerald-500/20 text-emerald-400'
+                              : subproject.status === 'Completed'
+                              ? 'bg-blue-500/20 text-blue-400'
+                              : 'bg-slate-500/20 text-slate-400'
+                          }`}>
+                            {subproject.status}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* Action Buttons */}
+                    <div className="flex items-center gap-3 pt-4 border-t border-inherit">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEditSubproject(subproject);
+                        }}
+                        className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold bg-[#6B8E23] hover:bg-[#5a7a1e] text-white transition-all shadow-sm"
+                      >
+                        <Edit className="w-4 h-4" />
+                        Edit
                       </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteSubproject(subproject.id);
+                        }}
+                        className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold transition-all ${
+                          isDark
+                            ? 'bg-slate-700 hover:bg-slate-600 text-slate-200'
+                            : 'bg-slate-200 hover:bg-slate-300 text-slate-700'
+                        }`}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       ) : (
         <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
@@ -482,8 +658,12 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
             {/* Modal Header */}
             <div className={`flex items-center justify-between p-6 border-b border-inherit`}>
               <div>
-                <h2 className={`text-xl font-black ${textPrimary}`}>Add New Subproject</h2>
-                <p className={`text-sm ${textSecondary} mt-1`}>Enter subproject details below</p>
+                <h2 className={`text-xl font-black ${textPrimary}`}>
+                  {editingSubprojectId ? 'Edit Subproject' : 'Add New Subproject'}
+                </h2>
+                <p className={`text-sm ${textSecondary} mt-1`}>
+                  {editingSubprojectId ? 'Update subproject details below' : 'Enter subproject details below'}
+                </p>
               </div>
               <button
                 onClick={handleCloseModal}
@@ -592,7 +772,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                 onClick={handleCreateSubproject}
                 className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#6B8E23] hover:bg-[#5a7a1e] text-white transition-all shadow-md"
               >
-                Create
+                {editingSubprojectId ? 'Update' : 'Create'}
               </button>
             </div>
           </div>

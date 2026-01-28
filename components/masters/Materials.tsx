@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
-import { Boxes, MoreVertical, Download, Plus, Search, X, ArrowUpDown } from 'lucide-react';
+import { useToast } from '../../contexts/ToastContext';
+import { Boxes, MoreVertical, Download, Plus, Search, X, ArrowUpDown, FileSpreadsheet, Upload } from 'lucide-react';
 
 interface Material {
   id: string;
@@ -19,7 +20,10 @@ interface MaterialsProps {
 }
 
 const Materials: React.FC<MaterialsProps> = ({ theme }) => {
+  const toast = useToast();
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<'list' | 'bulkUpload' | 'openingStock'>('list');
+  const [openingStockSubTab, setOpeningStockSubTab] = useState<'bulkUpload' | 'available'>('bulkUpload');
   const [showMaterialModal, setShowMaterialModal] = useState<boolean>(false);
   const [userMaterials, setUserMaterials] = useState<Material[]>([]);
   const [formData, setFormData] = useState({
@@ -28,6 +32,18 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
     specification: '',
     unit: ''
   });
+  const [openingStockForm, setOpeningStockForm] = useState({
+    project: '',
+    storeWarehouse: '',
+    openingDate: '',
+    file: null as File | null
+  });
+  const [availableStockFilters, setAvailableStockFilters] = useState({
+    project: '',
+    storeWarehouse: ''
+  });
+  const [availableStockSearch, setAvailableStockSearch] = useState<string>('');
+  const [entriesPerPage, setEntriesPerPage] = useState<number>(10);
   
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -43,6 +59,19 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
   const unitOptions = [
     'Bags', 'Nos', 'Cum', 'Sqm', 'Rmt', 'Brass', 'Yard', 'Packet', 'LS', 
     'Bulk', 'Bundles', 'MT', 'Cft', 'Sft', 'Rft', 'Kgs', 'Ltr', 'Hrs', 'Day'
+  ];
+
+  const availableProjects = [
+    { name: 'Residential Complex A', code: 'PRJ001' },
+    { name: 'Commercial Tower B', code: 'PRJ002' },
+    { name: 'Highway Infrastructure Project', code: 'PRJ003' },
+    { name: 'Shopping Mall Development', code: 'PRJ004' },
+  ];
+
+  const availableWarehouses = [
+    { name: 'Main Store', code: 'WH001' },
+    { name: 'Main Warehouse', code: 'WH002' },
+    { name: 'Storage Facility B', code: 'WH003' },
   ];
 
   const defaultMaterials: Material[] = [
@@ -87,7 +116,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
       } catch (error) {
         console.error('Error saving to localStorage:', error);
         if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-          alert('Storage limit exceeded. Some data may not be saved.');
+          toast.showWarning('Storage limit exceeded. Some data may not be saved.');
         }
       }
     } else {
@@ -141,8 +170,14 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
   };
 
   const handleCreateMaterial = () => {
-    if (!formData.materialClass || !formData.materialName || !formData.unit) {
-      alert('Please fill in all required fields');
+    const missingFields: string[] = [];
+    
+    if (!formData.materialClass) missingFields.push('Material Class');
+    if (!formData.materialName) missingFields.push('Material Name');
+    if (!formData.unit) missingFields.push('Unit');
+    
+    if (missingFields.length > 0) {
+      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
       return;
     }
 
@@ -161,7 +196,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
       handleCloseModal();
     } catch (error) {
       console.error('Error saving material:', error);
-      alert('Error saving material. Please try again.');
+      toast.showError('Error saving material. Please try again.');
     }
   };
 
@@ -193,6 +228,50 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
     document.body.removeChild(link);
   };
 
+  const handleExportMaterialsData = () => {
+    const headers = ['Class', 'Code', 'Name', 'Specification', 'Unit'];
+    const rows = allMaterials.map(material => [
+      material.class,
+      material.code,
+      material.name,
+      material.specification || '',
+      material.unit
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+
+    const BOM = '\uFEFF';
+    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
+    
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `materials_data_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.showSuccess('Materials data exported successfully');
+  };
+
+  const handleImportMaterialsData = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.csv,.xlsx,.xls';
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (file) {
+        // Here you would typically parse the file and import the data
+        // For now, just show a success message
+        toast.showSuccess('Materials data imported successfully');
+      }
+    };
+    input.click();
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between mb-2">
@@ -207,40 +286,90 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button 
-            onClick={handleDownloadExcel}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
-              isDark 
-                ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' 
-                : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-            } shadow-sm`}
-            title="Download as Excel"
+        {activeTab === 'list' && (
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={handleDownloadExcel}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+                isDark 
+                  ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' 
+                  : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
+              } shadow-sm`}
+              title="Download as Excel"
+            >
+              <Download className="w-4 h-4" />
+            </button>
+            <button 
+              onClick={() => setShowMaterialModal(true)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md`}
+            >
+              <Plus className="w-4 h-4" /> Add New
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Tabs */}
+      <div className={`border-b ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
+        <div className="flex gap-1">
+          <button
+            onClick={() => setActiveTab('list')}
+            className={`px-6 py-3 text-sm font-bold transition-colors relative ${
+              activeTab === 'list'
+                ? `${textPrimary}`
+                : `${textSecondary} hover:${textPrimary}`
+            }`}
           >
-            <Download className="w-4 h-4" />
+            Materials List
+            {activeTab === 'list' && (
+              <span className={`absolute bottom-0 left-0 right-0 h-0.5 bg-red-500`} />
+            )}
           </button>
-          <button 
-            onClick={() => setShowMaterialModal(true)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md`}
+          <button
+            onClick={() => setActiveTab('bulkUpload')}
+            className={`px-6 py-3 text-sm font-bold transition-colors relative ${
+              activeTab === 'bulkUpload'
+                ? `text-red-500`
+                : `${textSecondary} hover:${textPrimary}`
+            }`}
           >
-            <Plus className="w-4 h-4" /> Add New
+            Bulk Upload of Material
+            {activeTab === 'bulkUpload' && (
+              <span className={`absolute bottom-0 left-0 right-0 h-0.5 bg-red-500`} />
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab('openingStock')}
+            className={`px-6 py-3 text-sm font-bold transition-colors relative ${
+              activeTab === 'openingStock'
+                ? `${textPrimary}`
+                : `${textSecondary} hover:${textPrimary}`
+            }`}
+          >
+            Opening Stock
+            {activeTab === 'openingStock' && (
+              <span className={`absolute bottom-0 left-0 right-0 h-0.5 bg-red-500`} />
+            )}
           </button>
         </div>
       </div>
 
-      {/* Search Bar */}
-      <div className={`flex items-center gap-4 p-4 rounded-xl border ${cardClass}`}>
-        <div className="flex-1 relative">
-          <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
-          <input 
-            type="text" 
-            placeholder="Search by class, code, name, specification, or unit..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-          />
-        </div>
-      </div>
+      {/* Tab Content */}
+      {activeTab === 'list' && (
+        <>
+          {/* Search Bar */}
+          <div className={`flex items-center gap-4 p-4 rounded-xl border ${cardClass}`}>
+            <div className="flex-1 relative">
+              <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
+              <input 
+                type="text" 
+                placeholder="Search by class, code, name, specification, or unit..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+              />
+            </div>
+          </div>
 
       {filteredMaterials.length > 0 ? (
         <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
@@ -308,24 +437,452 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Total Records</p>
-          <p className={`text-2xl font-black ${textPrimary}`}>{filteredMaterials.length}</p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className={`p-4 rounded-xl border ${cardClass}`}>
+              <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Total Records</p>
+              <p className={`text-2xl font-black ${textPrimary}`}>{filteredMaterials.length}</p>
+            </div>
+            <div className={`p-4 rounded-xl border ${cardClass}`}>
+              <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Class A</p>
+              <p className={`text-2xl font-black text-[#6B8E23]`}>{filteredMaterials.filter(m => m.class === 'A').length}</p>
+            </div>
+            <div className={`p-4 rounded-xl border ${cardClass}`}>
+              <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Class B</p>
+              <p className={`text-2xl font-black text-emerald-500`}>{filteredMaterials.filter(m => m.class === 'B').length}</p>
+            </div>
+            <div className={`p-4 rounded-xl border ${cardClass}`}>
+              <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Class C</p>
+              <p className={`text-2xl font-black text-amber-500`}>{filteredMaterials.filter(m => m.class === 'C').length}</p>
+            </div>
+          </div>
+        </>
+      )}
+
+      {activeTab === 'bulkUpload' && (
+        <div className={`rounded-xl border p-8 ${cardClass}`}>
+          <div className="space-y-4 max-w-md mx-auto">
+            <button
+              onClick={handleExportMaterialsData}
+              className={`w-full flex items-center justify-center gap-3 px-6 py-4 rounded-lg text-sm font-bold transition-all ${
+                isDark
+                  ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                  : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+              } shadow-md`}
+            >
+              <FileSpreadsheet className="w-5 h-5" />
+              Export Materials Data
+            </button>
+            <button
+              onClick={handleImportMaterialsData}
+              className={`w-full flex items-center justify-center gap-3 px-6 py-4 rounded-lg text-sm font-bold transition-all ${
+                isDark
+                  ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                  : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+              } shadow-md`}
+            >
+              <Upload className="w-5 h-5" />
+              Import Materials Data
+            </button>
+          </div>
         </div>
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Class A</p>
-          <p className={`text-2xl font-black text-[#6B8E23]`}>{filteredMaterials.filter(m => m.class === 'A').length}</p>
-        </div>
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Class B</p>
-          <p className={`text-2xl font-black text-emerald-500`}>{filteredMaterials.filter(m => m.class === 'B').length}</p>
-        </div>
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Class C</p>
-          <p className={`text-2xl font-black text-amber-500`}>{filteredMaterials.filter(m => m.class === 'C').length}</p>
-        </div>
-      </div>
+      )}
+
+      {activeTab === 'openingStock' && (
+        <>
+          {/* Sub-tabs */}
+          <div className={`flex gap-2 border-b ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
+            <button
+              onClick={() => setOpeningStockSubTab('bulkUpload')}
+              className={`px-6 py-3 text-sm font-bold transition-colors ${
+                openingStockSubTab === 'bulkUpload'
+                  ? isDark
+                    ? 'bg-slate-800 border-t border-l border-r border-slate-700 text-slate-100'
+                    : 'bg-white border-t border-l border-r border-slate-200 text-slate-900'
+                  : `${textSecondary} hover:${textPrimary}`
+              } rounded-t-lg`}
+            >
+              Bulk Upload Opening Materials
+            </button>
+            <button
+              onClick={() => setOpeningStockSubTab('available')}
+              className={`px-6 py-3 text-sm font-bold transition-colors ${
+                openingStockSubTab === 'available'
+                  ? isDark
+                    ? 'bg-slate-800 border-t border-l border-r border-slate-700 text-slate-100'
+                    : 'bg-white border-t border-l border-r border-slate-200 text-slate-900'
+                  : `${textSecondary} hover:${textPrimary}`
+              } rounded-t-lg`}
+            >
+              Available Opening Stock
+            </button>
+          </div>
+
+          {openingStockSubTab === 'bulkUpload' && (
+            <div className="space-y-6">
+              {/* Export Button */}
+              <div className={`rounded-xl border p-8 ${cardClass}`}>
+                <button
+                  onClick={handleExportMaterialsData}
+                  className={`w-full flex items-center justify-center gap-3 px-6 py-4 rounded-lg text-sm font-bold transition-all ${
+                    isDark
+                      ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                      : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                  } shadow-md`}
+                >
+                  <FileSpreadsheet className="w-5 h-5" />
+                  Export Materials Data
+                </button>
+              </div>
+
+              {/* Bulk Upload Form */}
+              <div className={`rounded-xl border ${cardClass}`}>
+                <div className="p-6 space-y-6">
+                  <h3 className={`text-lg font-black ${textPrimary} mb-4`}>Bulk Upload Opening Materials</h3>
+                  
+                  {/* Project */}
+                  <div>
+                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                      Project
+                    </label>
+                    <select
+                      value={openingStockForm.project}
+                      onChange={(e) => setOpeningStockForm({ ...openingStockForm, project: e.target.value })}
+                      className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+                        isDark 
+                          ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
+                          : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
+                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                    >
+                      <option value="">---Select Project---</option>
+                      {availableProjects.map((project, idx) => (
+                        <option key={idx} value={project.name}>
+                          {project.name} ({project.code})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Store/Warehouses */}
+                  <div>
+                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                      Store/Warehouses
+                    </label>
+                    <select
+                      value={openingStockForm.storeWarehouse}
+                      onChange={(e) => setOpeningStockForm({ ...openingStockForm, storeWarehouse: e.target.value })}
+                      className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+                        isDark 
+                          ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
+                          : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
+                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                    >
+                      <option value="">---Select Store/Warehouses---</option>
+                      {availableWarehouses.map((warehouse, idx) => (
+                        <option key={idx} value={warehouse.name}>
+                          {warehouse.name} ({warehouse.code})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Opening Date */}
+                  <div>
+                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                      Opening Date
+                    </label>
+                    <input
+                      type="date"
+                      value={openingStockForm.openingDate}
+                      onChange={(e) => setOpeningStockForm({ ...openingStockForm, openingDate: e.target.value })}
+                      className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                        isDark 
+                          ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
+                          : 'bg-white border-slate-200 text-slate-900'
+                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                    />
+                  </div>
+
+                  {/* File Upload */}
+                  <div>
+                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                      Upload File
+                    </label>
+                    <div className="flex items-center gap-4">
+                      <label className={`flex-1 px-4 py-3 rounded-lg text-sm font-bold transition-all cursor-pointer ${
+                        isDark 
+                          ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
+                          : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
+                      } border flex items-center justify-center`}>
+                        <input
+                          type="file"
+                          accept=".csv,.xlsx,.xls"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              setOpeningStockForm({ ...openingStockForm, file });
+                            }
+                          }}
+                          className="hidden"
+                        />
+                        Choose File
+                      </label>
+                      <span className={`text-sm ${textSecondary}`}>
+                        {openingStockForm.file ? openingStockForm.file.name : 'No file chosen'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Import Data Button */}
+                  <div className="pt-4">
+                    <button
+                      onClick={() => {
+                        if (!openingStockForm.file) {
+                          toast.showWarning('Please select a file to upload');
+                          return;
+                        }
+                        if (!openingStockForm.project) {
+                          toast.showWarning('Please select a project');
+                          return;
+                        }
+                        if (!openingStockForm.storeWarehouse) {
+                          toast.showWarning('Please select a store/warehouse');
+                          return;
+                        }
+                        if (!openingStockForm.openingDate) {
+                          toast.showWarning('Please select an opening date');
+                          return;
+                        }
+                        toast.showSuccess('Opening materials stock data imported successfully');
+                        // Reset form
+                        setOpeningStockForm({
+                          project: '',
+                          storeWarehouse: '',
+                          openingDate: '',
+                          file: null
+                        });
+                      }}
+                      className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-lg text-sm font-bold transition-all ${
+                        isDark
+                          ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                          : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                      } shadow-md`}
+                    >
+                      Import Data
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {openingStockSubTab === 'available' && (
+            <div className="space-y-6">
+              {/* Filters */}
+              <div className={`rounded-xl border p-6 ${cardClass}`}>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                      Project
+                    </label>
+                    <select
+                      value={availableStockFilters.project}
+                      onChange={(e) => setAvailableStockFilters({ ...availableStockFilters, project: e.target.value })}
+                      className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+                        isDark 
+                          ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
+                          : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
+                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                    >
+                      <option value="">----Select Project----</option>
+                      {availableProjects.map((project, idx) => (
+                        <option key={idx} value={project.name}>
+                          {project.name} ({project.code})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                      Store/Warehouses
+                    </label>
+                    <select
+                      value={availableStockFilters.storeWarehouse}
+                      onChange={(e) => setAvailableStockFilters({ ...availableStockFilters, storeWarehouse: e.target.value })}
+                      className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+                        isDark 
+                          ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
+                          : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
+                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                    >
+                      <option value="">----Select Store/Warehouses----</option>
+                      {availableWarehouses.map((warehouse, idx) => (
+                        <option key={idx} value={warehouse.name}>
+                          {warehouse.name} ({warehouse.code})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Materials Details Table */}
+              <div className={`rounded-xl border ${cardClass}`}>
+                <div className="p-6">
+                  <h3 className={`text-lg font-black ${textPrimary} mb-4`}>LIST MATERIALS DETAILS</h3>
+                  
+                  {/* Table Controls */}
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-sm ${textSecondary}`}>Show</span>
+                      <select
+                        value={entriesPerPage}
+                        onChange={(e) => setEntriesPerPage(Number(e.target.value))}
+                        className={`px-3 py-1 rounded text-sm font-bold ${
+                          isDark 
+                            ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
+                            : 'bg-white border-slate-200 text-slate-900'
+                        } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                      >
+                        <option value={10}>10</option>
+                        <option value={25}>25</option>
+                        <option value={50}>50</option>
+                        <option value={100}>100</option>
+                      </select>
+                      <span className={`text-sm ${textSecondary}`}>entries</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-sm ${textSecondary}`}>Search:</span>
+                      <input
+                        type="text"
+                        value={availableStockSearch}
+                        onChange={(e) => setAvailableStockSearch(e.target.value)}
+                        className={`px-3 py-1 rounded text-sm font-bold ${
+                          isDark 
+                            ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
+                            : 'bg-white border-slate-200 text-slate-900'
+                        } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                        placeholder="Search..."
+                      />
+                    </div>
+                  </div>
+
+                  {/* Table */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
+                        <tr>
+                          <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                            <div className="flex items-center gap-2">
+                              <ArrowUpDown className="w-3 h-3" />
+                              #
+                            </div>
+                          </th>
+                          <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                            <div className="flex items-center gap-2">
+                              <ArrowUpDown className="w-3 h-3" />
+                              Project Name
+                            </div>
+                          </th>
+                          <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                            <div className="flex items-center gap-2">
+                              <ArrowUpDown className="w-3 h-3" />
+                              Store/ Warehouse
+                            </div>
+                          </th>
+                          <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                            <div className="flex items-center gap-2">
+                              <ArrowUpDown className="w-3 h-3" />
+                              Class of Materials
+                            </div>
+                          </th>
+                          <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                            <div className="flex items-center gap-2">
+                              <ArrowUpDown className="w-3 h-3" />
+                              Materials Code
+                            </div>
+                          </th>
+                          <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                            <div className="flex items-center gap-2">
+                              <ArrowUpDown className="w-3 h-3" />
+                              Materials Name
+                            </div>
+                          </th>
+                          <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                            <div className="flex items-center gap-2">
+                              <ArrowUpDown className="w-3 h-3" />
+                              Specification
+                            </div>
+                          </th>
+                          <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                            <div className="flex items-center gap-2">
+                              <ArrowUpDown className="w-3 h-3" />
+                              Unit
+                            </div>
+                          </th>
+                          <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                            <div className="flex items-center gap-2">
+                              <ArrowUpDown className="w-3 h-3" />
+                              Opening
+                            </div>
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-inherit">
+                        {/* Sample data - in real app, this would come from state/API */}
+                        {[
+                          { id: 1, project: 'Demo Data', store: 'Main Store', class: 'A', code: 'M685270', name: 'Cement', specification: 'OPC testy', unit: 'Packet', opening: '2025-11' },
+                          { id: 10, project: 'Demo Data', store: 'Main Store', class: 'A', code: 'M984236', name: 'RMC', specification: 'M40', unit: 'Cft', opening: '2025-11' },
+                          { id: 100, project: 'Demo Data', store: 'Main Store', class: 'B', code: 'M211203', name: 'Measuring Tape', specification: '1/2 Inches', unit: 'Nos', opening: '2025-11' },
+                          { id: 101, project: 'Demo Data', store: 'Main Store', class: 'B', code: 'M257929', name: 'Hose Pipe', specification: '1 Inches', unit: 'Nos', opening: '2025-11' },
+                          { id: 102, project: 'Demo Data', store: 'Main Store', class: 'B', code: 'M205837', name: 'Hose Pipe', specification: '', unit: 'Rft', opening: '2025-11' },
+                          { id: 103, project: 'Demo Data', store: 'Main Store', class: 'B', code: 'M987837', name: 'Nylon Rope', specification: '', unit: 'Rft', opening: '2025-11' },
+                          { id: 104, project: 'Demo Data', store: 'Main Store', class: 'C', code: 'M183654', name: 'Oil', specification: '', unit: 'Ltr', opening: '2025-11' },
+                          { id: 105, project: 'Demo Data', store: 'Main Store', class: 'C', code: 'M976735', name: 'Cover Blocks', specification: '20mm', unit: 'Nos', opening: '2025-11' },
+                        ]
+                          .filter((item) => {
+                            // Filter by project
+                            if (availableStockFilters.project && item.project !== availableStockFilters.project) {
+                              return false;
+                            }
+                            // Filter by store/warehouse
+                            if (availableStockFilters.storeWarehouse && item.store !== availableStockFilters.storeWarehouse) {
+                              return false;
+                            }
+                            // Filter by search
+                            if (availableStockSearch) {
+                              const searchLower = availableStockSearch.toLowerCase();
+                              return (
+                                item.code.toLowerCase().includes(searchLower) ||
+                                item.name.toLowerCase().includes(searchLower) ||
+                                item.specification.toLowerCase().includes(searchLower) ||
+                                item.class.toLowerCase().includes(searchLower)
+                              );
+                            }
+                            return true;
+                          })
+                          .slice(0, entriesPerPage)
+                          .map((row, index) => (
+                            <tr key={row.id} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
+                              <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{row.id}</td>
+                              <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{row.project}</td>
+                              <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{row.store}</td>
+                              <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{row.class}</td>
+                              <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{row.code}</td>
+                              <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{row.name}</td>
+                              <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{row.specification || '-'}</td>
+                              <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{row.unit}</td>
+                              <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{row.opening}</td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
 
       {/* Add Material Modal */}
       {showMaterialModal && (

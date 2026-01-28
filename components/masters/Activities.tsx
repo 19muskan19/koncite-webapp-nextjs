@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
+import { useToast } from '../../contexts/ToastContext';
 import { Activity, MoreVertical, Download, Plus, X, Trash2 } from 'lucide-react';
 
 interface ActivityItem {
@@ -24,6 +25,7 @@ interface ActivitiesProps {
 }
 
 const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
+  const toast = useToast();
   const [selectedProject, setSelectedProject] = useState<string>('');
   const [selectedSubproject, setSelectedSubproject] = useState<string>('');
   const [showActivityModal, setShowActivityModal] = useState<boolean>(false);
@@ -101,7 +103,7 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
       } catch (error) {
         console.error('Error saving to localStorage:', error);
         if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-          alert('Storage limit exceeded. Some data may not be saved.');
+          toast.showWarning('Storage limit exceeded. Some data may not be saved.');
         }
       }
     } else {
@@ -170,8 +172,15 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
   };
 
   const handleCreateActivity = () => {
-    if (!formData.project || !formData.subproject || !formData.type || !formData.name) {
-      alert('Please fill in all required fields');
+    const missingFields: string[] = [];
+    
+    if (!formData.project) missingFields.push('Project');
+    if (!formData.subproject) missingFields.push('Subproject');
+    if (!formData.type) missingFields.push('Type');
+    if (!formData.name) missingFields.push('Name');
+    
+    if (missingFields.length > 0) {
+      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
       return;
     }
 
@@ -189,14 +198,14 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
       handleCloseModal();
     } catch (error) {
       console.error('Error saving activity:', error);
-      alert('Error saving activity. Please try again.');
+      toast.showError('Error saving activity. Please try again.');
     }
   };
 
   const handleDeleteActivity = (activityId: string) => {
     const defaultIds = defaultActivities.map(a => a.id);
     if (defaultIds.includes(activityId)) {
-      alert('Cannot delete default activities');
+      toast.showWarning('Cannot delete default activities');
       return;
     }
     

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
+import { useToast } from '../../contexts/ToastContext';
 import { 
   Building2,
   Plus,
@@ -38,6 +39,7 @@ interface CompaniesProps {
 }
 
 const Companies: React.FC<CompaniesProps> = ({ theme }) => {
+  const toast = useToast();
   const [showCompanyModal, setShowCompanyModal] = useState<boolean>(false);
   const [editingCompanyId, setEditingCompanyId] = useState<string | null>(null);
   const [viewingCompanyId, setViewingCompanyId] = useState<string | null>(null);
@@ -145,7 +147,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
       } catch (error) {
         console.error('Error saving to localStorage:', error);
         if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-          alert('Storage limit exceeded. Some data may not be saved. Please clear browser storage or use smaller images.');
+          toast.showWarning('Storage limit exceeded. Some data may not be saved. Please clear browser storage or use smaller images.');
         }
       }
     } else {
@@ -205,7 +207,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
     const file = e.target.files?.[0];
     if (file) {
       if (file.size > 5 * 1024 * 1024) {
-        alert('Image size should be less than 5MB');
+        toast.showError('Image size should be less than 5MB');
         return;
       }
       if (formData.logoPreview) {
@@ -227,8 +229,14 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
   };
 
   const handleCreateCompany = async () => {
-    if (!formData.registrationName || !formData.registeredAddress || !formData.companyRegistrationNo) {
-      alert('Please fill in all required fields');
+    const missingFields: string[] = [];
+    
+    if (!formData.registrationName) missingFields.push('Registration Name');
+    if (!formData.registeredAddress) missingFields.push('Registered Address');
+    if (!formData.companyRegistrationNo) missingFields.push('Company Registration No');
+    
+    if (missingFields.length > 0) {
+      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
       return;
     }
 
@@ -245,7 +253,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
         logoUrl = await compressImage(formData.logo, 200, 200, 0.7);
       } catch (error) {
         console.error('Error compressing image:', error);
-        alert('Error processing image. Please try again.');
+        toast.showError('Error processing image. Please try again.');
         return;
       }
     } else {
@@ -271,9 +279,9 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
     } catch (error) {
       console.error('Error saving company:', error);
       if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-        alert('Storage limit exceeded. Please clear some data or use a smaller image.');
+        toast.showError('Storage limit exceeded. Please clear some data or use a smaller image.');
       } else {
-        alert('Error saving company. Please try again.');
+        toast.showError('Error saving company. Please try again.');
       }
     }
   };
@@ -323,8 +331,14 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
   };
 
   const handleUpdateCompany = async () => {
-    if (!formData.registrationName || !formData.registeredAddress || !formData.companyRegistrationNo) {
-      alert('Please fill in all required fields');
+    const missingFields: string[] = [];
+    
+    if (!formData.registrationName) missingFields.push('Registration Name');
+    if (!formData.registeredAddress) missingFields.push('Registered Address');
+    if (!formData.companyRegistrationNo) missingFields.push('Company Registration No');
+    
+    if (missingFields.length > 0) {
+      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
       return;
     }
 
@@ -337,7 +351,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
         logoUrl = await compressImage(formData.logo, 200, 200, 0.7);
       } catch (error) {
         console.error('Error compressing image:', error);
-        alert('Error processing image. Please try again.');
+        toast.showError('Error processing image. Please try again.');
         return;
       }
     } else {
@@ -362,9 +376,9 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
     } catch (error) {
       console.error('Error updating company:', error);
       if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-        alert('Storage limit exceeded. Please clear some data or use a smaller image.');
+        toast.showError('Storage limit exceeded. Please clear some data or use a smaller image.');
       } else {
-        alert('Error updating company. Please try again.');
+        toast.showError('Error updating company. Please try again.');
       }
     }
   };
@@ -372,7 +386,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
   const handleDeleteCompany = (companyId: string) => {
     const defaultIds = ['1', '2', '3', '4'];
     if (defaultIds.includes(companyId)) {
-      alert('Cannot delete sample companies');
+      toast.showWarning('Cannot delete sample companies');
       return;
     }
 

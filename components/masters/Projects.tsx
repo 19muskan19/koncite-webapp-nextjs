@@ -59,7 +59,15 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
     company: '',
     projectManager: '',
     logo: null as File | null,
-    logoPreview: '' as string | null
+    logoPreview: '' as string | null,
+    // Client fields (shown when isContractor is 'yes')
+    clientName: '',
+    clientAddress: '',
+    clientContactName: '',
+    clientContactEmail: '',
+    clientContactMobile: '',
+    clientContactDesignation: '',
+    clientContactPhone: ''
   });
   
   const isDark = theme === 'dark';
@@ -252,10 +260,38 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
   };
 
   const handleRadioChange = (value: string) => {
-    setFormData({
-      ...formData,
-      isContractor: value
-    });
+    // Toggle: if clicking the same value, deselect it
+    if (formData.isContractor === value) {
+      setFormData({
+        ...formData,
+        isContractor: '',
+        clientName: '',
+        clientAddress: '',
+        clientContactName: '',
+        clientContactEmail: '',
+        clientContactMobile: '',
+        clientContactDesignation: '',
+        clientContactPhone: ''
+      });
+    } else if (value === 'no') {
+      // Clear client fields when "no" is selected
+      setFormData({
+        ...formData,
+        isContractor: value,
+        clientName: '',
+        clientAddress: '',
+        clientContactName: '',
+        clientContactEmail: '',
+        clientContactMobile: '',
+        clientContactDesignation: '',
+        clientContactPhone: ''
+      });
+    } else {
+      setFormData({
+        ...formData,
+        isContractor: value
+      });
+    }
   };
 
   const handleViewProject = (project: Project) => {
@@ -278,7 +314,14 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
       company: '',
       projectManager: '',
       logo: null,
-      logoPreview: null
+      logoPreview: null,
+      clientName: '',
+      clientAddress: '',
+      clientContactName: '',
+      clientContactEmail: '',
+      clientContactMobile: '',
+      clientContactDesignation: '',
+      clientContactPhone: ''
     });
   };
 
@@ -291,8 +334,29 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
   }, [formData.logoPreview]);
 
   const handleCreateProject = async () => {
-    if (!formData.projectName || !formData.address || !formData.plannedStartDate || !formData.plannedEndDate || !formData.company || !formData.projectManager || !formData.isContractor) {
-      toast.showWarning('Please fill in all required fields');
+    const missingFields: string[] = [];
+    
+    if (!formData.projectName) missingFields.push('Project Name');
+    if (!formData.address) missingFields.push('Address');
+    if (!formData.isContractor) missingFields.push('Are you contractor for this project?');
+    if (!formData.plannedStartDate) missingFields.push('Planned Start Date');
+    if (!formData.plannedEndDate) missingFields.push('Planned End Date');
+    if (!formData.company) missingFields.push('Tag Company');
+    if (!formData.projectManager) missingFields.push('Tag Project Manager');
+    
+    // If contractor is 'yes', check client fields
+    if (formData.isContractor === 'yes') {
+      if (!formData.clientName) missingFields.push('Client Name');
+      if (!formData.clientAddress) missingFields.push('Client Address');
+      if (!formData.clientContactName) missingFields.push('Client Point of Contact - Name');
+      if (!formData.clientContactEmail) missingFields.push('Client Point of Contact - Email');
+      if (!formData.clientContactMobile) missingFields.push('Client Point of Contact - Mobile Number');
+      if (!formData.clientContactDesignation) missingFields.push('Client Point of Contact - Designation');
+      if (!formData.clientContactPhone) missingFields.push('Client Point of Contact - Phone Number');
+    }
+    
+    if (missingFields.length > 0) {
+      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
       return;
     }
 
@@ -813,6 +877,158 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                   </label>
                 </div>
               </div>
+
+              {/* Client Information Fields - Shown when contractor is 'yes' */}
+              {formData.isContractor === 'yes' && (
+                <>
+                  {/* Client Name */}
+                  <div>
+                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                      Client Name
+                    </label>
+                    <input
+                      type="text"
+                      name="clientName"
+                      value={formData.clientName}
+                      onChange={handleInputChange}
+                      placeholder="Enter Your Client Name"
+                      className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                        isDark 
+                          ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
+                          : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
+                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                    />
+                  </div>
+
+                  {/* Client Address */}
+                  <div>
+                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                      Client Address
+                    </label>
+                    <input
+                      type="text"
+                      name="clientAddress"
+                      value={formData.clientAddress}
+                      onChange={handleInputChange}
+                      placeholder="Enter Client Address"
+                      className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                        isDark 
+                          ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
+                          : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
+                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                    />
+                  </div>
+
+                  {/* Client Point of Contact Section */}
+                  <div className={`p-4 rounded-lg ${isDark ? 'bg-slate-800/30' : 'bg-slate-50'}`}>
+                    <h3 className={`text-base font-bold mb-4 ${textPrimary}`}>
+                      Client Point of Contact
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Left Column */}
+                      <div className="space-y-4">
+                        {/* Name */}
+                        <div>
+                          <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                            Name
+                          </label>
+                          <input
+                            type="text"
+                            name="clientContactName"
+                            value={formData.clientContactName}
+                            onChange={handleInputChange}
+                            placeholder="Enter Your client_pontin Name"
+                            className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                              isDark 
+                                ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
+                                : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
+                            } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                          />
+                        </div>
+
+                        {/* Email */}
+                        <div>
+                          <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                            Email
+                          </label>
+                          <input
+                            type="email"
+                            name="clientContactEmail"
+                            value={formData.clientContactEmail}
+                            onChange={handleInputChange}
+                            placeholder="Enter Your Email"
+                            className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                              isDark 
+                                ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
+                                : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
+                            } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                          />
+                        </div>
+
+                        {/* Mobile Number */}
+                        <div>
+                          <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                            Mobile Number
+                          </label>
+                          <input
+                            type="tel"
+                            name="clientContactMobile"
+                            value={formData.clientContactMobile}
+                            onChange={handleInputChange}
+                            placeholder="Enter Your Mobile Number"
+                            className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                              isDark 
+                                ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
+                                : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
+                            } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Right Column */}
+                      <div className="space-y-4">
+                        {/* Designation */}
+                        <div>
+                          <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                            Designation
+                          </label>
+                          <input
+                            type="text"
+                            name="clientContactDesignation"
+                            value={formData.clientContactDesignation}
+                            onChange={handleInputChange}
+                            placeholder="Enter Your Designation"
+                            className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                              isDark 
+                                ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
+                                : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
+                            } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                          />
+                        </div>
+
+                        {/* Phone Number */}
+                        <div>
+                          <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                            Phone Number
+                          </label>
+                          <input
+                            type="tel"
+                            name="clientContactPhone"
+                            value={formData.clientContactPhone}
+                            onChange={handleInputChange}
+                            placeholder="Enter Your Phone Number"
+                            className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                              isDark 
+                                ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
+                                : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
+                            } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
 
               {/* Planned Start Date */}
               <div>

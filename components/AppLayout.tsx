@@ -38,8 +38,22 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
   const { theme, toggleTheme } = useTheme();
   const pathname = usePathname();
   const router = useRouter();
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Initialize sidebar based on screen size - closed on mobile, open on desktop
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth >= 1024; // lg breakpoint (1024px)
+    }
+    return false; // Default closed for SSR/mobile-first
+  });
   const [openDropdowns, setOpenDropdowns] = useState<Set<string>>(new Set());
+
+  // Set initial sidebar state on mount based on screen size
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const isDesktop = window.innerWidth >= 1024;
+      setSidebarOpen(isDesktop);
+    }
+  }, []);
 
   const handleLogout = () => {
     localStorage.removeItem('isAuthenticated');
@@ -161,8 +175,8 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
         { label: 'Project Stock Statement', id: ViewType.INVENTORY_PROJECT_STOCK_STATEMENT, path: '/inventory-reports/project-stock-statement' }
       ] 
     },
-    { id: ViewType.LABOUR_STRENGTH, label: 'LABOUR STRENGTH', icon: UsersRound, path: '/labour-strength' },
-    { id: ViewType.WORK_CONTRACTOR, label: 'WORK CONTRACTOR', icon: Briefcase, path: '/work-contractor' },
+    // { id: ViewType.LABOUR_STRENGTH, label: 'LABOUR STRENGTH', icon: UsersRound, path: '/labour-strength' },
+    // { id: ViewType.WORK_CONTRACTOR, label: 'WORK CONTRACTOR', icon: Briefcase, path: '/work-contractor' },
     { id: ViewType.LABOUR_MANAGEMENT, label: 'LABOUR MANAGEMENT', icon: UserCog, path: '/labour-management' },
     { id: ViewType.DOCUMENT_MANAGEMENT, label: 'DOCUMENT MANAGEMENT', icon: FileText, path: '/document-management' },
     { id: ViewType.AI_AGENTS, label: 'AI AGENTS', icon: Bot, path: '/ai-agents' },

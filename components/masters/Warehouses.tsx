@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
-import { Warehouse, MoreVertical, Plus, Search, X, Download } from 'lucide-react';
+import { useToast } from '../../contexts/ToastContext';
+import { Warehouse, MoreVertical, Plus, Search, X, Download, Edit, Trash2, MapPin, Building2 } from 'lucide-react';
 
 interface WarehouseData {
   id: string;
@@ -20,8 +21,10 @@ interface WarehousesProps {
 }
 
 const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
+  const toast = useToast();
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [showWarehouseModal, setShowWarehouseModal] = useState<boolean>(false);
+  const [editingWarehouseId, setEditingWarehouseId] = useState<string | null>(null);
   const [userWarehouses, setUserWarehouses] = useState<WarehouseData[]>([]);
   const [formData, setFormData] = useState({
     project: '',
@@ -71,7 +74,7 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
       } catch (error) {
         console.error('Error saving to localStorage:', error);
         if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-          alert('Storage limit exceeded. Some data may not be saved.');
+          toast.showWarning('Storage limit exceeded. Some data may not be saved.');
         }
       }
     } else {
@@ -134,6 +137,7 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
 
   const handleCloseModal = () => {
     setShowWarehouseModal(false);
+    setEditingWarehouseId(null);
     setFormData({
       project: '',
       warehouseName: '',
@@ -141,36 +145,83 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
     });
   };
 
-  const handleCreateWarehouse = () => {
-    if (!formData.project || !formData.warehouseName || !formData.location) {
-      alert('Please fill in all required fields');
+  const handleEditWarehouse = (warehouse: WarehouseData) => {
+    setEditingWarehouseId(warehouse.id);
+    setFormData({
+      project: warehouse.project,
+      warehouseName: warehouse.name,
+      location: warehouse.location
+    });
+    setShowWarehouseModal(true);
+  };
+
+  const handleDeleteWarehouse = (warehouseId: string) => {
+    const defaultIds = ['1', '2'];
+    if (defaultIds.includes(warehouseId)) {
+      toast.showWarning('Cannot delete default warehouses');
       return;
     }
 
-    // Generate a code from the warehouse name
-    const code = formData.warehouseName
-      .split(' ')
-      .map(word => word.charAt(0).toUpperCase())
-      .join('')
-      .substring(0, 6) + String(defaultWarehouses.length + userWarehouses.length + 1).padStart(3, '0');
-
-    const newWarehouse: WarehouseData = {
-      id: Date.now().toString(),
-      name: formData.warehouseName,
-      code: code,
-      project: formData.project,
-      location: formData.location,
-      status: 'Active',
-      createdAt: new Date().toISOString()
-    };
-
-    try {
-      setUserWarehouses(prev => [...prev, newWarehouse]);
-      handleCloseModal();
-    } catch (error) {
-      console.error('Error saving warehouse:', error);
-      alert('Error saving warehouse. Please try again.');
+    if (window.confirm('Are you sure you want to delete this warehouse?')) {
+      setUserWarehouses(prev => prev.filter(w => w.id !== warehouseId));
+      toast.showSuccess('Warehouse deleted successfully');
     }
+  };
+
+  const handleCreateWarehouse = () => {
+    const missingFields: string[] = [];
+    
+    if (!formData.project) missingFields.push('Project');
+    if (!formData.warehouseName) missingFields.push('Warehouse Name');
+    if (!formData.location) missingFields.push('Location');
+    
+    if (missingFields.length > 0) {
+      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
+      return;
+    }
+
+    if (editingWarehouseId) {
+      // Update existing warehouse
+      const defaultIds = ['1', '2'];
+      if (defaultIds.includes(editingWarehouseId)) {
+        toast.showWarning('Cannot edit default warehouses');
+        return;
+      }
+
+      setUserWarehouses(prev => prev.map(w => 
+        w.id === editingWarehouseId 
+          ? {
+              ...w,
+              name: formData.warehouseName,
+              project: formData.project,
+              location: formData.location
+            }
+          : w
+      ));
+      toast.showSuccess('Warehouse updated successfully');
+    } else {
+      // Generate a code from the warehouse name
+      const code = formData.warehouseName
+        .split(' ')
+        .map(word => word.charAt(0).toUpperCase())
+        .join('')
+        .substring(0, 6) + String(defaultWarehouses.length + userWarehouses.length + 1).padStart(3, '0');
+
+      const newWarehouse: WarehouseData = {
+        id: Date.now().toString(),
+        name: formData.warehouseName,
+        code: code,
+        project: formData.project,
+        location: formData.location,
+        status: 'Active',
+        createdAt: new Date().toISOString()
+      };
+
+      setUserWarehouses(prev => [...prev, newWarehouse]);
+      toast.showSuccess('Warehouse created successfully');
+    }
+
+    handleCloseModal();
   };
 
   return (
@@ -223,27 +274,87 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
       </div>
 
       {filteredWarehouses.length > 0 ? (
-        <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
-                <tr>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Project</th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Warehouse Name</th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Location</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-inherit">
-                {filteredWarehouses.map((row) => (
-                  <tr key={row.id} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.project}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.name}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.location}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filteredWarehouses.map((warehouse) => (
+            <div 
+              key={warehouse.id} 
+              className={`rounded-xl border p-5 transition-all ${cardClass} ${
+                isDark ? 'hover:border-[#6B8E23]/30 hover:shadow-lg' : 'hover:border-[#6B8E23]/20 hover:shadow-md'
+              }`}
+            >
+              <div className="flex items-start justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className={`p-2 rounded-lg ${isDark ? 'bg-[#6B8E23]/20' : 'bg-[#6B8E23]/10'}`}>
+                    <Warehouse className="w-5 h-5 text-[#6B8E23]" />
+                  </div>
+                  <div>
+                    <h3 className={`text-lg font-black ${textPrimary}`}>{warehouse.name}</h3>
+                    <p className={`text-xs font-bold ${textSecondary} uppercase tracking-wider`}>{warehouse.code}</p>
+                  </div>
+                </div>
+                {warehouse.status && (
+                  <span className={`px-2 py-1 rounded-full text-xs font-bold ${
+                    warehouse.status === 'Active'
+                      ? 'bg-emerald-500/20 text-emerald-500'
+                      : 'bg-slate-500/20 text-slate-500'
+                  }`}>
+                    {warehouse.status}
+                  </span>
+                )}
+              </div>
+
+              <div className="space-y-3 mb-4">
+                <div className="flex items-start gap-2">
+                  <Building2 className={`w-4 h-4 mt-0.5 ${textSecondary} flex-shrink-0`} />
+                  <div>
+                    <p className={`text-xs font-bold uppercase tracking-wider mb-1 ${textSecondary}`}>
+                      Project
+                    </p>
+                    <p className={`text-sm font-bold ${textPrimary}`}>{warehouse.project}</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-2">
+                  <MapPin className={`w-4 h-4 mt-0.5 ${textSecondary} flex-shrink-0`} />
+                  <div>
+                    <p className={`text-xs font-bold uppercase tracking-wider mb-1 ${textSecondary}`}>
+                      Location
+                    </p>
+                    <p className={`text-sm font-bold ${textPrimary}`}>{warehouse.location}</p>
+                  </div>
+                </div>
+                {warehouse.capacity && (
+                  <div>
+                    <p className={`text-xs font-bold uppercase tracking-wider mb-1 ${textSecondary}`}>
+                      Capacity
+                    </p>
+                    <p className={`text-sm font-bold ${textPrimary}`}>{warehouse.capacity}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-2 pt-4 border-t border-inherit">
+                <button
+                  onClick={() => handleEditWarehouse(warehouse)}
+                  className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-bold bg-[#6B8E23] hover:bg-[#5a7a1e] text-white transition-all"
+                >
+                  <Edit className="w-4 h-4" />
+                  Edit
+                </button>
+                <button
+                  onClick={() => handleDeleteWarehouse(warehouse.id)}
+                  className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-bold transition-all ${
+                    isDark
+                      ? 'bg-slate-700 hover:bg-slate-600 text-slate-200'
+                      : 'bg-slate-200 hover:bg-slate-300 text-slate-700'
+                  }`}
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       ) : (
         <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
@@ -275,8 +386,12 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
             {/* Modal Header */}
             <div className={`flex items-center justify-between p-6 border-b border-inherit`}>
               <div>
-                <h2 className={`text-xl font-black ${textPrimary}`}>Add New Warehouse</h2>
-                <p className={`text-sm ${textSecondary} mt-1`}>Enter warehouse details below</p>
+                <h2 className={`text-xl font-black ${textPrimary}`}>
+                  {editingWarehouseId ? 'Edit Warehouse' : 'Add New Warehouse'}
+                </h2>
+                <p className={`text-sm ${textSecondary} mt-1`}>
+                  {editingWarehouseId ? 'Update warehouse details below' : 'Enter warehouse details below'}
+                </p>
               </div>
               <button
                 onClick={handleCloseModal}
@@ -367,7 +482,7 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
                 onClick={handleCreateWarehouse}
                 className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#6B8E23] hover:bg-[#5a7a1e] text-white transition-all shadow-md"
               >
-                Create
+                {editingWarehouseId ? 'Update' : 'Create'}
               </button>
             </div>
           </div>

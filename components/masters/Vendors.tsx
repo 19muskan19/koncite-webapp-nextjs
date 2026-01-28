@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
+import { useToast } from '../../contexts/ToastContext';
 import { Truck, MoreVertical, Download, Plus, Search, X, ArrowUpDown } from 'lucide-react';
 
 interface Vendor {
@@ -22,6 +23,7 @@ interface VendorsProps {
 }
 
 const Vendors: React.FC<VendorsProps> = ({ theme }) => {
+  const toast = useToast();
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
@@ -80,7 +82,7 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
       } catch (error) {
         console.error('Error saving to localStorage:', error);
         if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-          alert('Storage limit exceeded. Some data may not be saved.');
+          toast.showWarning('Storage limit exceeded. Some data may not be saved.');
         }
       }
     } else {
@@ -133,8 +135,17 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
   };
 
   const handleCreateVendor = () => {
-    if (!formData.name || !formData.address || !formData.type || !formData.contactPersonName || !formData.phone || !formData.email) {
-      alert('Please fill in all required fields');
+    const missingFields: string[] = [];
+    
+    if (!formData.name) missingFields.push('Vendor Name');
+    if (!formData.address) missingFields.push('Address');
+    if (!formData.type) missingFields.push('Type');
+    if (!formData.contactPersonName) missingFields.push('Contact Person Name');
+    if (!formData.phone) missingFields.push('Phone');
+    if (!formData.email) missingFields.push('Email');
+    
+    if (missingFields.length > 0) {
+      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
       return;
     }
 
@@ -156,7 +167,7 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
       handleCloseModal();
     } catch (error) {
       console.error('Error saving vendor:', error);
-      alert('Error saving vendor. Please try again.');
+      toast.showError('Error saving vendor. Please try again.');
     }
   };
 
@@ -272,7 +283,7 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
                     <div className="flex items-center gap-2">
                       <ArrowUpDown className="w-3 h-3" />
-                      #
+                      SR No
                     </div>
                   </th>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
@@ -328,23 +339,46 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
               </thead>
               <tbody className="divide-y divide-inherit">
                 {filteredVendors.map((row, idx) => (
-                  <tr key={row.id} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>#{idx + 1}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.name}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.gstNo || '-'}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.address}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.type}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.contactPersonName}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.phone}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.email}</td>
+                  <tr 
+                    key={row.id} 
+                    className={`${
+                      row.status === 'Inactive' 
+                        ? isDark 
+                          ? 'opacity-50 bg-slate-800/20' 
+                          : 'opacity-50 bg-slate-50/50'
+                        : isDark 
+                          ? 'hover:bg-slate-800/30' 
+                          : 'hover:bg-slate-50/50'
+                    } transition-colors`}
+                  >
+                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{idx + 1}</td>
+                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
+                      {row.name}
+                      {row.status === 'Inactive' && (
+                        <span className="ml-2 text-xs text-red-500">(Disabled)</span>
+                      )}
+                    </td>
+                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.gstNo || '-'}</td>
+                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.address}</td>
+                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.type}</td>
+                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.contactPersonName}</td>
+                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.phone}</td>
+                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.email}</td>
                     <td className={`px-6 py-4`}>
                       <button
-                        onClick={() => handleToggleStatus(row.id)}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#6B8E23] focus:ring-offset-2 ${
+                        onClick={(e) => {
+                          e?.stopPropagation?.();
+                          handleToggleStatus(row.id);
+                        }}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#6B8E23] focus:ring-offset-2 cursor-pointer ${
                           row.status === 'Active'
                             ? 'bg-[#6B8E23]'
                             : 'bg-slate-400'
                         }`}
+                        role="switch"
+                        aria-checked={row.status === 'Active'}
+                        title={row.status === 'Active' ? 'Click to disable' : 'Click to enable'}
+                        type="button"
                       >
                         <span
                           className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
@@ -354,8 +388,12 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
                       </button>
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <button className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}>
-                        <MoreVertical className={`w-4 h-4 ${textSecondary}`} />
+                      <button 
+                        className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+                        disabled={row.status === 'Inactive'}
+                        title={row.status === 'Inactive' ? 'Vendor is disabled' : ''}
+                      >
+                        <MoreVertical className={`w-4 h-4 ${row.status === 'Inactive' ? 'opacity-50' : textSecondary}`} />
                       </button>
                     </td>
                   </tr>

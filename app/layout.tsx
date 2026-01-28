@@ -6,6 +6,11 @@ import './globals.css'
 export const metadata: Metadata = {
   title: 'KONCITE - Construction Platform',
   description: 'Construction management platform',
+  icons: {
+    icon: '/logo.png',
+    shortcut: '/logo.png',
+    apple: '/logo.png',
+  },
 }
 
 export default function RootLayout({

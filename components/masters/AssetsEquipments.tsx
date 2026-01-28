@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
-import { Wrench, MoreVertical, Download, Plus, Search, X } from 'lucide-react';
+import { useToast } from '../../contexts/ToastContext';
+import { Wrench, MoreVertical, Download, Plus, Search, X, FileSpreadsheet, Upload, ArrowUpDown } from 'lucide-react';
 
 interface AssetEquipment {
   id: string;
@@ -10,7 +11,7 @@ interface AssetEquipment {
   code: string;
   unit: string;
   specification: string;
-  status?: string;
+  status: 'Active' | 'Inactive';
   createdAt?: string;
 }
 
@@ -19,14 +20,31 @@ interface AssetsEquipmentsProps {
 }
 
 const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
+  const toast = useToast();
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<'list' | 'bulkUpload' | 'openingStock'>('list');
+  const [openingStockSubTab, setOpeningStockSubTab] = useState<'bulkUpload' | 'available'>('bulkUpload');
   const [showAssetModal, setShowAssetModal] = useState<boolean>(false);
   const [userAssets, setUserAssets] = useState<AssetEquipment[]>([]);
+  const [defaultAssetsStatus, setDefaultAssetsStatus] = useState<Record<string, 'Active' | 'Inactive'>>({});
   const [formData, setFormData] = useState({
     machineryName: '',
     unit: '',
     specification: ''
   });
+  const [openingStockForm, setOpeningStockForm] = useState({
+    project: 'Demo Data',
+    storeWarehouse: 'Main Store',
+    openingDate: '2026-01-08',
+    file: null as File | null
+  });
+  const [availableStockFilters, setAvailableStockFilters] = useState({
+    project: '',
+    storeWarehouse: ''
+  });
+  const [availableStockSearch, setAvailableStockSearch] = useState<string>('');
+  const [entriesPerPage, setEntriesPerPage] = useState<number>(10);
+  const [currentPage, setCurrentPage] = useState<number>(1);
   
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -59,6 +77,19 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
     'Bulk', 'Bundles', 'MT', 'Cft', 'Sft', 'Rft', 'Kgs', 'Ltr', 'Hrs', 'Day'
   ];
 
+  const availableProjects = [
+    { name: 'Residential Complex A', code: 'PRJ001' },
+    { name: 'Commercial Tower B', code: 'PRJ002' },
+    { name: 'Highway Infrastructure Project', code: 'PRJ003' },
+    { name: 'Shopping Mall Development', code: 'PRJ004' },
+  ];
+
+  const availableWarehouses = [
+    { name: 'Main Store', code: 'WH001' },
+    { name: 'Main Warehouse', code: 'WH002' },
+    { name: 'Storage Facility B', code: 'WH003' },
+  ];
+
   const defaultAssets: AssetEquipment[] = [
     { id: '1', name: 'Machinery Hire', code: 'AST001', unit: 'Hrs', specification: 'Heavy Machinery', status: 'Active', createdAt: '2024-01-15T00:00:00.000Z' },
     { id: '2', name: 'Excavator Hire', code: 'AST002', unit: 'Hrs', specification: 'Excavator Equipment', status: 'Active', createdAt: '2024-02-20T00:00:00.000Z' },
@@ -77,6 +108,17 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
     } else {
       setUserAssets([]);
     }
+
+    // Load default assets status from localStorage
+    const savedDefaultStatus = localStorage.getItem('defaultAssetsStatus');
+    if (savedDefaultStatus) {
+      try {
+        const parsed = JSON.parse(savedDefaultStatus);
+        setDefaultAssetsStatus(parsed);
+      } catch (e) {
+        setDefaultAssetsStatus({});
+      }
+    }
   }, []);
 
   // Save assets to localStorage whenever userAssets state changes
@@ -89,7 +131,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
       } catch (error) {
         console.error('Error saving to localStorage:', error);
         if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-          alert('Storage limit exceeded. Some data may not be saved.');
+          toast.showWarning('Storage limit exceeded. Some data may not be saved.');
         }
       }
     } else {
@@ -101,10 +143,15 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
     }
   }, [userAssets]);
 
-  // Combine default and user assets
+  // Combine default and user assets with status updates
   const allAssets = useMemo(() => {
-    return [...defaultAssets, ...userAssets];
-  }, [userAssets]);
+    const defaultIds = ['1', '2'];
+    const updatedDefaultAssets = defaultAssets.map(asset => ({
+      ...asset,
+      status: defaultAssetsStatus[asset.id] || asset.status
+    }));
+    return [...updatedDefaultAssets, ...userAssets];
+  }, [userAssets, defaultAssetsStatus]);
 
   // Filter assets based on search query
   const filteredAssets = useMemo(() => {
@@ -134,9 +181,63 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
     });
   };
 
+  const handleToggleStatus = (e: React.MouseEvent<HTMLButtonElement>, assetId: string) => {
+    e?.stopPropagation?.();
+    
+    const defaultIds = ['1', '2'];
+    
+    if (defaultIds.includes(assetId)) {
+      // Toggle default asset status
+      setDefaultAssetsStatus(prev => {
+        const currentStatus = prev[assetId] || defaultAssets.find(a => a.id === assetId)?.status || 'Active';
+        const newStatus: 'Active' | 'Inactive' = currentStatus === 'Active' ? 'Inactive' : 'Active';
+        const updated: Record<string, 'Active' | 'Inactive'> = { ...prev, [assetId]: newStatus };
+        
+        // Save to localStorage
+        try {
+          localStorage.setItem('defaultAssetsStatus', JSON.stringify(updated));
+        } catch (error) {
+          console.error('Error saving default assets status:', error);
+        }
+        
+        return updated;
+      });
+    } else {
+      // Toggle user-added asset status
+      setUserAssets(prev => {
+        const updated = prev.map(asset =>
+          asset.id === assetId
+            ? { ...asset, status: (asset.status === 'Active' ? 'Inactive' : 'Active') as 'Active' | 'Inactive' }
+            : asset
+        );
+        
+        // Save to localStorage
+        const defaultIds = ['1', '2'];
+        const userAddedAssets = updated.filter(a => !defaultIds.includes(a.id));
+        try {
+          if (userAddedAssets.length > 0) {
+            localStorage.setItem('assetsEquipments', JSON.stringify(userAddedAssets));
+          } else {
+            localStorage.removeItem('assetsEquipments');
+          }
+        } catch (error) {
+          console.error('Error saving assets:', error);
+        }
+        
+        return updated;
+      });
+    }
+  };
+
   const handleCreateAsset = () => {
-    if (!formData.machineryName || !formData.unit || !formData.specification) {
-      alert('Please fill in all required fields');
+    const missingFields: string[] = [];
+    
+    if (!formData.machineryName) missingFields.push('Machinery Name');
+    if (!formData.unit) missingFields.push('Unit');
+    if (!formData.specification) missingFields.push('Specification');
+    
+    if (missingFields.length > 0) {
+      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
       return;
     }
 
@@ -156,9 +257,10 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
     try {
       setUserAssets(prev => [...prev, newAsset]);
       handleCloseModal();
+      toast.showSuccess('Asset created successfully');
     } catch (error) {
       console.error('Error saving asset:', error);
-      alert('Error saving asset. Please try again.');
+      toast.showError('Error saving asset. Please try again.');
     }
   };
 
@@ -190,88 +292,220 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
     document.body.removeChild(link);
   };
 
+  const handleExportMasterData = () => {
+    const headers = ['Name', 'Code', 'Specification', 'Unit', 'Status'];
+    const rows = allAssets.map(asset => [
+      asset.name,
+      asset.code,
+      asset.specification,
+      asset.unit,
+      asset.status
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+    ].join('\n');
+
+    const BOM = '\uFEFF';
+    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
+    
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `asset_equipments_machinery_master_data_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.showSuccess('Master data exported successfully');
+  };
+
+  const handleImportMasterData = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.csv,.xlsx,.xls';
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (file) {
+        // Here you would typically parse the file and import the data
+        // For now, just show a message
+        toast.showSuccess('Import functionality will be implemented');
+      }
+    };
+    input.click();
+  };
+
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-4">
-          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5'}`}>
-            <Wrench className="w-6 h-6 text-[#6B8E23]" />
+    <div className="space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-2">
+        <div className="flex items-center gap-3 sm:gap-4">
+          <div className={`p-2 sm:p-3 rounded-xl ${isDark ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5'}`}>
+            <Wrench className="w-5 h-5 sm:w-6 sm:h-6 text-[#6B8E23]" />
           </div>
           <div>
-            <h1 className={`text-2xl font-black tracking-tight ${textPrimary}`}>Assets Equipments</h1>
-            <p className={`text-[11px] font-bold opacity-50 uppercase tracking-widest mt-1 ${textSecondary}`}>
+            <h1 className={`text-xl sm:text-2xl font-black tracking-tight ${textPrimary}`}>Assets Equipments</h1>
+            <p className={`text-[10px] sm:text-[11px] font-bold opacity-50 uppercase tracking-widest mt-1 ${textSecondary}`}>
               Manage construction equipment and assets
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button 
-            onClick={handleDownloadExcel}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
-              isDark 
-                ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' 
-                : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-            } shadow-sm`}
-            title="Download as Excel"
+        {activeTab === 'list' && (
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button 
+              onClick={handleDownloadExcel}
+              className={`p-2 rounded-lg transition-all ${
+                isDark 
+                  ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' 
+                  : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
+              } shadow-sm`}
+              title="Download as Excel"
+            >
+              <Download className="w-4 h-4" />
+            </button>
+            <button 
+              onClick={() => setShowAssetModal(true)}
+              className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md`}
+            >
+              <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Add New</span><span className="sm:hidden">Add</span>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Tabs */}
+      <div className={`border-b ${isDark ? 'border-slate-700' : 'border-slate-200'} overflow-x-auto`}>
+        <div className="flex gap-1 min-w-max sm:min-w-0">
+          <button
+            onClick={() => setActiveTab('list')}
+            className={`px-3 sm:px-6 py-2 sm:py-3 text-xs sm:text-sm font-bold transition-colors relative whitespace-nowrap ${
+              activeTab === 'list'
+                ? `${textPrimary}`
+                : `${textSecondary} hover:${textPrimary}`
+            }`}
           >
-            <Download className="w-4 h-4" />
+            <span className="hidden sm:inline">Asset/Equipments/Machinery List</span>
+            <span className="sm:hidden">List</span>
+            {activeTab === 'list' && (
+              <span className={`absolute bottom-0 left-0 right-0 h-0.5 bg-red-500`} />
+            )}
           </button>
-          <button 
-            onClick={() => setShowAssetModal(true)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md`}
+          <button
+            onClick={() => setActiveTab('bulkUpload')}
+            className={`px-3 sm:px-6 py-2 sm:py-3 text-xs sm:text-sm font-bold transition-colors relative whitespace-nowrap ${
+              activeTab === 'bulkUpload'
+                ? `text-red-500`
+                : `${textSecondary} hover:${textPrimary}`
+            }`}
           >
-            <Plus className="w-4 h-4" /> Add New
+            <span className="hidden sm:inline">Bulk Upload of Asset/Equipments/Machinery</span>
+            <span className="sm:hidden">Bulk Upload</span>
+            {activeTab === 'bulkUpload' && (
+              <span className={`absolute bottom-0 left-0 right-0 h-0.5 bg-red-500`} />
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab('openingStock')}
+            className={`px-3 sm:px-6 py-2 sm:py-3 text-xs sm:text-sm font-bold transition-colors relative whitespace-nowrap ${
+              activeTab === 'openingStock'
+                ? `${textPrimary}`
+                : `${textSecondary} hover:${textPrimary}`
+            }`}
+          >
+            Opening Stock
+            {activeTab === 'openingStock' && (
+              <span className={`absolute bottom-0 left-0 right-0 h-0.5 bg-red-500`} />
+            )}
           </button>
         </div>
       </div>
 
-      {/* Search Bar */}
-      <div className={`flex items-center gap-4 p-4 rounded-xl border ${cardClass}`}>
-        <div className="flex-1 relative">
-          <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
-          <input 
-            type="text" 
-            placeholder="Search by machinery name, code, unit, or specification..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-          />
-        </div>
-      </div>
+      {/* Tab Content */}
+      {activeTab === 'list' && (
+        <>
+          {/* Search Bar */}
+          <div className={`flex items-center gap-2 sm:gap-4 p-3 sm:p-4 rounded-xl border ${cardClass}`}>
+            <div className="flex-1 relative">
+              <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
+              <input 
+                type="text" 
+                placeholder="Search..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+              />
+            </div>
+          </div>
 
       {filteredAssets.length > 0 ? (
         <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full min-w-[640px]">
               <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
                 <tr>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Name</th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Code</th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Specification</th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Unit</th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Status</th>
-                  <th className={`px-6 py-4 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>Actions</th>
+                  <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Name</th>
+                  <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Code</th>
+                  <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary} hidden md:table-cell`}>Specification</th>
+                  <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Unit</th>
+                  <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Status</th>
+                  <th className={`px-3 sm:px-6 py-3 sm:py-4 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-inherit">
                 {filteredAssets.map((row) => (
-                  <tr key={row.id} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.name}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.code}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.specification}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.unit}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
-                      <span className={`inline-block px-2 py-1 rounded text-xs font-bold ${
-                        row.status === 'Active' 
-                          ? 'bg-emerald-500/20 text-emerald-500' 
-                          : 'bg-slate-500/20 text-slate-500'
-                      }`}>
-                        {row.status || 'Active'}
-                      </span>
+                  <tr 
+                    key={row.id} 
+                    className={`${
+                      row.status === 'Inactive' 
+                        ? isDark 
+                          ? 'opacity-50 bg-slate-800/20' 
+                          : 'opacity-50 bg-slate-50/50'
+                        : isDark 
+                          ? 'hover:bg-slate-800/30' 
+                          : 'hover:bg-slate-50/50'
+                    } transition-colors`}
+                  >
+                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
+                      <div className="flex flex-col">
+                        <span>
+                          {row.name}
+                          {row.status === 'Inactive' && (
+                            <span className="ml-2 text-xs text-red-500">(Disabled)</span>
+                          )}
+                        </span>
+                        <span className="md:hidden text-xs opacity-70 mt-1">{row.specification}</span>
+                      </div>
                     </td>
-                    <td className="px-6 py-4 text-right">
-                      <button className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}>
-                        <MoreVertical className={`w-4 h-4 ${textSecondary}`} />
+                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.code}</td>
+                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary} hidden md:table-cell`}>{row.specification}</td>
+                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.unit}</td>
+                    <td className={`px-3 sm:px-6 py-3 sm:py-4`}>
+                      <button
+                        onClick={(e) => handleToggleStatus(e, row.id)}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#6B8E23] focus:ring-offset-2 cursor-pointer ${
+                          row.status === 'Active'
+                            ? 'bg-[#6B8E23]'
+                            : 'bg-slate-400'
+                        }`}
+                        role="switch"
+                        aria-checked={row.status === 'Active'}
+                        title={row.status === 'Active' ? 'Click to disable' : 'Click to enable'}
+                        type="button"
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                            row.status === 'Active' ? 'translate-x-6' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
+                    </td>
+                    <td className="px-3 sm:px-6 py-3 sm:py-4 text-right">
+                      <button 
+                        className={`p-1.5 sm:p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+                        disabled={row.status === 'Inactive'}
+                        title={row.status === 'Inactive' ? 'Asset is disabled' : ''}
+                      >
+                        <MoreVertical className={`w-4 h-4 ${row.status === 'Inactive' ? 'opacity-50' : textSecondary}`} />
                       </button>
                     </td>
                   </tr>
@@ -281,48 +515,512 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
           </div>
         </div>
       ) : (
-        <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
-          <Wrench className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
-          <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>No Data Available</h3>
-          <p className={`text-sm ${textSecondary}`}>Start by adding your first equipment entry</p>
+        <div className={`p-8 sm:p-12 rounded-xl border text-center ${cardClass}`}>
+          <Wrench className={`w-12 h-12 sm:w-16 sm:h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
+          <h3 className={`text-base sm:text-lg font-black mb-2 ${textPrimary}`}>No Data Available</h3>
+          <p className={`text-xs sm:text-sm ${textSecondary}`}>Start by adding your first equipment entry</p>
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Total Records</p>
-          <p className={`text-2xl font-black ${textPrimary}`}>{filteredAssets.length}</p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className={`p-4 rounded-xl border ${cardClass}`}>
+              <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Total Records</p>
+              <p className={`text-2xl font-black ${textPrimary}`}>{filteredAssets.length}</p>
+            </div>
+            <div className={`p-4 rounded-xl border ${cardClass}`}>
+              <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
+              <p className={`text-2xl font-black text-emerald-500`}>{filteredAssets.filter(a => a.status === 'Active').length}</p>
+            </div>
+            <div className={`p-4 rounded-xl border ${cardClass}`}>
+              <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>
+              <p className={`text-sm font-bold ${textPrimary}`}>Today</p>
+            </div>
+          </div>
+        </>
+      )}
+
+      {activeTab === 'bulkUpload' && (
+        <div className={`rounded-xl border p-4 sm:p-8 ${cardClass}`}>
+          <div className="space-y-3 sm:space-y-4 max-w-md mx-auto">
+            <button
+              onClick={handleExportMasterData}
+              className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
+                isDark
+                  ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                  : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+              } shadow-md`}
+            >
+              <FileSpreadsheet className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
+              <span className="text-center">Export Asset/Equipments/Machinery Master Data</span>
+            </button>
+            <button
+              onClick={handleImportMasterData}
+              className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
+                isDark
+                  ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                  : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+              } shadow-md`}
+            >
+              <Upload className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
+              <span className="text-center">Import Asset/Equipments/Machinery Master Data</span>
+            </button>
+          </div>
         </div>
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
-          <p className={`text-2xl font-black text-emerald-500`}>{filteredAssets.filter(a => a.status === 'Active').length}</p>
-        </div>
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>
-          <p className={`text-sm font-bold ${textPrimary}`}>Today</p>
-        </div>
-      </div>
+      )}
+
+      {activeTab === 'openingStock' && (
+        <>
+          {/* Sub-tabs */}
+          <div className={`flex gap-1 sm:gap-2 border-b ${isDark ? 'border-slate-700' : 'border-slate-200'} overflow-x-auto`}>
+            <button
+              onClick={() => setOpeningStockSubTab('bulkUpload')}
+              className={`px-3 sm:px-6 py-2 sm:py-3 text-xs sm:text-sm font-bold transition-colors whitespace-nowrap ${
+                openingStockSubTab === 'bulkUpload'
+                  ? isDark
+                    ? 'bg-slate-800 border-t border-l border-r border-slate-700 text-slate-100'
+                    : 'bg-white border-t border-l border-r border-slate-200 text-slate-900'
+                  : `${textSecondary} hover:${textPrimary}`
+              } rounded-t-lg`}
+            >
+              <span className="hidden sm:inline">Bulk Upload Opening Stock</span>
+              <span className="sm:hidden">Bulk Upload</span>
+            </button>
+            <button
+              onClick={() => setOpeningStockSubTab('available')}
+              className={`px-3 sm:px-6 py-2 sm:py-3 text-xs sm:text-sm font-bold transition-colors whitespace-nowrap ${
+                openingStockSubTab === 'available'
+                  ? isDark
+                    ? 'bg-slate-800 border-t border-l border-r border-slate-700 text-slate-100'
+                    : 'bg-white border-t border-l border-r border-slate-200 text-slate-900'
+                  : `${textSecondary} hover:${textPrimary}`
+              } rounded-t-lg`}
+            >
+              <span className="hidden sm:inline">Available Opening Stock</span>
+              <span className="sm:hidden">Available</span>
+            </button>
+          </div>
+
+          {openingStockSubTab === 'bulkUpload' && (
+            <div className="space-y-4 sm:space-y-6">
+              {/* Export Button */}
+              <div className={`rounded-xl border p-4 sm:p-8 ${cardClass}`}>
+                <button
+                  onClick={handleExportMasterData}
+                  className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
+                    isDark
+                      ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                      : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                  } shadow-md`}
+                >
+                  <FileSpreadsheet className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
+                  <span className="text-center">Export Asset/Equipments/Machinery Data</span>
+                </button>
+              </div>
+
+              {/* Bulk Upload Form */}
+              <div className={`rounded-xl border ${cardClass}`}>
+                <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+                  <h3 className={`text-base sm:text-lg font-black ${textPrimary} mb-3 sm:mb-4`}>Bulk Upload Opening Stock</h3>
+                  
+                  {/* Project */}
+                  <div>
+                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                      Project
+                    </label>
+                    <input
+                      type="text"
+                      value={openingStockForm.project}
+                      onChange={(e) => setOpeningStockForm({ ...openingStockForm, project: e.target.value })}
+                      className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                        isDark 
+                          ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
+                          : 'bg-white border-slate-200 text-slate-900'
+                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                    />
+                  </div>
+
+                  {/* Store/Warehouses */}
+                  <div>
+                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                      Store/Warehouses
+                    </label>
+                    <input
+                      type="text"
+                      value={openingStockForm.storeWarehouse}
+                      onChange={(e) => setOpeningStockForm({ ...openingStockForm, storeWarehouse: e.target.value })}
+                      className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                        isDark 
+                          ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
+                          : 'bg-white border-slate-200 text-slate-900'
+                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                    />
+                  </div>
+
+                  {/* Opening Date */}
+                  <div>
+                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                      Opening Date
+                    </label>
+                    <input
+                      type="date"
+                      value={openingStockForm.openingDate}
+                      onChange={(e) => setOpeningStockForm({ ...openingStockForm, openingDate: e.target.value })}
+                      className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                        isDark 
+                          ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
+                          : 'bg-white border-slate-200 text-slate-900'
+                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                    />
+                  </div>
+
+                  {/* File Upload */}
+                  <div>
+                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                      Upload File
+                    </label>
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-4">
+                      <label className={`flex-1 px-4 py-3 rounded-lg text-sm font-bold transition-all cursor-pointer ${
+                        isDark 
+                          ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
+                          : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
+                      } border flex items-center justify-center`}>
+                        <input
+                          type="file"
+                          accept=".csv,.xlsx,.xls"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              setOpeningStockForm({ ...openingStockForm, file });
+                            }
+                          }}
+                          className="hidden"
+                        />
+                        Choose File
+                      </label>
+                      <span className={`text-xs sm:text-sm ${textSecondary} text-center sm:text-left break-all`}>
+                        {openingStockForm.file ? openingStockForm.file.name : 'No file chosen'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Import Data Button */}
+                  <div className="pt-4">
+                    <button
+                      onClick={() => {
+                        if (!openingStockForm.file) {
+                          toast.showWarning('Please select a file to upload');
+                          return;
+                        }
+                        toast.showSuccess('Opening stock data imported successfully');
+                      }}
+                      className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-lg text-sm font-bold transition-all ${
+                        isDark
+                          ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                          : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                      } shadow-md`}
+                    >
+                      Import Data
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {openingStockSubTab === 'available' && (
+            <div className="space-y-4 sm:space-y-6">
+              {/* Filters */}
+              <div className={`rounded-xl border p-4 sm:p-6 ${cardClass}`}>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                      Project
+                    </label>
+                    <select
+                      value={availableStockFilters.project}
+                      onChange={(e) => {
+                        setAvailableStockFilters({ ...availableStockFilters, project: e.target.value });
+                        setCurrentPage(1);
+                      }}
+                      className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+                        isDark 
+                          ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
+                          : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
+                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                    >
+                      <option value="">----Select Project----</option>
+                      {availableProjects.map((project, idx) => (
+                        <option key={idx} value={project.name}>
+                          {project.name} ({project.code})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                      Store/Warehouses
+                    </label>
+                    <select
+                      value={availableStockFilters.storeWarehouse}
+                      onChange={(e) => {
+                        setAvailableStockFilters({ ...availableStockFilters, storeWarehouse: e.target.value });
+                        setCurrentPage(1);
+                      }}
+                      className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+                        isDark 
+                          ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
+                          : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
+                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                    >
+                      <option value="">----Select Store/Warehouses----</option>
+                      {availableWarehouses.map((warehouse, idx) => (
+                        <option key={idx} value={warehouse.name}>
+                          {warehouse.name} ({warehouse.code})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* Opening Stock Table */}
+              <div className={`rounded-xl border ${cardClass}`}>
+                <div className="p-4 sm:p-6">
+                  <h3 className={`text-base sm:text-lg font-black ${textPrimary} mb-4`}>LIST ASSET/MACHINERY OPENING DETAILS</h3>
+                  
+                  {/* Table Controls */}
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs sm:text-sm ${textSecondary}`}>Show</span>
+                      <select
+                        value={entriesPerPage}
+                        onChange={(e) => {
+                          setEntriesPerPage(Number(e.target.value));
+                          setCurrentPage(1);
+                        }}
+                        className={`px-2 sm:px-3 py-1 rounded text-xs sm:text-sm font-bold ${
+                          isDark 
+                            ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
+                            : 'bg-white border-slate-200 text-slate-900'
+                        } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                      >
+                        <option value={10}>10</option>
+                        <option value={25}>25</option>
+                        <option value={50}>50</option>
+                        <option value={100}>100</option>
+                      </select>
+                      <span className={`text-xs sm:text-sm ${textSecondary}`}>entries</span>
+                    </div>
+                    <div className="flex items-center gap-2 w-full sm:w-auto">
+                      <span className={`text-xs sm:text-sm ${textSecondary}`}>Search:</span>
+                      <input
+                        type="text"
+                        value={availableStockSearch}
+                        onChange={(e) => {
+                          setAvailableStockSearch(e.target.value);
+                          setCurrentPage(1);
+                        }}
+                        className={`flex-1 sm:w-auto px-3 py-1 rounded text-xs sm:text-sm font-bold ${
+                          isDark 
+                            ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
+                            : 'bg-white border-slate-200 text-slate-900'
+                        } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                        placeholder="Search..."
+                      />
+                    </div>
+                  </div>
+
+                  {/* Sample Data - In real app, this would come from state/API */}
+                  {(() => {
+                    const sampleData = [
+                      { id: 1, project: 'Demo Data', store: 'Main Store', name: 'Machinery Hire', code: 'AST001', specification: 'Heavy Machinery', unit: 'Hrs', openingQty: 10, openingDate: '2025-11-01' },
+                      { id: 2, project: 'Demo Data', store: 'Main Store', name: 'Excavator Hire', code: 'AST002', specification: 'Excavator Equipment', unit: 'Hrs', openingQty: 5, openingDate: '2025-11-01' },
+                    ];
+
+                    const filteredData = sampleData.filter((item) => {
+                      if (availableStockFilters.project && item.project !== availableStockFilters.project) return false;
+                      if (availableStockFilters.storeWarehouse && item.store !== availableStockFilters.storeWarehouse) return false;
+                      if (availableStockSearch) {
+                        const searchLower = availableStockSearch.toLowerCase();
+                        return (
+                          item.name.toLowerCase().includes(searchLower) ||
+                          item.code.toLowerCase().includes(searchLower) ||
+                          item.specification.toLowerCase().includes(searchLower)
+                        );
+                      }
+                      return true;
+                    });
+
+                    const totalPages = Math.ceil(filteredData.length / entriesPerPage);
+                    const startIndex = (currentPage - 1) * entriesPerPage;
+                    const endIndex = startIndex + entriesPerPage;
+                    const paginatedData = filteredData.slice(startIndex, endIndex);
+
+                    return (
+                      <>
+                        {filteredData.length === 0 ? (
+                          <div className={`p-8 sm:p-12 text-center ${cardClass}`}>
+                            <p className={`text-sm sm:text-base ${textSecondary}`}>!No Data Found</p>
+                          </div>
+                        ) : (
+                          <>
+                            {/* Table */}
+                            <div className="overflow-x-auto">
+                              <table className="w-full min-w-[800px]">
+                                <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
+                                  <tr>
+                                    <th className={`px-3 sm:px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                                      <div className="flex items-center gap-2">
+                                        <ArrowUpDown className="w-3 h-3" />
+                                        #
+                                      </div>
+                                    </th>
+                                    <th className={`px-3 sm:px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                                      <div className="flex items-center gap-2">
+                                        <ArrowUpDown className="w-3 h-3" />
+                                        Project Name
+                                      </div>
+                                    </th>
+                                    <th className={`px-3 sm:px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                                      <div className="flex items-center gap-2">
+                                        <ArrowUpDown className="w-3 h-3" />
+                                        Store/ Warehouse
+                                      </div>
+                                    </th>
+                                    <th className={`px-3 sm:px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                                      <div className="flex items-center gap-2">
+                                        <ArrowUpDown className="w-3 h-3" />
+                                        Name
+                                      </div>
+                                    </th>
+                                    <th className={`px-3 sm:px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                                      <div className="flex items-center gap-2">
+                                        <ArrowUpDown className="w-3 h-3" />
+                                        Code
+                                      </div>
+                                    </th>
+                                    <th className={`px-3 sm:px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                                      <div className="flex items-center gap-2">
+                                        <ArrowUpDown className="w-3 h-3" />
+                                        Specification
+                                      </div>
+                                    </th>
+                                    <th className={`px-3 sm:px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                                      <div className="flex items-center gap-2">
+                                        <ArrowUpDown className="w-3 h-3" />
+                                        Unit
+                                      </div>
+                                    </th>
+                                    <th className={`px-3 sm:px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                                      <div className="flex items-center gap-2">
+                                        <ArrowUpDown className="w-3 h-3" />
+                                        Opening QTY
+                                      </div>
+                                    </th>
+                                    <th className={`px-3 sm:px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                                      <div className="flex items-center gap-2">
+                                        <ArrowUpDown className="w-3 h-3" />
+                                        Opening Date
+                                      </div>
+                                    </th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-inherit">
+                                  {paginatedData.length > 0 ? (
+                                    paginatedData.map((row, index) => (
+                                      <tr key={row.id} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
+                                        <td className={`px-3 sm:px-4 py-3 text-xs sm:text-sm font-bold ${textPrimary}`}>{startIndex + index + 1}</td>
+                                        <td className={`px-3 sm:px-4 py-3 text-xs sm:text-sm font-bold ${textPrimary}`}>{row.project}</td>
+                                        <td className={`px-3 sm:px-4 py-3 text-xs sm:text-sm font-bold ${textPrimary}`}>{row.store}</td>
+                                        <td className={`px-3 sm:px-4 py-3 text-xs sm:text-sm font-bold ${textPrimary}`}>{row.name}</td>
+                                        <td className={`px-3 sm:px-4 py-3 text-xs sm:text-sm font-bold ${textPrimary}`}>{row.code}</td>
+                                        <td className={`px-3 sm:px-4 py-3 text-xs sm:text-sm font-bold ${textPrimary}`}>{row.specification}</td>
+                                        <td className={`px-3 sm:px-4 py-3 text-xs sm:text-sm font-bold ${textPrimary}`}>{row.unit}</td>
+                                        <td className={`px-3 sm:px-4 py-3 text-xs sm:text-sm font-bold ${textPrimary}`}>{row.openingQty}</td>
+                                        <td className={`px-3 sm:px-4 py-3 text-xs sm:text-sm font-bold ${textPrimary}`}>{row.openingDate}</td>
+                                      </tr>
+                                    ))
+                                  ) : (
+                                    <tr>
+                                      <td colSpan={9} className={`px-4 py-8 text-center ${textSecondary}`}>
+                                        No data available in table
+                                      </td>
+                                    </tr>
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+
+                            {/* Table Footer */}
+                            <div className={`flex flex-col sm:flex-row items-center justify-between gap-4 mt-4 pt-4 border-t ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
+                              <div className={`text-xs sm:text-sm ${textSecondary}`}>
+                                Showing {filteredData.length > 0 ? startIndex + 1 : 0} to {Math.min(endIndex, filteredData.length)} of {filteredData.length} entries
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                                  disabled={currentPage === 1}
+                                  className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded text-xs sm:text-sm font-bold transition-all ${
+                                    currentPage === 1
+                                      ? isDark
+                                        ? 'bg-slate-800/30 text-slate-500 cursor-not-allowed'
+                                        : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                                      : isDark
+                                        ? 'bg-slate-700 hover:bg-slate-600 text-slate-100'
+                                        : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
+                                  }`}
+                                >
+                                  Previous
+                                </button>
+                                <button
+                                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                                  disabled={currentPage === totalPages || totalPages === 0}
+                                  className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded text-xs sm:text-sm font-bold transition-all ${
+                                    currentPage === totalPages || totalPages === 0
+                                      ? isDark
+                                        ? 'bg-slate-800/30 text-slate-500 cursor-not-allowed'
+                                        : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                                      : isDark
+                                        ? 'bg-slate-700 hover:bg-slate-600 text-slate-100'
+                                        : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
+                                  }`}
+                                >
+                                  Next
+                                </button>
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
 
       {/* Add Asset Modal */}
       {showAssetModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/50 backdrop-blur-sm">
           <div className={`w-full max-w-2xl rounded-xl border ${cardClass} shadow-2xl max-h-[90vh] overflow-y-auto`}>
             {/* Modal Header */}
-            <div className={`flex items-center justify-between p-6 border-b border-inherit`}>
+            <div className={`flex items-center justify-between p-4 sm:p-6 border-b border-inherit`}>
               <div>
-                <h2 className={`text-xl font-black ${textPrimary}`}>Add New Asset/Equipment</h2>
-                <p className={`text-sm ${textSecondary} mt-1`}>Enter asset details below</p>
+                <h2 className={`text-lg sm:text-xl font-black ${textPrimary}`}>Add New Asset/Equipment</h2>
+                <p className={`text-xs sm:text-sm ${textSecondary} mt-1`}>Enter asset details below</p>
               </div>
               <button
                 onClick={handleCloseModal}
-                className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+                className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors flex-shrink-0`}
               >
                 <X className={`w-5 h-5 ${textSecondary}`} />
               </button>
             </div>
 
             {/* Modal Body */}
-            <div className="p-6 space-y-6">
+            <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
               {/* Machinery Name */}
               <div>
                 <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
@@ -392,10 +1090,10 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
             </div>
 
             {/* Modal Footer */}
-            <div className={`flex items-center justify-end gap-3 p-6 border-t border-inherit`}>
+            <div className={`flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2 sm:gap-3 p-4 sm:p-6 border-t border-inherit`}>
               <button
                 onClick={handleCloseModal}
-                className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
+                className={`px-4 sm:px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
                   isDark
                     ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
                     : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
@@ -405,7 +1103,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
               </button>
               <button
                 onClick={handleCreateAsset}
-                className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#6B8E23] hover:bg-[#5a7a1e] text-white transition-all shadow-md"
+                className="px-4 sm:px-6 py-2.5 rounded-lg text-sm font-bold bg-[#6B8E23] hover:bg-[#5a7a1e] text-white transition-all shadow-md"
               >
                 Create
               </button>

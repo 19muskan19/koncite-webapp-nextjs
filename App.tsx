@@ -172,8 +172,8 @@ const AppContent: React.FC = () => {
         { label: 'Project Stock Statement', id: ViewType.INVENTORY_PROJECT_STOCK_STATEMENT }
       ] 
     },
-    { id: ViewType.LABOUR_STRENGTH, label: 'LABOUR STRENGTH', icon: UsersRound },
-    { id: ViewType.WORK_CONTRACTOR, label: 'WORK CONTRACTOR', icon: Briefcase },
+    // { id: ViewType.LABOUR_STRENGTH, label: 'LABOUR STRENGTH', icon: UsersRound },
+    // { id: ViewType.WORK_CONTRACTOR, label: 'WORK CONTRACTOR', icon: Briefcase },
     { id: ViewType.LABOUR_MANAGEMENT, label: 'LABOUR MANAGEMENT', icon: UserCog },
     { id: ViewType.DOCUMENT_MANAGEMENT, label: 'DOCUMENT MANAGEMENT', icon: FileText },
     { id: ViewType.AI_AGENTS, label: 'AI AGENTS', icon: Bot },
