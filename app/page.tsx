@@ -4,8 +4,10 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import HomePage from '@/components/HomePage';
 import LoginModal from '@/components/LoginModal';
+import { usePageTitle } from '@/hooks/usePageTitle';
 
 export default function Home() {
+  usePageTitle();
   const router = useRouter();
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);

@@ -1,5 +1,3 @@
-'use client';
-
 import React, { useState } from 'react';
 import { Menu, X, Moon, Sun } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
@@ -8,16 +6,21 @@ interface NavbarProps {
   onLoginClick: () => void;
   onNavigateToAbout?: () => void;
   scrollToSection: (id: string) => void;
+  onContactClick?: () => void;
 }
 
-const Navbar: React.FC<NavbarProps> = ({ onLoginClick, onNavigateToAbout, scrollToSection }) => {
+const Navbar: React.FC<NavbarProps> = ({ onLoginClick, onNavigateToAbout, scrollToSection, onContactClick }) => {
   const { isDark, toggleTheme } = useTheme();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [activeSection, setActiveSection] = useState<string>('home');
 
   const handleScrollToSection = (id: string) => {
     setActiveSection(id);
-    scrollToSection(id);
+    if (id === 'contact' && onContactClick) {
+      onContactClick();
+    } else {
+      scrollToSection(id);
+    }
     setMobileMenuOpen(false);
   };
 
@@ -40,8 +43,8 @@ const Navbar: React.FC<NavbarProps> = ({ onLoginClick, onNavigateToAbout, scroll
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           <div className="flex items-center gap-2">
-            <img src="/logo.png" alt="Koncite Logo" className="w-8 h-8 object-contain" />
-            <span className={`font-black text-xl tracking-tight ${textPrimary}`}>
+            <img src="/logo.png" alt="Koncite Logo" className="w-12 h-12 object-contain" />
+            <span className={`font-black text-2xl tracking-tight ${textPrimary}`}>
               Koncite
             </span>
           </div>
@@ -49,59 +52,59 @@ const Navbar: React.FC<NavbarProps> = ({ onLoginClick, onNavigateToAbout, scroll
           <nav className="hidden md:flex items-center gap-8">
             <button
               onClick={() => handleScrollToSection('home')}
-              className={`text-sm font-semibold ${textSecondary} hover:text-[#6B8E23] transition-colors relative pb-1 ${
-                activeSection === 'home' ? 'text-[#6B8E23]' : ''
+              className={`text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors relative pb-1 ${
+                activeSection === 'home' ? 'text-[#C2D642]' : ''
               }`}
             >
               Home
               {activeSection === 'home' && (
-                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#6B8E23]"></span>
+                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#C2D642]"></span>
               )}
             </button>
             <button
               onClick={() => handleScrollToSection('features')}
-              className={`text-sm font-semibold ${textSecondary} hover:text-[#6B8E23] transition-colors relative pb-1 ${
-                activeSection === 'features' ? 'text-[#6B8E23]' : ''
+              className={`text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors relative pb-1 ${
+                activeSection === 'features' ? 'text-[#C2D642]' : ''
               }`}
             >
               Features
               {activeSection === 'features' && (
-                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#6B8E23]"></span>
+                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#C2D642]"></span>
               )}
             </button>
             {onNavigateToAbout && (
               <button
                 onClick={handleAboutClick}
-                className={`text-sm font-semibold ${textSecondary} hover:text-[#6B8E23] transition-colors relative pb-1 ${
-                  activeSection === 'about' ? 'text-[#6B8E23]' : ''
+                className={`text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors relative pb-1 ${
+                  activeSection === 'about' ? 'text-[#C2D642]' : ''
                 }`}
               >
                 About
                 {activeSection === 'about' && (
-                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#6B8E23]"></span>
+                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#C2D642]"></span>
                 )}
               </button>
             )}
             <button
               onClick={() => handleScrollToSection('pricing')}
-              className={`text-sm font-semibold ${textSecondary} hover:text-[#6B8E23] transition-colors relative pb-1 ${
-                activeSection === 'pricing' ? 'text-[#6B8E23]' : ''
+              className={`text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors relative pb-1 ${
+                activeSection === 'pricing' ? 'text-[#C2D642]' : ''
               }`}
             >
               Pricing
               {activeSection === 'pricing' && (
-                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#6B8E23]"></span>
+                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#C2D642]"></span>
               )}
             </button>
             <button
               onClick={() => handleScrollToSection('contact')}
-              className={`text-sm font-semibold ${textSecondary} hover:text-[#6B8E23] transition-colors relative pb-1 ${
-                activeSection === 'contact' ? 'text-[#6B8E23]' : ''
+              className={`text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors relative pb-1 ${
+                activeSection === 'contact' ? 'text-[#C2D642]' : ''
               }`}
             >
               Contact Us
               {activeSection === 'contact' && (
-                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#6B8E23]"></span>
+                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#C2D642]"></span>
               )}
             </button>
           </nav>
@@ -116,19 +119,19 @@ const Navbar: React.FC<NavbarProps> = ({ onLoginClick, onNavigateToAbout, scroll
             </button>
             <button
               onClick={onLoginClick}
-              className={`hidden sm:block text-sm font-semibold ${textSecondary} hover:text-[#6B8E23] transition-colors`}
+              className={`hidden sm:block text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors`}
             >
               Log In
             </button>
             <button
               onClick={onLoginClick}
-              className="hidden sm:block px-4 py-2 border-2 border-[#6B8E23] hover:bg-[#6B8E23] text-[#6B8E23] hover:text-white rounded-lg text-sm font-semibold transition-all shadow-md hover:shadow-lg"
+              className="hidden sm:block px-4 py-2 border-2 border-[#C2D642] hover:bg-[#C2D642] text-[#C2D642] hover:text-white rounded-lg text-sm font-semibold transition-all shadow-md hover:shadow-lg"
             >
               Book a Demo
             </button>
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className={`md:hidden p-2 ${textSecondary} hover:text-[#6B8E23] transition-colors`}
+              className={`md:hidden p-2 ${textSecondary} hover:text-[#C2D642] transition-colors`}
             >
               {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
             </button>
@@ -141,71 +144,71 @@ const Navbar: React.FC<NavbarProps> = ({ onLoginClick, onNavigateToAbout, scroll
             <nav className="flex flex-col gap-4">
               <button
                 onClick={() => handleScrollToSection('home')}
-                className={`text-sm font-semibold ${textSecondary} hover:text-[#6B8E23] transition-colors text-left relative pb-1 ${
-                  activeSection === 'home' ? 'text-[#6B8E23]' : ''
+                className={`text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors text-left relative pb-1 ${
+                  activeSection === 'home' ? 'text-[#C2D642]' : ''
                 }`}
               >
                 Home
                 {activeSection === 'home' && (
-                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#6B8E23]"></span>
+                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#C2D642]"></span>
                 )}
               </button>
               {onNavigateToAbout && (
                 <button
                   onClick={handleAboutClick}
-                  className={`text-sm font-semibold ${textSecondary} hover:text-[#6B8E23] transition-colors text-left relative pb-1 ${
-                    activeSection === 'about' ? 'text-[#6B8E23]' : ''
+                  className={`text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors text-left relative pb-1 ${
+                    activeSection === 'about' ? 'text-[#C2D642]' : ''
                   }`}
                 >
                   About
                   {activeSection === 'about' && (
-                    <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#6B8E23]"></span>
+                    <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#C2D642]"></span>
                   )}
                 </button>
               )}
               <button
                 onClick={() => handleScrollToSection('features')}
-                className={`text-sm font-semibold ${textSecondary} hover:text-[#6B8E23] transition-colors text-left relative pb-1 ${
-                  activeSection === 'features' ? 'text-[#6B8E23]' : ''
+                className={`text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors text-left relative pb-1 ${
+                  activeSection === 'features' ? 'text-[#C2D642]' : ''
                 }`}
               >
                 Features
                 {activeSection === 'features' && (
-                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#6B8E23]"></span>
+                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#C2D642]"></span>
                 )}
               </button>
               <button
                 onClick={() => handleScrollToSection('pricing')}
-                className={`text-sm font-semibold ${textSecondary} hover:text-[#6B8E23] transition-colors text-left relative pb-1 ${
-                  activeSection === 'pricing' ? 'text-[#6B8E23]' : ''
+                className={`text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors text-left relative pb-1 ${
+                  activeSection === 'pricing' ? 'text-[#C2D642]' : ''
                 }`}
               >
                 Pricing
                 {activeSection === 'pricing' && (
-                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#6B8E23]"></span>
+                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#C2D642]"></span>
                 )}
               </button>
               <button
                 onClick={() => handleScrollToSection('contact')}
-                className={`text-sm font-semibold ${textSecondary} hover:text-[#6B8E23] transition-colors text-left relative pb-1 ${
-                  activeSection === 'contact' ? 'text-[#6B8E23]' : ''
+                className={`text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors text-left relative pb-1 ${
+                  activeSection === 'contact' ? 'text-[#C2D642]' : ''
                 }`}
               >
                 Contact Us
                 {activeSection === 'contact' && (
-                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#6B8E23]"></span>
+                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#C2D642]"></span>
                 )}
               </button>
               <div className={`flex flex-col gap-2 pt-4 border-t ${borderClass}`}>
                 <button
                   onClick={onLoginClick}
-                  className={`text-sm font-semibold ${textSecondary} hover:text-[#6B8E23] transition-colors text-left`}
+                  className={`text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors text-left`}
                 >
                   Log In
                 </button>
                 <button
                   onClick={onLoginClick}
-                  className="px-4 py-2 border-2 border-[#6B8E23] hover:bg-[#6B8E23] text-[#6B8E23] hover:text-white rounded-lg text-sm font-semibold transition-all w-full"
+                  className="px-4 py-2 border-2 border-[#C2D642] hover:bg-[#C2D642] text-[#C2D642] hover:text-white rounded-lg text-sm font-semibold transition-all w-full"
                 >
                   Book a Demo
                 </button>

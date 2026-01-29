@@ -190,7 +190,7 @@ const AppContent: React.FC = () => {
           <div className="flex items-center gap-3 px-1">
             <div className="relative">
               <img src="https://picsum.photos/seed/doc/100/100" alt="Avatar" className="w-10 h-10 rounded-xl border border-inherit object-cover" />
-              <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 bg-emerald-500 border-2 border-inherit rounded-full"></div>
+              <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 bg-[#C2D642] border-2 border-inherit rounded-full"></div>
             </div>
             {sidebarOpen && (
               <div className="flex-1 overflow-hidden">

@@ -19,7 +19,7 @@ const Subscription: React.FC<SubscriptionProps> = ({ theme }) => {
   const cardClass = isDark ? 'card-dark' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
-  const bgPrimary = isDark ? 'bg-slate-900' : 'bg-white';
+  const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
   const bgSecondary = isDark ? 'bg-slate-800' : 'bg-slate-50';
 
   const pricingPlans = [
@@ -87,12 +87,13 @@ const Subscription: React.FC<SubscriptionProps> = ({ theme }) => {
   };
 
   return (
-    <div className="space-y-4 sm:space-y-6">
+    <div className={`min-h-[calc(100vh-3.5rem)] ${bgPrimary} -m-4 p-4 sm:p-6 rounded-xl`}>
+      <div className="space-y-4 sm:space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-2">
         <div className="flex items-center gap-3 sm:gap-4">
-          <div className={`p-2 sm:p-3 rounded-xl ${isDark ? 'bg-indigo-500/10' : 'bg-indigo-500/5'}`}>
-            <CreditCard className="w-5 h-5 sm:w-6 sm:h-6 text-indigo-500" />
+          <div className={`p-2 sm:p-3 rounded-xl ${isDark ? 'bg-slate-700/50' : 'bg-slate-100'}`}>
+            <CreditCard className={`w-5 h-5 sm:w-6 sm:h-6 ${isDark ? 'text-slate-300' : 'text-slate-700'}`} />
           </div>
           <div>
             <h1 className={`text-xl sm:text-2xl font-black tracking-tight ${textPrimary}`}>Subscription Plans</h1>
@@ -126,7 +127,7 @@ const Subscription: React.FC<SubscriptionProps> = ({ theme }) => {
             Yearly
           </span>
           {billingPeriod === 'yearly' && (
-            <span className={`px-2 py-1 rounded-full text-[10px] sm:text-xs font-bold ${isDark ? 'bg-green-500/20 text-green-400' : 'bg-green-100 text-green-700'}`}>
+            <span className={`px-2 py-1 rounded-full text-[10px] sm:text-xs font-bold ${isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/20 text-[#a8b835]'}`}>
               Save 17%
             </span>
           )}
@@ -230,6 +231,7 @@ const Subscription: React.FC<SubscriptionProps> = ({ theme }) => {
             </div>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

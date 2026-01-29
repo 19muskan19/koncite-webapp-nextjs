@@ -33,12 +33,12 @@
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(107, 142, 35, 0.3);
+  background: rgba(194, 214, 66, 0.3);
   border-radius: 3px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(107, 142, 35, 0.5);
+  background: rgba(194, 214, 66, 0.5);
 }
 
 /* Theme classes */
@@ -53,8 +53,8 @@
 }
 
 .sidebar-dark {
-  background: #0f172a;
-  border-right: 1px solid #1e293b;
+  background: #0a0a0a;
+  border-right: 1px solid #2d2d2d;
 }
 
 .sidebar-light {
@@ -63,8 +63,8 @@
 }
 
 .header-dark {
-  background: #0f172a;
-  border-bottom: 1px solid #1e293b;
+  background: #0a0a0a;
+  border-bottom: 1px solid #2d2d2d;
 }
 
 .header-light {
@@ -73,8 +73,8 @@
 }
 
 .card-dark {
-  background: #1e293b;
-  border-color: #334155;
+  background: #2d2d2d;
+  border-color: #404040;
 }
 
 .card-light {

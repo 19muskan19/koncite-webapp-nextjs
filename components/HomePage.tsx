@@ -1,10 +1,9 @@
-'use client';
-
-import React from 'react';
+import React, { useState } from 'react';
 import { ArrowRight, Check, Zap, Shield, FileText, Users, ClipboardList, Sparkles, Search, MessageSquare, FileCheck, TrendingUp, Package, BarChart, Download } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import Navbar from './Navbar';
 import Footer from './Footer';
+import ContactModal from './ContactModal';
 
 interface HomePageProps {
   onLoginClick: () => void;
@@ -14,8 +13,14 @@ interface HomePageProps {
 
 const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigateToAbout }) => {
   const { isDark } = useTheme();
+  const [showContactModal, setShowContactModal] = useState(false);
 
   const scrollToSection = (id: string) => {
+    // If trying to scroll to contact, open modal instead
+    if (id === 'contact') {
+      setShowContactModal(true);
+      return;
+    }
     const element = document.getElementById(id);
     if (element) {
       element.scrollIntoView({ behavior: 'smooth' });
@@ -139,6 +144,7 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
         onLoginClick={onLoginClick}
         onNavigateToAbout={onNavigateToAbout}
         scrollToSection={scrollToSection}
+        onContactClick={() => setShowContactModal(true)}
       />
 
       <main className="flex-1">
@@ -148,16 +154,16 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
             {/* AI-Powered Badge */}
             <div
               // onClick={() => scrollToSection('ai-features')}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#0a0a0a] mb-8 hover:border-[#6B8E23] hover:shadow-md transition-all "
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#0a0a0a] mb-8 hover:border-[#C2D642] hover:shadow-md transition-all "
             >
-              <div className="w-2 h-2 rounded-full bg-[#6B8E23]"></div>
-              <span className={`text-sm font-semibold ${isDark ? textSecondary : 'text-[#6B8E23]'} hover:text-[#6B8E23] transition-colors`}>AI-Powered Construction Management</span>
+              <div className="w-2 h-2 rounded-full bg-[#C2D642]"></div>
+              <span className={`text-sm font-semibold ${isDark ? textSecondary : 'text-[#C2D642]'} hover:text-[#C2D642] transition-colors`}>AI-Powered Construction Management</span>
             </div>
 
             {/* Main Heading */}
             <h1 className={`text-5xl md:text-6xl lg:text-7xl font-black ${textPrimary} mb-6 leading-tight`}>
               Build Smarter with{' '}
-              K<span className="text-[#6B8E23]">o</span>ncite
+              K<span className="text-[#C2D642]">o</span>ncite
             </h1>
 
             {/* Tagline */}
@@ -168,7 +174,7 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
             <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
               <button
                 onClick={onLoginClick}
-                className="px-8 py-4 border-2 border-[#6B8E23] bg-[#6B8E23] text-white rounded-lg font-semibold text-lg transition-all shadow-lg hover:shadow-xl flex items-center gap-2"
+                className="px-8 py-4 border-2 border-[#C2D642] bg-[#C2D642] text-white rounded-lg font-semibold text-lg transition-all shadow-lg hover:shadow-xl flex items-center gap-2"
               >
                 Get Started
                 <ArrowRight className="w-5 h-5" />
@@ -184,7 +190,7 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
                 href={getPlayStoreUrl()}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="px-8 py-4 border-2 border-[#6B8E23] hover:bg-[#6B8E23] text-[#6B8E23] hover:text-white rounded-lg font-semibold text-lg transition-all flex items-center gap-2"
+                className="px-8 py-4 border-2 border-[#C2D642] hover:bg-[#C2D642] text-[#C2D642] hover:text-white rounded-lg font-semibold text-lg transition-all flex items-center gap-2"
               >
                 <Download className="w-5 h-5" />
                 Download App
@@ -220,10 +226,10 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
                   className={`p-6 rounded-xl border ${borderClass} ${cardClass} hover:shadow-xl hover:scale-105 hover:-translate-y-1 transition-all duration-300 cursor-pointer group opacity-0 ${item.animationClass}`}
                   style={{ animationDelay: `${idx * 150}ms` }}
                 >
-                  <div className={`w-10 h-10 ${isDark ? 'bg-[#6B8E23]/20' : 'bg-[#6B8E23]/10'} rounded-lg flex items-center justify-center mb-4 group-hover:bg-[#6B8E23]/30 transition-colors duration-300 group-hover:rotate-6`}>
-                    <item.icon className="w-5 h-5 text-[#6B8E23] group-hover:scale-110 transition-transform duration-300" />
+                  <div className={`w-10 h-10 ${isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/10'} rounded-lg flex items-center justify-center mb-4 group-hover:bg-[#C2D642]/30 transition-colors duration-300 group-hover:rotate-6`}>
+                    <item.icon className="w-5 h-5 text-[#C2D642] group-hover:scale-110 transition-transform duration-300" />
                   </div>
-                  <h3 className={`text-lg font-bold mb-2 ${textPrimary} group-hover:text-[#6B8E23] transition-colors duration-300`}>{item.title}</h3>
+                  <h3 className={`text-lg font-bold mb-2 ${textPrimary} group-hover:text-[#C2D642] transition-colors duration-300`}>{item.title}</h3>
                   <p className={`text-sm ${textSecondary}`}>{item.desc}</p>
                 </div>
               ))}
@@ -248,14 +254,14 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
                     'Auto-generate DPRs with cumulative & pending work'
                   ].map((item, idx) => (
                     <li key={idx} className="flex items-start gap-3">
-                      <Check className="w-6 h-6 text-[#6B8E23] flex-shrink-0 mt-0.5" />
+                      <Check className="w-6 h-6 text-[#C2D642] flex-shrink-0 mt-0.5" />
                       <span className={textSecondary}>{item}</span>
                     </li>
                   ))}
                 </ul>
                 <button
                   onClick={onLoginClick}
-                  className="px-6 py-3 border-2 border-[#6B8E23] hover:bg-[#6B8E23] text-[#6B8E23] hover:text-white rounded-lg font-semibold transition-all shadow-lg hover:shadow-xl inline-flex items-center gap-2"
+                  className="px-6 py-3 border-2 border-[#C2D642] hover:bg-[#C2D642] text-[#C2D642] hover:text-white rounded-lg font-semibold transition-all shadow-lg hover:shadow-xl inline-flex items-center gap-2"
                 >
                   Explore Daily Work Progress
                   <ArrowRight className="w-5 h-5" />
@@ -265,21 +271,21 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
                 <div className={`${cardClass} rounded-xl p-8 shadow-xl border ${borderClass}`}>
                   <div className="space-y-4">
                     <div className={`flex items-center gap-3 p-3 ${isDark ? 'bg-slate-800' : 'bg-slate-50'} rounded-lg`}>
-                      <ClipboardList className="w-5 h-5 text-[#6B8E23]" />
+                      <ClipboardList className="w-5 h-5 text-[#C2D642]" />
                       <div className="flex-1">
                         <div className={`h-3 ${isDark ? 'bg-slate-700' : 'bg-slate-300'} rounded w-3/4 mb-1`}></div>
                         <div className={`h-2 ${isDark ? 'bg-slate-800' : 'bg-slate-200'} rounded w-1/2`}></div>
                       </div>
                     </div>
-                    <div className={`flex items-center gap-3 p-3 ${isDark ? 'bg-[#6B8E23]/20' : 'bg-[#6B8E23]/5'} rounded-lg`}>
-                      <ClipboardList className="w-5 h-5 text-[#6B8E23]" />
+                    <div className={`flex items-center gap-3 p-3 ${isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/5'} rounded-lg`}>
+                      <ClipboardList className="w-5 h-5 text-[#C2D642]" />
                       <div className="flex-1">
-                        <div className={`h-3 ${isDark ? 'bg-[#6B8E23]/60' : 'bg-[#6B8E23]/30'} rounded w-full mb-1`}></div>
-                        <div className={`h-2 ${isDark ? 'bg-[#6B8E23]/70' : 'bg-[#6B8E23]/20'} rounded w-2/3`}></div>
+                        <div className={`h-3 ${isDark ? 'bg-[#C2D642]/60' : 'bg-[#C2D642]/30'} rounded w-full mb-1`}></div>
+                        <div className={`h-2 ${isDark ? 'bg-[#C2D642]/70' : 'bg-[#C2D642]/20'} rounded w-2/3`}></div>
                       </div>
                     </div>
                     <div className={`flex items-center gap-3 p-3 ${isDark ? 'bg-slate-800' : 'bg-slate-50'} rounded-lg`}>
-                      <ClipboardList className="w-5 h-5 text-[#6B8E23]" />
+                      <ClipboardList className="w-5 h-5 text-[#C2D642]" />
                       <div className="flex-1">
                         <div className={`h-3 ${isDark ? 'bg-slate-700' : 'bg-slate-300'} rounded w-5/6 mb-1`}></div>
                         <div className={`h-2 ${isDark ? 'bg-slate-800' : 'bg-slate-200'} rounded w-3/4`}></div>
@@ -301,12 +307,12 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
                       <div className={`p-4 ${isDark ? 'bg-slate-800' : 'bg-slate-50'} rounded-lg`}>
-                        <div className={`h-8 ${isDark ? 'bg-[#6B8E23]/70' : 'bg-[#6B8E23]/20'} rounded mb-2`}></div>
+                        <div className={`h-8 ${isDark ? 'bg-[#C2D642]/70' : 'bg-[#C2D642]/20'} rounded mb-2`}></div>
                         <div className={`h-4 ${isDark ? 'bg-slate-700' : 'bg-slate-200'} rounded w-3/4`}></div>
                       </div>
-                      <div className={`p-4 ${isDark ? 'bg-[#6B8E23]/20' : 'bg-[#6B8E23]/5'} rounded-lg`}>
-                        <div className={`h-8 ${isDark ? 'bg-[#6B8E23]/60' : 'bg-[#6B8E23]/30'} rounded mb-2`}></div>
-                        <div className={`h-4 ${isDark ? 'bg-[#6B8E23]/70' : 'bg-[#6B8E23]/20'} rounded w-2/3`}></div>
+                      <div className={`p-4 ${isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/5'} rounded-lg`}>
+                        <div className={`h-8 ${isDark ? 'bg-[#C2D642]/60' : 'bg-[#C2D642]/30'} rounded mb-2`}></div>
+                        <div className={`h-4 ${isDark ? 'bg-[#C2D642]/70' : 'bg-[#C2D642]/20'} rounded w-2/3`}></div>
                       </div>
                     </div>
                     <div className={`h-32 ${isDark ? 'bg-slate-800' : 'bg-slate-50'} rounded-lg`}></div>
@@ -325,14 +331,14 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
                     'Reduce wastage and pilferage'
                   ].map((item, idx) => (
                     <li key={idx} className="flex items-start gap-3">
-                      <Check className="w-6 h-6 text-[#6B8E23] flex-shrink-0 mt-0.5" />
+                      <Check className="w-6 h-6 text-[#C2D642] flex-shrink-0 mt-0.5" />
                       <span className={textSecondary}>{item}</span>
                     </li>
                   ))}
                 </ul>
                 <button
                   onClick={onLoginClick}
-                  className="px-6 py-3 border-2 border-[#6B8E23] hover:bg-[#6B8E23] text-[#6B8E23] hover:text-white rounded-lg font-semibold transition-all shadow-lg hover:shadow-xl inline-flex items-center gap-2"
+                  className="px-6 py-3 border-2 border-[#C2D642] hover:bg-[#C2D642] text-[#C2D642] hover:text-white rounded-lg font-semibold transition-all shadow-lg hover:shadow-xl inline-flex items-center gap-2"
                 >
                   Explore Inventory & Materials Management
                   <ArrowRight className="w-5 h-5" />
@@ -358,14 +364,14 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
                     'AI-assisted search across documents and images'
                   ].map((item, idx) => (
                     <li key={idx} className="flex items-start gap-3">
-                      <Check className="w-6 h-6 text-[#6B8E23] flex-shrink-0 mt-0.5" />
+                      <Check className="w-6 h-6 text-[#C2D642] flex-shrink-0 mt-0.5" />
                       <span className={textSecondary}>{item}</span>
                     </li>
                   ))}
                 </ul>
                 <button
                   onClick={onLoginClick}
-                  className="px-6 py-3 border-2 border-[#6B8E23] hover:bg-[#6B8E23] text-[#6B8E23] hover:text-white rounded-lg font-semibold transition-all shadow-lg hover:shadow-xl inline-flex items-center gap-2"
+                  className="px-6 py-3 border-2 border-[#C2D642] hover:bg-[#C2D642] text-[#C2D642] hover:text-white rounded-lg font-semibold transition-all shadow-lg hover:shadow-xl inline-flex items-center gap-2"
                 >
                   Explore Document Management
                   <ArrowRight className="w-5 h-5" />
@@ -375,21 +381,21 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
                 <div className={`${cardClass} rounded-xl p-8 shadow-xl border ${borderClass}`}>
                   <div className="space-y-4">
                     <div className={`flex items-center gap-3 p-3 ${isDark ? 'bg-slate-800' : 'bg-slate-50'} rounded-lg`}>
-                      <FileText className="w-5 h-5 text-[#6B8E23]" />
+                      <FileText className="w-5 h-5 text-[#C2D642]" />
                       <div className="flex-1">
                         <div className={`h-3 ${isDark ? 'bg-slate-700' : 'bg-slate-300'} rounded w-3/4 mb-1`}></div>
                         <div className={`h-2 ${isDark ? 'bg-slate-800' : 'bg-slate-200'} rounded w-1/2`}></div>
                       </div>
                     </div>
-                    <div className={`flex items-center gap-3 p-3 ${isDark ? 'bg-[#6B8E23]/20' : 'bg-[#6B8E23]/5'} rounded-lg`}>
-                      <FileText className="w-5 h-5 text-[#6B8E23]" />
+                    <div className={`flex items-center gap-3 p-3 ${isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/5'} rounded-lg`}>
+                      <FileText className="w-5 h-5 text-[#C2D642]" />
                       <div className="flex-1">
-                        <div className={`h-3 ${isDark ? 'bg-[#6B8E23]/60' : 'bg-[#6B8E23]/30'} rounded w-full mb-1`}></div>
-                        <div className={`h-2 ${isDark ? 'bg-[#6B8E23]/70' : 'bg-[#6B8E23]/20'} rounded w-2/3`}></div>
+                        <div className={`h-3 ${isDark ? 'bg-[#C2D642]/60' : 'bg-[#C2D642]/30'} rounded w-full mb-1`}></div>
+                        <div className={`h-2 ${isDark ? 'bg-[#C2D642]/70' : 'bg-[#C2D642]/20'} rounded w-2/3`}></div>
                       </div>
                     </div>
                     <div className={`flex items-center gap-3 p-3 ${isDark ? 'bg-slate-800' : 'bg-slate-50'} rounded-lg`}>
-                      <FileText className="w-5 h-5 text-[#6B8E23]" />
+                      <FileText className="w-5 h-5 text-[#C2D642]" />
                       <div className="flex-1">
                         <div className={`h-3 ${isDark ? 'bg-slate-700' : 'bg-slate-300'} rounded w-5/6 mb-1`}></div>
                         <div className={`h-2 ${isDark ? 'bg-slate-800' : 'bg-slate-200'} rounded w-3/4`}></div>
@@ -411,12 +417,12 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
                   <div className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
                       <div className={`p-4 ${isDark ? 'bg-slate-800' : 'bg-slate-50'} rounded-lg`}>
-                        <div className={`h-8 ${isDark ? 'bg-[#6B8E23]/70' : 'bg-[#6B8E23]/20'} rounded mb-2`}></div>
+                        <div className={`h-8 ${isDark ? 'bg-[#C2D642]/70' : 'bg-[#C2D642]/20'} rounded mb-2`}></div>
                         <div className={`h-4 ${isDark ? 'bg-slate-700' : 'bg-slate-200'} rounded w-3/4`}></div>
                       </div>
-                      <div className={`p-4 ${isDark ? 'bg-[#6B8E23]/20' : 'bg-[#6B8E23]/5'} rounded-lg`}>
-                        <div className={`h-8 ${isDark ? 'bg-[#6B8E23]/60' : 'bg-[#6B8E23]/30'} rounded mb-2`}></div>
-                        <div className={`h-4 ${isDark ? 'bg-[#6B8E23]/70' : 'bg-[#6B8E23]/20'} rounded w-2/3`}></div>
+                      <div className={`p-4 ${isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/5'} rounded-lg`}>
+                        <div className={`h-8 ${isDark ? 'bg-[#C2D642]/60' : 'bg-[#C2D642]/30'} rounded mb-2`}></div>
+                        <div className={`h-4 ${isDark ? 'bg-[#C2D642]/70' : 'bg-[#C2D642]/20'} rounded w-2/3`}></div>
                       </div>
                     </div>
                     <div className={`h-32 ${isDark ? 'bg-slate-800' : 'bg-slate-50'} rounded-lg`}></div>
@@ -435,14 +441,14 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
                     'Make contractor labour payments'
                   ].map((item, idx) => (
                     <li key={idx} className="flex items-start gap-3">
-                      <Check className="w-6 h-6 text-[#6B8E23] flex-shrink-0 mt-0.5" />
+                      <Check className="w-6 h-6 text-[#C2D642] flex-shrink-0 mt-0.5" />
                       <span className={textSecondary}>{item}</span>
                     </li>
                   ))}
                 </ul>
                 <button
                   onClick={onLoginClick}
-                  className="px-6 py-3 border-2 border-[#6B8E23] hover:bg-[#6B8E23] text-[#6B8E23] hover:text-white rounded-lg font-semibold transition-all shadow-lg hover:shadow-xl inline-flex items-center gap-2"
+                  className="px-6 py-3 border-2 border-[#C2D642] hover:bg-[#C2D642] text-[#C2D642] hover:text-white rounded-lg font-semibold transition-all shadow-lg hover:shadow-xl inline-flex items-center gap-2"
                 >
                   Explore Labour Management
                   <ArrowRight className="w-5 h-5" />
@@ -468,14 +474,14 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
                     'Ask AI for project insights & reports'
                   ].map((item, idx) => (
                     <li key={idx} className="flex items-start gap-3">
-                      <Check className="w-6 h-6 text-[#6B8E23] flex-shrink-0 mt-0.5" />
+                      <Check className="w-6 h-6 text-[#C2D642] flex-shrink-0 mt-0.5" />
                       <span className={textSecondary}>{item}</span>
                     </li>
                   ))}
                 </ul>
                 <button
                   onClick={onLoginClick}
-                  className="px-6 py-3 border-2 border-[#6B8E23] hover:bg-[#6B8E23] text-[#6B8E23] hover:text-white rounded-lg font-semibold transition-all shadow-lg hover:shadow-xl inline-flex items-center gap-2"
+                  className="px-6 py-3 border-2 border-[#C2D642] hover:bg-[#C2D642] text-[#C2D642] hover:text-white rounded-lg font-semibold transition-all shadow-lg hover:shadow-xl inline-flex items-center gap-2"
                 >
                   Explore Reports & Dashboards
                   <ArrowRight className="w-5 h-5" />
@@ -485,16 +491,16 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
                 <div className={`${cardClass} rounded-xl p-8 shadow-xl border ${borderClass}`}>
                   <div className="space-y-3">
                     <div className={`h-4 ${isDark ? 'bg-slate-700' : 'bg-slate-200'} rounded w-full`}></div>
-                    <div className={`h-4 ${isDark ? 'bg-[#6B8E23]/70' : 'bg-[#6B8E23]/20'} rounded w-3/4`}></div>
+                    <div className={`h-4 ${isDark ? 'bg-[#C2D642]/70' : 'bg-[#C2D642]/20'} rounded w-3/4`}></div>
                     <div className={`h-4 ${isDark ? 'bg-slate-700' : 'bg-slate-200'} rounded w-5/6`}></div>
                     <div className="mt-6 space-y-2">
                       <div className={`h-3 ${isDark ? 'bg-slate-800' : 'bg-slate-100'} rounded w-full`}></div>
                       <div className={`h-3 ${isDark ? 'bg-slate-800' : 'bg-slate-100'} rounded w-4/5`}></div>
-                      <div className={`h-3 ${isDark ? 'bg-[#6B8E23]/70' : 'bg-[#6B8E23]/10'} rounded w-3/4`}></div>
+                      <div className={`h-3 ${isDark ? 'bg-[#C2D642]/70' : 'bg-[#C2D642]/10'} rounded w-3/4`}></div>
                     </div>
                     <div className="mt-6 grid grid-cols-3 gap-2">
                       <div className={`h-16 ${isDark ? 'bg-slate-800' : 'bg-slate-50'} rounded`}></div>
-                      <div className={`h-16 ${isDark ? 'bg-[#6B8E23]/70' : 'bg-[#6B8E23]/5'} rounded`}></div>
+                      <div className={`h-16 ${isDark ? 'bg-[#C2D642]/70' : 'bg-[#C2D642]/5'} rounded`}></div>
                       <div className={`h-16 ${isDark ? 'bg-slate-800' : 'bg-slate-50'} rounded`}></div>
                     </div>
                   </div>
@@ -512,7 +518,7 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
               <h2 className={`text-4xl md:text-5xl lg:text-6xl font-black ${textPrimary} mb-6`}>
                 About Koncite
               </h2>
-              <div className="w-24 h-1 bg-[#6B8E23] mx-auto mb-8"></div>
+              <div className="w-24 h-1 bg-[#C2D642] mx-auto mb-8"></div>
               <p className={`text-xl md:text-2xl ${textSecondary} max-w-4xl mx-auto leading-relaxed`}>
                 Built for the Future of Construction
               </p>
@@ -577,7 +583,7 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
                 <h3 className={`text-3xl md:text-4xl font-bold ${textPrimary} mb-3`}>
                   What We Enable
                 </h3>
-                <div className="w-20 h-1 bg-[#6B8E23] mx-auto"></div>
+                <div className="w-20 h-1 bg-[#C2D642] mx-auto"></div>
               </div>
               <div className="grid md:grid-cols-3 gap-6 md:gap-8">
                 {[
@@ -596,10 +602,10 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
                 ].map((item, idx) => (
                   <div 
                     key={idx} 
-                    className={`${cardClass} p-6 md:p-8 rounded-xl border-2 border-[#6B8E23]/20 hover:border-[#6B8E23]/40 ${borderClass} transition-all duration-300 hover:shadow-lg group text-center`}
+                    className={`${cardClass} p-6 md:p-8 rounded-xl border-2 border-[#C2D642]/20 hover:border-[#C2D642]/40 ${borderClass} transition-all duration-300 hover:shadow-lg group text-center`}
                   >
-                    <div className={`w-14 h-14 ${isDark ? 'bg-[#6B8E23]/20' : 'bg-[#6B8E23]/10'} rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:bg-[#6B8E23]/30 transition-colors duration-300`}>
-                      <item.icon className="w-7 h-7 text-[#6B8E23]" />
+                    <div className={`w-14 h-14 ${isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/10'} rounded-xl flex items-center justify-center mx-auto mb-4 group-hover:bg-[#C2D642]/30 transition-colors duration-300`}>
+                      <item.icon className="w-7 h-7 text-[#C2D642]" />
                     </div>
                     <p className={`text-base md:text-lg font-medium ${textPrimary} leading-relaxed`}>
                       {item.text}
@@ -631,28 +637,28 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
               ].map((plan, idx) => (
                 <div 
                   key={idx} 
-                  className={`p-8 rounded-xl border ${plan.popular ? 'border-2 border-[#6B8E23]' : borderClass} ${plan.popular ? (isDark ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5') : cardClass} hover:shadow-2xl hover:scale-105 hover:-translate-y-2 transition-all duration-300 cursor-pointer group relative opacity-0 animate-[scaleIn_0.6s_ease-out_forwards] ${plan.popular ? 'hover:border-[#6B8E23] hover:ring-2 hover:ring-[#6B8E23]/20' : 'hover:border-[#6B8E23]'}`}
+                  className={`p-8 rounded-xl border ${plan.popular ? 'border-2 border-[#C2D642]' : borderClass} ${plan.popular ? (isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5') : cardClass} hover:shadow-2xl hover:scale-105 hover:-translate-y-2 transition-all duration-300 cursor-pointer group relative opacity-0 animate-[scaleIn_0.6s_ease-out_forwards] ${plan.popular ? 'hover:border-[#C2D642] hover:ring-2 hover:ring-[#C2D642]/20' : 'hover:border-[#C2D642]'}`}
                   style={{ animationDelay: `${idx * 100}ms` }}
                 >
                   {plan.popular && (
-                    <span className="absolute top-4 right-4 px-3 py-1 bg-[#6B8E23] text-white text-xs font-bold rounded-full">POPULAR</span>
+                    <span className="absolute top-4 right-4 px-3 py-1 bg-[#C2D642] text-white text-xs font-bold rounded-full">POPULAR</span>
                   )}
-                  <h3 className={`text-2xl font-bold mb-2 ${textPrimary} group-hover:text-[#6B8E23] transition-colors duration-300`}>{plan.name}</h3>
-                  <p className="text-3xl font-black mb-4 text-[#6B8E23] group-hover:scale-110 transition-transform duration-300 inline-block">
+                  <h3 className={`text-2xl font-bold mb-2 ${textPrimary} group-hover:text-[#C2D642] transition-colors duration-300`}>{plan.name}</h3>
+                  <p className="text-3xl font-black mb-4 text-[#C2D642] group-hover:scale-110 transition-transform duration-300 inline-block">
                     {plan.price}
                     {plan.price !== 'Custom' && <span className={`text-lg ${textSecondary} font-normal`}>/mo</span>}
                   </p>
                   <ul className={`space-y-3 mb-6 ${textSecondary}`}>
                     {plan.features.map((feature, fIdx) => (
                       <li key={fIdx} className="flex items-start gap-2">
-                        <Check className="w-5 h-5 text-[#6B8E23] flex-shrink-0 mt-0.5" />
+                        <Check className="w-5 h-5 text-[#C2D642] flex-shrink-0 mt-0.5" />
                         <span>{feature}</span>
                       </li>
                     ))}
                   </ul>
                   <button
-                    onClick={plan.name === 'Enterprise' ? () => scrollToSection('contact') : onLoginClick}
-                    className={`w-full px-4 py-2 border-2 border-[#6B8E23] hover:bg-[#6B8E23] ${plan.popular ? 'bg-[#6B8E23] text-white' : 'text-[#6B8E23] hover:text-white'} rounded-lg font-semibold transition-all duration-300 hover:scale-105 hover:shadow-lg group-hover:shadow-xl`}
+                    onClick={plan.name === 'Enterprise' ? () => setShowContactModal(true) : onLoginClick}
+                    className={`w-full px-4 py-2 border-2 border-[#C2D642] hover:bg-[#C2D642] ${plan.popular ? 'bg-[#C2D642] text-white' : 'text-[#C2D642] hover:text-white'} rounded-lg font-semibold transition-all duration-300 hover:scale-105 hover:shadow-lg group-hover:shadow-xl`}
                   >
                     {plan.name === 'Enterprise' ? 'Contact Sales' : 'Get Started'}
                   </button>
@@ -666,7 +672,7 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
         {/* Ready to Transform CTA */}
         <section className={`py-16 md:py-24 px-4 sm:px-6 lg:px-8 'bg-[#0a0a0a]' }`}>
           <div className="max-w-5xl mx-auto">
-            <div className={`${isDark ? 'bg-[#1a1a1a]' : 'bg-white'} rounded-2xl p-8 md:p-12 lg:p-16 shadow-2xl`}>
+            <div className={`${isDark ? 'bg-[#0a0a0a]' : 'bg-white'} rounded-2xl p-8 md:p-12 lg:p-16 shadow-2xl`}>
               <div className="text-center max-w-3xl mx-auto">
                 <h2 className={`text-3xl md:text-4xl lg:text-5xl xl:text-6xl font-black ${isDark ? 'text-white' : 'text-slate-900'} mb-4 md:mb-6 leading-tight`}>
                   Ready to transform your construction projects?
@@ -677,14 +683,14 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
                 <div className="flex flex-col sm:flex-row gap-4 justify-center">
                   <button
                     onClick={onLoginClick}
-                    className="px-8 py-4 border-2 border-[#6B8E23] bg-[#6B8E23] text-[#6B8E23] text-white rounded-lg font-semibold text-lg transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
+                    className="px-8 py-4 border-2 border-[#C2D642] bg-[#C2D642] text-[#C2D642] text-white rounded-lg font-semibold text-lg transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
                   >
                     Start Free Trial
                     <ArrowRight className="w-5 h-5" />
                   </button>
                   <button
-                    onClick={() => scrollToSection('contact')}
-                    className="px-8 py-4 border-2 border-[#6B8E23] hover:bg-[#6B8E23] text-[#6B8E23] hover:text-white rounded-lg font-semibold text-lg transition-all"
+                    onClick={() => setShowContactModal(true)}
+                    className="px-8 py-4 border-2 border-[#C2D642] hover:bg-[#C2D642] text-[#C2D642] hover:text-white rounded-lg font-semibold text-lg transition-all"
                   >
                     Contact Sales
                   </button>
@@ -694,65 +700,15 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
           </div>
         </section>
 
-        {/* Contact Section */}
-        <section id="contact" className={`py-16 md:py-24 px-4 sm:px-6 lg:px-8 ${sectionBg}`}>
-          <div className="max-w-4xl mx-auto">
-            <div className="text-center mb-8 md:mb-12">
-              <h2 className={`text-3xl md:text-4xl font-black ${textPrimary} mb-4`}>
-                Get in touch
-              </h2>
-              <p className={`text-lg ${textSecondary}`}>
-                Have questions? We'd love to hear from you.
-              </p>
-            </div>
-            <form className="space-y-6">
-              <div className="grid md:grid-cols-2 gap-6">
-                <div>
-                  <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>Name</label>
-                  <input
-                    type="text"
-                    className={`w-full px-4 py-3 border ${borderClass} rounded-lg ${isDark ? 'bg-slate-800 text-white' : 'bg-white text-slate-900'} focus:ring-2 focus:ring-[#6B8E23] focus:border-transparent outline-none`}
-                    placeholder="Your name"
-                  />
-                </div>
-                <div>
-                  <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>Email</label>
-                  <input
-                    type="email"
-                    className={`w-full px-4 py-3 border ${borderClass} rounded-lg ${isDark ? 'bg-slate-800 text-white' : 'bg-white text-slate-900'} focus:ring-2 focus:ring-[#6B8E23] focus:border-transparent outline-none`}
-                    placeholder="your.email@example.com"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>Company</label>
-                <input
-                  type="text"
-                  className={`w-full px-4 py-3 border ${borderClass} rounded-lg ${isDark ? 'bg-slate-800 text-white' : 'bg-white text-slate-900'} focus:ring-2 focus:ring-[#6B8E23] focus:border-transparent outline-none`}
-                  placeholder="Your company"
-                />
-              </div>
-              <div>
-                <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>Message</label>
-                <textarea
-                  rows={4}
-                  className={`w-full px-4 py-3 border ${borderClass} rounded-lg ${isDark ? 'bg-slate-800 text-white' : 'bg-white text-slate-900'} focus:ring-2 focus:ring-[#6B8E23] focus:border-transparent outline-none`}
-                  placeholder="Your message"
-                />
-              </div>
-              <button
-                type="submit"
-                className="w-full px-6 py-3 border-2 border-[#6B8E23] hover:bg-[#6B8E23] text-[#6B8E23] hover:text-white rounded-lg font-semibold transition-all shadow-lg hover:shadow-xl"
-              >
-                Send Message
-              </button>
-            </form>
-          </div>
-        </section>
       </main>
 
-      <Footer scrollToSection={scrollToSection} />
+      <Footer scrollToSection={scrollToSection} onContactClick={() => setShowContactModal(true)} />
       </div>
+      
+      <ContactModal 
+        isOpen={showContactModal} 
+        onClose={() => setShowContactModal(false)} 
+      />
     </>
   );
 };

@@ -514,7 +514,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                     {subproject.status && !isExpanded && (
                       <span className={`ml-auto px-3 py-1 rounded-full text-xs font-bold flex-shrink-0 ${
                         subproject.status === 'Active' || subproject.status === 'In Progress'
-                          ? 'bg-emerald-500/30 text-emerald-300'
+                          ? 'bg-[#C2D642]/30 text-[#C2D642]'
                           : subproject.status === 'Completed'
                           ? 'bg-blue-500/30 text-blue-300'
                           : 'bg-slate-500/30 text-slate-300'
@@ -577,7 +577,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                           </p>
                           <span className={`inline-block px-3 py-1.5 rounded-full text-xs font-bold ${
                             subproject.status === 'Active' || subproject.status === 'In Progress'
-                              ? 'bg-emerald-500/20 text-emerald-400'
+                              ? 'bg-[#C2D642]/20 text-[#C2D642]'
                               : subproject.status === 'Completed'
                               ? 'bg-blue-500/20 text-blue-400'
                               : 'bg-slate-500/20 text-slate-400'
@@ -642,7 +642,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
           </div>
           <div className={`p-4 rounded-xl border ${cardClass}`}>
             <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
-            <p className={`text-2xl font-black text-emerald-500`}>{filteredAndSortedSubprojects.filter(s => s.status === 'Active' || s.status === 'In Progress').length}</p>
+            <p className={`text-2xl font-black text-[#C2D642]`}>{filteredAndSortedSubprojects.filter(s => s.status === 'Active' || s.status === 'In Progress').length}</p>
           </div>
           <div className={`p-4 rounded-xl border ${cardClass}`}>
             <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>

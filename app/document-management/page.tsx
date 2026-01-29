@@ -4,8 +4,10 @@ import AppLayout from '@/components/AppLayout';
 import DocumentManagement from '@/components/DocumentManagement';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
+import { usePageTitle } from '@/hooks/usePageTitle';
 
 export default function DOCUMENT_MANAGEMENTPage() {
+  usePageTitle();
   const { theme } = useTheme();
   const { isAuthenticated, isChecking } = useAuth();
 

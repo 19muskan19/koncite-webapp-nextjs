@@ -5,8 +5,10 @@ import Masters from '@/components/Masters';
 import { useTheme } from '@/contexts/ThemeContext';
 import { ViewType } from '@/types';
 import { useAuth } from '@/hooks/useAuth';
+import { usePageTitle } from '@/hooks/usePageTitle';
 
 export default function ASSETS_EQUIPMENTSPage() {
+  usePageTitle();
   const { theme } = useTheme();
   const { isAuthenticated, isChecking } = useAuth();
 

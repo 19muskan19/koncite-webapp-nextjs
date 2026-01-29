@@ -448,7 +448,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
             </div>
             <div className={`p-4 rounded-xl border ${cardClass}`}>
               <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Class B</p>
-              <p className={`text-2xl font-black text-emerald-500`}>{filteredMaterials.filter(m => m.class === 'B').length}</p>
+              <p className={`text-2xl font-black text-[#C2D642]`}>{filteredMaterials.filter(m => m.class === 'B').length}</p>
             </div>
             <div className={`p-4 rounded-xl border ${cardClass}`}>
               <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Class C</p>

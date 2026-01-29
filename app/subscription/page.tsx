@@ -4,8 +4,10 @@ import AppLayout from '@/components/AppLayout';
 import Subscription from '@/components/Subscription';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
+import { usePageTitle } from '@/hooks/usePageTitle';
 
 export default function SUBSCRIPTIONPage() {
+  usePageTitle();
   const { theme } = useTheme();
   const { isAuthenticated, isChecking } = useAuth();
 

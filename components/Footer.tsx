@@ -1,14 +1,13 @@
-'use client';
-
 import React from 'react';
 import { Facebook, Twitter, Linkedin } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 
 interface FooterProps {
   scrollToSection: (id: string) => void;
+  onContactClick?: () => void;
 }
 
-const Footer: React.FC<FooterProps> = ({ scrollToSection }) => {
+const Footer: React.FC<FooterProps> = ({ scrollToSection, onContactClick }) => {
   const { isDark } = useTheme();
 
   return (
@@ -17,8 +16,8 @@ const Footer: React.FC<FooterProps> = ({ scrollToSection }) => {
         <div className="grid md:grid-cols-4 gap-8 mb-8">
           <div>
             <div className="flex items-center gap-2 mb-4">
-              <img src="/logo.png" alt="Koncite Logo" className="w-8 h-8 object-contain" />
-              <span className="font-black text-lg tracking-tight text-white">
+              <img src="/logo.png" alt="Koncite Logo" className="w-14 h-14 object-contain" />
+              <span className="font-black text-2xl tracking-tight text-white">
                 Koncite
               </span>
             </div>
@@ -30,7 +29,7 @@ const Footer: React.FC<FooterProps> = ({ scrollToSection }) => {
                 href="https://facebook.com"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-slate-400 hover:text-[#6B8E23] transition-colors"
+                className="text-slate-400 hover:text-[#C2D642] transition-colors"
                 aria-label="Facebook"
               >
                 <Facebook className="w-5 h-5" />
@@ -39,7 +38,7 @@ const Footer: React.FC<FooterProps> = ({ scrollToSection }) => {
                 href="https://twitter.com"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-slate-400 hover:text-[#6B8E23] transition-colors"
+                className="text-slate-400 hover:text-[#C2D642] transition-colors"
                 aria-label="Twitter"
               >
                 <Twitter className="w-5 h-5" />
@@ -48,7 +47,7 @@ const Footer: React.FC<FooterProps> = ({ scrollToSection }) => {
                 href="https://linkedin.com"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-slate-400 hover:text-[#6B8E23] transition-colors"
+                className="text-slate-400 hover:text-[#C2D642] transition-colors"
                 aria-label="LinkedIn"
               >
                 <Linkedin className="w-5 h-5" />
@@ -66,7 +65,7 @@ const Footer: React.FC<FooterProps> = ({ scrollToSection }) => {
                 { label: 'Reports & Dashboards', id: 'reports-dashboards' }
               ].map((item, idx) => (
                 <li key={idx}>
-                  <button onClick={() => scrollToSection(item.id)} className="hover:text-[#6B8E23] transition-colors">
+                  <button onClick={() => scrollToSection(item.id)} className="hover:text-[#C2D642] transition-colors">
                     {item.label}
                   </button>
                 </li>
@@ -76,8 +75,8 @@ const Footer: React.FC<FooterProps> = ({ scrollToSection }) => {
           <div>
             <h4 className="font-bold mb-4 text-white">Company</h4>
             <ul className="space-y-2 text-sm">
-              <li><button onClick={() => scrollToSection('about')} className="hover:text-[#6B8E23] transition-colors">About Us</button></li>
-              <li><button onClick={() => scrollToSection('contact')} className="hover:text-[#6B8E23] transition-colors">Contact</button></li>
+              <li><button onClick={() => scrollToSection('about')} className="hover:text-[#C2D642] transition-colors">About Us</button></li>
+              <li><button onClick={() => onContactClick ? onContactClick() : scrollToSection('contact')} className="hover:text-[#C2D642] transition-colors">Contact</button></li>
             </ul>
           </div>
         </div>

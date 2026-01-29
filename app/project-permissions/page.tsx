@@ -4,8 +4,10 @@ import AppLayout from '@/components/AppLayout';
 import ProjectPermissions from '@/components/ProjectPermissions';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
+import { usePageTitle } from '@/hooks/usePageTitle';
 
 export default function PROJECT_PERMISSIONSPage() {
+  usePageTitle();
   const { theme } = useTheme();
   const { isAuthenticated, isChecking } = useAuth();
 

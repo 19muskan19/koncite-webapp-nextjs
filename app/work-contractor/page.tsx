@@ -4,8 +4,10 @@ import AppLayout from '@/components/AppLayout';
 import WorkContractor from '@/components/WorkContractor';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
+import { usePageTitle } from '@/hooks/usePageTitle';
 
 export default function WORK_CONTRACTORPage() {
+  usePageTitle();
   const { theme } = useTheme();
   const { isAuthenticated, isChecking } = useAuth();
 

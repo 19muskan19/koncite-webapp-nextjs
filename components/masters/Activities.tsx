@@ -395,7 +395,7 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
         </div>
         <div className={`p-4 rounded-xl border ${cardClass}`}>
           <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Activities</p>
-          <p className={`text-2xl font-black text-emerald-500`}>{filteredActivities.filter(a => a.type === 'activity').length}</p>
+          <p className={`text-2xl font-black text-[#C2D642]`}>{filteredActivities.filter(a => a.type === 'activity').length}</p>
         </div>
         <div className={`p-4 rounded-xl border ${cardClass}`}>
           <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Headings</p>

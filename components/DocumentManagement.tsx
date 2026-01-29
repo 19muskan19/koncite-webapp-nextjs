@@ -120,7 +120,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
   const isDark = theme === 'dark';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
-  const bgPrimary = isDark ? 'bg-slate-900' : 'bg-white';
+  const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
   const bgSecondary = isDark ? 'bg-slate-800' : 'bg-slate-50';
 
   const loadProjects = () => {
@@ -1588,7 +1588,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
       )}
 
       {/* Left Sidebar */}
-      <div className={`fixed md:static inset-y-0 left-0 z-[101] md:z-auto w-full sm:w-80 md:w-64 border-r ${isDark ? 'bg-slate-900 md:bg-[#6B8E23]/10 border-[#6B8E23]/20' : 'bg-white md:bg-[#6B8E23]/5 border-[#6B8E23]/10'} flex flex-col transform transition-transform duration-300 ease-in-out shadow-xl md:shadow-none ${
+      <div className={`fixed md:static inset-y-0 left-0 z-[101] md:z-auto w-full sm:w-80 md:w-64 border-r ${isDark ? 'bg-[#0a0a0a] md:bg-[#6B8E23]/10 border-[#6B8E23]/20' : 'bg-white md:bg-[#6B8E23]/5 border-[#6B8E23]/10'} flex flex-col transform transition-transform duration-300 ease-in-out shadow-xl md:shadow-none ${
         sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
       }`}>
         {/* Mobile Close Button */}
@@ -2653,7 +2653,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
               <>
                 <button
                   onClick={handleRestoreFiles}
-                  className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg ${isDark ? 'bg-green-500/80 hover:bg-green-500' : 'bg-green-500 hover:bg-green-600'} transition-colors text-white`}
+                  className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg ${isDark ? 'bg-[#C2D642]/80 hover:bg-[#C2D642]' : 'bg-[#C2D642] hover:bg-[#a8b835]'} transition-colors text-white`}
                   title="Restore selected files"
                 >
                   <RotateCcw className="w-4 h-4" />

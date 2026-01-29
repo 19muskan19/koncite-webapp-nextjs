@@ -36,7 +36,7 @@ const ProjectPermissions: React.FC<ProjectPermissionsProps> = ({ theme }) => {
   const cardClass = isDark ? 'card-dark' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
-  const bgPrimary = isDark ? 'bg-slate-900' : 'bg-white';
+  const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
   const bgSecondary = isDark ? 'bg-slate-800' : 'bg-slate-50';
 
   // Default permissions matching the image

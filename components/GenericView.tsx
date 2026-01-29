@@ -257,7 +257,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
         </div>
         <div className={`p-4 rounded-xl border ${cardClass}`}>
           <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
-          <p className={`text-2xl font-black text-emerald-500`}>{config.sampleData.length}</p>
+          <p className={`text-2xl font-black text-[#C2D642]`}>{config.sampleData.length}</p>
         </div>
         <div className={`p-4 rounded-xl border ${cardClass}`}>
           <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>

@@ -689,7 +689,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
         </div>
         <div className={`p-4 rounded-xl border ${cardClass}`}>
           <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
-          <p className={`text-2xl font-black text-emerald-500`}>{sortedCompanies.filter(c => c.status === 'Active').length}</p>
+          <p className={`text-2xl font-black text-[#C2D642]`}>{sortedCompanies.filter(c => c.status === 'Active').length}</p>
         </div>
         <div className={`p-4 rounded-xl border ${cardClass}`}>
           <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>
@@ -801,7 +801,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                     </label>
                     <span className={`inline-block px-3 py-1 rounded-full text-xs font-black uppercase ${
                       viewingCompany.status === 'Active' 
-                        ? 'bg-emerald-500/20 text-emerald-500' 
+                        ? 'bg-[#C2D642]/20 text-[#C2D642]' 
                         : 'bg-slate-500/20 text-slate-500'
                     }`}>
                       {viewingCompany.status}

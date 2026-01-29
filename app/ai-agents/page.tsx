@@ -4,8 +4,10 @@ import AppLayout from '@/components/AppLayout';
 import AIAgents from '@/components/AIAgents';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
+import { usePageTitle } from '@/hooks/usePageTitle';
 
 export default function AI_AGENTSPage() {
+  usePageTitle();
   const { theme } = useTheme();
   const { isAuthenticated, isChecking } = useAuth();
 

@@ -36,8 +36,8 @@ const ToastItem: React.FC<ToastProps> = ({ toast, onClose, isDark }) => {
 
   const colors = {
     success: isDark
-      ? 'bg-green-600 border-green-500 text-white'
-      : 'bg-green-500 border-green-600 text-white',
+      ? 'bg-[#C2D642] border-[#C2D642] text-white'
+      : 'bg-[#C2D642] border-[#a8b835] text-white',
     error: isDark
       ? 'bg-red-600 border-red-500 text-white'
       : 'bg-red-500 border-red-600 text-white',

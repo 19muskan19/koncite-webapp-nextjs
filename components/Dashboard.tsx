@@ -25,7 +25,7 @@ const goalData = [
 
 const activitySplit = [
   { name: 'Strength', value: 45, color: '#6366f1' },
-  { name: 'Cardio', value: 30, color: '#10b981' },
+  { name: 'Cardio', value: 30, color: '#C2D642' },
   { name: 'Mobility', value: 15, color: '#f59e0b' },
   { name: 'Rest', value: 10, color: '#64748b' },
 ];
@@ -49,7 +49,7 @@ const MetricCard: React.FC<{
       <div className={`p-2.5 rounded-xl ${theme === 'dark' ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5'}`}>
         <Icon className="w-5 h-5 text-[#6B8E23]" />
       </div>
-      <div className={`flex items-center gap-1 text-[11px] font-black ${isPositive ? 'text-emerald-500' : 'text-rose-500'}`}>
+      <div className={`flex items-center gap-1 text-[11px] font-black ${isPositive ? 'text-[#C2D642]' : 'text-rose-500'}`}>
         {isPositive ? '+' : ''}{change}
       </div>
     </div>
@@ -74,7 +74,7 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
         </div>
         <div className="flex items-center gap-2">
            <span className="text-[10px] font-black opacity-40">AUTO-REFRESH IN 12S</span>
-           <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+           <div className="w-1.5 h-1.5 rounded-full bg-[#C2D642] animate-pulse"></div>
         </div>
       </div>
 
@@ -204,10 +204,10 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
           <h3 className="text-xs font-black uppercase tracking-widest opacity-60 mb-6">Live Diagnostic Stream</h3>
           <div className="space-y-4">
             {[
-              { time: '12:45', event: 'Biometric Sync Complete', status: 'Success', icon: CheckCircle2, color: 'text-emerald-500' },
+              { time: '12:45', event: 'Biometric Sync Complete', status: 'Success', icon: CheckCircle2, color: 'text-[#C2D642]' },
               { time: '11:20', event: 'Heart Rate Spike Detected', status: 'Analysis', icon: Activity, color: 'text-orange-500' },
               { time: '09:15', event: 'Neural Coach Responding', status: 'Live', icon: MessageSquare, color: 'text-[#6B8E23]' },
-              { time: '08:02', event: 'Goal Re-calibration', status: 'Complete', icon: TrendingUp, color: 'text-emerald-500' }
+              { time: '08:02', event: 'Goal Re-calibration', status: 'Complete', icon: TrendingUp, color: 'text-[#C2D642]' }
             ].map((log, i) => (
               <div key={i} className="flex items-center justify-between pb-3 border-b border-inherit last:border-0">
                 <div className="flex items-center gap-4">

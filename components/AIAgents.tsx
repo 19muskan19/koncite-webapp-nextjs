@@ -71,11 +71,11 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
   
   const isDark = theme === 'dark';
-  const cardClass = isDark ? 'card-dark' : 'card-light';
+  const cardClass = isDark ? 'bg-[#2d2d2d] border-[#404040]' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
-  const bgPrimary = isDark ? 'bg-slate-900' : 'bg-white';
-  const bgSecondary = isDark ? 'bg-slate-800' : 'bg-slate-50';
+  const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
+  const bgSecondary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
 
   const workspaceOptions = ['DPR', 'Inventory'];
 
@@ -383,7 +383,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
   };
 
   return (
-    <div className={`flex flex-col md:flex-row h-[calc(100vh-3.5rem-2rem)] sm:h-[calc(100vh-4rem-2rem)] md:h-[calc(100vh-3.5rem-2rem)] ${bgPrimary} rounded-xl border ${cardClass} overflow-hidden relative`}>
+    <div className={`flex flex-col md:flex-row h-[calc(100vh-3.5rem-2rem)] sm:h-[calc(100vh-4rem-2rem)] md:h-[calc(100vh-3.5rem-2rem)] ${isDark ? 'bg-[#2d2d2d]' : 'bg-white'} rounded-xl border ${isDark ? 'border-[#404040]' : 'border-gray-200'} overflow-hidden relative`}>
       {/* Mobile Sidebar Overlay */}
       {sidebarOpen && (
         <div 
@@ -393,14 +393,14 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
       )}
 
       {/* Left Sidebar */}
-      <div className={`fixed md:static inset-y-0 left-0 z-50 md:z-auto w-full sm:w-80 md:w-64 border-r border-inherit flex flex-col ${bgSecondary} transform transition-transform duration-300 ease-in-out ${
+      <div className={`fixed md:static inset-y-0 left-0 z-50 md:z-auto w-full sm:w-80 md:w-64 border-r ${isDark ? 'border-[#2d2d2d]' : 'border-gray-200'} flex flex-col ${bgSecondary} transform transition-transform duration-300 ease-in-out ${
         sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
       }`}>
         {/* Logo Section */}
-        <div className="p-4 md:p-6 border-b border-inherit">
+        <div className={`p-4 md:p-6 border-b ${isDark ? 'border-[#404040]' : 'border-gray-200'}`}>
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-[#6B8E23] rounded-lg flex items-center justify-center">
+              <div className="w-8 h-8 bg-[#C2D642] rounded-lg flex items-center justify-center">
                 <Bot className="w-5 h-5 text-white" />
               </div>
               <div>
@@ -417,19 +417,19 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
           </div>
           <button 
             onClick={handleNewSession}
-            className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md`}
+            className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#A8B838] text-white' : 'bg-[#C2D642] hover:bg-[#A8B838] text-white'} shadow-md`}
           >
             <Plus className="w-4 h-4" /> New Session
           </button>
         </div>
 
         {/* Active Workspace */}
-        <div className="p-3 md:p-4 border-b border-inherit">
+        <div className={`p-3 md:p-4 border-b ${isDark ? 'border-[#404040]' : 'border-gray-200'}`}>
           <p className={`text-[10px] font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>ACTIVE WORKSPACE</p>
           <div className="relative">
             <button
               onClick={() => setShowWorkspaceDropdown(!showWorkspaceDropdown)}
-              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100' : 'bg-white hover:bg-slate-50 text-slate-900'} border ${isDark ? 'border-slate-600' : 'border-slate-200'} shadow-sm`}
+              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#2d2d2d] hover:bg-[#404040] text-slate-100' : 'bg-white hover:bg-gray-50 text-slate-900'} border ${isDark ? 'border-[#404040]' : 'border-gray-200'} shadow-sm`}
             >
               <div className="flex items-center gap-2">
                 <Truck className="w-4 h-4" />
@@ -438,7 +438,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
               <ChevronDown className={`w-4 h-4 transition-transform ${showWorkspaceDropdown ? 'rotate-180' : ''}`} />
             </button>
             {showWorkspaceDropdown && (
-              <div className={`absolute top-full left-0 right-0 mt-2 rounded-lg border shadow-lg z-20 ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+              <div className={`absolute top-full left-0 right-0 mt-2 rounded-lg border shadow-lg z-20 ${isDark ? 'bg-[#2d2d2d] border-[#404040]' : 'bg-white border-gray-200'}`}>
                 <div className="py-1">
                   {workspaceOptions.map((option) => (
                     <button
@@ -449,8 +449,8 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
                       }}
                       className={`w-full flex items-center gap-2 px-3 py-2 text-sm font-bold transition-colors text-left ${
                         selectedWorkspace === option
-                          ? isDark ? 'bg-[#6B8E23]/20 text-[#6B8E23]' : 'bg-[#6B8E23]/10 text-[#6B8E23]'
-                          : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
+                          ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
+                          : isDark ? 'hover:bg-[#2d2d2d] text-slate-100' : 'hover:bg-gray-50 text-slate-900'
                       }`}
                     >
                       <Truck className="w-4 h-4" />
@@ -473,12 +473,12 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
                 onClick={() => handleSessionClick(session.id)}
                 className={`p-3 rounded-lg cursor-pointer transition-colors ${
                   session.id === currentSessionId 
-                    ? isDark ? 'bg-[#6B8E23]/20 border-[#6B8E23]/50' : 'bg-[#6B8E23]/10 border-[#6B8E23]/30'
-                    : isDark ? 'bg-slate-700 hover:bg-slate-600 border-slate-600' : 'bg-white hover:bg-slate-50 border-slate-200'
+                    ? isDark ? 'bg-[#C2D642]/20 border-[#C2D642]/50' : 'bg-[#C2D642]/10 border-[#C2D642]/30'
+                    : isDark ? 'bg-[#2d2d2d] hover:bg-[#404040] border-[#404040]' : 'bg-white hover:bg-gray-50 border-gray-200'
                 } border`}
               >
                 <div className="flex items-center justify-between">
-                  <p className={`text-sm font-bold ${session.id === currentSessionId ? 'text-[#6B8E23]' : textPrimary} truncate`}>{session.preview}</p>
+                  <p className={`text-sm font-bold ${session.id === currentSessionId ? 'text-[#C2D642]' : textPrimary} truncate`}>{session.preview}</p>
                   <span className={`text-[10px] font-bold ${textSecondary}`}>{session.time}</span>
                 </div>
               </div>
@@ -487,13 +487,13 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
         </div>
 
         {/* AI State Indicator */}
-        <div className="p-3 md:p-4 border-t border-inherit">
-          <div className={`w-full flex items-center gap-2 md:gap-3 px-3 py-2 rounded-lg ${isDark ? 'bg-slate-800/50' : 'bg-slate-50'}`}>
+        <div className={`p-3 md:p-4 border-t ${isDark ? 'border-[#404040]' : 'border-gray-200'}`}>
+          <div className={`w-full flex items-center gap-2 md:gap-3 px-3 py-2 rounded-lg ${isDark ? 'bg-[#2d2d2d]/50' : 'bg-white'}`}>
             <div className={`w-2 h-2 md:w-2.5 md:h-2.5 rounded-full flex-shrink-0 ${
               aiState === 'thinking' 
                 ? 'bg-orange-500 animate-pulse' 
                 : aiState === 'ready' 
-                  ? 'bg-green-500' 
+                  ? 'bg-[#C2D642]' 
                   : 'bg-red-500 animate-pulse'
             }`} />
             <div className="flex-1 min-w-0">
@@ -502,7 +502,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
                 aiState === 'thinking' 
                   ? 'text-orange-500' 
                   : aiState === 'ready' 
-                    ? 'text-green-500' 
+                    ? 'text-[#C2D642]' 
                     : 'text-red-500'
               }`}>
                 {aiState === 'thinking' ? 'Thinking' : aiState === 'ready' ? 'Ready' : 'Error'}
@@ -515,7 +515,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
       {/* Chat Area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Chat Header */}
-        <div className={`p-3 md:p-4 border-b border-inherit flex items-center justify-between ${bgSecondary}`}>
+        <div className={`p-3 md:p-4 border-b ${isDark ? 'border-[#404040]' : 'border-gray-200'} flex items-center justify-between ${bgSecondary}`}>
           <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
             <button
               onClick={() => setSidebarOpen(true)}
@@ -523,7 +523,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
             >
               <Menu className={`w-5 h-5 ${textSecondary}`} />
             </button>
-            <div className="w-7 h-7 md:w-8 md:h-8 bg-[#6B8E23] rounded-lg flex items-center justify-center flex-shrink-0">
+            <div className="w-7 h-7 md:w-8 md:h-8 bg-[#C2D642] rounded-lg flex items-center justify-center flex-shrink-0">
               <Bot className="w-4 h-4 md:w-5 md:h-5 text-white" />
             </div>
             <div className="min-w-0 flex-1">
@@ -532,13 +532,13 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
             </div>
           </div>
           {/* <div className="flex items-center gap-2">
-            <button className={`p-2 rounded-lg transition-colors ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}>
+            <button className={`p-2 rounded-lg transition-colors ${isDark ? 'hover:bg-[#2d2d2d]' : 'hover:bg-gray-100'}`}>
               <Search className={`w-4 h-4 ${textSecondary}`} />
             </button>
-            <button className={`p-2 rounded-lg transition-colors ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}>
+            <button className={`p-2 rounded-lg transition-colors ${isDark ? 'hover:bg-[#2d2d2d]' : 'hover:bg-gray-100'}`}>
               <MoreVertical className={`w-4 h-4 ${textSecondary}`} />
             </button>
-            <div className="w-8 h-8 rounded-full bg-[#6B8E23] flex items-center justify-center">
+            <div className="w-8 h-8 rounded-full bg-[#C2D642] flex items-center justify-center">
               <span className="text-white text-xs font-bold">NV</span>
             </div>
           </div> */}
@@ -552,12 +552,12 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
               className={`flex gap-2 md:gap-3 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               {message.role === 'assistant' && (
-                <div className="w-7 h-7 md:w-8 md:h-8 bg-[#6B8E23] rounded-lg flex items-center justify-center flex-shrink-0">
+                <div className="w-7 h-7 md:w-8 md:h-8 bg-[#C2D642] rounded-lg flex items-center justify-center flex-shrink-0">
                   <Bot className="w-4 h-4 md:w-5 md:h-5 text-white" />
                 </div>
               )}
               <div className={`max-w-[85%] sm:max-w-[75%] md:max-w-[70%] ${message.role === 'user' ? 'order-2' : ''}`}>
-                <div className={`rounded-xl p-3 md:p-4 ${message.role === 'user' ? 'bg-[#6B8E23] text-white' : isDark ? 'bg-slate-800 text-slate-100' : 'bg-white text-slate-900'} border ${message.role === 'user' ? 'border-[#6B8E23]' : isDark ? 'border-slate-700' : 'border-slate-200'}`}>
+                <div className={`rounded-xl p-3 md:p-4 ${message.role === 'user' ? 'bg-[#C2D642] text-white' : isDark ? 'bg-[#2d2d2d] text-slate-100' : 'bg-white text-slate-900'} border ${message.role === 'user' ? 'border-[#C2D642]' : isDark ? 'border-[#404040]' : 'border-gray-200'}`}>
                   <p className={`text-xs md:text-sm font-bold break-words ${message.role === 'user' ? 'text-white' : textPrimary}`}>
                     {message.content}
                   </p>
@@ -567,7 +567,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
                 </p>
               </div>
               {message.role === 'user' && (
-                <div className="w-7 h-7 md:w-8 md:h-8 rounded-full bg-[#6B8E23] flex items-center justify-center flex-shrink-0">
+                <div className="w-7 h-7 md:w-8 md:h-8 rounded-full bg-[#C2D642] flex items-center justify-center flex-shrink-0">
                   <span className="text-white text-[10px] md:text-xs font-bold">NV</span>
                 </div>
               )}
@@ -577,14 +577,14 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
         </div>
 
         {/* Input Area */}
-        <div className={`p-3 md:p-4 border-t border-inherit ${bgSecondary}`}>
+        <div className={`p-3 md:p-4 border-t ${isDark ? 'border-[#404040]' : 'border-gray-200'} ${bgSecondary}`}>
           {/* Attached Files Preview */}
           {attachedFiles.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-2">
               {attachedFiles.map((file, index) => (
                 <div
                   key={index}
-                  className={`flex items-center gap-1.5 md:gap-2 px-2 md:px-3 py-1 md:py-1.5 rounded-lg text-[10px] md:text-xs font-bold ${isDark ? 'bg-slate-700 text-slate-100' : 'bg-slate-100 text-slate-900'}`}
+                  className={`flex items-center gap-1.5 md:gap-2 px-2 md:px-3 py-1 md:py-1.5 rounded-lg text-[10px] md:text-xs font-bold ${isDark ? 'bg-[#2d2d2d] text-slate-100' : 'bg-gray-100 text-slate-900'}`}
                 >
                   <Paperclip className="w-3 h-3 flex-shrink-0" />
                   <span className="max-w-[100px] sm:max-w-[150px] truncate">{file.name}</span>
@@ -599,7 +599,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
             </div>
           )}
           
-          <div className={`flex items-center gap-1.5 md:gap-2 p-2 md:p-3 rounded-xl border-2 ${isDark ? 'bg-slate-800 border-[#6B8E23]/30' : 'bg-white border-[#6B8E23]/30'}`}>
+          <div className={`flex items-center gap-1.5 md:gap-2 p-2 md:p-3 rounded-xl border-2 ${isDark ? 'bg-[#2d2d2d] border-[#C2D642]/30' : 'bg-white border-[#C2D642]/30'}`}>
             <input
               ref={fileInputRef}
               type="file"
@@ -610,7 +610,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
             />
             <button
               onClick={handleAttachClick}
-              className={`p-1.5 md:p-2 rounded-lg transition-colors flex-shrink-0 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}
+              className={`p-1.5 md:p-2 rounded-lg transition-colors flex-shrink-0 ${isDark ? 'hover:bg-[#404040]' : 'hover:bg-gray-100'}`}
               title="Attach file"
             >
               <Paperclip className={`w-3.5 h-3.5 md:w-4 md:h-4 ${textSecondary}`} />
@@ -641,7 +641,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
                 <button
                   onClick={handleVoiceClick}
                   className={`p-1.5 md:p-2 rounded-lg transition-colors flex-shrink-0 ${
-                    isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'
+                    isDark ? 'hover:bg-[#404040]' : 'hover:bg-gray-100'
                   }`}
                   title="Start voice recording"
                 >
@@ -653,10 +653,10 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
                 disabled={(!inputMessage.trim() && attachedFiles.length === 0) || isRecording}
                 className={`p-1.5 md:p-2 rounded-lg transition-colors flex-shrink-0 ${
                   (inputMessage.trim() || attachedFiles.length > 0) && !isRecording
-                    ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' 
+                    ? 'bg-[#C2D642] hover:bg-[#A8B838] text-white' 
                     : isDark 
-                      ? 'bg-slate-700 text-slate-400 cursor-not-allowed' 
-                      : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                    ? 'bg-[#2d2d2d] text-slate-400 cursor-not-allowed' 
+                    : 'bg-gray-200 text-slate-400 cursor-not-allowed'
                 }`}
                 title="Send message"
               >

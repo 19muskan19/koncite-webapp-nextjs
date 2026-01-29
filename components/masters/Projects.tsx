@@ -662,7 +662,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
         </div>
         <div className={`p-4 rounded-xl border ${cardClass}`}>
           <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
-          <p className={`text-2xl font-black text-emerald-500`}>{filteredAndSortedProjects.filter(p => p.status === 'In Progress').length}</p>
+          <p className={`text-2xl font-black text-[#C2D642]`}>{filteredAndSortedProjects.filter(p => p.status === 'In Progress').length}</p>
         </div>
         <div className={`p-4 rounded-xl border ${cardClass}`}>
           <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>
@@ -734,7 +734,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                         </label>
                         <span className={`inline-block px-3 py-1 rounded-full text-xs font-black uppercase ${
                           viewingProject.isContractor 
-                            ? 'bg-emerald-500/20 text-emerald-500' 
+                            ? 'bg-[#C2D642]/20 text-[#C2D642]' 
                             : 'bg-slate-500/20 text-slate-500'
                         }`}>
                           {viewingProject.isContractor ? 'Yes' : 'No'}
@@ -797,7 +797,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                             : viewingProject.status === 'Planning'
                             ? 'bg-amber-500/20 text-amber-500'
                             : viewingProject.status === 'Completed'
-                            ? 'bg-emerald-500/20 text-emerald-500'
+                            ? 'bg-[#C2D642]/20 text-[#C2D642]'
                             : 'bg-slate-500/20 text-slate-500'
                         }`}>
                           {viewingProject.status}

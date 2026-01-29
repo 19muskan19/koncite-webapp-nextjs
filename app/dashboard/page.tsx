@@ -4,8 +4,10 @@ import AppLayout from '@/components/AppLayout';
 import Dashboard from '@/components/Dashboard';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
+import { usePageTitle } from '@/hooks/usePageTitle';
 
 export default function DashboardPage() {
+  usePageTitle();
   const { theme } = useTheme();
   const { isAuthenticated, isChecking } = useAuth();
 

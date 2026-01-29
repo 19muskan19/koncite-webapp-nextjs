@@ -1,13 +1,13 @@
 'use client';
 
 import AppLayout from '@/components/AppLayout';
-import Masters from '@/components/Masters';
+import GenericView from '@/components/GenericView';
 import { useTheme } from '@/contexts/ThemeContext';
 import { ViewType } from '@/types';
 import { useAuth } from '@/hooks/useAuth';
 import { usePageTitle } from '@/hooks/usePageTitle';
 
-export default function VENDORSPage() {
+export default function LABOUR_MANAGEMENTPage() {
   usePageTitle();
   const { theme } = useTheme();
   const { isAuthenticated, isChecking } = useAuth();
@@ -26,7 +26,7 @@ export default function VENDORSPage() {
 
   return (
     <AppLayout>
-      <Masters theme={theme} currentView={ViewType.VENDORS} />
+      <GenericView theme={theme} currentView={ViewType.LABOUR_MANAGEMENT} />
     </AppLayout>
   );
 }

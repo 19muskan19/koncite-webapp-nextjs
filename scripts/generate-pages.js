@@ -39,7 +39,7 @@ const routes = [
   // Other pages
   { viewType: 'LABOUR_STRENGTH', path: 'app/labour-strength', component: 'GenericView' },
   { viewType: 'WORK_CONTRACTOR', path: 'app/work-contractor', component: 'GenericView' },
-  { viewType: 'LABOUR_MANAGEMENT', path: 'app/labour-management', component: 'GenericView' },
+  { viewType: 'LABOUR_MANAGEMENT', path: 'app/operations/labour', component: 'GenericView' },
   { viewType: 'DOCUMENT_MANAGEMENT', path: 'app/document-management', component: 'GenericView' },
   { viewType: 'AI_AGENTS', path: 'app/ai-agents', component: 'GenericView' },
   { viewType: 'SUBSCRIPTION', path: 'app/subscription', component: 'GenericView' },
