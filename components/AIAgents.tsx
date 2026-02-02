@@ -32,6 +32,7 @@ interface AIAgentsProps {
 }
 
 const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
+  const toast = useToast();
   const [selectedWorkspace, setSelectedWorkspace] = useState<string>('DPR');
   const [showWorkspaceDropdown, setShowWorkspaceDropdown] = useState<boolean>(false);
   const [currentSessionId, setCurrentSessionId] = useState<string>('1');
