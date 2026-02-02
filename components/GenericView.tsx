@@ -31,6 +31,11 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
 
+  // Handle AI Agents separately - return null as it's handled by the page component
+  if (currentView === ViewType.AI_AGENTS) {
+    return null;
+  }
+
   const getViewConfig = () => {
     switch (currentView) {
       case ViewType.COMPANY_USERS:
@@ -146,8 +151,6 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
             { planName: 'Professional Plan', features: 'Standard Features', price: '$499/month', users: '50', status: 'Active' },
           ]
         };
-      case ViewType.AI_AGENTS:
-        return null; // Handle AI Agents separately
       default:
         return {
           title: 'View',
@@ -160,17 +163,6 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
   };
 
   const config = getViewConfig();
-  
-  // Handle AI Agents separately - return null as it's handled by the page component
-  if (currentView === ViewType.AI_AGENTS) {
-    return null;
-  }
-  
-  // Type guard: ensure config is not null
-  if (!config) {
-    return null;
-  }
-  
   const Icon = config.icon;
 
   return (
