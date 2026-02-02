@@ -113,7 +113,7 @@ const Subscription: React.FC<SubscriptionProps> = ({ theme }) => {
           <button
             onClick={() => setBillingPeriod(billingPeriod === 'monthly' ? 'yearly' : 'monthly')}
             className={`relative w-12 h-6 sm:w-14 sm:h-7 rounded-full transition-colors ${
-              billingPeriod === 'yearly' ? 'bg-[#6B8E23]' : isDark ? 'bg-slate-700' : 'bg-slate-300'
+              billingPeriod === 'yearly' ? 'bg-[#C2D642]' : isDark ? 'bg-slate-700' : 'bg-slate-300'
             }`}
             aria-label="Toggle billing period"
           >
@@ -127,7 +127,7 @@ const Subscription: React.FC<SubscriptionProps> = ({ theme }) => {
             Yearly
           </span>
           {billingPeriod === 'yearly' && (
-            <span className={`px-2 py-1 rounded-full text-[10px] sm:text-xs font-bold ${isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/20 text-[#a8b835]'}`}>
+            <span className={`px-2 py-1 rounded-full text-[10px] sm:text-xs font-bold ${isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/20 text-[#C2D642]'}`}>
               Save 17%
             </span>
           )}
@@ -141,13 +141,13 @@ const Subscription: React.FC<SubscriptionProps> = ({ theme }) => {
             key={idx}
             className={`relative p-4 sm:p-6 rounded-xl border transition-all duration-300 ${
               plan.popular
-                ? `border-2 border-[#6B8E23] ${isDark ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5'} shadow-lg`
-                : `${cardClass} hover:border-[#6B8E23] hover:shadow-md`
+                ? `border-2 border-[#C2D642] ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'} shadow-lg`
+                : `${cardClass} hover:border-[#C2D642] hover:shadow-md`
             }`}
           >
             {plan.popular && (
               <div className="absolute -top-2.5 sm:-top-3 left-1/2 -translate-x-1/2">
-                <span className="px-3 sm:px-4 py-0.5 sm:py-1 bg-[#6B8E23] text-white text-[10px] sm:text-xs font-bold rounded-full">
+                <span className="px-3 sm:px-4 py-0.5 sm:py-1 bg-[#C2D642] text-white text-[10px] sm:text-xs font-bold rounded-full">
                   POPULAR
                 </span>
               </div>
@@ -155,11 +155,11 @@ const Subscription: React.FC<SubscriptionProps> = ({ theme }) => {
 
             <div className="mb-4 sm:mb-6">
               <div className="flex items-center gap-2 mb-2">
-                <Zap className={`w-4 h-4 sm:w-5 sm:h-5 ${plan.popular ? 'text-[#6B8E23]' : textSecondary}`} />
+                <Zap className={`w-4 h-4 sm:w-5 sm:h-5 ${plan.popular ? 'text-[#C2D642]' : textSecondary}`} />
                 <h3 className={`text-lg sm:text-xl font-black ${textPrimary}`}>{plan.name}</h3>
               </div>
               <div className="flex items-baseline gap-2 flex-wrap">
-                <span className={`text-3xl sm:text-4xl font-black ${plan.popular ? 'text-[#6B8E23]' : textPrimary}`}>
+                <span className={`text-3xl sm:text-4xl font-black ${plan.popular ? 'text-[#C2D642]' : textPrimary}`}>
                   {getPrice(plan)}
                 </span>
                 {getPrice(plan) !== 'Custom' && (
@@ -178,7 +178,7 @@ const Subscription: React.FC<SubscriptionProps> = ({ theme }) => {
             <ul className={`space-y-2 sm:space-y-3 mb-4 sm:mb-6 ${textSecondary}`}>
               {plan.features.map((feature, fIdx) => (
                 <li key={fIdx} className="flex items-start gap-2">
-                  <Check className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 mt-0.5 ${plan.popular ? 'text-[#6B8E23]' : textSecondary}`} />
+                  <Check className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 mt-0.5 ${plan.popular ? 'text-[#C2D642]' : textSecondary}`} />
                   <span className="text-xs sm:text-sm leading-relaxed">{feature}</span>
                 </li>
               ))}
@@ -188,8 +188,8 @@ const Subscription: React.FC<SubscriptionProps> = ({ theme }) => {
               onClick={() => handleSelectPlan(plan.name)}
               className={`w-full px-4 py-2.5 sm:py-3 rounded-lg text-sm sm:text-base font-bold transition-all duration-300 ${
                 plan.popular
-                  ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white shadow-md'
-                  : `border-2 border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23] hover:text-white ${isDark ? 'bg-slate-800/50' : 'bg-white'}`
+                  ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white shadow-md'
+                  : `border-2 border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642] hover:text-white ${isDark ? 'bg-slate-800/50' : 'bg-white'}`
               }`}
             >
               {plan.name === 'Enterprise' ? 'Contact Sales' : 'Get Started'}
@@ -203,28 +203,28 @@ const Subscription: React.FC<SubscriptionProps> = ({ theme }) => {
         <h3 className={`text-base sm:text-lg font-black mb-3 sm:mb-4 ${textPrimary}`}>All Plans Include</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
           <div className="flex items-start gap-2 sm:gap-3">
-            <Check className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 mt-0.5 text-[#6B8E23]`} />
+            <Check className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 mt-0.5 text-[#C2D642]`} />
             <div>
               <h4 className={`text-sm sm:text-base font-bold mb-1 ${textPrimary}`}>24/7 Support</h4>
               <p className={`text-xs sm:text-sm ${textSecondary} leading-relaxed`}>Round-the-clock assistance for all your needs</p>
             </div>
           </div>
           <div className="flex items-start gap-2 sm:gap-3">
-            <Check className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 mt-0.5 text-[#6B8E23]`} />
+            <Check className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 mt-0.5 text-[#C2D642]`} />
             <div>
               <h4 className={`text-sm sm:text-base font-bold mb-1 ${textPrimary}`}>Regular Updates</h4>
               <p className={`text-xs sm:text-sm ${textSecondary} leading-relaxed`}>Access to latest features and improvements</p>
             </div>
           </div>
           <div className="flex items-start gap-2 sm:gap-3">
-            <Check className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 mt-0.5 text-[#6B8E23]`} />
+            <Check className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 mt-0.5 text-[#C2D642]`} />
             <div>
               <h4 className={`text-sm sm:text-base font-bold mb-1 ${textPrimary}`}>Data Security</h4>
               <p className={`text-xs sm:text-sm ${textSecondary} leading-relaxed`}>Enterprise-grade security and encryption</p>
             </div>
           </div>
           <div className="flex items-start gap-2 sm:gap-3">
-            <Check className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 mt-0.5 text-[#6B8E23]`} />
+            <Check className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 mt-0.5 text-[#C2D642]`} />
             <div>
               <h4 className={`text-sm sm:text-base font-bold mb-1 ${textPrimary}`}>Free Migration</h4>
               <p className={`text-xs sm:text-sm ${textSecondary} leading-relaxed`}>We'll help you migrate your existing data</p>

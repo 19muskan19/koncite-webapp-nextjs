@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
-import { Activity, MoreVertical, Download, Plus, X, Trash2 } from 'lucide-react';
+import { Activity, MoreVertical, Download, Plus, Trash2 } from 'lucide-react';
+import CreateActivityModal from './Modals/CreateActivityModal';
 
 interface ActivityItem {
   id: string;
@@ -28,14 +29,8 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
   const toast = useToast();
   const [selectedProject, setSelectedProject] = useState<string>('');
   const [selectedSubproject, setSelectedSubproject] = useState<string>('');
-  const [showActivityModal, setShowActivityModal] = useState<boolean>(false);
+  const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [userActivities, setUserActivities] = useState<ActivityItem[]>([]);
-  const [formData, setFormData] = useState({
-    project: '',
-    subproject: '',
-    type: '',
-    name: ''
-  });
   
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -141,66 +136,31 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
     return availableSubprojects.filter(sub => sub.project === selectedProject);
   }, [selectedProject]);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value } = e.target;
-    
-    // Reset subproject when project changes
-    if (name === 'project') {
-      setFormData(prev => ({
-        ...prev,
-        project: value,
-        subproject: '',
-        type: prev.type,
-        name: prev.name
-      }));
-    } else {
-      setFormData({
-        ...formData,
-        [name]: value
-      });
-    }
+  const handleActivityCreated = (newActivity: ActivityItem) => {
+    setUserActivities(prev => [...prev, newActivity]);
   };
 
-  const handleCloseModal = () => {
-    setShowActivityModal(false);
-    setFormData({
-      project: '',
-      subproject: '',
-      type: '',
-      name: ''
-    });
-  };
-
-  const handleCreateActivity = () => {
-    const missingFields: string[] = [];
-    
-    if (!formData.project) missingFields.push('Project');
-    if (!formData.subproject) missingFields.push('Subproject');
-    if (!formData.type) missingFields.push('Type');
-    if (!formData.name) missingFields.push('Name');
-    
-    if (missingFields.length > 0) {
-      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
-      return;
-    }
-
-    const newActivity: ActivityItem = {
-      id: Date.now().toString(),
-      name: formData.name,
-      project: formData.project,
-      subproject: formData.subproject,
-      type: formData.type as 'heading' | 'activity',
-      createdAt: new Date().toISOString()
+  // Listen for activitiesUpdated event
+  useEffect(() => {
+    const handleActivitiesUpdated = () => {
+      const savedActivities = localStorage.getItem('activities');
+      if (savedActivities) {
+        try {
+          const parsed = JSON.parse(savedActivities);
+          if (Array.isArray(parsed)) {
+            setUserActivities(parsed);
+          }
+        } catch (e) {
+          // Keep current activities if parsing fails
+        }
+      }
     };
 
-    try {
-      setUserActivities(prev => [...prev, newActivity]);
-      handleCloseModal();
-    } catch (error) {
-      console.error('Error saving activity:', error);
-      toast.showError('Error saving activity. Please try again.');
-    }
-  };
+    window.addEventListener('activitiesUpdated', handleActivitiesUpdated);
+    return () => {
+      window.removeEventListener('activitiesUpdated', handleActivitiesUpdated);
+    };
+  }, []);
 
   const handleDeleteActivity = (activityId: string) => {
     const defaultIds = defaultActivities.map(a => a.id);
@@ -249,8 +209,8 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
     <div className="space-y-6">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-4">
-          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5'}`}>
-            <Activity className="w-6 h-6 text-[#6B8E23]" />
+          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
+            <Activity className="w-6 h-6 text-[#C2D642]" />
           </div>
           <div>
             <h1 className={`text-2xl font-black tracking-tight ${textPrimary}`}>Activities</h1>
@@ -272,8 +232,8 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
             <Download className="w-4 h-4" />
           </button>
           <button 
-            onClick={() => setShowActivityModal(true)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md`}
+            onClick={() => setShowCreateModal(true)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white' : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'} shadow-md`}
           >
             <Plus className="w-4 h-4" /> Create New
           </button>
@@ -297,7 +257,7 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
                 isDark 
                   ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
                   : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-              } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
             >
               <option value="">-- Select Project --</option>
               {availableProjects.map((project, idx) => (
@@ -319,7 +279,7 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
                 isDark 
                   ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
                   : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-              } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none ${!selectedProject ? 'opacity-50 cursor-not-allowed' : ''}`}
+              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none ${!selectedProject ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <option value="">-- Select Subproject --</option>
               {projectSubprojects.map((subproject, idx) => (
@@ -399,146 +359,35 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
         </div>
         <div className={`p-4 rounded-xl border ${cardClass}`}>
           <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Headings</p>
-          <p className={`text-2xl font-black text-[#6B8E23]`}>{filteredActivities.filter(a => a.type === 'heading').length}</p>
+          <p className={`text-2xl font-black text-[#C2D642]`}>{filteredActivities.filter(a => a.type === 'heading').length}</p>
         </div>
       </div>
 
-      {/* Add Activity Modal */}
-      {showActivityModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className={`w-full max-w-2xl rounded-xl border ${cardClass} shadow-2xl max-h-[90vh] overflow-y-auto`}>
-            {/* Modal Header */}
-            <div className={`flex items-center justify-between p-6 border-b border-inherit`}>
-              <div>
-                <h2 className={`text-xl font-black ${textPrimary}`}>Add New Activity/Heading</h2>
-                <p className={`text-sm ${textSecondary} mt-1`}>Enter activity details below</p>
-              </div>
-              <button
-                onClick={handleCloseModal}
-                className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
-              >
-                <X className={`w-5 h-5 ${textSecondary}`} />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-6 space-y-6">
-              {/* Project */}
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Select Project <span className="text-red-500">*</span>
-                </label>
-                <select
-                  name="project"
-                  value={formData.project}
-                  onChange={handleInputChange}
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
-                    isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
-                      : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                >
-                  <option value="">-- Select Project --</option>
-                  {availableProjects.map((project, idx) => (
-                    <option key={idx} value={project.name}>
-                      {project.name} ({project.code})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Subproject */}
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Select Subproject <span className="text-red-500">*</span>
-                </label>
-                <select
-                  name="subproject"
-                  value={formData.subproject}
-                  onChange={handleInputChange}
-                  disabled={!formData.project}
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
-                    isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
-                      : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none ${!formData.project ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  <option value="">-- Select Subproject --</option>
-                  {availableSubprojects
-                    .filter(sub => sub.project === formData.project)
-                    .map((subproject, idx) => (
-                      <option key={idx} value={subproject.name}>
-                        {subproject.name}
-                      </option>
-                    ))}
-                </select>
-              </div>
-
-              {/* Type */}
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Type <span className="text-red-500">*</span>
-                </label>
-                <select
-                  name="type"
-                  value={formData.type}
-                  onChange={handleInputChange}
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
-                    isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
-                      : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                >
-                  <option value="">-- Select Type --</option>
-                  <option value="heading">Heading</option>
-                  <option value="activity">Activities</option>
-                </select>
-              </div>
-
-              {/* Activity Name / Heading Name */}
-              {formData.type && (
-                <div>
-                  <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                    {formData.type === 'heading' ? 'Heading Name' : 'Activity Name'} <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    name="name"
-                    value={formData.name}
-                    onChange={handleInputChange}
-                    placeholder={formData.type === 'heading' ? 'Enter Heading Name' : 'Enter Activity Name'}
-                    className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                      isDark 
-                        ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
-                        : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
-                    } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                  />
-                </div>
-              )}
-            </div>
-
-            {/* Modal Footer */}
-            <div className={`flex items-center justify-end gap-3 p-6 border-t border-inherit`}>
-              <button
-                onClick={handleCloseModal}
-                className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
-                  isDark
-                    ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
-                    : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-                }`}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateActivity}
-                className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#6B8E23] hover:bg-[#5a7a1e] text-white transition-all shadow-md"
-              >
-                Create
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Create Activity Modal */}
+      <CreateActivityModal
+        theme={theme}
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onSuccess={() => {
+          // Reload activities from localStorage
+          const savedActivities = localStorage.getItem('activities');
+          if (savedActivities) {
+            try {
+              const parsed = JSON.parse(savedActivities);
+              if (Array.isArray(parsed)) {
+                setUserActivities(parsed);
+              }
+            } catch (e) {
+              // Keep current activities if parsing fails
+            }
+          }
+        }}
+        defaultActivities={defaultActivities}
+        userActivities={userActivities}
+        availableProjects={availableProjects}
+        availableSubprojects={availableSubprojects}
+        onActivityCreated={handleActivityCreated}
+      />
     </div>
   );
 };

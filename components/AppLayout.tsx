@@ -66,7 +66,7 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
           <div className="flex items-center gap-2 sm:gap-4">
 
             <button onClick={toggleTheme} className="p-2 hover:bg-white/10 rounded-lg transition-colors flex items-center gap-2 border border-white/5">
-              {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+              {theme === 'dark' ? <Sun className="w-4 h-4 text-[#C2D642]" /> : <Moon className="w-4 h-4 text-[#C2D642]" />}
             </button>
 
             <button className="p-2 hover:bg-white/10 rounded-lg transition-colors relative border border-white/5">

@@ -217,15 +217,66 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
     });
   };
 
-  const handleChildClick = (e: React.MouseEvent, parentId: string) => {
+  // Helper function to find all parent IDs for a given path
+  const findParentIdsForPath = (targetPath: string): string[] => {
+    const parentIds: string[] = [];
+    
+    for (const item of navItems) {
+      if (item.children) {
+        for (const child of item.children) {
+          // Check if this child has the target path
+          if (child.path === targetPath) {
+            parentIds.push(item.id.toString());
+            return parentIds;
+          }
+          // Check nested children
+          if (child.children) {
+            for (const nestedChild of child.children) {
+              if (nestedChild.path === targetPath) {
+                parentIds.push(item.id.toString());
+                parentIds.push(child.id.toString());
+                return parentIds;
+              }
+              // Check third level children
+              if (nestedChild.children) {
+                for (const thirdLevelChild of nestedChild.children) {
+                  if (thirdLevelChild.path === targetPath) {
+                    parentIds.push(item.id.toString());
+                    parentIds.push(child.id.toString());
+                    parentIds.push(nestedChild.id.toString());
+                    return parentIds;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    return parentIds;
+  };
+
+  const handleChildClick = (e: React.MouseEvent, parentId: string, childPath?: string) => {
     // Keep the parent dropdown open when clicking a child item
     e.stopPropagation();
+    
+    // Find all parent IDs that should stay open
+    const parentIdsToKeepOpen = childPath ? findParentIdsForPath(childPath) : [parentId];
+    
     // Always keep the parent dropdown open when clicking a child
     // This ensures the dropdown stays open during navigation
     setOpenDropdowns(prev => {
       const newSet = new Set(prev);
-      newSet.clear(); // Close other dropdowns
-      newSet.add(parentId); // Keep this dropdown open
+      // Close other dropdowns that aren't in the parent chain
+      parentIdsToKeepOpen.forEach(id => newSet.add(id));
+      // Remove dropdowns that aren't in the parent chain
+      const toRemove: string[] = [];
+      newSet.forEach(id => {
+        if (!parentIdsToKeepOpen.includes(id)) {
+          toRemove.push(id);
+        }
+      });
+        toRemove.forEach(id => newSet.delete(id));
       return newSet;
     });
     // Close sidebar on mobile after navigation
@@ -236,32 +287,23 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
 
   // Keep dropdowns open based on current pathname - this ensures dropdowns stay open when on child pages
   useEffect(() => {
-    // Find which parent menu item has an active child
-    const activeParent = navItems.find((item) => {
-      if (item.children) {
-        return item.children.some(child => isActive(child.path));
-      }
-      return false;
-    });
-
-    if (activeParent) {
+    // Find all parent IDs for the current path
+    const parentIds = findParentIdsForPath(pathname);
+    
+    if (parentIds.length > 0) {
       setOpenDropdowns(prev => {
-        // If the correct dropdown is already open, keep it open
-        if (prev.has(activeParent.id.toString())) {
-          // Just ensure other dropdowns are closed
-          const newSet = new Set(prev);
-          if (newSet.size > 1) {
-            newSet.clear();
-            newSet.add(activeParent.id.toString());
-            return newSet;
+        const newSet = new Set(prev);
+        // Add all parent IDs
+        parentIds.forEach(id => newSet.add(id));
+        // Remove dropdowns that aren't in the parent chain
+        const toRemove: string[] = [];
+        newSet.forEach(id => {
+          if (!parentIds.includes(id)) {
+            toRemove.push(id);
           }
-          return prev;
-        } else {
-          // Open the correct dropdown and close others
-          const newSet = new Set<string>();
-          newSet.add(activeParent.id.toString());
-          return newSet;
-        }
+        });
+        toRemove.forEach(id => newSet.delete(id));
+        return newSet;
       });
     }
   }, [pathname]);
@@ -384,7 +426,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
                                                 href={thirdLevelChild.path}
                                                 onClick={(e) => {
                                                   e.stopPropagation();
-                                                  handleChildClick(e, item.id.toString());
+                                                  handleChildClick(e, item.id.toString(), thirdLevelChild.path);
                                                 }}
                                                 className={`text-[11px] font-bold py-1 px-2 rounded-md cursor-pointer transition-colors block ${isActive(thirdLevelChild.path) ? (isDark ? 'text-slate-300 bg-slate-700/30' : 'text-slate-700 bg-slate-100') : 'opacity-40 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}`}
                                               >
@@ -405,7 +447,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           // Keep parent dropdowns open
-                                          handleChildClick(e, item.id.toString());
+                                          handleChildClick(e, item.id.toString(), nestedChild.path);
                                           // Close sidebar on mobile after navigation
                                           if (window.innerWidth < 1024) {
                                             setSidebarOpen(false);
@@ -428,7 +470,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
                         <Link
                           key={child.id}
                           href={child.path}
-                          onClick={(e) => handleChildClick(e, item.id.toString())}
+                          onClick={(e) => handleChildClick(e, item.id.toString(), child.path)}
                           className={`text-[11px] font-bold py-1 px-2 rounded-md cursor-pointer transition-colors block ${isActive(child.path) ? (isDark ? 'text-slate-300 bg-slate-700/30' : 'text-slate-700 bg-slate-100') : 'opacity-40 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}`}
                         >
                           {child.label}

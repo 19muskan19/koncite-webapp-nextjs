@@ -163,7 +163,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
 
   const handleToggleCard = (subprojectId: string) => {
     setExpandedCards(prev => {
-      const newSet = new Set();
+      const newSet = new Set<string>();
       // If clicking the same card, close it. Otherwise, open only the clicked card
       if (prev.has(subprojectId)) {
         // Close the card
@@ -311,8 +311,8 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
       {/* Header */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-4">
-          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5'}`}>
-            <Layers className="w-6 h-6 text-[#6B8E23]" />
+          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
+            <Layers className="w-6 h-6 text-[#C2D642]" />
           </div>
           <div>
             <h1 className={`text-2xl font-black tracking-tight ${textPrimary}`}>Subproject</h1>
@@ -339,7 +339,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                   isDark 
                     ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
                     : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none pr-10`}
+                } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none pr-10`}
               >
                 <option value="">-- Select a Project --</option>
                 {availableProjects.map((project, idx) => (
@@ -383,7 +383,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                   });
                   setShowSubprojectModal(true);
                 }}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md`}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white' : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'} shadow-md`}
               >
                 <Plus className="w-4 h-4" /> Add New
               </button>
@@ -399,7 +399,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                 placeholder="Search by subproject name..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
               />
             </div>
             <div className="relative filter-dropdown">
@@ -410,7 +410,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                 <Filter className="w-4 h-4" /> 
                 Filter
                 {sortFilter !== 'none' && (
-                  <span className={`ml-1 px-1.5 py-0.5 rounded text-xs ${isDark ? 'bg-[#6B8E23]/20 text-[#6B8E23]' : 'bg-[#6B8E23]/10 text-[#6B8E23]'}`}>
+                  <span className={`ml-1 px-1.5 py-0.5 rounded text-xs ${isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'}`}>
                     {sortFilter === 'recent' ? 'Recent' : 'Oldest'}
                   </span>
                 )}
@@ -425,7 +425,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                       }}
                       className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
                         sortFilter === 'none'
-                          ? isDark ? 'bg-[#6B8E23]/20 text-[#6B8E23]' : 'bg-[#6B8E23]/10 text-[#6B8E23]'
+                          ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
                           : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                       }`}
                     >
@@ -438,7 +438,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                       }}
                       className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
                         sortFilter === 'recent'
-                          ? isDark ? 'bg-[#6B8E23]/20 text-[#6B8E23]' : 'bg-[#6B8E23]/10 text-[#6B8E23]'
+                          ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
                           : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                       }`}
                     >
@@ -451,7 +451,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                       }}
                       className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
                         sortFilter === 'oldest'
-                          ? isDark ? 'bg-[#6B8E23]/20 text-[#6B8E23]' : 'bg-[#6B8E23]/10 text-[#6B8E23]'
+                          ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
                           : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                       }`}
                     >
@@ -482,8 +482,8 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                 className={`rounded-lg border overflow-hidden transition-all shadow-sm ${
                   isExpanded 
                     ? isDark 
-                      ? 'border-[#6B8E23]/50 bg-slate-800/50' 
-                      : 'border-[#6B8E23]/30 bg-white'
+                      ? 'border-[#C2D642]/50 bg-slate-800/50' 
+                      : 'border-[#C2D642]/30 bg-white'
                     : isDark 
                       ? 'border-slate-700 bg-slate-800/30 hover:border-slate-600' 
                       : 'border-slate-200 bg-white hover:border-slate-300'
@@ -505,10 +505,10 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                   <div className="flex items-center gap-4 flex-1 min-w-0">
                     <div className={`w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0 transition-all ${
                       isExpanded 
-                        ? 'bg-[#6B8E23]/20' 
+                        ? 'bg-[#C2D642]/20' 
                         : 'bg-white/10'
                     }`}>
-                      <Layers className={`w-6 h-6 ${isExpanded ? 'text-[#6B8E23]' : 'text-white'}`} />
+                      <Layers className={`w-6 h-6 ${isExpanded ? 'text-[#C2D642]' : 'text-white'}`} />
                     </div>
                     <h3 className={`text-lg font-bold text-white truncate`}>{subproject.name}</h3>
                     {subproject.status && !isExpanded && (
@@ -595,7 +595,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                           e.stopPropagation();
                           handleEditSubproject(subproject);
                         }}
-                        className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold bg-[#6B8E23] hover:bg-[#5a7a1e] text-white transition-all shadow-sm"
+                        className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642] text-white transition-all shadow-sm"
                       >
                         <Edit className="w-4 h-4" />
                         Edit
@@ -688,7 +688,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                     isDark 
                       ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
                       : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                 >
                   <option value="">-- Select Project --</option>
                   {availableProjects.map((project, idx) => (
@@ -712,9 +712,9 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                   placeholder="Enter subproject name"
                   className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                     isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
-                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
+                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                 />
               </div>
 
@@ -730,9 +730,9 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                   onChange={handleInputChange}
                   className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                     isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
-                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
+                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                 />
               </div>
 
@@ -749,9 +749,9 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                   min={formData.plannedStartDate}
                   className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                     isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
-                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
+                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                 />
               </div>
             </div>
@@ -770,7 +770,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
               </button>
               <button
                 onClick={handleCreateSubproject}
-                className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#6B8E23] hover:bg-[#5a7a1e] text-white transition-all shadow-md"
+                className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642] text-white transition-all shadow-md"
               >
                 {editingSubprojectId ? 'Update' : 'Create'}
               </button>

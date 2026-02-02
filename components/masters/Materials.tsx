@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
-import { Boxes, MoreVertical, Download, Plus, Search, X, ArrowUpDown, FileSpreadsheet, Upload } from 'lucide-react';
+import { Boxes, MoreVertical, Download, Plus, Search, ArrowUpDown, FileSpreadsheet, Upload } from 'lucide-react';
+import CreateMaterialModal from './Modals/CreateMaterialModal';
 
 interface Material {
   id: string;
@@ -24,14 +25,8 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'list' | 'bulkUpload' | 'openingStock'>('list');
   const [openingStockSubTab, setOpeningStockSubTab] = useState<'bulkUpload' | 'available'>('bulkUpload');
-  const [showMaterialModal, setShowMaterialModal] = useState<boolean>(false);
+  const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [userMaterials, setUserMaterials] = useState<Material[]>([]);
-  const [formData, setFormData] = useState({
-    materialClass: '',
-    materialName: '',
-    specification: '',
-    unit: ''
-  });
   const [openingStockForm, setOpeningStockForm] = useState({
     project: '',
     storeWarehouse: '',
@@ -146,59 +141,31 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
     );
   }, [searchQuery, allMaterials]);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
+  const handleMaterialCreated = (newMaterial: Material) => {
+    setUserMaterials(prev => [...prev, newMaterial]);
   };
 
-  const handleCloseModal = () => {
-    setShowMaterialModal(false);
-    setFormData({
-      materialClass: '',
-      materialName: '',
-      specification: '',
-      unit: ''
-    });
-  };
-
-  const generateCode = () => {
-    // Generate a code like M123456
-    const randomNum = Math.floor(100000 + Math.random() * 900000);
-    return 'M' + randomNum.toString();
-  };
-
-  const handleCreateMaterial = () => {
-    const missingFields: string[] = [];
-    
-    if (!formData.materialClass) missingFields.push('Material Class');
-    if (!formData.materialName) missingFields.push('Material Name');
-    if (!formData.unit) missingFields.push('Unit');
-    
-    if (missingFields.length > 0) {
-      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
-      return;
-    }
-
-    const newMaterial: Material = {
-      id: Date.now().toString(),
-      class: formData.materialClass as 'A' | 'B' | 'C',
-      code: generateCode(),
-      name: formData.materialName,
-      specification: formData.specification || '',
-      unit: formData.unit,
-      createdAt: new Date().toISOString()
+  // Listen for materialsUpdated event
+  useEffect(() => {
+    const handleMaterialsUpdated = () => {
+      const savedMaterials = localStorage.getItem('materials');
+      if (savedMaterials) {
+        try {
+          const parsed = JSON.parse(savedMaterials);
+          if (Array.isArray(parsed)) {
+            setUserMaterials(parsed);
+          }
+        } catch (e) {
+          // Keep current materials if parsing fails
+        }
+      }
     };
 
-    try {
-      setUserMaterials(prev => [...prev, newMaterial]);
-      handleCloseModal();
-    } catch (error) {
-      console.error('Error saving material:', error);
-      toast.showError('Error saving material. Please try again.');
-    }
-  };
+    window.addEventListener('materialsUpdated', handleMaterialsUpdated);
+    return () => {
+      window.removeEventListener('materialsUpdated', handleMaterialsUpdated);
+    };
+  }, []);
 
   const handleDownloadExcel = () => {
     const headers = ['Class', 'Code', 'Name', 'Specification', 'Unit'];
@@ -276,8 +243,8 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
     <div className="space-y-6">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-4">
-          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5'}`}>
-            <Boxes className="w-6 h-6 text-[#6B8E23]" />
+          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
+            <Boxes className="w-6 h-6 text-[#C2D642]" />
           </div>
           <div>
             <h1 className={`text-2xl font-black tracking-tight ${textPrimary}`}>Materials</h1>
@@ -300,8 +267,8 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
               <Download className="w-4 h-4" />
             </button>
             <button 
-              onClick={() => setShowMaterialModal(true)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md`}
+              onClick={() => setShowCreateModal(true)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white' : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'} shadow-md`}
             >
               <Plus className="w-4 h-4" /> Add New
             </button>
@@ -366,7 +333,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                 placeholder="Search by class, code, name, specification, or unit..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
               />
             </div>
           </div>
@@ -444,7 +411,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
             </div>
             <div className={`p-4 rounded-xl border ${cardClass}`}>
               <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Class A</p>
-              <p className={`text-2xl font-black text-[#6B8E23]`}>{filteredMaterials.filter(m => m.class === 'A').length}</p>
+              <p className={`text-2xl font-black text-[#C2D642]`}>{filteredMaterials.filter(m => m.class === 'A').length}</p>
             </div>
             <div className={`p-4 rounded-xl border ${cardClass}`}>
               <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Class B</p>
@@ -465,8 +432,8 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
               onClick={handleExportMaterialsData}
               className={`w-full flex items-center justify-center gap-3 px-6 py-4 rounded-lg text-sm font-bold transition-all ${
                 isDark
-                  ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
-                  : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                  ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
+                  : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
               } shadow-md`}
             >
               <FileSpreadsheet className="w-5 h-5" />
@@ -476,8 +443,8 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
               onClick={handleImportMaterialsData}
               className={`w-full flex items-center justify-center gap-3 px-6 py-4 rounded-lg text-sm font-bold transition-all ${
                 isDark
-                  ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
-                  : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                  ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
+                  : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
               } shadow-md`}
             >
               <Upload className="w-5 h-5" />
@@ -525,8 +492,8 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                   onClick={handleExportMaterialsData}
                   className={`w-full flex items-center justify-center gap-3 px-6 py-4 rounded-lg text-sm font-bold transition-all ${
                     isDark
-                      ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
-                      : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                      ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
+                      : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
                   } shadow-md`}
                 >
                   <FileSpreadsheet className="w-5 h-5" />
@@ -551,7 +518,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                         isDark 
                           ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
                           : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                      } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                     >
                       <option value="">---Select Project---</option>
                       {availableProjects.map((project, idx) => (
@@ -574,7 +541,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                         isDark 
                           ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
                           : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                      } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                     >
                       <option value="">---Select Store/Warehouses---</option>
                       {availableWarehouses.map((warehouse, idx) => (
@@ -598,7 +565,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                         isDark 
                           ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
                           : 'bg-white border-slate-200 text-slate-900'
-                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                      } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                     />
                   </div>
 
@@ -663,8 +630,8 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                       }}
                       className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-lg text-sm font-bold transition-all ${
                         isDark
-                          ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
-                          : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                          ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
+                          : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
                       } shadow-md`}
                     >
                       Import Data
@@ -691,7 +658,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                         isDark 
                           ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
                           : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                      } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                     >
                       <option value="">----Select Project----</option>
                       {availableProjects.map((project, idx) => (
@@ -712,7 +679,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                         isDark 
                           ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
                           : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                      } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                     >
                       <option value="">----Select Store/Warehouses----</option>
                       {availableWarehouses.map((warehouse, idx) => (
@@ -741,7 +708,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                           isDark 
                             ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
                             : 'bg-white border-slate-200 text-slate-900'
-                        } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                        } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                       >
                         <option value={10}>10</option>
                         <option value={25}>25</option>
@@ -760,7 +727,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                           isDark 
                             ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
                             : 'bg-white border-slate-200 text-slate-900'
-                        } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                        } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                         placeholder="Search..."
                       />
                     </div>
@@ -884,135 +851,31 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
         </>
       )}
 
-      {/* Add Material Modal */}
-      {showMaterialModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className={`w-full max-w-2xl rounded-xl border ${cardClass} shadow-2xl max-h-[90vh] overflow-y-auto`}>
-            {/* Modal Header */}
-            <div className={`flex items-center justify-between p-6 border-b border-inherit`}>
-              <div>
-                <h2 className={`text-xl font-black ${textPrimary}`}>Add New Material</h2>
-                <p className={`text-sm ${textSecondary} mt-1`}>Enter material details below</p>
-              </div>
-              <button
-                onClick={handleCloseModal}
-                className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
-              >
-                <X className={`w-5 h-5 ${textSecondary}`} />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-6 space-y-6">
-              {/* Material Class */}
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Material Class <span className="text-red-500">*</span>
-                </label>
-                <select
-                  name="materialClass"
-                  value={formData.materialClass}
-                  onChange={handleInputChange}
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
-                    isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
-                      : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                >
-                  <option value="">-- Select Material Class --</option>
-                  {classOptions.map((option, idx) => (
-                    <option key={idx} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Material Name */}
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Material Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  name="materialName"
-                  value={formData.materialName}
-                  onChange={handleInputChange}
-                  placeholder="Enter material name"
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                    isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
-                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                />
-              </div>
-
-              {/* Specification */}
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Specification
-                </label>
-                <input
-                  type="text"
-                  name="specification"
-                  value={formData.specification}
-                  onChange={handleInputChange}
-                  placeholder="Enter specification (optional)"
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                    isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
-                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                />
-              </div>
-
-              {/* Unit */}
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Unit <span className="text-red-500">*</span>
-                </label>
-                <select
-                  name="unit"
-                  value={formData.unit}
-                  onChange={handleInputChange}
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
-                    isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
-                      : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                >
-                  <option value="">-- Select Unit --</option>
-                  {unitOptions.map((option, idx) => (
-                    <option key={idx} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className={`flex items-center justify-end gap-3 p-6 border-t border-inherit`}>
-              <button
-                onClick={handleCloseModal}
-                className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
-                  isDark
-                    ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
-                    : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-                }`}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateMaterial}
-                className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#6B8E23] hover:bg-[#5a7a1e] text-white transition-all shadow-md"
-              >
-                Create
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Create Material Modal */}
+      <CreateMaterialModal
+        theme={theme}
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onSuccess={() => {
+          // Reload materials from localStorage
+          const savedMaterials = localStorage.getItem('materials');
+          if (savedMaterials) {
+            try {
+              const parsed = JSON.parse(savedMaterials);
+              if (Array.isArray(parsed)) {
+                setUserMaterials(parsed);
+              }
+            } catch (e) {
+              // Keep current materials if parsing fails
+            }
+          }
+        }}
+        defaultMaterials={defaultMaterials}
+        userMaterials={userMaterials}
+        classOptions={classOptions}
+        unitOptions={unitOptions}
+        onMaterialCreated={handleMaterialCreated}
+      />
     </div>
   );
 };

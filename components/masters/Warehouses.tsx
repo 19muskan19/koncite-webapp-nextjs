@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
 import { Warehouse, MoreVertical, Plus, Search, X, Download, Edit, Trash2, MapPin, Building2 } from 'lucide-react';
+import CreateWarehouseModal from './Modals/CreateWarehouseModal';
 
 interface WarehouseData {
   id: string;
@@ -23,9 +24,10 @@ interface WarehousesProps {
 const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
   const toast = useToast();
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [showWarehouseModal, setShowWarehouseModal] = useState<boolean>(false);
+  const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [editingWarehouseId, setEditingWarehouseId] = useState<string | null>(null);
   const [userWarehouses, setUserWarehouses] = useState<WarehouseData[]>([]);
+  const [showEditModal, setShowEditModal] = useState<boolean>(false);
   const [formData, setFormData] = useState({
     project: '',
     warehouseName: '',
@@ -136,7 +138,7 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
   };
 
   const handleCloseModal = () => {
-    setShowWarehouseModal(false);
+    setShowEditModal(false);
     setEditingWarehouseId(null);
     setFormData({
       project: '',
@@ -145,6 +147,32 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
     });
   };
 
+  const handleWarehouseCreated = (newWarehouse: WarehouseData) => {
+    setUserWarehouses(prev => [...prev, newWarehouse]);
+  };
+
+  // Listen for warehousesUpdated event
+  useEffect(() => {
+    const handleWarehousesUpdated = () => {
+      const savedWarehouses = localStorage.getItem('warehouses');
+      if (savedWarehouses) {
+        try {
+          const parsed = JSON.parse(savedWarehouses);
+          if (Array.isArray(parsed)) {
+            setUserWarehouses(parsed);
+          }
+        } catch (e) {
+          // Keep current warehouses if parsing fails
+        }
+      }
+    };
+
+    window.addEventListener('warehousesUpdated', handleWarehousesUpdated);
+    return () => {
+      window.removeEventListener('warehousesUpdated', handleWarehousesUpdated);
+    };
+  }, []);
+
   const handleEditWarehouse = (warehouse: WarehouseData) => {
     setEditingWarehouseId(warehouse.id);
     setFormData({
@@ -152,7 +180,7 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
       warehouseName: warehouse.name,
       location: warehouse.location
     });
-    setShowWarehouseModal(true);
+    setShowEditModal(true);
   };
 
   const handleDeleteWarehouse = (warehouseId: string) => {
@@ -228,8 +256,8 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
     <div className="space-y-6">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-4">
-          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5'}`}>
-            <Warehouse className="w-6 h-6 text-[#6B8E23]" />
+          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
+            <Warehouse className="w-6 h-6 text-[#C2D642]" />
           </div>
           <div>
             <h1 className={`text-2xl font-black tracking-tight ${textPrimary}`}>Warehouses</h1>
@@ -251,8 +279,8 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
             <Download className="w-4 h-4" />
           </button>
           <button 
-            onClick={() => setShowWarehouseModal(true)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md`}
+            onClick={() => setShowCreateModal(true)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white' : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'} shadow-md`}
           >
             <Plus className="w-4 h-4" /> Add New
           </button>
@@ -268,7 +296,7 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
             placeholder="Search by project..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+            className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
           />
         </div>
       </div>
@@ -279,13 +307,13 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
             <div 
               key={warehouse.id} 
               className={`rounded-xl border p-5 transition-all ${cardClass} ${
-                isDark ? 'hover:border-[#6B8E23]/30 hover:shadow-lg' : 'hover:border-[#6B8E23]/20 hover:shadow-md'
+                isDark ? 'hover:border-[#C2D642]/30 hover:shadow-lg' : 'hover:border-[#C2D642]/20 hover:shadow-md'
               }`}
             >
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-lg ${isDark ? 'bg-[#6B8E23]/20' : 'bg-[#6B8E23]/10'}`}>
-                    <Warehouse className="w-5 h-5 text-[#6B8E23]" />
+                  <div className={`p-2 rounded-lg ${isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/10'}`}>
+                    <Warehouse className="w-5 h-5 text-[#C2D642]" />
                   </div>
                   <div>
                     <h3 className={`text-lg font-black ${textPrimary}`}>{warehouse.name}</h3>
@@ -336,7 +364,7 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
               <div className="flex items-center gap-2 pt-4 border-t border-inherit">
                 <button
                   onClick={() => handleEditWarehouse(warehouse)}
-                  className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-bold bg-[#6B8E23] hover:bg-[#5a7a1e] text-white transition-all"
+                  className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642] text-white transition-all"
                 >
                   <Edit className="w-4 h-4" />
                   Edit
@@ -379,19 +407,40 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
         </div>
       </div>
 
-      {/* Add Warehouse Modal */}
-      {showWarehouseModal && (
+      {/* Create Warehouse Modal */}
+      <CreateWarehouseModal
+        theme={theme}
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onSuccess={() => {
+          // Reload warehouses from localStorage
+          const savedWarehouses = localStorage.getItem('warehouses');
+          if (savedWarehouses) {
+            try {
+              const parsed = JSON.parse(savedWarehouses);
+              if (Array.isArray(parsed)) {
+                setUserWarehouses(parsed);
+              }
+            } catch (e) {
+              // Keep current warehouses if parsing fails
+            }
+          }
+        }}
+        defaultWarehouses={defaultWarehouses}
+        userWarehouses={userWarehouses}
+        availableProjects={availableProjects}
+        onWarehouseCreated={handleWarehouseCreated}
+      />
+
+      {/* Edit Warehouse Modal */}
+      {showEditModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div className={`w-full max-w-2xl rounded-xl border ${cardClass} shadow-2xl max-h-[90vh] overflow-y-auto`}>
             {/* Modal Header */}
             <div className={`flex items-center justify-between p-6 border-b border-inherit`}>
               <div>
-                <h2 className={`text-xl font-black ${textPrimary}`}>
-                  {editingWarehouseId ? 'Edit Warehouse' : 'Add New Warehouse'}
-                </h2>
-                <p className={`text-sm ${textSecondary} mt-1`}>
-                  {editingWarehouseId ? 'Update warehouse details below' : 'Enter warehouse details below'}
-                </p>
+                <h2 className={`text-xl font-black ${textPrimary}`}>Edit Warehouse</h2>
+                <p className={`text-sm ${textSecondary} mt-1`}>Update warehouse details below</p>
               </div>
               <button
                 onClick={handleCloseModal}
@@ -416,7 +465,7 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
                     isDark 
                       ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
                       : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                 >
                   <option value="">-- Select Project --</option>
                   {availableProjects.map((project, idx) => (
@@ -440,9 +489,9 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
                   placeholder="Enter warehouse name"
                   className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                     isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
-                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
+                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                 />
               </div>
 
@@ -459,9 +508,9 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
                   placeholder="Enter warehouse location"
                   className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                     isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
-                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
+                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                 />
               </div>
             </div>
@@ -480,9 +529,9 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
               </button>
               <button
                 onClick={handleCreateWarehouse}
-                className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#6B8E23] hover:bg-[#5a7a1e] text-white transition-all shadow-md"
+                className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642] text-white transition-all shadow-md"
               >
-                {editingWarehouseId ? 'Update' : 'Create'}
+                Update
               </button>
             </div>
           </div>

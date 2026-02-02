@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
 import { Users, Plus, Search, X, Download } from 'lucide-react';
+import CreateLabourModal from './Modals/CreateLabourModal';
 
 interface Labour {
   id: string;
@@ -22,14 +23,10 @@ interface LaboursProps {
 const Labours: React.FC<LaboursProps> = ({ theme }) => {
   const toast = useToast();
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [showLabourModal, setShowLabourModal] = useState<boolean>(false);
+  const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [userLabours, setUserLabours] = useState<Labour[]>([]);
   const [defaultLaboursStatus, setDefaultLaboursStatus] = useState<Record<string, 'Active' | 'Inactive'>>({});
   const [labours, setLabours] = useState<Labour[]>([]);
-  const [formData, setFormData] = useState({
-    labourType: '',
-    category: ''
-  });
   
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -190,52 +187,30 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
     }
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
+  const handleLabourCreated = (newLabour: Labour) => {
+    setUserLabours(prev => [...prev, newLabour]);
+    setLabours(prev => [...prev, newLabour]);
   };
 
-  const handleCloseModal = () => {
-    setShowLabourModal(false);
-    setFormData({
-      labourType: '',
-      category: ''
-    });
-  };
-
-  const handleCreateLabour = () => {
-    const missingFields: string[] = [];
-    
-    if (!formData.labourType) missingFields.push('Labour Type');
-    if (!formData.category) missingFields.push('Category');
-    
-    if (missingFields.length > 0) {
-      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
-      return;
-    }
-
-    // Generate an ID
-    const id = 'LAB' + String(defaultLabours.length + userLabours.length + 1).padStart(3, '0');
-
-    const newLabour: Labour = {
-      id: id,
-      name: formData.labourType,
-      category: formData.category as 'Skilled' | 'Unskilled' | 'Semi Skilled',
-      status: 'Active',
-      createdAt: new Date().toISOString()
+  // Listen for laboursUpdated event
+  useEffect(() => {
+    const handleLaboursUpdated = () => {
+      const savedLabours = localStorage.getItem('labours');
+      if (savedLabours) {
+        try {
+          const parsed = JSON.parse(savedLabours);
+          setUserLabours(parsed);
+        } catch (e) {
+          setUserLabours([]);
+        }
+      }
     };
 
-    try {
-      setUserLabours(prev => [...prev, newLabour]);
-      setLabours(prev => [...prev, newLabour]);
-      handleCloseModal();
-    } catch (error) {
-      console.error('Error saving labour:', error);
-      toast.showError('Error saving labour. Please try again.');
-    }
-  };
+    window.addEventListener('laboursUpdated', handleLaboursUpdated);
+    return () => {
+      window.removeEventListener('laboursUpdated', handleLaboursUpdated);
+    };
+  }, []);
 
   const handleDownloadExcel = () => {
     // Prepare data for Excel export
@@ -272,8 +247,8 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
     <div className="space-y-6">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-4">
-          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5'}`}>
-            <Users className="w-6 h-6 text-[#6B8E23]" />
+          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
+            <Users className="w-6 h-6 text-[#C2D642]" />
           </div>
           <div>
             <h1 className={`text-2xl font-black tracking-tight ${textPrimary}`}>Labours</h1>
@@ -295,8 +270,8 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
             <Download className="w-4 h-4" />
           </button>
           <button 
-            onClick={() => setShowLabourModal(true)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md`}
+            onClick={() => setShowCreateModal(true)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white' : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'} shadow-md`}
           >
             <Plus className="w-4 h-4" /> Add New
           </button>
@@ -312,7 +287,7 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
             placeholder="Search by labour type, code, or category..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+            className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
           />
         </div>
       </div>
@@ -358,9 +333,9 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
                     <td className={`px-6 py-4`}>
                       <button
                         onClick={(e) => handleToggleStatus(e, row.id)}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#6B8E23] focus:ring-offset-2 cursor-pointer ${
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#C2D642] focus:ring-offset-2 cursor-pointer ${
                           row.status === 'Active'
-                            ? 'bg-[#6B8E23]'
+                            ? 'bg-[#C2D642]'
                             : 'bg-slate-400'
                         }`}
                         role="switch"
@@ -404,97 +379,28 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
         </div>
       </div>
 
-      {/* Add Labour Modal */}
-      {showLabourModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className={`w-full max-w-2xl rounded-xl border ${cardClass} shadow-2xl max-h-[90vh] overflow-y-auto`}>
-            {/* Modal Header */}
-            <div className={`flex items-center justify-between p-6 border-b border-inherit`}>
-              <div>
-                <h2 className={`text-xl font-black ${textPrimary}`}>Add New Labour</h2>
-                <p className={`text-sm ${textSecondary} mt-1`}>Enter labour details below</p>
-              </div>
-              <button
-                onClick={handleCloseModal}
-                className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
-              >
-                <X className={`w-5 h-5 ${textSecondary}`} />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-6 space-y-6">
-              {/* Labour Type */}
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Labour Type <span className="text-red-500">*</span>
-                </label>
-                <select
-                  name="labourType"
-                  value={formData.labourType}
-                  onChange={handleInputChange}
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
-                    isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
-                      : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                >
-                  <option value="">-- Select Labour Type --</option>
-                  {labourTypeOptions.map((option, idx) => (
-                    <option key={idx} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Category Name */}
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Category Name <span className="text-red-500">*</span>
-                </label>
-                <select
-                  name="category"
-                  value={formData.category}
-                  onChange={handleInputChange}
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
-                    isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
-                      : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                >
-                  <option value="">-- Select Category --</option>
-                  {categoryOptions.map((option, idx) => (
-                    <option key={idx} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className={`flex items-center justify-end gap-3 p-6 border-t border-inherit`}>
-              <button
-                onClick={handleCloseModal}
-                className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
-                  isDark
-                    ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
-                    : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-                }`}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateLabour}
-                className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#6B8E23] hover:bg-[#5a7a1e] text-white transition-all shadow-md"
-              >
-                Create
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Create Labour Modal */}
+      <CreateLabourModal
+        theme={theme}
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onSuccess={() => {
+          setShowCreateModal(false);
+          // Reload labours from localStorage
+          const savedLabours = localStorage.getItem('labours');
+          if (savedLabours) {
+            try {
+              const parsed = JSON.parse(savedLabours);
+              setUserLabours(parsed);
+            } catch (e) {
+              setUserLabours([]);
+            }
+          }
+        }}
+        defaultLabours={defaultLabours}
+        userLabours={userLabours}
+        onLabourCreated={handleLabourCreated}
+      />
     </div>
   );
 };

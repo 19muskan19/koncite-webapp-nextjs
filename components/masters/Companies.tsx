@@ -18,6 +18,7 @@ import {
   Upload,
   Download
 } from 'lucide-react';
+import CreateCompanyModal from './Modals/CreateCompanyModal';
 
 interface Company {
   id: string;
@@ -41,6 +42,7 @@ interface CompaniesProps {
 const Companies: React.FC<CompaniesProps> = ({ theme }) => {
   const toast = useToast();
   const [showCompanyModal, setShowCompanyModal] = useState<boolean>(false);
+  const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [editingCompanyId, setEditingCompanyId] = useState<string | null>(null);
   const [viewingCompanyId, setViewingCompanyId] = useState<string | null>(null);
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
@@ -228,63 +230,29 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
     });
   };
 
-  const handleCreateCompany = async () => {
-    const missingFields: string[] = [];
-    
-    if (!formData.registrationName) missingFields.push('Registration Name');
-    if (!formData.registeredAddress) missingFields.push('Registered Address');
-    if (!formData.companyRegistrationNo) missingFields.push('Company Registration No');
-    
-    if (missingFields.length > 0) {
-      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
-      return;
-    }
+  const handleCompanyCreated = (newCompany: Company) => {
+    setCompanies(prev => [...prev, newCompany]);
+  };
 
-    const code = formData.registrationName
-      .split(' ')
-      .map(word => word.charAt(0).toUpperCase())
-      .join('')
-      .substring(0, 6) + String(companies.length + 1).padStart(3, '0');
-
-    let logoUrl = '';
-
-    if (formData.logo) {
-      try {
-        logoUrl = await compressImage(formData.logo, 200, 200, 0.7);
-      } catch (error) {
-        console.error('Error compressing image:', error);
-        toast.showError('Error processing image. Please try again.');
-        return;
+  // Listen for companiesUpdated event
+  useEffect(() => {
+    const handleCompaniesUpdated = () => {
+      const savedCompanies = localStorage.getItem('companies');
+      if (savedCompanies) {
+        try {
+          const parsed = JSON.parse(savedCompanies);
+          setCompanies(parsed);
+        } catch (e) {
+          setCompanies([]);
+        }
       }
-    } else {
-      logoUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(formData.registrationName)}&background=6366f1&color=fff&size=128`;
-    }
-
-    const newCompany: Company = {
-      id: Date.now().toString(),
-      name: formData.registrationName,
-      code: code,
-      address: formData.registeredAddress,
-      registrationNo: formData.companyRegistrationNo,
-      logo: logoUrl,
-      status: 'Active',
-      projects: 0,
-      employees: 0,
-      createdAt: new Date().toISOString()
     };
 
-    try {
-      setCompanies(prev => [...prev, newCompany]);
-      handleCloseModal();
-    } catch (error) {
-      console.error('Error saving company:', error);
-      if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-        toast.showError('Storage limit exceeded. Please clear some data or use a smaller image.');
-      } else {
-        toast.showError('Error saving company. Please try again.');
-      }
-    }
-  };
+    window.addEventListener('companiesUpdated', handleCompaniesUpdated);
+    return () => {
+      window.removeEventListener('companiesUpdated', handleCompaniesUpdated);
+    };
+  }, []);
 
   const handleCloseModal = () => {
     if (formData.logoPreview && formData.logoPreview.startsWith('blob:')) {
@@ -498,8 +466,8 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
       {/* Header */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-4">
-          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5'}`}>
-            <Building2 className="w-6 h-6 text-[#6B8E23]" />
+          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
+            <Building2 className="w-6 h-6 text-[#C2D642]" />
           </div>
           <div>
             <h1 className={`text-2xl font-black tracking-tight ${textPrimary}`}>Companies</h1>
@@ -521,8 +489,10 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
             <Download className="w-4 h-4" />
           </button>
           <button 
-            onClick={() => setShowCompanyModal(true)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md`}
+            onClick={() => {
+              setShowCreateModal(true);
+            }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white' : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'} shadow-md`}
           >
             <Plus className="w-4 h-4" /> Add New
           </button>
@@ -538,7 +508,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
             placeholder="Search by company name..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+            className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
           />
         </div>
         <div className="relative filter-dropdown">
@@ -549,7 +519,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
             <Filter className="w-4 h-4" /> 
             Filter
             {sortFilter !== 'none' && (
-              <span className={`ml-1 px-1.5 py-0.5 rounded text-xs ${isDark ? 'bg-[#6B8E23]/20 text-[#6B8E23]' : 'bg-[#6B8E23]/10 text-[#6B8E23]'}`}>
+              <span className={`ml-1 px-1.5 py-0.5 rounded text-xs ${isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'}`}>
                 {sortFilter === 'recent' ? 'Recent' : 'Oldest'}
               </span>
             )}
@@ -564,7 +534,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                   }}
                   className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
                     sortFilter === 'none'
-                      ? isDark ? 'bg-[#6B8E23]/20 text-[#6B8E23]' : 'bg-[#6B8E23]/10 text-[#6B8E23]'
+                      ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
                       : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                   }`}
                 >
@@ -577,7 +547,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                   }}
                   className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
                     sortFilter === 'recent'
-                      ? isDark ? 'bg-[#6B8E23]/20 text-[#6B8E23]' : 'bg-[#6B8E23]/10 text-[#6B8E23]'
+                      ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
                       : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                   }`}
                 >
@@ -590,7 +560,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                   }}
                   className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
                     sortFilter === 'oldest'
-                      ? isDark ? 'bg-[#6B8E23]/20 text-[#6B8E23]' : 'bg-[#6B8E23]/10 text-[#6B8E23]'
+                      ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
                       : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                   }`}
                 >
@@ -610,12 +580,12 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
               key={company.id || idx} 
               onClick={() => handleViewCompany(company)}
               className={`rounded-lg border ${cardClass} p-4 hover:shadow-md transition-all duration-200 cursor-pointer ${
-                isDark ? 'hover:border-[#6B8E23]/30' : 'hover:border-[#6B8E23]/20'
+                isDark ? 'hover:border-[#C2D642]/30' : 'hover:border-[#C2D642]/20'
               }`}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4 flex-1 min-w-0">
-                  <div className="w-12 h-12 rounded-lg overflow-hidden border-2 border-[#6B8E23]/20 flex-shrink-0">
+                  <div className="w-12 h-12 rounded-lg overflow-hidden border-2 border-[#C2D642]/20 flex-shrink-0">
                     <img 
                       src={company.logo} 
                       alt={company.name}
@@ -697,7 +667,30 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
         </div>
       </div>
 
-      {/* Add/Edit/View Company Modal */}
+      {/* Create Company Modal */}
+      <CreateCompanyModal
+        theme={theme}
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onSuccess={() => {
+          setShowCreateModal(false);
+          // Reload companies from localStorage
+          const savedCompanies = localStorage.getItem('companies');
+          if (savedCompanies) {
+            try {
+              const parsed = JSON.parse(savedCompanies);
+              setCompanies(parsed);
+            } catch (e) {
+              setCompanies([]);
+            }
+          }
+        }}
+        defaultCompanies={defaultCompanies}
+        userCompanies={companies.filter(c => !['1', '2', '3', '4'].includes(c.id))}
+        onCompanyCreated={handleCompanyCreated}
+      />
+
+      {/* Edit/View Company Modal */}
       {showCompanyModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div className={`w-full max-w-2xl rounded-xl border ${cardClass} shadow-2xl max-h-[90vh] overflow-y-auto`}>
@@ -705,10 +698,10 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
             <div className={`flex items-center justify-between p-6 border-b border-inherit`}>
               <div>
                 <h2 className={`text-xl font-black ${textPrimary}`}>
-                  {viewingCompanyId ? 'Company Details' : editingCompanyId ? 'Edit Company' : 'Add New Company'}
+                  {viewingCompanyId ? 'Company Details' : 'Edit Company'}
                 </h2>
                 <p className={`text-sm ${textSecondary} mt-1`}>
-                  {viewingCompanyId ? 'View company information' : 'Enter company details below'}
+                  {viewingCompanyId ? 'View company information' : 'Update company details below'}
                 </p>
               </div>
               <button
@@ -723,7 +716,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
             {viewingCompanyId && viewingCompany ? (
               <div className="p-6 space-y-6">
                 <div className="flex items-center gap-4 mb-6">
-                  <div className="w-20 h-20 rounded-xl overflow-hidden border-2 border-[#6B8E23]/20 flex-shrink-0">
+                  <div className="w-20 h-20 rounded-xl overflow-hidden border-2 border-[#C2D642]/20 flex-shrink-0">
                     <img 
                       src={viewingCompany.logo} 
                       alt={viewingCompany.name}
@@ -809,7 +802,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                   </div>
                 </div>
               </div>
-            ) : (
+            ) : editingCompanyId ? (
               <div className="p-6 space-y-6">
                 <div>
                   <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
@@ -823,9 +816,9 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                     placeholder="Enter company registration name"
                     className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                       isDark 
-                        ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
-                        : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
-                    } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                        ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
+                        : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+                    } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                   />
                 </div>
 
@@ -841,9 +834,9 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                     rows={3}
                     className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all resize-none ${
                       isDark 
-                        ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
-                        : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
-                    } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                        ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
+                        : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+                    } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                   />
                 </div>
 
@@ -859,9 +852,9 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                     placeholder="Enter company registration number"
                     className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                       isDark 
-                        ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
-                        : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
-                    } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                        ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
+                        : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+                    } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                   />
                 </div>
 
@@ -875,7 +868,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                         <img
                           src={formData.logoPreview}
                           alt="Logo preview"
-                          className="w-32 h-32 rounded-xl object-cover border-2 border-[#6B8E23]/20"
+                          className="w-32 h-32 rounded-xl object-cover border-2 border-[#C2D642]/20"
                         />
                         <button
                           onClick={() => {
@@ -893,14 +886,14 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                       <label
                         className={`flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-xl cursor-pointer transition-all ${
                           isDark
-                            ? 'border-slate-700 hover:border-[#6B8E23] bg-slate-800/30'
-                            : 'border-slate-300 hover:border-[#6B8E23] bg-slate-50'
+                            ? 'border-slate-700 hover:border-[#C2D642] bg-slate-800/30'
+                            : 'border-slate-300 hover:border-[#C2D642] bg-slate-50'
                         }`}
                       >
                         <div className="flex flex-col items-center justify-center pt-5 pb-6">
                           <Upload className={`w-8 h-8 mb-2 ${textSecondary}`} />
                           <p className={`text-sm font-bold ${textSecondary}`}>
-                            <span className="text-[#6B8E23]">Click to upload</span> or drag and drop
+                            <span className="text-[#C2D642]">Click to upload</span> or drag and drop
                           </p>
                           <p className={`text-xs ${textSecondary} mt-1`}>PNG, JPG, GIF up to 10MB</p>
                         </div>
@@ -915,7 +908,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                   </div>
                 </div>
               </div>
-            )}
+            ) : null}
 
             {/* Modal Footer */}
             <div className={`flex items-center justify-end gap-3 p-6 border-t border-inherit`}>
@@ -936,7 +929,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                       onClick={() => {
                         handleEditCompany(viewingCompany);
                       }}
-                      className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#6B8E23] hover:bg-[#5a7a1e] text-white transition-all shadow-md flex items-center gap-2"
+                      className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642] text-white transition-all shadow-md flex items-center gap-2"
                     >
                       <Edit className="w-4 h-4" />
                       Edit
@@ -956,10 +949,10 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                     Cancel
                   </button>
                   <button
-                    onClick={editingCompanyId ? handleUpdateCompany : handleCreateCompany}
-                    className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#6B8E23] hover:bg-[#5a7a1e] text-white transition-all shadow-md"
+                    onClick={handleUpdateCompany}
+                    className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642] text-white transition-all shadow-md"
                   >
-                    {editingCompanyId ? 'Update' : 'Create'}
+                    Update
                   </button>
                 </>
               )}

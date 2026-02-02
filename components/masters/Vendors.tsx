@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
-import { Truck, MoreVertical, Download, Plus, Search, X, ArrowUpDown } from 'lucide-react';
+import { Truck, MoreVertical, Download, Plus, Search, ArrowUpDown } from 'lucide-react';
+import CreateVendorModal from './Modals/CreateVendorModal';
 
 interface Vendor {
   id: string;
@@ -44,18 +45,9 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
   ];
 
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [showVendorModal, setShowVendorModal] = useState<boolean>(false);
+  const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [defaultVendorsState, setDefaultVendorsState] = useState<Vendor[]>(defaultVendors);
-  const [formData, setFormData] = useState({
-    name: '',
-    gstNo: '',
-    address: '',
-    type: '',
-    contactPersonName: '',
-    phone: '',
-    email: ''
-  });
 
   // Load vendors from localStorage on mount
   useEffect(() => {
@@ -114,62 +106,31 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
     );
   }, [searchQuery, allVendors]);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
+  const handleVendorCreated = (newVendor: Vendor) => {
+    setVendors(prev => [...prev, newVendor]);
   };
 
-  const handleCloseModal = () => {
-    setShowVendorModal(false);
-    setFormData({
-      name: '',
-      gstNo: '',
-      address: '',
-      type: '',
-      contactPersonName: '',
-      phone: '',
-      email: ''
-    });
-  };
-
-  const handleCreateVendor = () => {
-    const missingFields: string[] = [];
-    
-    if (!formData.name) missingFields.push('Vendor Name');
-    if (!formData.address) missingFields.push('Address');
-    if (!formData.type) missingFields.push('Type');
-    if (!formData.contactPersonName) missingFields.push('Contact Person Name');
-    if (!formData.phone) missingFields.push('Phone');
-    if (!formData.email) missingFields.push('Email');
-    
-    if (missingFields.length > 0) {
-      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
-      return;
-    }
-
-    const newVendor: Vendor = {
-      id: Date.now().toString(),
-      name: formData.name,
-      gstNo: formData.gstNo || undefined,
-      address: formData.address,
-      type: formData.type as 'contractor' | 'supplier' | 'both',
-      contactPersonName: formData.contactPersonName,
-      phone: formData.phone,
-      email: formData.email,
-      status: 'Active',
-      createdAt: new Date().toISOString()
+  // Listen for vendorsUpdated event
+  useEffect(() => {
+    const handleVendorsUpdated = () => {
+      const savedVendors = localStorage.getItem('vendors');
+      if (savedVendors) {
+        try {
+          const parsed = JSON.parse(savedVendors);
+          if (Array.isArray(parsed)) {
+            setVendors(parsed);
+          }
+        } catch (e) {
+          // Keep current vendors if parsing fails
+        }
+      }
     };
 
-    try {
-      setVendors(prev => [...prev, newVendor]);
-      handleCloseModal();
-    } catch (error) {
-      console.error('Error saving vendor:', error);
-      toast.showError('Error saving vendor. Please try again.');
-    }
-  };
+    window.addEventListener('vendorsUpdated', handleVendorsUpdated);
+    return () => {
+      window.removeEventListener('vendorsUpdated', handleVendorsUpdated);
+    };
+  }, []);
 
   const handleToggleStatus = (vendorId: string) => {
     const defaultIds = ['1', '2', '3', '4', '5'];
@@ -229,8 +190,8 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
     <div className="space-y-6">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-4">
-          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5'}`}>
-            <Truck className="w-6 h-6 text-[#6B8E23]" />
+          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
+            <Truck className="w-6 h-6 text-[#C2D642]" />
           </div>
           <div>
             <h1 className={`text-2xl font-black tracking-tight ${textPrimary}`}>Vendors</h1>
@@ -252,8 +213,8 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
             <Download className="w-4 h-4" />
           </button>
           <button 
-            onClick={() => setShowVendorModal(true)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md`}
+            onClick={() => setShowCreateModal(true)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white' : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'} shadow-md`}
           >
             <Plus className="w-4 h-4" /> Add New
           </button>
@@ -269,7 +230,7 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
             placeholder="Search by name, GST No, address, type, contact person, phone, or email..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+            className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
           />
         </div>
       </div>
@@ -370,9 +331,9 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
                           e?.stopPropagation?.();
                           handleToggleStatus(row.id);
                         }}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#6B8E23] focus:ring-offset-2 cursor-pointer ${
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#C2D642] focus:ring-offset-2 cursor-pointer ${
                           row.status === 'Active'
-                            ? 'bg-[#6B8E23]'
+                            ? 'bg-[#C2D642]'
                             : 'bg-slate-400'
                         }`}
                         role="switch"
@@ -425,197 +386,29 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
         </div>
       </div>
 
-      {/* Add Vendor Modal */}
-      {showVendorModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className={`w-full max-w-2xl rounded-xl border ${cardClass} shadow-2xl max-h-[90vh] overflow-y-auto`}>
-            {/* Modal Header */}
-            <div className={`flex items-center justify-between p-6 border-b border-inherit`}>
-              <div>
-                <h2 className={`text-xl font-black ${textPrimary}`}>Add New Vendor</h2>
-                <p className={`text-sm ${textSecondary} mt-1`}>Enter vendor details below</p>
-              </div>
-              <button
-                onClick={handleCloseModal}
-                className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
-              >
-                <X className={`w-5 h-5 ${textSecondary}`} />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-6 space-y-6">
-              {/* Vendor Information Section */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Vendor Name */}
-                <div>
-                  <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                    Vendor Name <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    name="name"
-                    value={formData.name}
-                    onChange={handleInputChange}
-                    placeholder="Enter Vendor Name"
-                    className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                      isDark 
-                        ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
-                        : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
-                    } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                  />
-                </div>
-
-                {/* Type */}
-                <div>
-                  <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                    Type <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    name="type"
-                    value={formData.type}
-                    onChange={handleInputChange}
-                    className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
-                      isDark 
-                        ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
-                        : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                    } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none ${!formData.type ? 'border-red-500' : ''}`}
-                  >
-                    <option value="">----Select Vendor Type----</option>
-                    <option value="supplier">Supplier</option>
-                    <option value="contractor">Contractor</option>
-                    <option value="both">Both</option>
-                  </select>
-                </div>
-
-                {/* GST No */}
-                <div>
-                  <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                    GST No (If any)
-                  </label>
-                  <input
-                    type="text"
-                    name="gstNo"
-                    value={formData.gstNo}
-                    onChange={handleInputChange}
-                    placeholder="Enter Your GST No. (If Any)"
-                    className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                      isDark 
-                        ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
-                        : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
-                    } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                  />
-                </div>
-
-                {/* Address */}
-                <div>
-                  <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                    Address <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    name="address"
-                    value={formData.address}
-                    onChange={handleInputChange}
-                    placeholder="Enter Your Address"
-                    className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                      isDark 
-                        ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
-                        : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
-                    } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                  />
-                </div>
-              </div>
-
-              {/* Separator */}
-              <div className={`border-t ${isDark ? 'border-slate-700' : 'border-slate-200'}`}></div>
-
-              {/* Contact Details Section */}
-              <div className="space-y-4">
-                <h3 className={`text-lg font-black ${textPrimary}`}>CONTACT DETAILS</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Contact Person Name */}
-                  <div>
-                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                      Contact Person Name <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      name="contactPersonName"
-                      value={formData.contactPersonName}
-                      onChange={handleInputChange}
-                      placeholder="Enter Contact Person Name"
-                      className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                        isDark 
-                          ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
-                          : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
-                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                    />
-                  </div>
-
-                  {/* Mobile No */}
-                  <div>
-                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                      Mobile No <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="tel"
-                      name="phone"
-                      value={formData.phone}
-                      onChange={handleInputChange}
-                      placeholder="Enter Your Mobile No."
-                      className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                        isDark 
-                          ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
-                          : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
-                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                    />
-                  </div>
-
-                  {/* Email */}
-                  <div className="md:col-span-2">
-                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                      Email <span className="text-red-500">*</span>
-                    </label>
-                    <input
-                      type="email"
-                      name="email"
-                      value={formData.email}
-                      onChange={handleInputChange}
-                      placeholder="Enter Your Email Id"
-                      className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                        isDark 
-                          ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
-                          : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
-                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className={`flex items-center justify-end gap-3 p-6 border-t border-inherit`}>
-              <button
-                onClick={handleCloseModal}
-                className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
-                  isDark
-                    ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
-                    : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-                }`}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateVendor}
-                className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#6B8E23] hover:bg-[#5a7a1e] text-white transition-all shadow-md"
-              >
-                Create
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Create Vendor Modal */}
+      <CreateVendorModal
+        theme={theme}
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onSuccess={() => {
+          // Reload vendors from localStorage
+          const savedVendors = localStorage.getItem('vendors');
+          if (savedVendors) {
+            try {
+              const parsed = JSON.parse(savedVendors);
+              if (Array.isArray(parsed)) {
+                setVendors(parsed);
+              }
+            } catch (e) {
+              // Keep current vendors if parsing fails
+            }
+          }
+        }}
+        defaultVendors={defaultVendorsState}
+        userVendors={vendors}
+        onVendorCreated={handleVendorCreated}
+      />
     </div>
   );
 };

@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
-import { Package, MoreVertical, Search, ArrowUpDown, Download, Plus, X } from 'lucide-react';
+import { Package, MoreVertical, Search, ArrowUpDown, Download, Plus } from 'lucide-react';
+import CreateUnitModal from './Modals/CreateUnitModal';
 
 interface UnitsProps {
   theme: ThemeType;
@@ -21,13 +22,7 @@ interface Unit {
 const Units: React.FC<UnitsProps> = ({ theme }) => {
   const toast = useToast();
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [showUnitModal, setShowUnitModal] = useState<boolean>(false);
-  const [formData, setFormData] = useState({
-    name: '',
-    code: '',
-    conversion: '',
-    factor: ''
-  });
+  const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   
   const defaultUnits: Unit[] = [
     { id: '1', name: 'Bags', code: 'Bags', conversion: 'Base Unit', factor: '1', status: 'Active' },
@@ -99,61 +94,31 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
     );
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
+  const handleUnitCreated = (newUnit: Unit) => {
+    setUnits(prev => [...prev, newUnit]);
   };
 
-  const handleCloseModal = () => {
-    setShowUnitModal(false);
-    setFormData({
-      name: '',
-      code: '',
-      conversion: '',
-      factor: ''
-    });
-  };
-
-  const handleCreateUnit = () => {
-    const missingFields: string[] = [];
-    
-    if (!formData.name) missingFields.push('Unit Name');
-    if (!formData.code) missingFields.push('Unit Code');
-    if (!formData.conversion) missingFields.push('Unit Conversion');
-    if (!formData.factor) missingFields.push('Unit Conversion Factor');
-    
-    if (missingFields.length > 0) {
-      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
-      return;
-    }
-
-    // Check if unit code already exists
-    const codeExists = units.some(unit => unit.code.toLowerCase() === formData.code.toLowerCase());
-    if (codeExists) {
-      toast.showError('Unit code already exists. Please use a different code.');
-      return;
-    }
-
-    const newUnit: Unit = {
-      id: Date.now().toString(),
-      name: formData.name,
-      code: formData.code,
-      conversion: formData.conversion,
-      factor: formData.factor,
-      status: 'Active'
+  // Listen for unitsUpdated event
+  useEffect(() => {
+    const handleUnitsUpdated = () => {
+      const savedUnits = localStorage.getItem('units');
+      if (savedUnits) {
+        try {
+          const parsed = JSON.parse(savedUnits);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setUnits(parsed);
+          }
+        } catch (e) {
+          // Keep current units if parsing fails
+        }
+      }
     };
 
-    try {
-      setUnits(prev => [...prev, newUnit]);
-      handleCloseModal();
-      toast.showSuccess('Unit added successfully');
-    } catch (error) {
-      console.error('Error saving unit:', error);
-      toast.showError('Error saving unit. Please try again.');
-    }
-  };
+    window.addEventListener('unitsUpdated', handleUnitsUpdated);
+    return () => {
+      window.removeEventListener('unitsUpdated', handleUnitsUpdated);
+    };
+  }, []);
 
   // Filter units based on search query
   const filteredUnits = useMemo(() => {
@@ -197,8 +162,8 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
     <div className="space-y-6">
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-4">
-          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5'}`}>
-            <Package className="w-6 h-6 text-[#6B8E23]" />
+          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
+            <Package className="w-6 h-6 text-[#C2D642]" />
           </div>
           <div>
             <h1 className={`text-2xl font-black tracking-tight ${textPrimary}`}>Units</h1>
@@ -220,8 +185,8 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
             <Download className="w-4 h-4" />
           </button>
           <button 
-            onClick={() => setShowUnitModal(true)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md`}
+            onClick={() => setShowCreateModal(true)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white' : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'} shadow-md`}
           >
             <Plus className="w-4 h-4" /> Add New
           </button>
@@ -237,7 +202,7 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
             placeholder="Search by unit name, code, or conversion..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+            className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
           />
         </div>
       </div>
@@ -305,9 +270,9 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
                     <td className={`px-6 py-4`}>
                       <button
                         onClick={(e) => handleToggleStatus(e, row.id)}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#6B8E23] focus:ring-offset-2 cursor-pointer ${
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#C2D642] focus:ring-offset-2 cursor-pointer ${
                           row.status === 'Active'
-                            ? 'bg-[#6B8E23]'
+                            ? 'bg-[#C2D642]'
                             : 'bg-slate-400'
                         }`}
                         role="switch"
@@ -364,125 +329,29 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
         </div>
       </div>
 
-      {/* Add Unit Modal */}
-      {showUnitModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className={`w-full max-w-2xl rounded-xl border ${cardClass} shadow-2xl max-h-[90vh] overflow-y-auto`}>
-            {/* Modal Header */}
-            <div className={`flex items-center justify-between p-6 border-b border-inherit`}>
-              <div>
-                <h2 className={`text-xl font-black ${textPrimary}`}>Add New Unit</h2>
-                <p className={`text-sm ${textSecondary} mt-1`}>Enter unit details below</p>
-              </div>
-              <button
-                onClick={handleCloseModal}
-                className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
-              >
-                <X className={`w-5 h-5 ${textSecondary}`} />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-6 space-y-6">
-              {/* Unit Name */}
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Unit Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  name="name"
-                  value={formData.name}
-                  onChange={handleInputChange}
-                  placeholder="Enter unit name (e.g., Bags, Nos)"
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                    isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
-                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                />
-              </div>
-
-              {/* Unit Code */}
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Unit Code <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  name="code"
-                  value={formData.code}
-                  onChange={handleInputChange}
-                  placeholder="Enter unit code (e.g., Bags, Nos)"
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                    isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
-                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                />
-              </div>
-
-              {/* Unit Conversion */}
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Unit Conversion <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  name="conversion"
-                  value={formData.conversion}
-                  onChange={handleInputChange}
-                  placeholder="Enter conversion type (e.g., Base Unit, Cubic Meter)"
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                    isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
-                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                />
-              </div>
-
-              {/* Unit Conversion Factor */}
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Unit Conversion Factor <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  name="factor"
-                  value={formData.factor}
-                  onChange={handleInputChange}
-                  placeholder="Enter conversion factor (e.g., 1, 0.9144, 100)"
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                    isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
-                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                />
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className={`flex items-center justify-end gap-3 p-6 border-t border-inherit`}>
-              <button
-                onClick={handleCloseModal}
-                className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
-                  isDark
-                    ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
-                    : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-                }`}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateUnit}
-                className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#6B8E23] hover:bg-[#5a7a1e] text-white transition-all shadow-md"
-              >
-                Create
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Create Unit Modal */}
+      <CreateUnitModal
+        theme={theme}
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onSuccess={() => {
+          // Reload units from localStorage
+          const savedUnits = localStorage.getItem('units');
+          if (savedUnits) {
+            try {
+              const parsed = JSON.parse(savedUnits);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                setUnits(parsed);
+              }
+            } catch (e) {
+              // Keep current units if parsing fails
+            }
+          }
+        }}
+        defaultUnits={defaultUnits}
+        userUnits={units}
+        onUnitCreated={handleUnitCreated}
+      />
     </div>
   );
 };

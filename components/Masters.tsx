@@ -92,8 +92,8 @@ const Masters: React.FC<MastersProps> = ({ theme, currentView }) => {
       {/* Header */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-4">
-          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5'}`}>
-            <Database className="w-6 h-6 text-[#6B8E23]" />
+          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
+            <Database className="w-6 h-6 text-[#C2D642]" />
           </div>
           <div>
             <h1 className={`text-2xl font-black tracking-tight ${textPrimary}`}>Master Data</h1>
@@ -113,15 +113,15 @@ const Masters: React.FC<MastersProps> = ({ theme, currentView }) => {
               key={item.viewType}
               onClick={() => router.push(item.path)}
               className={`rounded-xl border ${cardClass} p-6 hover:shadow-lg transition-all duration-300 cursor-pointer group ${
-                isDark ? 'hover:border-[#6B8E23]/50' : 'hover:border-[#6B8E23]/30'
+                isDark ? 'hover:border-[#C2D642]/50' : 'hover:border-[#C2D642]/30'
               }`}
             >
               <div className="flex items-center gap-4 mb-4">
-                <div className={`p-3 rounded-xl ${isDark ? 'bg-[#6B8E23]/10 group-hover:bg-[#6B8E23]/20' : 'bg-[#6B8E23]/5 group-hover:bg-[#6B8E23]/10'} transition-colors`}>
-                  <ItemIcon className="w-6 h-6 text-[#6B8E23]" />
+                <div className={`p-3 rounded-xl ${isDark ? 'bg-[#C2D642]/10 group-hover:bg-[#C2D642]/20' : 'bg-[#C2D642]/5 group-hover:bg-[#C2D642]/10'} transition-colors`}>
+                  <ItemIcon className="w-6 h-6 text-[#C2D642]" />
                 </div>
                 <h3 className={`text-lg font-black ${textPrimary} flex-1`}>{item.name}</h3>
-                <ArrowRight className={`w-5 h-5 ${textSecondary} group-hover:text-[#6B8E23] group-hover:translate-x-1 transition-all`} />
+                <ArrowRight className={`w-5 h-5 ${textSecondary} group-hover:text-[#C2D642] group-hover:translate-x-1 transition-all`} />
               </div>
               <p className={`text-sm ${textSecondary}`}>
                 Manage {item.name.toLowerCase()} information and details

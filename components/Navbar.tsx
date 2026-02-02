@@ -44,7 +44,7 @@ const Navbar: React.FC<NavbarProps> = ({ onLoginClick, onNavigateToAbout, scroll
         <div className="flex items-center justify-between h-16">
           <div className="flex items-center gap-2">
             <img src="/logo.png" alt="Koncite Logo" className="w-12 h-12 object-contain" />
-            <span className={`font-black text-2xl tracking-tight ${textPrimary}`}>
+            <span className={`font-black text-2xl tracking-tight ${textPrimary} mt-1`}>
               Koncite
             </span>
           </div>
@@ -52,7 +52,7 @@ const Navbar: React.FC<NavbarProps> = ({ onLoginClick, onNavigateToAbout, scroll
           <nav className="hidden md:flex items-center gap-8">
             <button
               onClick={() => handleScrollToSection('home')}
-              className={`text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors relative pb-1 ${
+              className={`text-base font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors relative pb-1 ${
                 activeSection === 'home' ? 'text-[#C2D642]' : ''
               }`}
             >
@@ -63,7 +63,7 @@ const Navbar: React.FC<NavbarProps> = ({ onLoginClick, onNavigateToAbout, scroll
             </button>
             <button
               onClick={() => handleScrollToSection('features')}
-              className={`text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors relative pb-1 ${
+              className={`text-base font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors relative pb-1 ${
                 activeSection === 'features' ? 'text-[#C2D642]' : ''
               }`}
             >
@@ -75,7 +75,7 @@ const Navbar: React.FC<NavbarProps> = ({ onLoginClick, onNavigateToAbout, scroll
             {onNavigateToAbout && (
               <button
                 onClick={handleAboutClick}
-                className={`text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors relative pb-1 ${
+                className={`text-base font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors relative pb-1 ${
                   activeSection === 'about' ? 'text-[#C2D642]' : ''
                 }`}
               >
@@ -87,7 +87,7 @@ const Navbar: React.FC<NavbarProps> = ({ onLoginClick, onNavigateToAbout, scroll
             )}
             <button
               onClick={() => handleScrollToSection('pricing')}
-              className={`text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors relative pb-1 ${
+              className={`text-base font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors relative pb-1 ${
                 activeSection === 'pricing' ? 'text-[#C2D642]' : ''
               }`}
             >
@@ -98,7 +98,7 @@ const Navbar: React.FC<NavbarProps> = ({ onLoginClick, onNavigateToAbout, scroll
             </button>
             <button
               onClick={() => handleScrollToSection('contact')}
-              className={`text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors relative pb-1 ${
+              className={`text-base font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors relative pb-1 ${
                 activeSection === 'contact' ? 'text-[#C2D642]' : ''
               }`}
             >
@@ -115,7 +115,7 @@ const Navbar: React.FC<NavbarProps> = ({ onLoginClick, onNavigateToAbout, scroll
               className={`p-2 ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-200'} rounded-lg transition-colors border ${borderClass}`}
               title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
             >
-              {isDark ? <Sun className="w-5 h-5 text-slate-300" /> : <Moon className="w-5 h-5 text-slate-700" />}
+              {isDark ? <Sun className="w-5 h-5 text-[#C2D642]" /> : <Moon className="w-5 h-5 text-[#C2D642]" />}
             </button>
             <button
               onClick={onLoginClick}
@@ -144,7 +144,7 @@ const Navbar: React.FC<NavbarProps> = ({ onLoginClick, onNavigateToAbout, scroll
             <nav className="flex flex-col gap-4">
               <button
                 onClick={() => handleScrollToSection('home')}
-                className={`text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors text-left relative pb-1 ${
+                className={`text-base font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors text-left relative pb-1 ${
                   activeSection === 'home' ? 'text-[#C2D642]' : ''
                 }`}
               >
@@ -156,7 +156,7 @@ const Navbar: React.FC<NavbarProps> = ({ onLoginClick, onNavigateToAbout, scroll
               {onNavigateToAbout && (
                 <button
                   onClick={handleAboutClick}
-                  className={`text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors text-left relative pb-1 ${
+                  className={`text-base font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors text-left relative pb-1 ${
                     activeSection === 'about' ? 'text-[#C2D642]' : ''
                   }`}
                 >
@@ -168,7 +168,7 @@ const Navbar: React.FC<NavbarProps> = ({ onLoginClick, onNavigateToAbout, scroll
               )}
               <button
                 onClick={() => handleScrollToSection('features')}
-                className={`text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors text-left relative pb-1 ${
+                className={`text-base font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors text-left relative pb-1 ${
                   activeSection === 'features' ? 'text-[#C2D642]' : ''
                 }`}
               >
@@ -179,7 +179,7 @@ const Navbar: React.FC<NavbarProps> = ({ onLoginClick, onNavigateToAbout, scroll
               </button>
               <button
                 onClick={() => handleScrollToSection('pricing')}
-                className={`text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors text-left relative pb-1 ${
+                className={`text-base font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors text-left relative pb-1 ${
                   activeSection === 'pricing' ? 'text-[#C2D642]' : ''
                 }`}
               >
@@ -190,7 +190,7 @@ const Navbar: React.FC<NavbarProps> = ({ onLoginClick, onNavigateToAbout, scroll
               </button>
               <button
                 onClick={() => handleScrollToSection('contact')}
-                className={`text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors text-left relative pb-1 ${
+                className={`text-base font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors text-left relative pb-1 ${
                   activeSection === 'contact' ? 'text-[#C2D642]' : ''
                 }`}
               >

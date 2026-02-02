@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
-import { Wrench, MoreVertical, Download, Plus, Search, X, FileSpreadsheet, Upload, ArrowUpDown } from 'lucide-react';
+import { Wrench, MoreVertical, Download, Plus, Search, FileSpreadsheet, Upload, ArrowUpDown } from 'lucide-react';
+import CreateAssetEquipmentModal from './Modals/CreateAssetEquipmentModal';
 
 interface AssetEquipment {
   id: string;
@@ -24,14 +25,9 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'list' | 'bulkUpload' | 'openingStock'>('list');
   const [openingStockSubTab, setOpeningStockSubTab] = useState<'bulkUpload' | 'available'>('bulkUpload');
-  const [showAssetModal, setShowAssetModal] = useState<boolean>(false);
+  const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [userAssets, setUserAssets] = useState<AssetEquipment[]>([]);
   const [defaultAssetsStatus, setDefaultAssetsStatus] = useState<Record<string, 'Active' | 'Inactive'>>({});
-  const [formData, setFormData] = useState({
-    machineryName: '',
-    unit: '',
-    specification: ''
-  });
   const [openingStockForm, setOpeningStockForm] = useState({
     project: 'Demo Data',
     storeWarehouse: 'Main Store',
@@ -165,21 +161,31 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
     );
   }, [searchQuery, allAssets]);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
+  const handleAssetCreated = (newAsset: AssetEquipment) => {
+    setUserAssets(prev => [...prev, newAsset]);
   };
 
-  const handleCloseModal = () => {
-    setShowAssetModal(false);
-    setFormData({
-      machineryName: '',
-      unit: '',
-      specification: ''
-    });
-  };
+  // Listen for assetsEquipmentsUpdated event
+  useEffect(() => {
+    const handleAssetsUpdated = () => {
+      const savedAssets = localStorage.getItem('assetsEquipments');
+      if (savedAssets) {
+        try {
+          const parsed = JSON.parse(savedAssets);
+          if (Array.isArray(parsed)) {
+            setUserAssets(parsed);
+          }
+        } catch (e) {
+          // Keep current assets if parsing fails
+        }
+      }
+    };
+
+    window.addEventListener('assetsEquipmentsUpdated', handleAssetsUpdated);
+    return () => {
+      window.removeEventListener('assetsEquipmentsUpdated', handleAssetsUpdated);
+    };
+  }, []);
 
   const handleToggleStatus = (e: React.MouseEvent<HTMLButtonElement>, assetId: string) => {
     e?.stopPropagation?.();
@@ -226,41 +232,6 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
         
         return updated;
       });
-    }
-  };
-
-  const handleCreateAsset = () => {
-    const missingFields: string[] = [];
-    
-    if (!formData.machineryName) missingFields.push('Machinery Name');
-    if (!formData.unit) missingFields.push('Unit');
-    if (!formData.specification) missingFields.push('Specification');
-    
-    if (missingFields.length > 0) {
-      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
-      return;
-    }
-
-    // Generate an ID
-    const id = 'AST' + String(defaultAssets.length + userAssets.length + 1).padStart(3, '0');
-
-    const newAsset: AssetEquipment = {
-      id: Date.now().toString(),
-      name: formData.machineryName,
-      code: id,
-      unit: formData.unit,
-      specification: formData.specification,
-      status: 'Active',
-      createdAt: new Date().toISOString()
-    };
-
-    try {
-      setUserAssets(prev => [...prev, newAsset]);
-      handleCloseModal();
-      toast.showSuccess('Asset created successfully');
-    } catch (error) {
-      console.error('Error saving asset:', error);
-      toast.showError('Error saving asset. Please try again.');
     }
   };
 
@@ -340,8 +311,8 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
     <div className="space-y-4 sm:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-2">
         <div className="flex items-center gap-3 sm:gap-4">
-          <div className={`p-2 sm:p-3 rounded-xl ${isDark ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5'}`}>
-            <Wrench className="w-5 h-5 sm:w-6 sm:h-6 text-[#6B8E23]" />
+          <div className={`p-2 sm:p-3 rounded-xl ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
+            <Wrench className="w-5 h-5 sm:w-6 sm:h-6 text-[#C2D642]" />
           </div>
           <div>
             <h1 className={`text-xl sm:text-2xl font-black tracking-tight ${textPrimary}`}>Assets Equipments</h1>
@@ -364,8 +335,8 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
               <Download className="w-4 h-4" />
             </button>
             <button 
-              onClick={() => setShowAssetModal(true)}
-              className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md`}
+              onClick={() => setShowCreateModal(true)}
+              className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white' : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'} shadow-md`}
             >
               <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Add New</span><span className="sm:hidden">Add</span>
             </button>
@@ -432,7 +403,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                 placeholder="Search..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
               />
             </div>
           </div>
@@ -482,9 +453,9 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                     <td className={`px-3 sm:px-6 py-3 sm:py-4`}>
                       <button
                         onClick={(e) => handleToggleStatus(e, row.id)}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#6B8E23] focus:ring-offset-2 cursor-pointer ${
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#C2D642] focus:ring-offset-2 cursor-pointer ${
                           row.status === 'Active'
-                            ? 'bg-[#6B8E23]'
+                            ? 'bg-[#C2D642]'
                             : 'bg-slate-400'
                         }`}
                         role="switch"
@@ -546,8 +517,8 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
               onClick={handleExportMasterData}
               className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
                 isDark
-                  ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
-                  : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                  ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
+                  : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
               } shadow-md`}
             >
               <FileSpreadsheet className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
@@ -557,8 +528,8 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
               onClick={handleImportMasterData}
               className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
                 isDark
-                  ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
-                  : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                  ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
+                  : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
               } shadow-md`}
             >
               <Upload className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
@@ -608,8 +579,8 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                   onClick={handleExportMasterData}
                   className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
                     isDark
-                      ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
-                      : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                      ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
+                      : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
                   } shadow-md`}
                 >
                   <FileSpreadsheet className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
@@ -635,7 +606,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                         isDark 
                           ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
                           : 'bg-white border-slate-200 text-slate-900'
-                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                      } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                     />
                   </div>
 
@@ -652,7 +623,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                         isDark 
                           ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
                           : 'bg-white border-slate-200 text-slate-900'
-                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                      } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                     />
                   </div>
 
@@ -669,7 +640,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                         isDark 
                           ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
                           : 'bg-white border-slate-200 text-slate-900'
-                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                      } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                     />
                   </div>
 
@@ -715,8 +686,8 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                       }}
                       className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-lg text-sm font-bold transition-all ${
                         isDark
-                          ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
-                          : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                          ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
+                          : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
                       } shadow-md`}
                     >
                       Import Data
@@ -746,7 +717,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                         isDark 
                           ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
                           : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                      } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                     >
                       <option value="">----Select Project----</option>
                       {availableProjects.map((project, idx) => (
@@ -770,7 +741,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                         isDark 
                           ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
                           : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                      } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                      } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                     >
                       <option value="">----Select Store/Warehouses----</option>
                       {availableWarehouses.map((warehouse, idx) => (
@@ -802,7 +773,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                           isDark 
                             ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
                             : 'bg-white border-slate-200 text-slate-900'
-                        } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                        } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                       >
                         <option value={10}>10</option>
                         <option value={25}>25</option>
@@ -824,7 +795,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                           isDark 
                             ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
                             : 'bg-white border-slate-200 text-slate-900'
-                        } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                        } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                         placeholder="Search..."
                       />
                     </div>
@@ -1001,116 +972,31 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
         </>
       )}
 
-      {/* Add Asset Modal */}
-      {showAssetModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/50 backdrop-blur-sm">
-          <div className={`w-full max-w-2xl rounded-xl border ${cardClass} shadow-2xl max-h-[90vh] overflow-y-auto`}>
-            {/* Modal Header */}
-            <div className={`flex items-center justify-between p-4 sm:p-6 border-b border-inherit`}>
-              <div>
-                <h2 className={`text-lg sm:text-xl font-black ${textPrimary}`}>Add New Asset/Equipment</h2>
-                <p className={`text-xs sm:text-sm ${textSecondary} mt-1`}>Enter asset details below</p>
-              </div>
-              <button
-                onClick={handleCloseModal}
-                className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors flex-shrink-0`}
-              >
-                <X className={`w-5 h-5 ${textSecondary}`} />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
-              {/* Machinery Name */}
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Name of Machinery <span className="text-red-500">*</span>
-                </label>
-                <select
-                  name="machineryName"
-                  value={formData.machineryName}
-                  onChange={handleInputChange}
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
-                    isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
-                      : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                >
-                  <option value="">-- Select Machinery Name --</option>
-                  {machineryOptions.map((option, idx) => (
-                    <option key={idx} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Unit */}
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Select Unit <span className="text-red-500">*</span>
-                </label>
-                <select
-                  name="unit"
-                  value={formData.unit}
-                  onChange={handleInputChange}
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
-                    isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
-                      : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                >
-                  <option value="">-- Select Unit --</option>
-                  {unitOptions.map((option, idx) => (
-                    <option key={idx} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Asset Specification */}
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Asset Specification <span className="text-red-500">*</span>
-                </label>
-                <textarea
-                  name="specification"
-                  value={formData.specification}
-                  onChange={handleInputChange}
-                  placeholder="Enter asset specification..."
-                  rows={4}
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                    isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#6B8E23]' 
-                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#6B8E23]'
-                  } border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none resize-none`}
-                />
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className={`flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2 sm:gap-3 p-4 sm:p-6 border-t border-inherit`}>
-              <button
-                onClick={handleCloseModal}
-                className={`px-4 sm:px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
-                  isDark
-                    ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
-                    : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-                }`}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateAsset}
-                className="px-4 sm:px-6 py-2.5 rounded-lg text-sm font-bold bg-[#6B8E23] hover:bg-[#5a7a1e] text-white transition-all shadow-md"
-              >
-                Create
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Create Asset/Equipment Modal */}
+      <CreateAssetEquipmentModal
+        theme={theme}
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onSuccess={() => {
+          // Reload assets from localStorage
+          const savedAssets = localStorage.getItem('assetsEquipments');
+          if (savedAssets) {
+            try {
+              const parsed = JSON.parse(savedAssets);
+              if (Array.isArray(parsed)) {
+                setUserAssets(parsed);
+              }
+            } catch (e) {
+              // Keep current assets if parsing fails
+            }
+          }
+        }}
+        defaultAssets={defaultAssets}
+        userAssets={userAssets}
+        machineryOptions={machineryOptions}
+        unitOptions={unitOptions}
+        onAssetCreated={handleAssetCreated}
+      />
     </div>
   );
 };
