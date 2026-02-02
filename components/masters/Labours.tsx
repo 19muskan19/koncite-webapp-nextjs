@@ -148,7 +148,7 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
       // Toggle default labour status
       setDefaultLaboursStatus(prev => {
         const currentStatus = prev[labourId] || defaultLabours.find(l => l.id === labourId)?.status || 'Active';
-        const newStatus = currentStatus === 'Active' ? 'Inactive' : 'Active';
+        const newStatus: 'Active' | 'Inactive' = currentStatus === 'Active' ? 'Inactive' : 'Active';
         const updated = { ...prev, [labourId]: newStatus };
         
         // Save to localStorage
@@ -165,7 +165,7 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
       setUserLabours(prev => {
         const updated = prev.map(labour =>
           labour.id === labourId
-            ? { ...labour, status: labour.status === 'Active' ? 'Inactive' : 'Active' }
+            ? { ...labour, status: (labour.status === 'Active' ? 'Inactive' : 'Active') as 'Active' | 'Inactive' }
             : labour
         );
         

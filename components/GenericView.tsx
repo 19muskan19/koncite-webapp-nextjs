@@ -166,6 +166,11 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
     return null;
   }
   
+  // Type guard: ensure config is not null
+  if (!config) {
+    return null;
+  }
+  
   const Icon = config.icon;
 
   return (

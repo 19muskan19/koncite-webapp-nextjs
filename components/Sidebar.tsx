@@ -25,12 +25,19 @@ import {
 } from 'lucide-react';
 import { ViewType, ThemeType } from '@/types';
 
+interface NavItemChild {
+  label: string;
+  id: ViewType | string;
+  path?: string;
+  children?: NavItemChild[];
+}
+
 interface NavItem {
   id: ViewType | string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   path?: string;
-  children?: { label: string; id: ViewType | string; path?: string; children?: { label: string; id: ViewType | string; path: string }[] }[];
+  children?: NavItemChild[];
 }
 
 interface SidebarProps {
@@ -420,19 +427,22 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
                                         </div>
                                         {isThirdLevelOpen && nestedChild.children && (
                                           <div className="ml-4 mt-1 border-l border-inherit pl-3 space-y-1">
-                                            {nestedChild.children.map((thirdLevelChild) => (
-                                              <Link
-                                                key={thirdLevelChild.id}
-                                                href={thirdLevelChild.path}
-                                                onClick={(e) => {
-                                                  e.stopPropagation();
-                                                  handleChildClick(e, item.id.toString(), thirdLevelChild.path);
-                                                }}
-                                                className={`text-[11px] font-bold py-1 px-2 rounded-md cursor-pointer transition-colors block ${isActive(thirdLevelChild.path) ? (isDark ? 'text-slate-300 bg-slate-700/30' : 'text-slate-700 bg-slate-100') : 'opacity-40 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}`}
-                                              >
-                                                {thirdLevelChild.label}
-                                              </Link>
-                                            ))}
+                                            {nestedChild.children.map((thirdLevelChild) => {
+                                              if (!thirdLevelChild.path) return null;
+                                              return (
+                                                <Link
+                                                  key={thirdLevelChild.id}
+                                                  href={thirdLevelChild.path}
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleChildClick(e, item.id.toString(), thirdLevelChild.path);
+                                                  }}
+                                                  className={`text-[11px] font-bold py-1 px-2 rounded-md cursor-pointer transition-colors block ${isActive(thirdLevelChild.path) ? (isDark ? 'text-slate-300 bg-slate-700/30' : 'text-slate-700 bg-slate-100') : 'opacity-40 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}`}
+                                                >
+                                                  {thirdLevelChild.label}
+                                                </Link>
+                                              );
+                                            })}
                                           </div>
                                         )}
                                       </div>
@@ -466,6 +476,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
                           </div>
                         );
                       }
+                      if (!child.path) return null;
                       return (
                         <Link
                           key={child.id}

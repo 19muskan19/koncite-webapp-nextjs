@@ -45,7 +45,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
 
-  const classOptions = [
+  const classOptions: Array<{ value: 'A' | 'B' | 'C'; label: string }> = [
     { value: 'A', label: 'Class A' },
     { value: 'B', label: 'Class B' },
     { value: 'C', label: 'Class C' },
