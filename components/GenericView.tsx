@@ -25,6 +25,14 @@ interface GenericViewProps {
   currentView: ViewType;
 }
 
+interface ViewConfig {
+  title: string;
+  icon: React.ComponentType<{ className?: string }>;
+  description: string;
+  columns: string[];
+  sampleData: Array<Record<string, string>>;
+}
+
 const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -36,7 +44,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
     return null;
   }
 
-  const getViewConfig = () => {
+  const getViewConfig = (): ViewConfig => {
     switch (currentView) {
       case ViewType.COMPANY_USERS:
       case ViewType.MANAGE_TEAMS:
