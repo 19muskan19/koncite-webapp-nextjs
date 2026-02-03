@@ -1,8 +1,10 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { X, UserPlus, Mail, Lock, Phone, Building, Search, ChevronDown, Check } from 'lucide-react';
+import { X, UserPlus, Mail, Lock, Phone, Building, Loader2 } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
+import { useToast } from '../contexts/ToastContext';
+import { authAPI, commonAPI, Country } from '../services/api';
 
 interface SignupModalProps {
   isOpen: boolean;
@@ -14,57 +16,65 @@ interface SignupData {
   name: string;
   email: string;
   phone: string;
+  country: number | string; // Country ID
+  countryCode: string; // Country code for user phone (e.g., '91', '971')
   password: string;
   confirmPassword: string;
   companyName: string;
-  country: string;
+  companyAddress: string;
+  companyPhone: string;
+  companyCountryCode: string; // Country code for company phone
+  profileImage: File | null;
   agreedToTerms: boolean;
 }
 
-// Comprehensive list of countries
-const countries = [
-  'Afghanistan', 'Albania', 'Algeria', 'Argentina', 'Australia', 'Austria', 'Bangladesh', 'Belgium', 'Brazil', 'Bulgaria',
-  'Canada', 'Chile', 'China', 'Colombia', 'Croatia', 'Czech Republic', 'Denmark', 'Egypt', 'Finland', 'France',
-  'Germany', 'Greece', 'Hong Kong', 'Hungary', 'India', 'Indonesia', 'Iran', 'Iraq', 'Ireland', 'Israel',
-  'Italy', 'Japan', 'Kenya', 'Malaysia', 'Mexico', 'Netherlands', 'New Zealand', 'Nigeria', 'Norway', 'Pakistan',
-  'Philippines', 'Poland', 'Portugal', 'Qatar', 'Romania', 'Russia', 'Saudi Arabia', 'Singapore', 'South Africa', 'South Korea',
-  'Spain', 'Sweden', 'Switzerland', 'Taiwan', 'Thailand', 'Turkey', 'Ukraine', 'United Arab Emirates', 'United Kingdom', 'United States',
-  'Vietnam', 'Zimbabwe'
-].sort();
-
 const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) => {
   const { isDark } = useTheme();
+  const toast = useToast();
   const [formData, setFormData] = useState<SignupData>({
     name: '',
     email: '',
     phone: '',
+    country: '', // Country ID - will be set based on country selection
+    countryCode: '91', // Default to India
     password: '',
     confirmPassword: '',
     companyName: '',
-    country: '',
+    companyAddress: '',
+    companyPhone: '',
+    companyCountryCode: '91', // Default to India
+    profileImage: null,
     agreedToTerms: false
   });
   const [errors, setErrors] = useState<Partial<SignupData>>({});
-  const [showCountryDropdown, setShowCountryDropdown] = useState(false);
-  const [countrySearch, setCountrySearch] = useState('');
-  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [countries, setCountries] = useState<Country[]>([]);
+  const [isLoadingCountries, setIsLoadingCountries] = useState(false);
 
+  // Fetch countries on mount
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setShowCountryDropdown(false);
-      }
-    };
-
-    if (showCountryDropdown) {
-      document.addEventListener('mousedown', handleClickOutside);
+    if (isOpen && countries.length === 0 && !isLoadingCountries) {
+      fetchCountries();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [showCountryDropdown]);
+  // Fetch countries from API
+  const fetchCountries = async () => {
+    setIsLoadingCountries(true);
+    try {
+      const fetchedCountries = await commonAPI.getCountries();
+      setCountries(fetchedCountries);
+    } catch (error) {
+      console.error('Failed to fetch countries:', error);
+      toast.showError('Failed to load countries. Please refresh the page.');
+    } finally {
+      setIsLoadingCountries(false);
+    }
+  };
 
+
+  // Early return AFTER all hooks
   if (!isOpen) return null;
 
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -73,15 +83,12 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
   const borderClass = isDark ? 'border-slate-700' : 'border-slate-300';
   const inputBg = isDark ? 'bg-slate-800' : 'bg-white';
 
-  const filteredCountries = countries.filter(country =>
-    country.toLowerCase().includes(countrySearch.toLowerCase())
-  );
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value, type, checked } = e.target;
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value, type } = e.target;
+    const checked = (e.target as HTMLInputElement).checked;
     
     // Phone number validation - only allow numbers
-    if (name === 'phone') {
+    if (name === 'phone' || name === 'companyPhone') {
       const numericValue = value.replace(/\D/g, ''); // Remove all non-digit characters
       setFormData(prev => ({
         ...prev,
@@ -136,10 +143,21 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
     }
   };
 
-  const handleCountrySelect = (country: string) => {
-    setFormData(prev => ({ ...prev, country }));
-    setShowCountryDropdown(false);
-    setCountrySearch('');
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] || null;
+    setFormData(prev => ({
+      ...prev,
+      profileImage: file
+    }));
+    
+    // Clear error for this field
+    if (errors.profileImage) {
+      setErrors(prev => {
+        const newErrors = { ...prev };
+        delete newErrors.profileImage;
+        return newErrors;
+      });
+    }
   };
 
   const validateForm = (): boolean => {
@@ -155,12 +173,16 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
       newErrors.email = 'Invalid email format';
     }
 
+    if (!formData.countryCode.trim()) {
+      newErrors.countryCode = 'Country code is required';
+    }
+
     if (!formData.phone.trim()) {
       newErrors.phone = 'Phone number is required';
     } else if (!/^\d+$/.test(formData.phone)) {
       newErrors.phone = 'Phone number must contain only numbers';
-    } else if (formData.phone.length < 10) {
-      newErrors.phone = 'Phone number must be at least 10 digits';
+    } else if (formData.phone.length < 10 || formData.phone.length > 15) {
+      newErrors.phone = 'Phone number must be between 10 and 15 digits';
     }
 
     if (!formData.password) {
@@ -179,6 +201,26 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
       newErrors.companyName = 'Company name is required';
     }
 
+    if (!formData.companyAddress.trim()) {
+      newErrors.companyAddress = 'Company address is required';
+    }
+
+    if (!formData.companyPhone.trim()) {
+      newErrors.companyPhone = 'Company phone is required';
+    } else if (!/^\d+$/.test(formData.companyPhone)) {
+      newErrors.companyPhone = 'Company phone must contain only numbers';
+    } else if (formData.companyPhone.length < 10 || formData.companyPhone.length > 15) {
+      newErrors.companyPhone = 'Company phone must be between 10 and 15 digits';
+    }
+
+    if (!formData.companyCountryCode.trim()) {
+      newErrors.companyCountryCode = 'Company country code is required';
+    }
+
+    if (!formData.countryCode.trim()) {
+      newErrors.countryCode = 'Country code is required';
+    }
+
     if (!formData.country) {
       newErrors.country = 'Please select a country';
     }
@@ -191,26 +233,180 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (validateForm()) {
+    if (!validateForm()) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    setErrors({});
+
+    // Double-check passwords match before sending
+    if (formData.password !== formData.confirmPassword) {
+      setErrors({ confirmPassword: 'Passwords do not match' });
+      setIsSubmitting(false);
+      toast.showError('Passwords do not match. Please check and try again.');
+      return;
+    }
+
+    try {
+      // Prepare FormData for Laravel API
+      const formDataToSend = new FormData();
+      
+      // Required user fields
+      formDataToSend.append('name', formData.name.trim());
+      formDataToSend.append('email', formData.email.trim().toLowerCase());
+      formDataToSend.append('password', formData.password);
+      formDataToSend.append('password_confirmation', formData.confirmPassword);
+      formDataToSend.append('phone', formData.phone.trim());
+      formDataToSend.append('country', String(formData.country)); // Country ID (integer)
+      formDataToSend.append('country_code', formData.countryCode);
+      
+      // Required company fields
+      formDataToSend.append('company_name', formData.companyName.trim());
+      formDataToSend.append('company_address', formData.companyAddress.trim());
+      formDataToSend.append('company_phone', formData.companyPhone.trim());
+      formDataToSend.append('company_country_code', formData.companyCountryCode);
+      
+      // Optional fields
+      if (formData.profileImage) {
+        formDataToSend.append('profile_images', formData.profileImage);
+      }
+
+      // Log the data being sent (for debugging)
+      console.log('=== SIGNUP MODAL DEBUG ===');
+      console.log('Form data before sending:', {
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone,
+        country: formData.country,
+        companyName: formData.companyName,
+        password: '***hidden***',
+        confirmPassword: '***hidden***'
+      });
+      console.log('FormData entries:');
+      for (const [key, value] of formDataToSend.entries()) {
+        console.log(`  ${key}:`, value);
+      }
+      console.log('==========================');
+
+      // Call Laravel API
+      const response = await authAPI.signup(formDataToSend);
+
+      // Verify response
+      console.log('=== SIGNUP RESPONSE ===');
+      console.log('Full Response:', JSON.stringify(response, null, 2));
+      console.log('Response status:', response.status);
+      console.log('Response message:', response.message);
+      console.log('User from response.user:', response.user);
+      console.log('User from response.data?.user:', response.data?.user);
+      console.log('User from response.data?.data?.user:', response.data?.data?.user);
+      console.log('======================');
+
+      // Check if signup was successful
+      const signupSuccess = response.status !== false && (response.user || response.data?.user || response.data?.data?.user);
+      
+      if (signupSuccess) {
+        const userData = response.user || response.data?.user || response.data?.data?.user;
+        console.log('Signup: User data found:', userData);
+        
+        toast.showSuccess(response.message || 'Account created successfully! Please verify your email with OTP.');
+        
+        // If user data is returned, dispatch event (though user still needs OTP verification)
+        if (userData && typeof window !== 'undefined') {
+          console.log('Signup: Dispatching userCreated event with user:', userData);
+          window.dispatchEvent(new CustomEvent('userCreated', { detail: { user: userData } }));
+        }
+      } else {
+        console.error('Signup: Response indicates failure or no user data returned');
+        console.error('Response structure:', response);
+        toast.showWarning('Signup request sent, but user data not returned. Please check database and Laravel logs.');
+      }
+      
+      // Store email for OTP verification
+      localStorage.setItem('pendingVerificationEmail', formData.email);
+      
+      // Call the onSignup callback if provided
       if (onSignup) {
         onSignup(formData);
       }
+
       // Reset form
       setFormData({
         name: '',
         email: '',
         phone: '',
+        country: '',
+        countryCode: '91',
         password: '',
         confirmPassword: '',
         companyName: '',
-        country: '',
+        companyAddress: '',
+        companyPhone: '',
+        companyCountryCode: '91',
+        profileImage: null,
         agreedToTerms: false
       });
       setErrors({});
+      
+      // Close modal and trigger OTP verification modal
       onClose();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('openOtpModal', { detail: { email: formData.email } }));
+      }
+    } catch (error: any) {
+      // Log full error for debugging
+      console.error('Signup Error:', error);
+
+      // Handle API errors
+      if (error.errors && Object.keys(error.errors).length > 0) {
+        // Laravel validation errors (422)
+        const apiErrors: Partial<SignupData> = {};
+        
+        // Map Laravel field names to form field names
+        Object.keys(error.errors).forEach((key) => {
+          const fieldMap: Record<string, keyof SignupData> = {
+            name: 'name',
+            email: 'email',
+            phone: 'phone',
+            password: 'password',
+            company_name: 'companyName',
+            country: 'country',
+          };
+          
+          const formField = fieldMap[key] || key as keyof SignupData;
+          if (error.errors[key] && Array.isArray(error.errors[key]) && error.errors[key].length > 0) {
+            // Laravel returns errors as arrays
+            apiErrors[formField] = error.errors[key][0] as any;
+          } else if (typeof error.errors[key] === 'string') {
+            // Sometimes errors might be strings
+            apiErrors[formField] = error.errors[key] as any;
+          }
+        });
+        
+        setErrors(apiErrors);
+        
+        // Show a general error message plus specific field errors
+        const errorMessage = error.message || 'Please fix the errors in the form';
+        toast.showError(errorMessage);
+        
+        // Log validation errors for debugging
+        console.error('Validation Errors:', apiErrors);
+      } else {
+        // Network or other errors
+        const errorMessage = error.message || 'Signup failed. Please try again.';
+        toast.showError(errorMessage);
+        
+        // If it's a 404, show additional help
+        if (error.status === 404 || errorMessage.includes('not found') || errorMessage.includes('endpoint')) {
+          console.error('API Endpoint Error:', errorMessage);
+          console.error('Please check LARAVEL_ENDPOINTS_GUIDE.md for help');
+        }
+      }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -250,7 +446,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
                 required
               />
             </div>
-            {errors.name && <p className="text-red-500 text-xs mt-1">{errors.name}</p>}
+            {errors.name && <p className="text-red-500 text-xs mt-1">{typeof errors.name === 'string' ? errors.name : 'Invalid name'}</p>}
           </div>
 
           {/* Email */}
@@ -270,35 +466,77 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
                 required
               />
             </div>
-            {errors.email && <p className="text-red-500 text-xs mt-1">{errors.email}</p>}
+            {errors.email && <p className="text-red-500 text-xs mt-1">{typeof errors.email === 'string' ? errors.email : 'Invalid email'}</p>}
           </div>
 
-          {/* Phone */}
+          {/* Phone with Country Code */}
           <div>
             <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>
               Phone Number <span className="text-red-500">*</span>
             </label>
-            <div className="relative">
-              <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-              <input
-                type="tel"
-                name="phone"
-                value={formData.phone}
-                onChange={handleInputChange}
-                onKeyPress={(e) => {
-                  // Only allow numbers
-                  if (!/[0-9]/.test(e.key) && e.key !== 'Backspace' && e.key !== 'Delete' && e.key !== 'Tab') {
-                    e.preventDefault();
-                  }
-                }}
-                pattern="[0-9]*"
-                inputMode="numeric"
-                className={`w-full pl-10 pr-4 py-3 border ${errors.phone ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
-                placeholder="Enter your phone number (numbers only)"
-                required
-              />
+            <div className="flex gap-2">
+              <div className="w-24">
+                <select
+                  name="countryCode"
+                  value={formData.countryCode}
+                  onChange={handleInputChange}
+                  className={`w-full px-3 py-3 border ${errors.countryCode ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
+                >
+                  <option value="91">+91 (IN)</option>
+                  <option value="971">+971 (AE)</option>
+                  <option value="1">+1 (US)</option>
+                  <option value="44">+44 (UK)</option>
+                </select>
+              </div>
+              <div className="flex-1 relative">
+                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                <input
+                  type="tel"
+                  name="phone"
+                  value={formData.phone}
+                  onChange={handleInputChange}
+                  onKeyPress={(e) => {
+                    // Only allow numbers
+                    if (!/[0-9]/.test(e.key) && e.key !== 'Backspace' && e.key !== 'Delete' && e.key !== 'Tab') {
+                      e.preventDefault();
+                    }
+                  }}
+                  pattern="[0-9]*"
+                  inputMode="numeric"
+                  maxLength={15}
+                  className={`w-full pl-10 pr-4 py-3 border ${errors.phone ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
+                  placeholder="Enter phone number"
+                  required
+                />
+              </div>
             </div>
-            {errors.phone && <p className="text-red-500 text-xs mt-1">{errors.phone}</p>}
+            {errors.phone && <p className="text-red-500 text-xs mt-1">{typeof errors.phone === 'string' ? errors.phone : 'Invalid phone'}</p>}
+          </div>
+
+          {/* Country Dropdown */}
+          <div>
+            <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>
+              Country <span className="text-red-500">*</span>
+            </label>
+            <div className="relative">
+              <Building className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 z-10" />
+              <select
+                name="country"
+                value={formData.country}
+                onChange={(e) => setFormData(prev => ({ ...prev, country: e.target.value }))}
+                disabled={isLoadingCountries}
+                className={`w-full pl-10 pr-4 py-3 border ${errors.country ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none disabled:opacity-50 disabled:cursor-not-allowed`}
+                required
+              >
+                <option value="">{isLoadingCountries ? 'Loading countries...' : 'Select a country'}</option>
+                {countries.map((country) => (
+                  <option key={country.id} value={country.id}>
+                    {country.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {errors.country && <p className="text-red-500 text-xs mt-1">{typeof errors.country === 'string' ? errors.country : 'Please select a country'}</p>}
           </div>
 
           {/* Password */}
@@ -318,7 +556,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
                 required
               />
             </div>
-            {errors.password && <p className="text-red-500 text-xs mt-1">{errors.password}</p>}
+            {errors.password && <p className="text-red-500 text-xs mt-1">{typeof errors.password === 'string' ? errors.password : 'Invalid password'}</p>}
           </div>
 
           {/* Confirm Password */}
@@ -338,7 +576,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
                 required
               />
             </div>
-            {errors.confirmPassword && <p className="text-red-500 text-xs mt-1">{errors.confirmPassword}</p>}
+            {errors.confirmPassword && <p className="text-red-500 text-xs mt-1">{typeof errors.confirmPassword === 'string' ? errors.confirmPassword : 'Passwords do not match'}</p>}
           </div>
 
           {/* Company Name */}
@@ -358,63 +596,93 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
                 required
               />
             </div>
-            {errors.companyName && <p className="text-red-500 text-xs mt-1">{errors.companyName}</p>}
+            {errors.companyName && <p className="text-red-500 text-xs mt-1">{typeof errors.companyName === 'string' ? errors.companyName : 'Invalid company name'}</p>}
           </div>
 
-          {/* Country Dropdown */}
-          <div className="relative" ref={dropdownRef}>
+          {/* Company Address */}
+          <div>
             <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>
-              Country <span className="text-red-500">*</span>
+              Company Address <span className="text-red-500">*</span>
             </label>
-            <button
-              type="button"
-              onClick={() => setShowCountryDropdown(!showCountryDropdown)}
-              className={`w-full px-4 py-3 border ${errors.country ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none flex items-center justify-between`}
-            >
-              <span className={formData.country ? textPrimary : textSecondary}>
-                {formData.country || 'Select a country'}
-              </span>
-              <ChevronDown className={`w-5 h-5 ${textSecondary} transition-transform ${showCountryDropdown ? 'rotate-180' : ''}`} />
-            </button>
-            {errors.country && <p className="text-red-500 text-xs mt-1">{errors.country}</p>}
-            
-            {showCountryDropdown && (
-              <div className={`absolute z-50 w-full mt-2 ${cardClass} border ${borderClass} rounded-lg shadow-xl max-h-60 overflow-hidden`}>
-                <div className={`p-2 border-b ${borderClass} sticky top-0 ${inputBg}`}>
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                    <input
-                      type="text"
-                      value={countrySearch}
-                      onChange={(e) => setCountrySearch(e.target.value)}
-                      placeholder="Search country..."
-                      className={`w-full pl-9 pr-3 py-2 border ${borderClass} rounded-lg ${inputBg} ${textPrimary} text-sm focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
-                      autoFocus
-                    />
-                  </div>
-                </div>
-                <div className="overflow-y-auto max-h-48 custom-scrollbar">
-                  {filteredCountries.length > 0 ? (
-                    filteredCountries.map((country) => (
-                      <button
-                        key={country}
-                        type="button"
-                        onClick={() => handleCountrySelect(country)}
-                        className={`w-full text-left px-4 py-2 hover:bg-[#C2D642]/10 ${textPrimary} transition-colors flex items-center gap-2 ${
-                          formData.country === country ? 'bg-[#C2D642]/20' : ''
-                        }`}
-                      >
-                        {formData.country === country && <Check className="w-4 h-4 text-[#C2D642]" />}
-                        <span>{country}</span>
-                      </button>
-                    ))
-                  ) : (
-                    <div className={`px-4 py-2 ${textSecondary} text-sm text-center`}>No countries found</div>
-                  )}
-                </div>
-              </div>
-            )}
+            <div className="relative">
+              <Building className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+              <input
+                type="text"
+                name="companyAddress"
+                value={formData.companyAddress}
+                onChange={handleInputChange}
+                className={`w-full pl-10 pr-4 py-3 border ${errors.companyAddress ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
+                placeholder="Enter company address"
+                required
+              />
+            </div>
+            {errors.companyAddress && <p className="text-red-500 text-xs mt-1">{typeof errors.companyAddress === 'string' ? errors.companyAddress : 'Invalid address'}</p>}
           </div>
+
+          {/* Company Phone with Country Code */}
+          <div>
+            <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>
+              Company Phone <span className="text-red-500">*</span>
+            </label>
+            <div className="flex gap-2">
+              <div className="w-24">
+                <select
+                  name="companyCountryCode"
+                  value={formData.companyCountryCode}
+                  onChange={handleInputChange}
+                  className={`w-full px-3 py-3 border ${errors.companyCountryCode ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
+                >
+                  <option value="91">+91 (IN)</option>
+                  <option value="971">+971 (AE)</option>
+                  <option value="1">+1 (US)</option>
+                  <option value="44">+44 (UK)</option>
+                </select>
+              </div>
+              <div className="flex-1 relative">
+                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                <input
+                  type="tel"
+                  name="companyPhone"
+                  value={formData.companyPhone}
+                  onChange={handleInputChange}
+                  onKeyPress={(e) => {
+                    // Only allow numbers
+                    if (!/[0-9]/.test(e.key) && e.key !== 'Backspace' && e.key !== 'Delete' && e.key !== 'Tab') {
+                      e.preventDefault();
+                    }
+                  }}
+                  pattern="[0-9]*"
+                  inputMode="numeric"
+                  maxLength={15}
+                  className={`w-full pl-10 pr-4 py-3 border ${errors.companyPhone ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
+                  placeholder="Enter company phone number"
+                  required
+                />
+              </div>
+            </div>
+            {errors.companyPhone && <p className="text-red-500 text-xs mt-1">{typeof errors.companyPhone === 'string' ? errors.companyPhone : 'Invalid phone'}</p>}
+          </div>
+
+          {/* Profile Image */}
+          <div>
+            <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>
+              Profile Image (Optional)
+            </label>
+            <div className="relative">
+              <input
+                type="file"
+                name="profileImage"
+                accept="image/*"
+                onChange={handleFileChange}
+                className={`w-full px-4 py-3 border ${errors.profileImage ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-[#C2D642] file:text-white hover:file:bg-[#A8B838] cursor-pointer`}
+              />
+            </div>
+            {formData.profileImage && (
+              <p className="text-xs text-green-500 mt-1">Selected: {formData.profileImage.name}</p>
+            )}
+            {errors.profileImage && <p className="text-red-500 text-xs mt-1">{typeof errors.profileImage === 'string' ? errors.profileImage : 'Invalid file'}</p>}
+          </div>
+
 
           {/* Terms and Conditions Checkbox */}
           <div>
@@ -440,10 +708,20 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
           {/* Submit Button */}
           <button
             type="submit"
-            className="w-full px-4 py-3 bg-[#C2D642] hover:bg-[#A8B838] text-white rounded-lg font-semibold transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2 mt-6"
+            disabled={isSubmitting}
+            className="w-full px-4 py-3 bg-[#C2D642] hover:bg-[#A8B838] disabled:bg-slate-400 disabled:cursor-not-allowed text-white rounded-lg font-semibold transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2 mt-6"
           >
-            <UserPlus className="w-5 h-5" />
-            Sign Up
+            {isSubmitting ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                Creating Account...
+              </>
+            ) : (
+              <>
+                <UserPlus className="w-5 h-5" />
+                Sign Up
+              </>
+            )}
           </button>
         </form>
 

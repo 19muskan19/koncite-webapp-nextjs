@@ -26,13 +26,28 @@ import Masters from './components/Masters';
 import GenericView from './components/GenericView';
 import HomePage from './components/HomePage';
 import LoginModal from './components/LoginModal';
+import SignupModal from './components/SignupModal';
+import OtpVerificationModal from './components/OtpVerificationModal';
+import ForgotPasswordModal from './components/ForgotPasswordModal';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { ViewType, ThemeType } from './types';
+import { authAPI } from './services/api';
 
 const AppContent: React.FC = () => {
   const { theme, toggleTheme } = useTheme();
+  const { user } = useUser();
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  
+  // Debug: Log user changes
+  useEffect(() => {
+    console.log('App: User state changed:', user);
+    console.log('App: User name:', user?.name);
+  }, [user]);
   const [showLoginModal, setShowLoginModal] = useState<boolean>(false);
+  const [showSignupModal, setShowSignupModal] = useState<boolean>(false);
+  const [showOtpModal, setShowOtpModal] = useState<boolean>(false);
+  const [showForgotPasswordModal, setShowForgotPasswordModal] = useState<boolean>(false);
+  const [otpEmail, setOtpEmail] = useState<string>('');
   const [currentView, setCurrentView] = useState<ViewType>(ViewType.DASHBOARD);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [openDropdowns, setOpenDropdowns] = useState<Set<ViewType>>(new Set());
@@ -40,22 +55,75 @@ const AppContent: React.FC = () => {
   // Check if user is already logged in (from localStorage)
   useEffect(() => {
     const savedAuth = localStorage.getItem('isAuthenticated');
-    if (savedAuth === 'true') {
+    const token = localStorage.getItem('auth_token');
+    if (savedAuth === 'true' && token) {
       setIsAuthenticated(true);
     }
   }, []);
 
+  // Listen for modal open events
+  useEffect(() => {
+    const handleOpenSignupModal = () => {
+      setShowSignupModal(true);
+      setShowLoginModal(false);
+    };
+
+    const handleOpenOtpModal = (event: CustomEvent) => {
+      const email = event.detail?.email || localStorage.getItem('pendingVerificationEmail') || '';
+      setOtpEmail(email);
+      setShowOtpModal(true);
+      setShowSignupModal(false);
+    };
+
+    const handleOpenForgotPasswordModal = () => {
+      setShowForgotPasswordModal(true);
+      setShowLoginModal(false);
+    };
+
+    window.addEventListener('openSignupModal' as any, handleOpenSignupModal);
+    window.addEventListener('openOtpModal' as any, handleOpenOtpModal);
+    window.addEventListener('openForgotPasswordModal' as any, handleOpenForgotPasswordModal);
+
+    return () => {
+      window.removeEventListener('openSignupModal' as any, handleOpenSignupModal);
+      window.removeEventListener('openOtpModal' as any, handleOpenOtpModal);
+      window.removeEventListener('openForgotPasswordModal' as any, handleOpenForgotPasswordModal);
+    };
+  }, []);
+
   const handleLogin = (email: string, password: string) => {
-    // Credentials are validated in LoginModal
+    // Authentication is handled in LoginModal via API
+    // This callback is called after successful login
     setIsAuthenticated(true);
-    localStorage.setItem('isAuthenticated', 'true');
-    localStorage.setItem('userEmail', email);
+    // User data will be fetched by UserContext automatically
   };
 
-  const handleLogout = () => {
-    setIsAuthenticated(false);
-    localStorage.removeItem('isAuthenticated');
-    localStorage.removeItem('userEmail');
+  const handleOtpVerified = () => {
+    // After OTP verification, user is logged in
+    setIsAuthenticated(true);
+    setShowOtpModal(false);
+    // User data will be fetched by UserContext automatically
+  };
+
+  const handleLogout = async () => {
+    try {
+      // Call logout API
+      await authAPI.logout();
+    } catch (error) {
+      // Even if API call fails, clear local storage
+      console.error('Logout error:', error);
+    } finally {
+      // Clear authentication state - only keep auth_token removal
+      setIsAuthenticated(false);
+      localStorage.removeItem('isAuthenticated');
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('pendingVerificationEmail');
+      
+      // Dispatch logout event for UserContext
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('userLoggedOut'));
+      }
+    }
   };
 
   const toggleDropdown = (itemId: ViewType) => {
@@ -90,6 +158,23 @@ const AppContent: React.FC = () => {
           isOpen={showLoginModal} 
           onClose={() => setShowLoginModal(false)}
           onLogin={handleLogin}
+        />
+        <SignupModal
+          isOpen={showSignupModal}
+          onClose={() => setShowSignupModal(false)}
+        />
+        <OtpVerificationModal
+          isOpen={showOtpModal}
+          onClose={() => {
+            setShowOtpModal(false);
+            setOtpEmail('');
+          }}
+          email={otpEmail}
+          onVerified={handleOtpVerified}
+        />
+        <ForgotPasswordModal
+          isOpen={showForgotPasswordModal}
+          onClose={() => setShowForgotPasswordModal(false)}
         />
       </>
     );
@@ -194,7 +279,7 @@ const AppContent: React.FC = () => {
             </div>
             {sidebarOpen && (
               <div className="flex-1 overflow-hidden">
-                <p className="font-bold text-sm truncate">Dr. Niharika V.</p>
+                <p className="font-bold text-sm truncate">{user?.name || 'User'}</p>
                 <p className="text-[10px] opacity-40 uppercase font-black tracking-widest">Chief Admin</p>
               </div>
             )}
@@ -270,7 +355,7 @@ const AppContent: React.FC = () => {
 
             <div className="flex items-center gap-3 pl-4 border-l border-white/10">
               <div className="text-right hidden md:block">
-                <p className="text-[12px] font-black leading-none">Dr. Niharika V.</p>
+                <p className="text-[12px] font-black leading-none">{user?.name || 'User'}</p>
                 <p className="text-[9px] font-bold opacity-50 uppercase tracking-tighter">System Administrator</p>
               </div>
               <button

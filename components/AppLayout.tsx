@@ -10,12 +10,15 @@ import {
   LogOut
 } from 'lucide-react';
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
+import { useUser } from '@/contexts/UserContext';
 import Sidebar from './Sidebar';
 
 const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { theme, toggleTheme } = useTheme();
+  const { user } = useUser();
   const pathname = usePathname();
   const router = useRouter();
+  
   // Initialize sidebar based on screen size - closed on mobile, open on desktop
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -76,7 +79,7 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
 
             <div className="flex items-center gap-3 pl-4 border-l border-white/10">
               <div className="text-right hidden md:block">
-                <p className="text-[12px] font-black leading-none">Dr. Niharika V.</p>
+                <p className="text-[12px] font-black leading-none">{user?.name || 'User'}</p>
                 <p className="text-[9px] font-bold opacity-50 uppercase tracking-tighter">System Administrator</p>
               </div>
               <button

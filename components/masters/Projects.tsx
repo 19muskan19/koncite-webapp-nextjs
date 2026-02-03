@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
+import { masterDataAPI } from '../../services/api';
 import { 
   FolderKanban,
   Building2,
@@ -16,7 +17,8 @@ import {
   X,
   Upload,
   Users,
-  Download
+  Download,
+  Loader2
 } from 'lucide-react';
 import CreateProjectModal from './Modals/CreateProjectModal';
 
@@ -52,6 +54,8 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [viewingProjectId, setViewingProjectId] = useState<string | null>(null);
   const [userProjects, setUserProjects] = useState<Project[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
   
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -127,42 +131,44 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
     },
   ];
 
-  // Load projects from localStorage on mount
+  // Fetch projects from API on mount
   useEffect(() => {
-    const savedProjects = localStorage.getItem('projects');
-    if (savedProjects) {
-      try {
-        const parsed = JSON.parse(savedProjects);
-        setUserProjects(parsed);
-      } catch (e) {
-        setUserProjects([]);
-      }
-    } else {
-      setUserProjects([]);
-    }
+    fetchProjects();
   }, []);
 
-  // Save projects to localStorage whenever userProjects state changes
-  useEffect(() => {
-    const defaultIds = ['1', '2', '3', '4'];
-    const userAddedProjects = userProjects.filter(p => !defaultIds.includes(p.id));
-    if (userAddedProjects.length > 0) {
-      try {
-        localStorage.setItem('projects', JSON.stringify(userAddedProjects));
-      } catch (error) {
-        console.error('Error saving to localStorage:', error);
-        if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-          toast.showWarning('Storage limit exceeded. Some data may not be saved. Please clear browser storage or use smaller images.');
-        }
-      }
-    } else {
-      try {
-        localStorage.removeItem('projects');
-      } catch (error) {
-        console.error('Error clearing localStorage:', error);
-      }
+  const fetchProjects = async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      const projects = await masterDataAPI.getProjects();
+      // Transform API response to match Project interface if needed
+      setUserProjects(projects.map((p: any) => ({
+        id: String(p.id),
+        name: p.name || '',
+        code: p.code || '',
+        company: p.company || p.company_name || '',
+        companyLogo: p.company_logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.company || p.company_name || '')}&background=6366f1&color=fff&size=64`,
+        startDate: p.start_date || p.startDate || '',
+        endDate: p.end_date || p.endDate || '',
+        status: p.status || 'Planning',
+        progress: p.progress || 0,
+        budget: p.budget,
+        location: p.location || '',
+        logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.name || '')}&background=6366f1&color=fff&size=128`,
+        teamSize: p.team_size || p.teamSize,
+        createdAt: p.created_at || p.createdAt,
+        isContractor: p.is_contractor || p.isContractor,
+        projectManager: p.project_manager || p.projectManager,
+      })));
+    } catch (err: any) {
+      console.error('Failed to fetch projects:', err);
+      setError(err.message || 'Failed to load projects');
+      toast.showError(err.message || 'Failed to load projects');
+      setUserProjects([]);
+    } finally {
+      setIsLoading(false);
     }
-  }, [userProjects]);
+  };
 
   const handleViewProject = (project: Project) => {
     setViewingProjectId(project.id);
@@ -174,33 +180,37 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
     setViewingProjectId(null);
   };
 
-  const handleProjectCreated = (newProject: Project) => {
-    setUserProjects(prev => [...prev, newProject]);
+  const handleProjectCreated = async (newProject: Project) => {
+    try {
+      // Save project via API
+      const projectData = {
+        name: newProject.name,
+        code: newProject.code,
+        company: newProject.company,
+        start_date: newProject.startDate,
+        end_date: newProject.endDate,
+        status: newProject.status,
+        progress: newProject.progress,
+        budget: newProject.budget,
+        location: newProject.location,
+        is_contractor: newProject.isContractor,
+        project_manager: newProject.projectManager,
+      };
+
+      const response = await masterDataAPI.createProject(projectData);
+      toast.showSuccess('Project created successfully!');
+      
+      // Refresh projects list
+      await fetchProjects();
+    } catch (err: any) {
+      console.error('Failed to create project:', err);
+      toast.showError(err.message || 'Failed to create project');
+    }
   };
 
-  // Listen for projectsUpdated event
-  useEffect(() => {
-    const handleProjectsUpdated = () => {
-      const savedProjects = localStorage.getItem('projects');
-      if (savedProjects) {
-        try {
-          const parsed = JSON.parse(savedProjects);
-          setUserProjects(parsed);
-        } catch (e) {
-          setUserProjects([]);
-        }
-      }
-    };
-
-    window.addEventListener('projectsUpdated', handleProjectsUpdated);
-    return () => {
-      window.removeEventListener('projectsUpdated', handleProjectsUpdated);
-    };
-  }, []);
-
-  // Combine default and user projects
+  // Use only API projects (no default projects)
   const allProjects = useMemo(() => {
-    return [...defaultProjects, ...userProjects];
+    return userProjects;
   }, [userProjects]);
 
   // Close dropdown when clicking outside
@@ -390,8 +400,32 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
         </div>
       </div>
 
+      {/* Loading State */}
+      {isLoading && (
+        <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
+          <Loader2 className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50 animate-spin`} />
+          <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>Loading Projects...</h3>
+          <p className={`text-sm ${textSecondary}`}>Please wait while we fetch your projects</p>
+        </div>
+      )}
+
+      {/* Error State */}
+      {error && !isLoading && (
+        <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
+          <FolderKanban className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
+          <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>Error Loading Projects</h3>
+          <p className={`text-sm ${textSecondary} mb-4`}>{error}</p>
+          <button
+            onClick={fetchProjects}
+            className="px-4 py-2 bg-[#C2D642] hover:bg-[#A8B838] text-white rounded-lg font-semibold transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Projects Bars View */}
-      {filteredAndSortedProjects.length > 0 ? (
+      {!isLoading && !error && filteredAndSortedProjects.length > 0 ? (
         <div className="space-y-2">
           {filteredAndSortedProjects.map((project) => (
             <div 
@@ -426,13 +460,13 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
             </div>
           ))}
         </div>
-      ) : (
+      ) : !isLoading && !error ? (
         <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
           <FolderKanban className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
           <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>No Projects Found</h3>
           <p className={`text-sm ${textSecondary}`}>Start by adding your first project</p>
         </div>
-      )}
+      ) : null}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -455,18 +489,10 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
         theme={theme}
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}
-        onSuccess={() => {
+        onSuccess={async () => {
           setShowCreateModal(false);
-          // Reload projects from localStorage
-          const savedProjects = localStorage.getItem('projects');
-          if (savedProjects) {
-            try {
-              const parsed = JSON.parse(savedProjects);
-              setUserProjects(parsed);
-            } catch (e) {
-              setUserProjects([]);
-            }
-          }
+          // Reload projects from API
+          await fetchProjects();
         }}
         defaultProjects={defaultProjects}
         userProjects={userProjects}

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import ClientThemeProvider from '@/components/ClientThemeProvider'
 import { ToastProvider } from '@/contexts/ToastContext'
+import { UserProvider } from '@/contexts/UserContext'
 import './globals.css'
 
 export const metadata: Metadata = {
@@ -22,7 +23,11 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body>
         <ClientThemeProvider>
-          {children}
+          <ToastProvider>
+            <UserProvider>
+              {children}
+            </UserProvider>
+          </ToastProvider>
         </ClientThemeProvider>
       </body>
     </html>

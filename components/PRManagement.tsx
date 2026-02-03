@@ -43,26 +43,8 @@ const PRManagement: React.FC<PRManagementProps> = ({ theme }) => {
   const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
   const bgSecondary = isDark ? 'bg-slate-800' : 'bg-slate-50';
 
-  // Default purchase request data matching the image
-  const defaultPRs: PurchaseRequest[] = [
-    { id: '1', requestNo: 'PR-2025-001', userName: 'Niharika', project: 'Demo Data', subProject: '', date: '2025-08-31', status: 'Approved' },
-    { id: '2', requestNo: 'PR-2025-002', userName: 'Niharika', project: 'Demo Data', subProject: '', date: '2025-09-01', status: 'Approved' },
-    { id: '3', requestNo: 'PR-2025-003', userName: 'Niharika', project: 'Demo Data', subProject: '', date: '2025-09-02', status: 'Approved' },
-    { id: '4', requestNo: 'PR-2025-004', userName: 'Niharika', project: 'Demo Data', subProject: '', date: '2025-09-03', status: 'Approved' },
-    { id: '5', requestNo: 'PR-2025-005', userName: 'Niharika', project: 'Demo Data', subProject: '', date: '2025-09-04', status: 'Approved' },
-    { id: '6', requestNo: 'PR-2025-006', userName: 'Niharika', project: 'Demo Data', subProject: '', date: '2025-09-05', status: 'Approved' },
-    { id: '7', requestNo: 'PR-2025-007', userName: 'Niharika', project: 'Lotus Rise', subProject: 'A wing', date: '2025-09-10', status: 'Approved' },
-    { id: '8', requestNo: 'PR-2025-008', userName: 'Niharika', project: 'Lotus Rise', subProject: 'A wing', date: '2025-09-15', status: 'Approved' },
-    { id: '9', requestNo: 'PR-2025-009', userName: 'Niharika', project: 'Lotus Rise', subProject: 'A wing', date: '2025-09-20', status: 'Approved' },
-    { id: '10', requestNo: 'PR-2025-010', userName: 'Niharika', project: 'Lakeshire', subProject: 'A wing', date: '2025-10-01', status: 'Approved' },
-    { id: '11', requestNo: 'PR-2025-011', userName: 'Niharika', project: 'Demo Data', subProject: '', date: '2025-10-05', status: 'Approved' },
-    { id: '12', requestNo: 'PR-2025-012', userName: 'Niharika', project: 'Demo Data', subProject: '', date: '2025-10-10', status: 'Approved' },
-    { id: '13', requestNo: 'PR-2025-013', userName: 'Niharika', project: 'Lotus Rise', subProject: 'A wing', date: '2025-10-15', status: 'Approved' },
-    { id: '14', requestNo: 'PR-2025-014', userName: 'Niharika', project: 'Lakeshire', subProject: 'A wing', date: '2025-10-20', status: 'Approved' },
-    { id: '15', requestNo: 'PR-2025-015', userName: 'Niharika', project: 'Demo Data', subProject: '', date: '2025-10-25', status: 'Approved' },
-    { id: '16', requestNo: 'PR-2025-016', userName: 'Niharika', project: 'Lotus Rise', subProject: 'A wing', date: '2025-10-28', status: 'Approved' },
-    { id: '17', requestNo: 'PR-2025-017', userName: 'Niharika', project: 'Lakeshire', subProject: 'A wing', date: '2025-10-31', status: 'Approved' },
-  ];
+  // Empty default purchase request data - will be populated from API
+  const defaultPRs: PurchaseRequest[] = [];
 
   // Load projects from localStorage
   useEffect(() => {

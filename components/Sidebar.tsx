@@ -24,6 +24,7 @@ import {
   Warehouse
 } from 'lucide-react';
 import { ViewType, ThemeType } from '@/types';
+import { useUser } from '@/contexts/UserContext';
 
 interface NavItemChild {
   label: string;
@@ -48,6 +49,7 @@ interface SidebarProps {
 
 const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen }) => {
   const pathname = usePathname();
+  const { user } = useUser();
   const router = useRouter();
   const [openDropdowns, setOpenDropdowns] = useState<Set<string>>(new Set());
   const isDark = theme === 'dark';
@@ -335,7 +337,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
             </div>
             {sidebarOpen && (
               <div className="flex-1 overflow-hidden">
-                <p className="font-bold text-sm truncate">Dr. Niharika V.</p>
+                <p className="font-bold text-sm truncate">{user?.name || 'User'}</p>
                 <p className="text-[10px] opacity-40 uppercase font-black tracking-widest">Chief Admin</p>
               </div>
             )}

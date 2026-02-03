@@ -1,8 +1,10 @@
 'use client';
 
 import React, { useState } from 'react';
-import { X, LogIn, Mail, Lock } from 'lucide-react';
+import { X, LogIn, Mail, Lock, Loader2 } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
+import { useToast } from '../contexts/ToastContext';
+import { authAPI } from '../services/api';
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -12,9 +14,11 @@ interface LoginModalProps {
 
 const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin }) => {
   const { isDark } = useTheme();
+  const toast = useToast();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
   if (!isOpen) return null;
 
@@ -24,18 +28,39 @@ const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin }) => 
   const borderClass = isDark ? 'border-slate-700' : 'border-slate-300';
   const inputBg = isDark ? 'bg-slate-800' : 'bg-white';
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setIsLoading(true);
 
-    // Hardcoded credentials: email = "abc", password = "abc"
-    if (email === 'abc' && password === 'abc') {
+    try {
+      // Call Laravel API (fcm_token can be added later if needed)
+      const response = await authAPI.login(email, password);
+
+      // Token is already stored in the API function
+      // User data is dispatched via userLoggedIn event
+      console.log('LoginModal: Login response:', response);
+      console.log('LoginModal: User data in response:', response.data?.user || response.data?.data?.user);
+
+      toast.showSuccess(response.message || 'Login successful!');
+      
+      // Call the onLogin callback - this will trigger userName refresh
       onLogin(email, password);
+      
+      // Reset form
       setEmail('');
       setPassword('');
+      
+      // Close modal
       onClose();
-    } else {
-      setError('Invalid email or password. Please use email: abc and password: abc');
+    } catch (error: any) {
+      // Handle API errors - skip email verification check
+      const errorMessage = error.message || 'Login failed. Please check your credentials and try again.';
+      
+      setError(errorMessage);
+      toast.showError(errorMessage);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -103,17 +128,36 @@ const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin }) => 
               <input type="checkbox" className="w-4 h-4 text-[#C2D642] rounded" />
               <span className={textSecondary}>Remember me</span>
             </label>
-            <button type="button" className="text-[#C2D642] hover:underline font-semibold">
+            <button 
+              type="button" 
+              onClick={() => {
+                onClose();
+                if (typeof window !== 'undefined') {
+                  window.dispatchEvent(new CustomEvent('openForgotPasswordModal'));
+                }
+              }}
+              className="text-[#C2D642] hover:underline font-semibold"
+            >
               Forgot password?
             </button>
           </div>
 
           <button
             type="submit"
-            className="w-full px-4 py-3 bg-[#C2D642] hover:bg-[#A8B838] text-white rounded-lg font-semibold transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
+            disabled={isLoading}
+            className="w-full px-4 py-3 bg-[#C2D642] hover:bg-[#A8B838] disabled:bg-slate-400 disabled:cursor-not-allowed text-white rounded-lg font-semibold transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2"
           >
-            <LogIn className="w-5 h-5" />
-            Sign In
+            {isLoading ? (
+              <>
+                <Loader2 className="w-5 h-5 animate-spin" />
+                Signing In...
+              </>
+            ) : (
+              <>
+                <LogIn className="w-5 h-5" />
+                Sign In
+              </>
+            )}
           </button>
         </form>
 
@@ -133,9 +177,6 @@ const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin }) => 
             >
               Sign Up
             </button>
-          </p>
-          <p className={`text-xs text-center ${textSecondary} mt-2`}>
-            Demo credentials: email: <span className="font-mono font-bold">abc</span>, password: <span className="font-mono font-bold">abc</span>
           </p>
         </div>
       </div>
