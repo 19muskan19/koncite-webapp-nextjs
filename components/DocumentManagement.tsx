@@ -142,45 +142,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
       }
     }
     
-    // Also load default projects
-    const defaultProjects: Project[] = [
-      { 
-        id: '1',
-        name: 'Residential Complex A', 
-        code: 'PRJ001', 
-        company: 'ABC Construction Ltd',
-        companyLogo: 'https://ui-avatars.com/api/?name=ABC+Construction&background=6366f1&color=fff&size=64',
-        startDate: '2024-01-15',
-        endDate: '2024-12-31',
-        status: 'In Progress',
-        progress: 65,
-        location: '123 Main Street, New York, NY 10001',
-        logo: 'https://ui-avatars.com/api/?name=Residential+Complex&background=6366f1&color=fff&size=128',
-        isContractor: true,
-        projectManager: 'John Doe',
-        createdAt: '2024-01-15T00:00:00.000Z'
-      },
-      { 
-        id: '2',
-        name: 'Commercial Tower B', 
-        code: 'PRJ002', 
-        company: 'XYZ Builders Inc',
-        companyLogo: 'https://ui-avatars.com/api/?name=XYZ+Builders&background=10b981&color=fff&size=64',
-        startDate: '2024-02-01',
-        endDate: '2024-11-30',
-        status: 'In Progress',
-        progress: 45,
-        location: '456 Business Ave, Los Angeles, CA 90001',
-        logo: 'https://ui-avatars.com/api/?name=Commercial+Tower&background=10b981&color=fff&size=128',
-        isContractor: false,
-        projectManager: 'Jane Smith',
-        createdAt: '2024-02-01T00:00:00.000Z'
-      }
-    ];
-    
-    const existingIds = loadedProjects.map(p => p.id);
-    const newDefaults = defaultProjects.filter(p => !existingIds.includes(p.id));
-    setProjects([...loadedProjects, ...newDefaults]);
+    setProjects(loadedProjects);
   };
 
   // Load projects from localStorage

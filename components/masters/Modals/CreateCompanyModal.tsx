@@ -3,7 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import { ThemeType } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
-import { X, Upload } from 'lucide-react';
+import { X, Upload, Loader2 } from 'lucide-react';
+import { masterDataAPI } from '@/services/api';
 
 interface Company {
   id: string;
@@ -25,7 +26,6 @@ interface CreateCompanyModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
-  defaultCompanies?: Company[];
   userCompanies?: Company[];
   onCompanyCreated?: (company: Company) => void;
 }
@@ -35,11 +35,11 @@ const CreateCompanyModal: React.FC<CreateCompanyModalProps> = ({
   isOpen,
   onClose,
   onSuccess,
-  defaultCompanies = [],
   userCompanies = [],
   onCompanyCreated
 }) => {
   const toast = useToast();
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState({
     registrationName: '',
     registeredAddress: '',
@@ -163,7 +163,7 @@ const CreateCompanyModal: React.FC<CreateCompanyModalProps> = ({
       .split(' ')
       .map(word => word.charAt(0).toUpperCase())
       .join('')
-      .substring(0, 6) + String(defaultCompanies.length + userCompanies.length + 1).padStart(3, '0');
+      .substring(0, 6) + String(userCompanies.length + 1).padStart(3, '0');
 
     let logoUrl = '';
 
@@ -179,47 +179,45 @@ const CreateCompanyModal: React.FC<CreateCompanyModalProps> = ({
       logoUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(formData.registrationName)}&background=C2D642&color=fff&size=128`;
     }
 
-    const newCompany: Company = {
-      id: Date.now().toString(),
-      name: formData.registrationName,
-      code: code,
-      address: formData.registeredAddress,
-      registrationNo: formData.companyRegistrationNo,
-      logo: logoUrl,
-      status: 'Active',
-      projects: 0,
-      employees: 0,
-      createdAt: new Date().toISOString()
-    };
-
-    // Save to localStorage
-    const savedCompanies = localStorage.getItem('companies');
-    let existingCompanies: any[] = [];
-    if (savedCompanies) {
-      try {
-        existingCompanies = JSON.parse(savedCompanies);
-      } catch (e) {
-        console.error('Error parsing companies:', e);
+    setIsSubmitting(true);
+    try {
+      // Prepare FormData for API - matching database field names
+      const companyData = new FormData();
+      companyData.append('registration_name', formData.registrationName);
+      companyData.append('registered_address', formData.registeredAddress);
+      companyData.append('company_registration_no', formData.companyRegistrationNo);
+      
+      if (formData.logo) {
+        companyData.append('logo', formData.logo);
       }
-    }
 
-    existingCompanies.push(newCompany);
-    localStorage.setItem('companies', JSON.stringify(existingCompanies));
-    
-    // Trigger event to update other components
-    window.dispatchEvent(new Event('companiesUpdated'));
+      const response = await masterDataAPI.createCompany(companyData);
+      
+      toast.showSuccess('Company created successfully!');
+      
+      // Reset form
+      setFormData({
+        registrationName: '',
+        registeredAddress: '',
+        companyRegistrationNo: '',
+        logo: null,
+        logoPreview: null
+      });
 
-    toast.showSuccess('Company created successfully!');
-    
-    if (onCompanyCreated) {
-      onCompanyCreated(newCompany);
+      // Call onSuccess callback and wait for it to complete
+      // onSuccess will handle closing the modal and refreshing the list
+      if (onSuccess) {
+        await onSuccess();
+      } else {
+        // If no onSuccess callback, just close the modal
+        onClose();
+      }
+    } catch (error: any) {
+      console.error('Error creating company:', error);
+      toast.showError(error.message || 'Failed to create company. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
-    
-    if (onSuccess) {
-      onSuccess();
-    }
-    
-    onClose();
   };
 
   if (!isOpen) return null;
@@ -366,9 +364,17 @@ const CreateCompanyModal: React.FC<CreateCompanyModalProps> = ({
           </button>
           <button
             onClick={handleCreateCompany}
-            className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642]/90 text-white transition-all shadow-md"
+            disabled={isSubmitting}
+            className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642]/90 text-white transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
-            Create
+            {isSubmitting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Creating...
+              </>
+            ) : (
+              'Create'
+            )}
           </button>
         </div>
       </div>

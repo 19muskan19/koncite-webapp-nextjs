@@ -3,16 +3,27 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
-import { Users, Plus, Search, X, Download } from 'lucide-react';
+import { Users, Plus, Search, X, Download, Loader2, Edit, Trash2, MoreVertical } from 'lucide-react';
 import CreateLabourModal from './Modals/CreateLabourModal';
+import { masterDataAPI } from '../../services/api';
+import { useUser } from '../../contexts/UserContext';
 
 interface Labour {
-  id: string;
+  id: string; // UUID or string for display
+  numericId?: number | string; // Numeric ID from database for API calls
+  uuid?: string; // UUID if available
   name: string;
-  category: 'Skilled' | 'Unskilled' | 'Semi Skilled';
-  trade?: string;
-  skillLevel?: string;
-  status: 'Active' | 'Inactive';
+  code?: string;
+  category: 'skilled' | 'semiskilled' | 'unskilled'; // API uses lowercase
+  unit_id?: number;
+  unit?: {
+    id: number;
+    unit: string;
+    unit_coversion?: string;
+    unit_coversion_factor?: string;
+  };
+  status?: 'Active' | 'Inactive';
+  is_active?: number; // 1 = active, 0 = inactive
   createdAt?: string;
 }
 
@@ -22,35 +33,157 @@ interface LaboursProps {
 
 const Labours: React.FC<LaboursProps> = ({ theme }) => {
   const toast = useToast();
+  const { isAuthenticated } = useUser();
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [isSearching, setIsSearching] = useState<boolean>(false);
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
-  const [userLabours, setUserLabours] = useState<Labour[]>([]);
-  const [defaultLaboursStatus, setDefaultLaboursStatus] = useState<Record<string, 'Active' | 'Inactive'>>({});
+  const [editingLabourId, setEditingLabourId] = useState<string | null>(null); // UUID for display
+  const [editingLabourNumericId, setEditingLabourNumericId] = useState<number | string | null>(null); // Numeric ID for API calls
+  const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
   const [labours, setLabours] = useState<Labour[]>([]);
+  const [isLoadingLabours, setIsLoadingLabours] = useState<boolean>(false);
+  const [laboursError, setLaboursError] = useState<string | null>(null);
+  const [togglingLabourId, setTogglingLabourId] = useState<string | null>(null); // Track which labour is being toggled
   
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
 
-  const defaultLabours: Labour[] = [
-    { id: 'LAB001', name: 'Supervisor', category: 'Skilled', status: 'Active', createdAt: '2024-01-15T00:00:00.000Z' },
-    { id: 'LAB002', name: 'Foremen', category: 'Skilled', status: 'Active', createdAt: '2024-01-16T00:00:00.000Z' },
-    { id: 'LAB003', name: 'Helpers', category: 'Semi Skilled', status: 'Active', createdAt: '2024-01-17T00:00:00.000Z' },
-    { id: 'LAB004', name: 'Male Coolie', category: 'Unskilled', status: 'Active', createdAt: '2024-01-18T00:00:00.000Z' },
-    { id: 'LAB005', name: 'Female Coolie', category: 'Unskilled', status: 'Active', createdAt: '2024-01-19T00:00:00.000Z' },
-    { id: 'LAB006', name: 'General Laborers', category: 'Unskilled', status: 'Active', createdAt: '2024-01-20T00:00:00.000Z' },
-    { id: 'LAB007', name: 'Beldar', category: 'Unskilled', status: 'Active', createdAt: '2024-01-21T00:00:00.000Z' },
-    { id: 'LAB008', name: 'Masons', category: 'Skilled', status: 'Active', createdAt: '2024-01-22T00:00:00.000Z' },
-    { id: 'LAB009', name: 'Carpenters', category: 'Skilled', status: 'Active', createdAt: '2024-01-23T00:00:00.000Z' },
-    { id: 'LAB010', name: 'Electricians', category: 'Skilled', status: 'Active', createdAt: '2024-01-24T00:00:00.000Z' },
-  ];
+  // Fetch labours from API
+  const fetchLabours = async () => {
+    if (!isAuthenticated) {
+      setLabours([]);
+      setIsLoadingLabours(false);
+      return;
+    }
+    
+    setIsLoadingLabours(true);
+    setLaboursError(null);
+    try {
+      const fetchedLabours = await masterDataAPI.getLabours();
+      // Transform API response to match Labour interface
+      const transformedLabours: Labour[] = fetchedLabours.map((labour: any) => {
+        const numericId = labour.id; // Numeric ID from database
+        const uuid = labour.uuid; // UUID if available
+        
+        // Normalize category to lowercase
+        let category: 'skilled' | 'semiskilled' | 'unskilled' = 'skilled';
+        const cat = (labour.category || '').toLowerCase();
+        if (cat === 'skilled' || cat === 'semiskilled' || cat === 'unskilled') {
+          category = cat as 'skilled' | 'semiskilled' | 'unskilled';
+        }
+        
+        // Handle is_active: can be 1, "1", true, or undefined/null
+        // Default to Active if undefined/null
+        const isActiveValue = labour.is_active;
+        const isActive = isActiveValue === 1 || 
+                        isActiveValue === '1' || 
+                        isActiveValue === true || 
+                        isActiveValue === 'true' ||
+                        isActiveValue === undefined || // Default to active
+                        isActiveValue === null; // Default to active
+        
+        return {
+          id: uuid || String(numericId), // Use UUID for display if available, otherwise numeric ID as string
+          numericId: numericId, // Store numeric ID for API calls
+          uuid: uuid, // Store UUID if available
+          name: labour.name || '',
+          code: labour.code || '',
+          category,
+          unit_id: labour.unit_id || labour.unit?.id,
+          unit: labour.unit || undefined,
+          status: (isActive ? 'Active' : 'Inactive') as 'Active' | 'Inactive',
+          is_active: isActive ? 1 : 0,
+          createdAt: labour.created_at || labour.createdAt,
+        };
+      });
+      setLabours(transformedLabours);
+    } catch (err: any) {
+      console.error('Failed to fetch labours:', err);
+      setLaboursError(err.message || 'Failed to load labours');
+      setLabours([]);
+      toast.showError(err.message || 'Failed to load labours');
+    } finally {
+      setIsLoadingLabours(false);
+    }
+  };
 
-  const categoryOptions = [
-    { value: 'Skilled', label: 'Skilled' },
-    { value: 'Unskilled', label: 'Unskilled' },
-    { value: 'Semi Skilled', label: 'Semi Skilled' },
-  ];
+  // Load labours from API on mount and when auth changes
+  useEffect(() => {
+    fetchLabours();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
+
+  // Search labours using API
+  const handleSearch = async (query: string) => {
+    if (!query.trim()) {
+      // If search is empty, fetch all labours
+      await fetchLabours();
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    try {
+      const searchResults = await masterDataAPI.searchLabours(query);
+      // Transform API response to match Labour interface
+      const transformedLabours: Labour[] = searchResults.map((labour: any) => {
+        const numericId = labour.id; // Numeric ID from database
+        const uuid = labour.uuid; // UUID if available
+        
+        // Normalize category to lowercase
+        let category: 'skilled' | 'semiskilled' | 'unskilled' = 'skilled';
+        const cat = (labour.category || '').toLowerCase();
+        if (cat === 'skilled' || cat === 'semiskilled' || cat === 'unskilled') {
+          category = cat as 'skilled' | 'semiskilled' | 'unskilled';
+        }
+        
+        // Handle is_active: can be 1, "1", true, or undefined/null
+        // Default to Active if undefined/null
+        const isActiveValue = labour.is_active;
+        const isActive = isActiveValue === 1 || 
+                        isActiveValue === '1' || 
+                        isActiveValue === true || 
+                        isActiveValue === 'true' ||
+                        isActiveValue === undefined || // Default to active
+                        isActiveValue === null; // Default to active
+        
+        return {
+          id: uuid || String(numericId), // Use UUID for display if available, otherwise numeric ID as string
+          numericId: numericId, // Store numeric ID for API calls
+          uuid: uuid, // Store UUID if available
+          name: labour.name || '',
+          code: labour.code || '',
+          category,
+          unit_id: labour.unit_id || labour.unit?.id,
+          unit: labour.unit || undefined,
+          status: (isActive ? 'Active' : 'Inactive') as 'Active' | 'Inactive',
+          is_active: isActive ? 1 : 0,
+          createdAt: labour.created_at || labour.createdAt,
+        };
+      });
+      setLabours(transformedLabours);
+    } catch (error: any) {
+      console.error('Search failed:', error);
+      toast.showError(error.message || 'Search failed. Please try again.');
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // Debounced search
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (searchQuery.trim()) {
+        handleSearch(searchQuery);
+      } else {
+        fetchLabours();
+      }
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [searchQuery]);
 
   const labourTypeOptions = [
     'Supervisor',
@@ -70,147 +203,214 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
     'Painter'
   ];
 
-  // Load labours from localStorage on mount
-  useEffect(() => {
-    const savedLabours = localStorage.getItem('labours');
-    if (savedLabours) {
-      try {
-        const parsed = JSON.parse(savedLabours);
-        setUserLabours(parsed);
-      } catch (e) {
-        setUserLabours([]);
-      }
-    } else {
-      setUserLabours([]);
-    }
-
-    // Load default labours status from localStorage
-    const savedDefaultStatus = localStorage.getItem('defaultLaboursStatus');
-    if (savedDefaultStatus) {
-      try {
-        const parsed = JSON.parse(savedDefaultStatus);
-        setDefaultLaboursStatus(parsed);
-      } catch (e) {
-        setDefaultLaboursStatus({});
-      }
-    }
-  }, []);
-
-  // Initialize labours state with default and user labours
-  useEffect(() => {
-    const defaultIds = ['LAB001', 'LAB002', 'LAB003', 'LAB004', 'LAB005', 'LAB006', 'LAB007', 'LAB008', 'LAB009', 'LAB010'];
-    const updatedDefaultLabours = defaultLabours.map(labour => ({
-      ...labour,
-      status: defaultLaboursStatus[labour.id] || labour.status
-    }));
-    setLabours([...updatedDefaultLabours, ...userLabours]);
-  }, [userLabours, defaultLaboursStatus]);
-
-  // Save labours to localStorage whenever userLabours state changes
-  useEffect(() => {
-    const defaultIds = ['LAB001', 'LAB002', 'LAB003', 'LAB004', 'LAB005', 'LAB006', 'LAB007', 'LAB008', 'LAB009', 'LAB010'];
-    const userAddedLabours = userLabours.filter(l => !defaultIds.includes(l.id));
-    if (userAddedLabours.length > 0) {
-      try {
-        localStorage.setItem('labours', JSON.stringify(userAddedLabours));
-      } catch (error) {
-        console.error('Error saving to localStorage:', error);
-        if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-          toast.showWarning('Storage limit exceeded. Some data may not be saved.');
-        }
-      }
-    } else {
-      try {
-        localStorage.removeItem('labours');
-      } catch (error) {
-        console.error('Error clearing localStorage:', error);
-      }
-    }
-  }, [userLabours]);
-
-  // Filter labours based on search query
+  // Filter labours (client-side filtering is optional since we're using API search)
   const filteredLabours = useMemo(() => {
-    if (!searchQuery.trim()) return labours;
+    let filtered = [...labours];
     
-    return labours.filter(labour =>
-      labour.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      labour.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      labour.category.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }, [searchQuery, labours]);
+    // Client-side filtering is optional since we're using API search
+    // But keep it for additional filtering if needed
+    if (searchQuery.trim() && !isSearching) {
+      filtered = filtered.filter(labour =>
+        labour.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (labour.code && labour.code.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        labour.category.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+    }
+    
+    return filtered;
+  }, [labours, searchQuery, isSearching]);
 
-  const handleToggleStatus = (e: React.MouseEvent<HTMLButtonElement>, labourId: string) => {
-    e?.stopPropagation?.();
-    
-    const defaultIds = ['LAB001', 'LAB002', 'LAB003', 'LAB004', 'LAB005', 'LAB006', 'LAB007', 'LAB008', 'LAB009', 'LAB010'];
-    
-    if (defaultIds.includes(labourId)) {
-      // Toggle default labour status
-      setDefaultLaboursStatus(prev => {
-        const currentStatus = prev[labourId] || defaultLabours.find(l => l.id === labourId)?.status || 'Active';
-        const newStatus: 'Active' | 'Inactive' = currentStatus === 'Active' ? 'Inactive' : 'Active';
-        const updated = { ...prev, [labourId]: newStatus };
-        
-        // Save to localStorage
-        try {
-          localStorage.setItem('defaultLaboursStatus', JSON.stringify(updated));
-        } catch (error) {
-          console.error('Error saving default labours status:', error);
-        }
-        
-        return updated;
+  const handleEditLabour = async (labour: Labour) => {
+    try {
+      // Use UUID for GET /labour-edit/{uuid} API
+      const labourUuid = labour.uuid || labour.id;
+      
+      console.log('📝 Editing labour:', {
+        labourId: labour.id,
+        uuid: labour.uuid,
+        numericId: labour.numericId,
+        usingUuidForGet: labourUuid
       });
-    } else {
-      // Toggle user-added labour status
-      setUserLabours(prev => {
-        const updated = prev.map(labour =>
-          labour.id === labourId
-            ? { ...labour, status: (labour.status === 'Active' ? 'Inactive' : 'Active') as 'Active' | 'Inactive' }
-            : labour
-        );
-        
-        // Save to localStorage
-        const defaultIds = ['LAB001', 'LAB002', 'LAB003', 'LAB004', 'LAB005', 'LAB006', 'LAB007', 'LAB008', 'LAB009', 'LAB010'];
-        const userAddedLabours = updated.filter(l => !defaultIds.includes(l.id));
-        try {
-          if (userAddedLabours.length > 0) {
-            localStorage.setItem('labours', JSON.stringify(userAddedLabours));
-          } else {
-            localStorage.removeItem('labours');
-          }
-        } catch (error) {
-          console.error('Error saving labours:', error);
-        }
-        
-        return updated;
-      });
+      
+      // Fetch full labour details from API using UUID
+      const labourDetails = await masterDataAPI.getLabour(String(labourUuid));
+      console.log('✅ Labour details fetched:', labourDetails);
+      
+      setEditingLabourId(String(labourUuid)); // UUID for GET /labour-edit/{uuid}
+      setEditingLabourNumericId(labour.numericId || null); // Numeric ID for update if needed
+      
+      // Open modal with labour data - CreateLabourModal will handle this
+      setShowCreateModal(true);
+    } catch (error: any) {
+      console.error('❌ Failed to fetch labour details:', error);
+      toast.showError(error.message || 'Failed to load labour details');
     }
   };
 
-  const handleLabourCreated = (newLabour: Labour) => {
-    setUserLabours(prev => [...prev, newLabour]);
-    setLabours(prev => [...prev, newLabour]);
+  const handleDeleteLabour = async (labourId: string) => {
+    // Find the labour to get its UUID
+    const labour = labours.find(l => l.id === labourId);
+    const deleteUuid = labour?.uuid || labourId; // Use UUID for delete API
+    
+    console.log('🗑️ Deleting labour:', {
+      labourId: labourId,
+      uuid: labour?.uuid,
+      numericId: labour?.numericId,
+      usingUuid: deleteUuid
+    });
+    
+    if (window.confirm('Are you sure you want to delete this labour?')) {
+      try {
+        await masterDataAPI.deleteLabour(String(deleteUuid));
+        toast.showSuccess('Labour deleted successfully');
+        // Refresh labours list
+        await fetchLabours();
+      } catch (error: any) {
+        console.error('Failed to delete labour:', error);
+        toast.showError(error.message || 'Failed to delete labour');
+      }
+    }
   };
 
-  // Listen for laboursUpdated event
+  const handleToggleStatus = async (labour: Labour) => {
+    console.log('🔄 handleToggleStatus called with labour:', {
+      id: labour.id,
+      name: labour.name,
+      status: labour.status,
+      is_active: labour.is_active,
+      togglingLabourId: togglingLabourId,
+      isLoadingLabours: isLoadingLabours
+    });
+    
+    // Prevent multiple simultaneous toggles
+    if (togglingLabourId === labour.id) {
+      console.log('⏳ Toggle already in progress for this labour');
+      return;
+    }
+
+    if (isLoadingLabours) {
+      console.log('⏳ Labours are loading, cannot toggle');
+      return;
+    }
+
+    try {
+      setTogglingLabourId(labour.id);
+      
+      // Determine current status
+      const currentStatus = labour.status || (labour.is_active === 1 || labour.is_active === '1' || labour.is_active === true ? 'Active' : 'Inactive');
+      const newStatus = currentStatus === 'Active' ? 'Inactive' : 'Active';
+      const isActive = newStatus === 'Active' ? 1 : 0;
+      
+      console.log('🔄 Status toggle calculation:', {
+        currentStatus: currentStatus,
+        currentIsActive: labour.is_active,
+        newStatus: newStatus,
+        newIsActive: isActive
+      });
+      
+      // Use UUID for labour-edit/{uuid} API
+      const labourUuid = labour.uuid || labour.id;
+      
+      console.log('🔄 Toggling labour status:', {
+        labourId: labour.id,
+        uuid: labourUuid,
+        currentStatus: labour.status,
+        currentIsActive: labour.is_active,
+        newStatus: newStatus,
+        newIsActive: isActive
+      });
+
+      // First, fetch current labour data using labour-edit/{uuid} API to ensure we have latest data
+      let currentLabourData;
+      try {
+        console.log('📖 Fetching current labour data via labour-edit/{uuid}');
+        currentLabourData = await masterDataAPI.getLabour(String(labourUuid));
+        console.log('✅ Current labour data:', currentLabourData);
+      } catch (fetchError: any) {
+        console.warn('⚠️ Failed to fetch labour data, using existing data:', fetchError);
+        // Fallback to existing labour data if fetch fails
+        currentLabourData = {
+          name: labour.name,
+          category: labour.category,
+          unit_id: labour.unit_id,
+          is_active: labour.is_active
+        };
+      }
+
+      // Optimistically update UI immediately
+      setLabours(prevLabours => 
+        prevLabours.map(l => 
+          l.id === labour.id 
+            ? { ...l, status: newStatus, is_active: isActive }
+            : l
+        )
+      );
+
+      // Update labour status using updateLabour API with UUID
+      // The API uses POST /labour-add with updateId parameter
+      const updatePayload = {
+        name: currentLabourData.name || labour.name,
+        category: currentLabourData.category || labour.category,
+        unit_id: currentLabourData.unit_id || labour.unit_id,
+        is_active: isActive // Explicitly set the new status
+      };
+      
+      console.log('📝 Updating labour with payload:', {
+        uuid: labourUuid,
+        updatePayload: updatePayload
+      });
+      
+      await masterDataAPI.updateLabour(String(labourUuid), updatePayload);
+      
+      toast.showSuccess(`Labour ${newStatus.toLowerCase()} successfully`);
+      
+      // Refresh labours list to ensure UI reflects database state
+      await fetchLabours();
+      
+    } catch (error: any) {
+      console.error('❌ Failed to toggle labour status:', error);
+      console.error('❌ Error details:', {
+        message: error.message,
+        status: error.status,
+        response: error.response?.data
+      });
+      
+      // Revert optimistic update on error
+      setLabours(prevLabours => 
+        prevLabours.map(l => 
+          l.id === labour.id 
+            ? { ...l, status: labour.status, is_active: labour.is_active }
+            : l
+        )
+      );
+      
+      toast.showError(error.message || 'Failed to update labour status');
+    } finally {
+      setTogglingLabourId(null);
+    }
+  };
+
+  const handleLabourCreated = async () => {
+    // Refresh labours list after create/update
+    await fetchLabours();
+  };
+
+  // Close dropdown when clicking outside
   useEffect(() => {
-    const handleLaboursUpdated = () => {
-      const savedLabours = localStorage.getItem('labours');
-      if (savedLabours) {
-        try {
-          const parsed = JSON.parse(savedLabours);
-          setUserLabours(parsed);
-        } catch (e) {
-          setUserLabours([]);
-        }
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest('.dropdown-menu') && !target.closest('.dropdown-trigger')) {
+        setOpenDropdownId(null);
       }
     };
 
-    window.addEventListener('laboursUpdated', handleLaboursUpdated);
-    return () => {
-      window.removeEventListener('laboursUpdated', handleLaboursUpdated);
-    };
-  }, []);
+    if (openDropdownId) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
+    }
+  }, [openDropdownId]);
 
   const handleDownloadExcel = () => {
     // Prepare data for Excel export
@@ -292,7 +492,32 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
         </div>
       </div>
 
-      {filteredLabours.length > 0 ? (
+      {/* Loading State */}
+      {isLoadingLabours && (
+        <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
+          <Loader2 className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50 animate-spin`} />
+          <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>Loading Labours...</h3>
+          <p className={`text-sm ${textSecondary}`}>Please wait while we fetch your labours</p>
+        </div>
+      )}
+
+      {/* Error State */}
+      {laboursError && !isLoadingLabours && (
+        <div className={`p-12 rounded-xl border text-center ${cardClass} border-red-500`}>
+          <Users className={`w-16 h-16 mx-auto mb-4 text-red-500 opacity-50`} />
+          <h3 className={`text-lg font-black mb-2 text-red-500`}>Error Loading Labours</h3>
+          <p className={`text-sm ${textSecondary} mb-4`}>{laboursError}</p>
+          <button
+            onClick={fetchLabours}
+            className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Labours Table */}
+      {!isLoadingLabours && !laboursError && filteredLabours.length > 0 ? (
         <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -302,7 +527,9 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Labour Type</th>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Code</th>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Category</th>
+                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Unit</th>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Status</th>
+                  <th className={`px-6 py-4 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-inherit">
@@ -328,20 +555,38 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
                         <span className="ml-2 text-xs text-red-500">(Disabled)</span>
                       )}
                     </td>
-                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.id}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.category}</td>
+                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.code || '-'}</td>
+                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
+                      {row.category === 'skilled' ? 'Skilled' : 
+                       row.category === 'semiskilled' ? 'Semi Skilled' : 
+                       row.category === 'unskilled' ? 'Unskilled' : 
+                       row.category}
+                    </td>
+                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
+                      {row.unit?.unit || '-'}
+                    </td>
                     <td className={`px-6 py-4`}>
                       <button
-                        onClick={(e) => handleToggleStatus(e, row.id)}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#C2D642] focus:ring-offset-2 cursor-pointer ${
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          console.log('🔄 Toggle button clicked for labour:', {
+                            id: row.id,
+                            name: row.name,
+                            currentStatus: row.status,
+                            currentIsActive: row.is_active,
+                            togglingLabourId: togglingLabourId,
+                            isLoadingLabours: isLoadingLabours
+                          });
+                          handleToggleStatus(row);
+                        }}
+                        disabled={isLoadingLabours || togglingLabourId === row.id}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#C2D642]/50 focus:ring-offset-2 ${
                           row.status === 'Active'
-                            ? 'bg-[#C2D642]'
-                            : 'bg-slate-400'
-                        }`}
-                        role="switch"
-                        aria-checked={row.status === 'Active'}
-                        title={row.status === 'Active' ? 'Click to disable' : 'Click to enable'}
-                        type="button"
+                            ? 'bg-green-600'
+                            : isDark ? 'bg-slate-700' : 'bg-slate-300'
+                        } ${(isLoadingLabours || togglingLabourId === row.id) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                        title={row.status === 'Active' ? 'Click to deactivate' : 'Click to activate'}
                       >
                         <span
                           className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
@@ -350,19 +595,64 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
                         />
                       </button>
                     </td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="relative">
+                        <button 
+                          onClick={() => setOpenDropdownId(openDropdownId === row.id ? null : row.id)}
+                          className={`dropdown-trigger p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+                          title="Actions"
+                        >
+                          <MoreVertical className={`w-4 h-4 ${textSecondary}`} />
+                        </button>
+                        {openDropdownId === row.id && (
+                          <div className={`dropdown-menu absolute right-0 top-full mt-1 w-32 rounded-lg border shadow-lg z-20 ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                            <div className="py-1">
+                              <button
+                                onClick={() => {
+                                  handleEditLabour(row);
+                                  setOpenDropdownId(null);
+                                }}
+                                className={`w-full flex items-center gap-2 px-4 py-2 text-sm font-bold transition-colors text-left ${
+                                  isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
+                                }`}
+                              >
+                                <Edit className="w-4 h-4" />
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => {
+                                  handleDeleteLabour(row.id);
+                                  setOpenDropdownId(null);
+                                }}
+                                className={`w-full flex items-center gap-2 px-4 py-2 text-sm font-bold transition-colors text-left ${
+                                  isDark ? 'hover:bg-slate-700 text-red-400' : 'hover:bg-slate-50 text-red-600'
+                                }`}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         </div>
-      ) : (
+      ) : !isLoadingLabours && !laboursError ? (
         <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
           <Users className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
-          <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>No Data Available</h3>
-          <p className={`text-sm ${textSecondary}`}>Start by adding your first labour entry</p>
+          <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>No Labours Found</h3>
+          <p className={`text-sm ${textSecondary}`}>
+            {searchQuery.trim() 
+              ? `No labours found matching "${searchQuery}"` 
+              : 'Start by adding your first labour entry'}
+          </p>
         </div>
-      )}
+      ) : null}
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className={`p-4 rounded-xl border ${cardClass}`}>
@@ -383,23 +673,15 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
       <CreateLabourModal
         theme={theme}
         isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        onSuccess={() => {
+        onClose={() => {
           setShowCreateModal(false);
-          // Reload labours from localStorage
-          const savedLabours = localStorage.getItem('labours');
-          if (savedLabours) {
-            try {
-              const parsed = JSON.parse(savedLabours);
-              setUserLabours(parsed);
-            } catch (e) {
-              setUserLabours([]);
-            }
-          }
+          setEditingLabourId(null);
+          setEditingLabourNumericId(null);
         }}
-        defaultLabours={defaultLabours}
-        userLabours={userLabours}
-        onLabourCreated={handleLabourCreated}
+        onSuccess={handleLabourCreated}
+        editingLabourId={editingLabourId}
+        editingLabourNumericId={editingLabourNumericId}
+        labours={labours}
       />
     </div>
   );

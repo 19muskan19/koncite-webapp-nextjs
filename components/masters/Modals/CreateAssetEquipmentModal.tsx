@@ -3,16 +3,18 @@
 import React, { useState, useEffect } from 'react';
 import { ThemeType } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
-import { X } from 'lucide-react';
+import { X, Loader2 } from 'lucide-react';
+import { masterDataAPI } from '@/services/api';
 
 interface AssetEquipment {
   id: string;
+  uuid?: string;
   name: string;
-  code: string;
-  unit: string;
+  code?: string;
+  unit?: string;
+  unit_id?: number;
   specification: string;
-  status: 'Active' | 'Inactive';
-  createdAt?: string;
+  status?: 'Active' | 'Inactive';
 }
 
 interface CreateAssetEquipmentModalProps {
@@ -20,11 +22,9 @@ interface CreateAssetEquipmentModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
-  defaultAssets?: AssetEquipment[];
-  userAssets?: AssetEquipment[];
-  machineryOptions?: string[];
-  unitOptions?: string[];
-  onAssetCreated?: (asset: AssetEquipment) => void;
+  editingAssetId?: string | null; // UUID for GET /assets-edit/{uuid}
+  editingAssetNumericId?: number | string | null; // Numeric ID for API calls if needed
+  assets?: AssetEquipment[];
 }
 
 const CreateAssetEquipmentModal: React.FC<CreateAssetEquipmentModalProps> = ({
@@ -32,39 +32,19 @@ const CreateAssetEquipmentModal: React.FC<CreateAssetEquipmentModalProps> = ({
   isOpen,
   onClose,
   onSuccess,
-  defaultAssets = [],
-  userAssets = [],
-  machineryOptions = [
-    'Machinery Hire',
-    'Breaker Hire',
-    'MS Props',
-    'MS Shikanja',
-    'MS Shuttering Plates',
-    'Concrete Breaker Machine',
-    'Measuring Tape',
-    'Helmets',
-    'Safety Belt',
-    'Excavator on hire',
-    'Excavator Hire',
-    'Concrete Mixer Hire',
-    'Vibrator Hire',
-    'DG Hire',
-    'Poclain machine Hire',
-    'Road Roller Hire',
-    'Tipper Hire',
-    'Compactor Hire'
-  ],
-  unitOptions = [],
-  onAssetCreated
+  editingAssetId = null,
+  editingAssetNumericId = null,
+  assets = []
 }) => {
   const toast = useToast();
   const [formData, setFormData] = useState({
-    machineryName: '',
-    unit: '',
-    specification: ''
+    name: '', // Required: asset name
+    specification: '', // Required: asset specifications/details
+    unit_id: '' // Required: ID of measurement unit
   });
-
-  const [units, setUnits] = useState<string[]>([]);
+  const [units, setUnits] = useState<Array<{ id: number; unit: string; uuid?: string }>>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLoadingUnits, setIsLoadingUnits] = useState(false);
 
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -72,113 +52,134 @@ const CreateAssetEquipmentModal: React.FC<CreateAssetEquipmentModalProps> = ({
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
   const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
 
-  // Load units from localStorage
+  const isEditing = !!editingAssetId && !!editingAssetNumericId;
+
+  // Fetch units from API
   useEffect(() => {
-    const loadUnits = () => {
-      const defaultUnitOptions = [
-        'Bags', 'Nos', 'Cum', 'Sqm', 'Rmt', 'Brass', 'Yard', 'Packet', 'LS', 
-        'Bulk', 'Bundles', 'MT', 'Cft', 'Sft', 'Rft', 'Kgs', 'Ltr', 'Hrs', 'Day'
-      ];
-
-      const savedUnits = localStorage.getItem('units');
-      let unitList: string[] = [...defaultUnitOptions];
-
-      if (savedUnits) {
-        try {
-          const parsed = JSON.parse(savedUnits);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            const unitNames = parsed.map((u: any) => u.name || u.code).filter(Boolean);
-            unitList = [...new Set([...defaultUnitOptions, ...unitNames])];
-          }
-        } catch (e) {
-          console.error('Error parsing units:', e);
-        }
-      }
-
-      // Combine with unitOptions prop (only if provided and not empty)
-      const allUnits = unitOptions && unitOptions.length > 0 
-        ? [...unitOptions, ...unitList]
-        : unitList;
-      setUnits([...new Set(allUnits)]);
-    };
-
     if (isOpen) {
-      loadUnits();
+      const fetchUnits = async () => {
+        setIsLoadingUnits(true);
+        try {
+          const fetchedUnits = await masterDataAPI.getUnits();
+          const transformedUnits = fetchedUnits.map((unit: any) => ({
+            id: unit.id,
+            uuid: unit.uuid,
+            unit: unit.unit || unit.name || '',
+          }));
+          setUnits(transformedUnits);
+        } catch (error: any) {
+          console.error('Failed to fetch units:', error);
+          toast.showError('Failed to load units');
+        } finally {
+          setIsLoadingUnits(false);
+        }
+      };
+      fetchUnits();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
+
+  // Load asset data when editing
+  useEffect(() => {
+    if (isOpen && editingAssetId) {
+      const loadAssetData = async () => {
+        try {
+          const assetData = await masterDataAPI.getAssetEquipment(editingAssetId);
+          setFormData({
+            name: assetData.name || '',
+            specification: assetData.specification || '',
+            unit_id: String(assetData.unit_id || assetData.unit?.id || '')
+          });
+        } catch (error: any) {
+          console.error('Failed to load asset data:', error);
+          toast.showError('Failed to load asset data');
+        }
+      };
+      loadAssetData();
+    } else if (isOpen && !editingAssetId) {
+      // Reset form for new asset
+      setFormData({
+        name: '',
+        specification: '',
+        unit_id: ''
+      });
+    }
+  }, [isOpen, editingAssetId]);
 
   // Reset form when modal closes
   useEffect(() => {
     if (!isOpen) {
       setFormData({
-        machineryName: '',
-        unit: '',
-        specification: ''
+        name: '',
+        specification: '',
+        unit_id: ''
       });
+      setIsSubmitting(false);
     }
   }, [isOpen]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
+    const { name, value } = e.target;
     setFormData({
       ...formData,
-      [e.target.name]: e.target.value
+      [name]: value
     });
   };
 
-  const handleCreateAsset = () => {
-    const missingFields: string[] = [];
-    
-    if (!formData.machineryName) missingFields.push('Machinery Name');
-    if (!formData.unit) missingFields.push('Unit');
-    if (!formData.specification) missingFields.push('Specification');
-    
-    if (missingFields.length > 0) {
-      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
+  const validateForm = (): boolean => {
+    if (!formData.name.trim()) {
+      toast.showWarning('Asset name is required');
+      return false;
+    }
+
+    if (!formData.specification.trim()) {
+      toast.showWarning('Specification is required');
+      return false;
+    }
+
+    if (!formData.unit_id) {
+      toast.showWarning('Unit selection is required');
+      return false;
+    }
+
+    return true;
+  };
+
+  const handleSubmit = async () => {
+    if (!validateForm()) {
       return;
     }
 
-    // Generate a code
-    const code = 'AST' + String(defaultAssets.length + userAssets.length + 1).padStart(3, '0');
+    setIsSubmitting(true);
+    try {
+      const payload: any = {
+        name: formData.name.trim(),
+        specification: formData.specification.trim(),
+        unit_id: Number(formData.unit_id)
+      };
 
-    const newAsset: AssetEquipment = {
-      id: Date.now().toString(),
-      name: formData.machineryName,
-      code: code,
-      unit: formData.unit,
-      specification: formData.specification,
-      status: 'Active',
-      createdAt: new Date().toISOString()
-    };
-
-    // Save to localStorage
-    const savedAssets = localStorage.getItem('assetsEquipments');
-    let existingAssets: any[] = [];
-    if (savedAssets) {
-      try {
-        existingAssets = JSON.parse(savedAssets);
-      } catch (e) {
-        console.error('Error parsing assets:', e);
+      if (isEditing && editingAssetId) {
+        // Update existing asset - use UUID for update API
+        await masterDataAPI.updateAssetEquipment(editingAssetId, payload);
+        toast.showSuccess('Asset updated successfully!');
+      } else {
+        // Create new asset - set is_active to 1 (active) by default
+        payload.is_active = 1;
+        console.log('📦 Creating new asset with is_active = 1 (active by default)');
+        await masterDataAPI.createAssetEquipment(payload);
+        toast.showSuccess('Asset created successfully!');
       }
-    }
 
-    existingAssets.push(newAsset);
-    localStorage.setItem('assetsEquipments', JSON.stringify(existingAssets));
-    
-    // Trigger event to update other components
-    window.dispatchEvent(new Event('assetsEquipmentsUpdated'));
+      if (onSuccess) {
+        onSuccess();
+      }
 
-    toast.showSuccess('Asset/Equipment created successfully!');
-    
-    if (onAssetCreated) {
-      onAssetCreated(newAsset);
+      onClose();
+    } catch (error: any) {
+      console.error('Failed to save asset:', error);
+      toast.showError(error.message || 'Failed to save asset');
+    } finally {
+      setIsSubmitting(false);
     }
-    
-    if (onSuccess) {
-      onSuccess();
-    }
-    
-    onClose();
   };
 
   if (!isOpen) return null;
@@ -189,12 +190,17 @@ const CreateAssetEquipmentModal: React.FC<CreateAssetEquipmentModalProps> = ({
         {/* Modal Header */}
         <div className="flex items-center justify-between p-6 border-b border-inherit">
           <div>
-            <h2 className={`text-xl font-black ${textPrimary}`}>Create New Asset/Equipment</h2>
-            <p className={`text-sm ${textSecondary} mt-1`}>Enter asset details below</p>
+            <h2 className={`text-xl font-black ${textPrimary}`}>
+              {isEditing ? 'Edit Asset/Equipment' : 'Create New Asset/Equipment'}
+            </h2>
+            <p className={`text-sm ${textSecondary} mt-1`}>
+              {isEditing ? 'Update asset details below' : 'Enter asset details below'}
+            </p>
           </div>
           <button
             onClick={onClose}
-            className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+            disabled={isSubmitting}
+            className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors disabled:opacity-50`}
           >
             <X className={`w-5 h-5 ${textSecondary}`} />
           </button>
@@ -202,55 +208,64 @@ const CreateAssetEquipmentModal: React.FC<CreateAssetEquipmentModalProps> = ({
 
         {/* Modal Body */}
         <div className="p-6 space-y-6">
-          {/* Machinery Name */}
+          {/* Asset Name */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Name of Machinery <span className="text-red-500">*</span>
+              Asset Name <span className="text-red-500">*</span>
             </label>
-            <select
-              name="machineryName"
-              value={formData.machineryName}
+            <input
+              type="text"
+              name="name"
+              value={formData.name}
               onChange={handleInputChange}
-              className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+              placeholder="Enter asset name (e.g., Excavator, Crane, Concrete Mixer)"
+              disabled={isSubmitting}
+              className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                 isDark 
-                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
-                  : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-            >
-              <option value="">-- Select Machinery Name --</option>
-              {machineryOptions.map((option, idx) => (
-                <option key={idx} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
+                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
+                  : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+            />
           </div>
 
           {/* Unit */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Select Unit <span className="text-red-500">*</span>
+              Measurement Unit <span className="text-red-500">*</span>
             </label>
-            <select
-              name="unit"
-              value={formData.unit}
-              onChange={handleInputChange}
-              className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
-                isDark 
-                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
-                  : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-            >
-              <option value="">-- Select Unit --</option>
-              {units.map((option, idx) => (
-                <option key={idx} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
+            {isLoadingUnits ? (
+              <div className="flex items-center gap-2 px-4 py-3">
+                <Loader2 className="w-4 h-4 animate-spin text-[#C2D642]" />
+                <span className={`text-sm ${textSecondary}`}>Loading units...</span>
+              </div>
+            ) : (
+              <select
+                name="unit_id"
+                value={formData.unit_id}
+                onChange={handleInputChange}
+                disabled={isSubmitting}
+                className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+                  isDark 
+                    ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
+                    : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
+                } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+              >
+                <option value="">-- Select Unit --</option>
+                {units.map((unit) => (
+                  <option key={unit.id} value={unit.id}>
+                    {unit.unit}
+                  </option>
+                ))}
+              </select>
+            )}
+            {units.length === 0 && !isLoadingUnits && (
+              <p className={`text-xs mt-1 ${textSecondary}`}>
+                No units available. Please create a unit first.
+              </p>
+            )}
           </div>
 
-          {/* Asset Specification */}
+          {/* Specification */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
               Asset Specification <span className="text-red-500">*</span>
@@ -259,13 +274,14 @@ const CreateAssetEquipmentModal: React.FC<CreateAssetEquipmentModalProps> = ({
               name="specification"
               value={formData.specification}
               onChange={handleInputChange}
-              placeholder="Enter asset specification..."
+              placeholder="Enter asset specifications and details..."
               rows={4}
+              disabled={isSubmitting}
               className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                 isDark 
                   ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
                   : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none resize-none`}
+              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none resize-none disabled:opacity-50`}
             />
           </div>
         </div>
@@ -274,19 +290,22 @@ const CreateAssetEquipmentModal: React.FC<CreateAssetEquipmentModalProps> = ({
         <div className={`flex items-center justify-end gap-3 p-6 border-t border-inherit`}>
           <button
             onClick={onClose}
+            disabled={isSubmitting}
             className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
               isDark
                 ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
                 : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-            }`}
+            } disabled:opacity-50`}
           >
             Cancel
           </button>
           <button
-            onClick={handleCreateAsset}
-            className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642]/90 text-white transition-all shadow-md"
+            onClick={handleSubmit}
+            disabled={isSubmitting || isLoadingUnits}
+            className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642]/90 text-white transition-all shadow-md disabled:opacity-50 flex items-center gap-2"
           >
-            Create
+            {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+            {isEditing ? 'Update' : 'Create'}
           </button>
         </div>
       </div>

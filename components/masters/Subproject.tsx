@@ -3,6 +3,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
+import { masterDataAPI } from '../../services/api';
+import { useUser } from '../../contexts/UserContext';
 import { 
   Layers,
   FolderKanban,
@@ -20,6 +22,8 @@ import {
 
 interface Subproject {
   id: string;
+  numericId?: number | string; // Store numeric ID from database for API calls
+  uuid?: string; // Store UUID for display
   name: string;
   code: string;
   project: string;
@@ -37,16 +41,25 @@ interface SubprojectProps {
 
 const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
   const toast = useToast();
+  const { isAuthenticated } = useUser();
   const [selectedProject, setSelectedProject] = useState<string>('');
+  const [selectedProjectId, setSelectedProjectId] = useState<number | string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [isSearching, setIsSearching] = useState<boolean>(false);
   const [sortFilter, setSortFilter] = useState<'recent' | 'oldest' | 'none'>('none');
   const [showFilterDropdown, setShowFilterDropdown] = useState<boolean>(false);
   const [showSubprojectModal, setShowSubprojectModal] = useState<boolean>(false);
   const [editingSubprojectId, setEditingSubprojectId] = useState<string | null>(null);
+  const [editingSubprojectNumericId, setEditingSubprojectNumericId] = useState<number | string | null>(null);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
-  const [userSubprojects, setUserSubprojects] = useState<Subproject[]>([]);
+  const [subprojects, setSubprojects] = useState<Subproject[]>([]);
+  const [isLoadingSubprojects, setIsLoadingSubprojects] = useState<boolean>(false);
+  const [subprojectsError, setSubprojectsError] = useState<string | null>(null);
+  const [projects, setProjects] = useState<any[]>([]);
+  const [isLoadingProjects, setIsLoadingProjects] = useState<boolean>(false);
   const [formData, setFormData] = useState({
     project: '',
+    projectId: '',
     subprojectName: '',
     plannedStartDate: '',
     plannedEndDate: ''
@@ -57,69 +70,35 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
 
-  const availableProjects = [
-    { name: 'Residential Complex A', code: 'PRJ001' },
-    { name: 'Commercial Tower B', code: 'PRJ002' },
-    { name: 'Highway Infrastructure Project', code: 'PRJ003' },
-    { name: 'Shopping Mall Development', code: 'PRJ004' },
-  ];
 
-  const defaultSubprojects: Subproject[] = [
-    { id: '1', name: 'Foundation Work', code: 'SUB001', project: 'Residential Complex A', manager: 'John Doe', status: 'Active', progress: 85, startDate: '2024-01-20', endDate: '2024-03-15', createdAt: '2024-01-20T00:00:00.000Z' },
-    { id: '2', name: 'Structural Framework', code: 'SUB002', project: 'Residential Complex A', manager: 'John Doe', status: 'In Progress', progress: 60, startDate: '2024-03-16', endDate: '2024-06-30', createdAt: '2024-03-16T00:00:00.000Z' },
-    { id: '3', name: 'Plumbing Installation', code: 'SUB003', project: 'Residential Complex A', manager: 'Mike Johnson', status: 'Pending', progress: 0, startDate: '2024-07-01', endDate: '2024-08-15', createdAt: '2024-07-01T00:00:00.000Z' },
-    { id: '4', name: 'Electrical Installation', code: 'SUB004', project: 'Commercial Tower B', manager: 'Jane Smith', status: 'In Progress', progress: 45, startDate: '2024-02-25', endDate: '2024-05-20', createdAt: '2024-02-25T00:00:00.000Z' },
-    { id: '5', name: 'HVAC System', code: 'SUB005', project: 'Commercial Tower B', manager: 'Jane Smith', status: 'Pending', progress: 0, startDate: '2024-05-21', endDate: '2024-07-10', createdAt: '2024-05-21T00:00:00.000Z' },
-    { id: '6', name: 'Interior Finishing', code: 'SUB006', project: 'Commercial Tower B', manager: 'Sarah Williams', status: 'Pending', progress: 0, startDate: '2024-07-11', endDate: '2024-09-30', createdAt: '2024-07-11T00:00:00.000Z' },
-    { id: '7', name: 'Road Construction', code: 'SUB007', project: 'Highway Infrastructure Project', manager: 'Robert Brown', status: 'Active', progress: 70, startDate: '2024-03-05', endDate: '2024-08-31', createdAt: '2024-03-05T00:00:00.000Z' },
-    { id: '8', name: 'Bridge Construction', code: 'SUB008', project: 'Highway Infrastructure Project', manager: 'Robert Brown', status: 'In Progress', progress: 35, startDate: '2024-04-01', endDate: '2024-10-15', createdAt: '2024-04-01T00:00:00.000Z' },
-    { id: '9', name: 'Drainage System', code: 'SUB009', project: 'Highway Infrastructure Project', manager: 'David Lee', status: 'Pending', progress: 0, startDate: '2024-09-01', endDate: '2024-11-30', createdAt: '2024-09-01T00:00:00.000Z' },
-    { id: '10', name: 'Site Preparation', code: 'SUB010', project: 'Shopping Mall Development', manager: 'Emily Davis', status: 'Completed', progress: 100, startDate: '2024-01-10', endDate: '2024-02-28', createdAt: '2024-01-10T00:00:00.000Z' },
-    { id: '11', name: 'Retail Space Construction', code: 'SUB011', project: 'Shopping Mall Development', manager: 'Emily Davis', status: 'In Progress', progress: 55, startDate: '2024-03-01', endDate: '2024-07-31', createdAt: '2024-03-01T00:00:00.000Z' },
-    { id: '12', name: 'Parking Structure', code: 'SUB012', project: 'Shopping Mall Development', manager: 'Chris Wilson', status: 'In Progress', progress: 40, startDate: '2024-03-15', endDate: '2024-08-20', createdAt: '2024-03-15T00:00:00.000Z' },
-  ];
-
-  // Load subprojects from localStorage on mount
-  useEffect(() => {
-    const savedSubprojects = localStorage.getItem('subprojects');
-    if (savedSubprojects) {
-      try {
-        const parsed = JSON.parse(savedSubprojects);
-        setUserSubprojects(parsed);
-      } catch (e) {
-        setUserSubprojects([]);
-      }
-    } else {
-      setUserSubprojects([]);
+  // Fetch all projects on mount
+  const fetchProjects = async () => {
+    if (!isAuthenticated) {
+      setProjects([]);
+      setIsLoadingProjects(false);
+      return;
     }
-  }, []);
-
-  // Save subprojects to localStorage whenever userSubprojects state changes
-  useEffect(() => {
-    const defaultIds = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12'];
-    const userAddedSubprojects = userSubprojects.filter(s => !defaultIds.includes(s.id));
-    if (userAddedSubprojects.length > 0) {
-      try {
-        localStorage.setItem('subprojects', JSON.stringify(userAddedSubprojects));
-      } catch (error) {
-        console.error('Error saving to localStorage:', error);
-        if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-          toast.showWarning('Storage limit exceeded. Some data may not be saved.');
-        }
-      }
-    } else {
-      try {
-        localStorage.removeItem('subprojects');
-      } catch (error) {
-        console.error('Error clearing localStorage:', error);
-      }
+    
+    setIsLoadingProjects(true);
+    try {
+      console.log('📦 Fetching all projects for subproject dropdown...');
+      const fetchedProjects = await masterDataAPI.getProjects();
+      console.log('✅ Fetched projects:', fetchedProjects?.length || 0);
+      setProjects(fetchedProjects || []);
+    } catch (error: any) {
+      console.error('Failed to fetch projects:', error);
+      setProjects([]);
+      toast.showError('Failed to load projects');
+    } finally {
+      setIsLoadingProjects(false);
     }
-  }, [userSubprojects]);
+  };
 
-  // Combine default and user subprojects
-  const allSubprojects = useMemo(() => {
-    return [...defaultSubprojects, ...userSubprojects];
-  }, [userSubprojects]);
+  // Load projects on mount
+  useEffect(() => {
+    fetchProjects();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -153,13 +132,66 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
   const handleCloseModal = () => {
     setShowSubprojectModal(false);
     setEditingSubprojectId(null);
+    setEditingSubprojectNumericId(null);
     setFormData({
       project: '',
+      projectId: '',
       subprojectName: '',
       plannedStartDate: '',
       plannedEndDate: ''
     });
   };
+
+  // Fetch subprojects from API
+  const fetchSubprojects = async (projectId: number | string) => {
+    if (!isAuthenticated || !projectId) {
+      setSubprojects([]);
+      setIsLoadingSubprojects(false);
+      return;
+    }
+    
+    setIsLoadingSubprojects(true);
+    setSubprojectsError(null);
+    try {
+      console.log('📦 Fetching subprojects for project ID:', projectId);
+      const fetchedSubprojects = await masterDataAPI.getSubprojects(projectId);
+      console.log('✅ Fetched subprojects:', fetchedSubprojects);
+      
+      // Transform API response to match Subproject interface
+      const transformedSubprojects = fetchedSubprojects.map((sub: any) => ({
+        id: sub.uuid || String(sub.id), // UUID for display
+        numericId: sub.id, // Store numeric ID from database (backend queries using numeric id)
+        uuid: sub.uuid || sub.id, // Store UUID
+        name: sub.name || sub.subproject_name || '',
+        code: sub.code || '',
+        project: sub.project?.name || sub.project?.project_name || sub.project_name || '',
+        manager: sub.manager || sub.project_manager || '',
+        status: sub.status || 'Pending',
+        progress: sub.progress || 0,
+        startDate: sub.start_date || sub.planned_start_date || sub.startDate || '',
+        endDate: sub.end_date || sub.planned_end_date || sub.endDate || '',
+        createdAt: sub.created_at || sub.createdAt,
+      }));
+      console.log('✅ Transformed subprojects:', transformedSubprojects);
+      setSubprojects(transformedSubprojects);
+    } catch (err: any) {
+      console.error('❌ Failed to fetch subprojects:', err);
+      setSubprojectsError(err.message || 'Failed to load subprojects');
+      setSubprojects([]);
+      toast.showError(err.message || 'Failed to load subprojects');
+    } finally {
+      setIsLoadingSubprojects(false);
+    }
+  };
+
+  // Load subprojects when project is selected
+  useEffect(() => {
+    if (selectedProjectId) {
+      fetchSubprojects(selectedProjectId);
+    } else {
+      setSubprojects([]);
+    }
+  }, [selectedProjectId, isAuthenticated]);
 
   const handleToggleCard = (subprojectId: string) => {
     setExpandedCards(prev => {
@@ -176,29 +208,107 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
     });
   };
 
-  const handleEditSubproject = (subproject: Subproject) => {
-    setEditingSubprojectId(subproject.id);
-    setFormData({
-      project: subproject.project,
-      subprojectName: subproject.name,
-      plannedStartDate: subproject.startDate,
-      plannedEndDate: subproject.endDate
-    });
-    setShowSubprojectModal(true);
-  };
-
-  const handleDeleteSubproject = (subprojectId: string) => {
-    if (window.confirm('Are you sure you want to delete this subproject?')) {
-      setUserSubprojects(prev => prev.filter(s => s.id !== subprojectId));
-      toast.showSuccess('Subproject deleted successfully');
+  const handleEditSubproject = async (subproject: Subproject) => {
+    try {
+      // Use UUID for edit API (Route::get('/sub-project-edit/{uuid}', 'edit'))
+      const subprojectUuid = subproject.uuid || subproject.id;
+      
+      if (!subprojectUuid) {
+        toast.showError('Invalid subproject ID. Cannot edit subproject.');
+        return;
+      }
+      
+      console.log('📝 Editing subproject:', {
+        uuid: subprojectUuid,
+        id: subproject.id,
+        numericId: subproject.numericId,
+        type: typeof subprojectUuid
+      });
+      console.log('Subproject data:', subproject);
+      
+      setEditingSubprojectId(subproject.id); // Keep UUID for display
+      setEditingSubprojectNumericId(subproject.numericId || subproject.id); // Store numeric ID for update API
+      
+      // Fetch full details from API using UUID
+      // Route: GET /sub-project-edit/{uuid}
+      let subprojectDetails: any = null;
+      try {
+        subprojectDetails = await masterDataAPI.getSubproject(String(subprojectUuid));
+        console.log('✅ Fetched subproject details from API:', subprojectDetails);
+      } catch (apiError: any) {
+        console.error('❌ Failed to fetch subproject details from API:', apiError);
+        toast.showError(apiError.message || 'Failed to load subproject details');
+        return;
+      }
+      
+      // Find the project ID from the project name or use project_id from API response
+      const projectIdFromAPI = subprojectDetails?.project_id || subprojectDetails?.tag_project;
+      let projectId = projectIdFromAPI;
+      
+      if (!projectId) {
+        // Fallback: find project by name
+        const project = projects.find(p => 
+          p.name === subproject.project || 
+          p.project_name === subproject.project ||
+          String(p.id) === String(subprojectDetails?.project_id) ||
+          String(p.uuid) === String(subprojectDetails?.project_id)
+        );
+        projectId = project?.id || project?.uuid || selectedProjectId || '';
+      }
+      
+      // Use API data if available, otherwise use existing subproject data
+      setFormData({
+        project: subproject.project,
+        projectId: String(projectId),
+        subprojectName: subprojectDetails?.name || subprojectDetails?.subproject_name || subproject.name,
+        plannedStartDate: subprojectDetails?.start_date || subprojectDetails?.planned_start_date || subprojectDetails?.startDate || subproject.startDate,
+        plannedEndDate: subprojectDetails?.end_date || subprojectDetails?.planned_end_date || subprojectDetails?.endDate || subproject.endDate
+      });
+      setShowSubprojectModal(true);
+    } catch (error: any) {
+      console.error('❌ Failed to edit subproject:', error);
+      toast.showError(error.message || 'Failed to load subproject details');
     }
   };
 
-  const handleCreateSubproject = () => {
+  const handleDeleteSubproject = async (subproject: Subproject) => {
+    if (window.confirm('Are you sure you want to delete this subproject?')) {
+      try {
+        // Use UUID for delete API (Route::delete('/sub-project-delete/{uuid}', 'delete'))
+        const subprojectUuid = subproject.uuid || subproject.id;
+        
+        if (!subprojectUuid) {
+          toast.showError('Invalid subproject ID. Cannot delete subproject.');
+          return;
+        }
+        
+        console.log('🗑️ Deleting subproject:', {
+          uuid: subprojectUuid,
+          id: subproject.id,
+          numericId: subproject.numericId,
+          type: typeof subprojectUuid
+        });
+        
+        // Route: DELETE /sub-project-delete/{uuid}
+        await masterDataAPI.deleteSubproject(String(subprojectUuid));
+        console.log('✅ Subproject deleted successfully');
+        toast.showSuccess('Subproject deleted successfully');
+        // Refresh subprojects list
+        if (selectedProjectId) {
+          await fetchSubprojects(selectedProjectId);
+        }
+      } catch (error: any) {
+        console.error('❌ Failed to delete subproject:', error);
+        toast.showError(error.message || 'Failed to delete subproject');
+      }
+    }
+  };
+
+  const handleCreateSubproject = async () => {
     const missingFields: string[] = [];
     
-    if (!formData.project) missingFields.push('Select Project');
-    if (!formData.subprojectName) missingFields.push('Subproject Name');
+    if (!formData.projectId) missingFields.push('Select Project');
+    if (!formData.subprojectName.trim()) missingFields.push('Subproject Name');
     if (!formData.plannedStartDate) missingFields.push('Planned Start Date');
     if (!formData.plannedEndDate) missingFields.push('Planned End Date');
     
@@ -207,53 +317,105 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
       return;
     }
 
-    if (editingSubprojectId) {
-      // Update existing subproject
-      setUserSubprojects(prev => prev.map(s => 
-        s.id === editingSubprojectId 
-          ? {
-              ...s,
-              name: formData.subprojectName,
-              project: formData.project,
-              startDate: formData.plannedStartDate,
-              endDate: formData.plannedEndDate
-            }
-          : s
-      ));
-    } else {
-      // Generate a code from the subproject name
-      const code = formData.subprojectName
-        .split(' ')
-        .map(word => word.charAt(0).toUpperCase())
-        .join('')
-        .substring(0, 6) + String(defaultSubprojects.length + userSubprojects.length + 1).padStart(3, '0');
-
-      const newSubproject: Subproject = {
-        id: Date.now().toString(),
-        name: formData.subprojectName,
-        code: code,
-        project: formData.project,
-        status: 'Pending',
-        progress: 0,
-        startDate: formData.plannedStartDate,
-        endDate: formData.plannedEndDate,
-        createdAt: new Date().toISOString()
+    try {
+      const subprojectData = {
+        name: formData.subprojectName.trim(),
+        start_date: formData.plannedStartDate,
+        end_date: formData.plannedEndDate,
+        tag_project: formData.projectId, // API expects tag_project field
       };
 
-      setUserSubprojects(prev => [...prev, newSubproject]);
+      console.log('📝 Creating/updating subproject:', {
+        editing: !!editingSubprojectId,
+        data: subprojectData
+      });
+
+      if (editingSubprojectId && editingSubprojectNumericId) {
+        // Use numeric ID for update (backend expects numeric id even though route uses {uuid})
+        console.log('📝 Updating subproject with numeric ID:', editingSubprojectNumericId);
+        await masterDataAPI.updateSubproject(String(editingSubprojectNumericId), subprojectData);
+        toast.showSuccess('Subproject updated successfully');
+      } else {
+        await masterDataAPI.createSubproject(subprojectData);
+        toast.showSuccess('Subproject created successfully');
+      }
+
+      // Refresh subprojects list
+      if (selectedProjectId) {
+        await fetchSubprojects(selectedProjectId);
+      }
+
+      handleCloseModal();
+    } catch (error: any) {
+      console.error('❌ Failed to save subproject:', error);
+      toast.showError(error.message || 'Failed to save subproject');
+    }
+  };
+
+  // Search subprojects using API
+  const handleSearch = async (query: string) => {
+    if (!query.trim()) {
+      // If search is empty, fetch all subprojects for selected project
+      if (selectedProjectId) {
+        await fetchSubprojects(selectedProjectId);
+      }
+      setIsSearching(false);
+      return;
     }
 
-    handleCloseModal();
+    setIsSearching(true);
+    try {
+      console.log('🔍 Searching subprojects with query:', query);
+      const searchResults = await masterDataAPI.searchSubprojects(query);
+      console.log('✅ Search results:', searchResults);
+      
+      // Transform API response to match Subproject interface
+      const transformedSubprojects = searchResults.map((sub: any) => ({
+        id: sub.uuid || String(sub.id), // UUID for display
+        numericId: sub.id, // Store numeric ID from database (backend queries using numeric id)
+        uuid: sub.uuid || sub.id, // Store UUID
+        name: sub.name || sub.subproject_name || '',
+        code: sub.code || '',
+        project: sub.project?.name || sub.project?.project_name || sub.project_name || '',
+        manager: sub.manager || sub.project_manager || '',
+        status: sub.status || 'Pending',
+        progress: sub.progress || 0,
+        startDate: sub.start_date || sub.planned_start_date || sub.startDate || '',
+        endDate: sub.end_date || sub.planned_end_date || sub.endDate || '',
+        createdAt: sub.created_at || sub.createdAt,
+      }));
+      console.log('✅ Transformed search results:', transformedSubprojects);
+      setSubprojects(transformedSubprojects);
+    } catch (error: any) {
+      console.error('❌ Search failed:', error);
+      toast.showError(error.message || 'Search failed. Please try again.');
+    } finally {
+      setIsSearching(false);
+    }
   };
+
+  // Debounced search
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (searchQuery.trim()) {
+        handleSearch(searchQuery);
+      } else if (selectedProjectId) {
+        fetchSubprojects(selectedProjectId);
+      }
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [searchQuery]);
 
   // Memoize filtered and sorted subprojects
   const filteredAndSortedSubprojects = useMemo(() => {
-    if (!selectedProject) return [];
+    if (!selectedProjectId) return [];
     
-    let filtered = allSubprojects.filter(sub => sub.project === selectedProject);
+    let filtered = [...subprojects];
 
-    // Apply search filter by subproject name
-    if (searchQuery.trim()) {
+    // Client-side filtering is optional since we're using API search
+    // But keep it for sorting
+    if (searchQuery.trim() && !isSearching) {
       filtered = filtered.filter(subproject =>
         subproject.name.toLowerCase().includes(searchQuery.toLowerCase())
       );
@@ -275,7 +437,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
     }
 
     return filtered;
-  }, [selectedProject, searchQuery, sortFilter, allSubprojects]);
+  }, [subprojects, searchQuery, sortFilter, selectedProjectId, isSearching]);
 
   const handleDownloadExcel = () => {
     const headers = ['Subproject Name', 'Code', 'Project', 'Planned Start Date', 'Planned End Date', 'Status'];
@@ -333,18 +495,24 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
             </label>
             <div className="relative">
               <select
-                value={selectedProject}
-                onChange={(e) => setSelectedProject(e.target.value)}
+                value={selectedProjectId}
+                onChange={(e) => {
+                  const projectId = e.target.value;
+                  const project = projects.find(p => (p.id || p.uuid) == projectId);
+                  setSelectedProjectId(projectId);
+                  setSelectedProject(project?.name || project?.project_name || '');
+                }}
+                disabled={isLoadingProjects}
                 className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
                   isDark 
                     ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
                     : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none pr-10`}
+                } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none pr-10 disabled:opacity-50`}
               >
-                <option value="">-- Select a Project --</option>
-                {availableProjects.map((project, idx) => (
-                  <option key={idx} value={project.name}>
-                    {project.name} ({project.code})
+                <option value="">{isLoadingProjects ? 'Loading projects...' : '-- Select a Project --'}</option>
+                {projects.map((project: any) => (
+                  <option key={project.uuid || project.id} value={project.id || project.uuid}>
+                    {project.name || project.project_name} {project.code ? `(${project.code})` : ''}
                   </option>
                 ))}
               </select>
@@ -359,7 +527,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
       </div>
 
       {/* Add New Button and Search/Filter Bar - Only show when project is selected */}
-      {selectedProject && (
+      {selectedProjectId && (
         <>
           <div className="flex items-center justify-between">
             <div className="flex-1"></div>
@@ -379,7 +547,8 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                 onClick={() => {
                   setFormData({
                     ...formData,
-                    project: selectedProject
+                    project: selectedProject,
+                    projectId: String(selectedProjectId)
                   });
                   setShowSubprojectModal(true);
                 }}
@@ -399,8 +568,14 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                 placeholder="Search by subproject name..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                disabled={isSearching}
+                className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
               />
+              {isSearching && (
+                <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-[#C2D642]"></div>
+                </div>
+              )}
             </div>
             <div className="relative filter-dropdown">
               <button 
@@ -466,11 +641,29 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
       )}
 
       {/* Subprojects Cards */}
-      {!selectedProject ? (
+      {!selectedProjectId ? (
         <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
           <FolderKanban className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
           <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>Select a Project</h3>
           <p className={`text-sm ${textSecondary}`}>Please select a project from the dropdown above to view its subprojects</p>
+        </div>
+      ) : isLoadingSubprojects ? (
+        <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#C2D642] mx-auto mb-4"></div>
+          <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>Loading Subprojects...</h3>
+          <p className={`text-sm ${textSecondary}`}>Please wait while we fetch subprojects</p>
+        </div>
+      ) : subprojectsError ? (
+        <div className={`p-12 rounded-xl border text-center ${cardClass} border-red-500`}>
+          <FolderKanban className={`w-16 h-16 mx-auto mb-4 text-red-500 opacity-50`} />
+          <h3 className={`text-lg font-black mb-2 text-red-500`}>Error Loading Subprojects</h3>
+          <p className={`text-sm ${textSecondary} mb-4`}>{subprojectsError}</p>
+          <button
+            onClick={() => selectedProjectId && fetchSubprojects(selectedProjectId)}
+            className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+          >
+            Retry
+          </button>
         </div>
       ) : filteredAndSortedSubprojects.length > 0 ? (
         <div className="space-y-3">
@@ -603,7 +796,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleDeleteSubproject(subproject.id);
+                          handleDeleteSubproject(subproject);
                         }}
                         className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold transition-all ${
                           isDark
@@ -681,19 +874,28 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                   Select Project <span className="text-red-500">*</span>
                 </label>
                 <select
-                  name="project"
-                  value={formData.project}
-                  onChange={handleInputChange}
+                  name="projectId"
+                  value={formData.projectId}
+                  onChange={(e) => {
+                    const projectId = e.target.value;
+                    const project = projects.find(p => (p.id || p.uuid) == projectId);
+                    setFormData({
+                      ...formData,
+                      projectId: projectId,
+                      project: project?.name || project?.project_name || ''
+                    });
+                  }}
+                  disabled={isLoadingProjects}
                   className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
                     isDark 
                       ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
                       : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
                 >
-                  <option value="">-- Select Project --</option>
-                  {availableProjects.map((project, idx) => (
-                    <option key={idx} value={project.name}>
-                      {project.name} ({project.code})
+                  <option value="">{isLoadingProjects ? 'Loading projects...' : '-- Select Project --'}</option>
+                  {projects.map((project: any) => (
+                    <option key={project.uuid || project.id} value={project.id || project.uuid}>
+                      {project.name || project.project_name} {project.code ? `(${project.code})` : ''}
                     </option>
                   ))}
                 </select>

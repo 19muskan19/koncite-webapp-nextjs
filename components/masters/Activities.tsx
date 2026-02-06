@@ -3,21 +3,33 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
-import { Activity, MoreVertical, Download, Plus, Trash2 } from 'lucide-react';
+import { Activity, MoreVertical, Download, Plus, Trash2, Loader2, Edit, Search } from 'lucide-react';
 import CreateActivityModal from './Modals/CreateActivityModal';
+import { masterDataAPI } from '../../services/api';
+import { useUser } from '../../contexts/UserContext';
 
 interface ActivityItem {
   id: string;
-  name: string;
-  project: string;
-  subproject: string;
-  type: 'heading' | 'activity';
+  uuid?: string;
+  name?: string;
+  activities?: string; // API field name
+  project?: string;
+  project_id?: number;
+  subproject?: string;
+  subproject_id?: number;
+  type: 'heading' | 'activity' | 'activites'; // API uses "activites" (with typo)
   unit?: string;
+  unit_id?: number;
   qty?: number;
+  quantity?: number; // API field name
   rate?: number;
   amount?: number;
   startDate?: string;
+  start_date?: string; // API field name
   endDate?: string;
+  end_date?: string; // API field name
+  heading?: number; // Parent activity ID
+  parent_id?: number;
   createdAt?: string;
 }
 
@@ -27,151 +39,242 @@ interface ActivitiesProps {
 
 const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
   const toast = useToast();
-  const [selectedProject, setSelectedProject] = useState<string>('');
-  const [selectedSubproject, setSelectedSubproject] = useState<string>('');
+  const { isAuthenticated } = useUser();
+  const [selectedProjectId, setSelectedProjectId] = useState<string>('');
+  const [selectedSubprojectId, setSelectedSubprojectId] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [isSearching, setIsSearching] = useState<boolean>(false);
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
-  const [userActivities, setUserActivities] = useState<ActivityItem[]>([]);
+  const [editingActivityId, setEditingActivityId] = useState<string | null>(null);
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
+  const [projects, setProjects] = useState<Array<{ id: number; uuid: string; project_name: string }>>([]);
+  const [subprojects, setSubprojects] = useState<Array<{ id: number; uuid: string; name: string; project_id?: number }>>([]);
+  const [isLoadingActivities, setIsLoadingActivities] = useState<boolean>(false);
+  const [isLoadingProjects, setIsLoadingProjects] = useState<boolean>(false);
+  const [isLoadingSubprojects, setIsLoadingSubprojects] = useState<boolean>(false);
+  const [activitiesError, setActivitiesError] = useState<string | null>(null);
   
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
 
-  const availableProjects = [
-    { name: 'Residential Complex A', code: 'PRJ001' },
-    { name: 'Commercial Tower B', code: 'PRJ002' },
-    { name: 'Highway Infrastructure Project', code: 'PRJ003' },
-    { name: 'Shopping Mall Development', code: 'PRJ004' },
-  ];
-
-  const availableSubprojects = [
-    { name: 'Foundation Work', project: 'Residential Complex A' },
-    { name: 'Structural Framework', project: 'Residential Complex A' },
-    { name: 'Plumbing Installation', project: 'Residential Complex A' },
-    { name: 'Electrical Installation', project: 'Commercial Tower B' },
-    { name: 'HVAC System', project: 'Commercial Tower B' },
-    { name: 'Road Construction', project: 'Highway Infrastructure Project' },
-    { name: 'Bridge Construction', project: 'Highway Infrastructure Project' },
-    { name: 'Site Preparation', project: 'Shopping Mall Development' },
-  ];
-
-  const defaultActivities: ActivityItem[] = [
-    { id: '1', name: 'Excavation & Misc', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', createdAt: '2024-01-15T00:00:00.000Z' },
-    { id: '2', name: 'PCC', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', createdAt: '2024-01-16T00:00:00.000Z' },
-    { id: '3', name: 'Steel Reinforcement', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', createdAt: '2024-01-17T00:00:00.000Z' },
-    { id: '4', name: 'Concrete Work', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', createdAt: '2024-01-18T00:00:00.000Z' },
-    { id: '5', name: 'Masonry', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', createdAt: '2024-01-19T00:00:00.000Z' },
-    { id: '6', name: 'Plastering, Gypsum, POP', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', createdAt: '2024-01-20T00:00:00.000Z' },
-    { id: '7', name: 'Water Proofing', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', createdAt: '2024-01-21T00:00:00.000Z' },
-    { id: '8', name: 'Doors & Windows', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', createdAt: '2024-01-22T00:00:00.000Z' },
-    { id: '9', name: 'Tiling & Paver Work', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', createdAt: '2024-01-23T00:00:00.000Z' },
-    { id: '10', name: 'Railing & Fabrication work', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', createdAt: '2024-01-24T00:00:00.000Z' },
-    { id: '11', name: 'Electrical', project: 'Residential Complex A', subproject: 'Plumbing Installation', type: 'activity', createdAt: '2024-01-25T00:00:00.000Z' },
-    { id: '12', name: 'Plumbing', project: 'Residential Complex A', subproject: 'Plumbing Installation', type: 'activity', createdAt: '2024-01-26T00:00:00.000Z' },
-    { id: '13', name: 'Painting', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', createdAt: '2024-01-27T00:00:00.000Z' },
-    { id: '14', name: 'Bituminous Works', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', createdAt: '2024-01-28T00:00:00.000Z' },
-    { id: '15', name: 'Sub Activites 1.1', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'heading', createdAt: '2024-01-29T00:00:00.000Z' },
-  ];
-
-  // Load activities from localStorage on mount
+  // Fetch projects from API
   useEffect(() => {
-    const savedActivities = localStorage.getItem('activities');
-    if (savedActivities) {
-      try {
-        const parsed = JSON.parse(savedActivities);
-        setUserActivities(parsed);
-      } catch (e) {
-        setUserActivities([]);
+    const fetchProjects = async () => {
+      if (!isAuthenticated) {
+        setProjects([]);
+        return;
       }
-    } else {
-      setUserActivities([]);
-    }
-  }, []);
-
-  // Save activities to localStorage whenever userActivities state changes
-  useEffect(() => {
-    const defaultIds = defaultActivities.map(a => a.id);
-    const userAddedActivities = userActivities.filter(a => !defaultIds.includes(a.id));
-    if (userAddedActivities.length > 0) {
+      
+      setIsLoadingProjects(true);
       try {
-        localStorage.setItem('activities', JSON.stringify(userAddedActivities));
-      } catch (error) {
-        console.error('Error saving to localStorage:', error);
-        if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-          toast.showWarning('Storage limit exceeded. Some data may not be saved.');
-        }
-      }
-    } else {
-      try {
-        localStorage.removeItem('activities');
-      } catch (error) {
-        console.error('Error clearing localStorage:', error);
-      }
-    }
-  }, [userActivities]);
-
-  // Combine default and user activities
-  const allActivities = useMemo(() => {
-    return [...defaultActivities, ...userActivities];
-  }, [userActivities]);
-
-  // Filter activities based on selected project and subproject
-  const filteredActivities = useMemo(() => {
-    let filtered = allActivities;
-    
-    if (selectedProject) {
-      filtered = filtered.filter(activity => activity.project === selectedProject);
-    }
-    
-    if (selectedSubproject) {
-      filtered = filtered.filter(activity => activity.subproject === selectedSubproject);
-    }
-    
-    return filtered;
-  }, [selectedProject, selectedSubproject, allActivities]);
-
-  // Get subprojects for selected project
-  const projectSubprojects = useMemo(() => {
-    if (!selectedProject) return [];
-    return availableSubprojects.filter(sub => sub.project === selectedProject);
-  }, [selectedProject]);
-
-  const handleActivityCreated = (newActivity: ActivityItem) => {
-    setUserActivities(prev => [...prev, newActivity]);
-  };
-
-  // Listen for activitiesUpdated event
-  useEffect(() => {
-    const handleActivitiesUpdated = () => {
-      const savedActivities = localStorage.getItem('activities');
-      if (savedActivities) {
-        try {
-          const parsed = JSON.parse(savedActivities);
-          if (Array.isArray(parsed)) {
-            setUserActivities(parsed);
-          }
-        } catch (e) {
-          // Keep current activities if parsing fails
-        }
+        const fetchedProjects = await masterDataAPI.getProjects();
+        setProjects(fetchedProjects.map((p: any) => ({
+          id: p.id,
+          uuid: p.uuid || String(p.id),
+          project_name: p.project_name || p.name || ''
+        })));
+      } catch (error: any) {
+        console.error('Failed to fetch projects:', error);
+        toast.showError('Failed to load projects');
+      } finally {
+        setIsLoadingProjects(false);
       }
     };
 
-    window.addEventListener('activitiesUpdated', handleActivitiesUpdated);
-    return () => {
-      window.removeEventListener('activitiesUpdated', handleActivitiesUpdated);
-    };
-  }, []);
+    fetchProjects();
+  }, [isAuthenticated]);
 
-  const handleDeleteActivity = (activityId: string) => {
-    const defaultIds = defaultActivities.map(a => a.id);
-    if (defaultIds.includes(activityId)) {
-      toast.showWarning('Cannot delete default activities');
+  // Fetch subprojects when project is selected
+  useEffect(() => {
+    const fetchSubprojects = async () => {
+      if (!isAuthenticated || !selectedProjectId) {
+        setSubprojects([]);
+        return;
+      }
+      
+      setIsLoadingSubprojects(true);
+      try {
+        const fetchedSubprojects = await masterDataAPI.getProjectSubprojects(selectedProjectId);
+        setSubprojects(fetchedSubprojects.map((s: any) => ({
+          id: s.id,
+          uuid: s.uuid || String(s.id),
+          name: s.name || '',
+          project_id: s.project_id || s.tag_project
+        })));
+      } catch (error: any) {
+        console.error('Failed to fetch subprojects:', error);
+        toast.showError('Failed to load subprojects');
+      } finally {
+        setIsLoadingSubprojects(false);
+      }
+    };
+
+    fetchSubprojects();
+  }, [selectedProjectId, isAuthenticated]);
+
+  // Fetch activities from API based on selected project/subproject
+  const fetchActivities = async () => {
+    if (!isAuthenticated || !selectedProjectId) {
+      setActivities([]);
+      setIsLoadingActivities(false);
       return;
     }
     
-    if (window.confirm('Are you sure you want to delete this activity?')) {
-      setUserActivities(prev => prev.filter(a => a.id !== activityId));
+    setIsLoadingActivities(true);
+    setActivitiesError(null);
+    try {
+      const projectIdNum = projects.find(p => p.uuid === selectedProjectId || String(p.id) === selectedProjectId)?.id;
+      const subprojectIdNum = selectedSubprojectId 
+        ? subprojects.find(s => s.uuid === selectedSubprojectId || String(s.id) === selectedSubprojectId)?.id
+        : undefined;
+      
+      const fetchedActivities = await masterDataAPI.getActivities(
+        projectIdNum || selectedProjectId,
+        subprojectIdNum
+      );
+      
+      // Transform API response to match ActivityItem interface
+      const transformedActivities = fetchedActivities.map((activity: any) => ({
+        id: activity.uuid || String(activity.id),
+        uuid: activity.uuid,
+        name: activity.activities || activity.name || '',
+        activities: activity.activities || '',
+        project: activity.project?.project_name || activity.project_name || '',
+        project_id: activity.project_id || activity.project?.id,
+        subproject: activity.subproject?.name || activity.subproject_name || '',
+        subproject_id: activity.subproject_id || activity.subproject?.id,
+        type: activity.type || '',
+        unit: activity.unit?.unit || activity.unit || '',
+        unit_id: activity.unit_id || activity.unit?.id,
+        qty: activity.qty || activity.quantity || 0,
+        quantity: activity.quantity || activity.qty || 0,
+        rate: activity.rate || 0,
+        amount: activity.amount || 0,
+        startDate: activity.start_date || activity.startDate || '',
+        start_date: activity.start_date || '',
+        endDate: activity.end_date || activity.endDate || '',
+        end_date: activity.end_date || '',
+        heading: activity.heading || activity.parent_id,
+        parent_id: activity.parent_id || activity.heading,
+        createdAt: activity.created_at || activity.createdAt,
+      }));
+      setActivities(transformedActivities);
+    } catch (err: any) {
+      console.error('Failed to fetch activities:', err);
+      setActivitiesError(err.message || 'Failed to load activities');
+      setActivities([]);
+      toast.showError(err.message || 'Failed to load activities');
+    } finally {
+      setIsLoadingActivities(false);
     }
+  };
+
+  // Load activities when project/subproject changes
+  useEffect(() => {
+    if (selectedProjectId && !searchQuery.trim()) {
+      fetchActivities();
+    }
+  }, [selectedProjectId, selectedSubprojectId]);
+
+  // Search activities using API
+  const handleSearch = async (query: string) => {
+    if (!query.trim() || !selectedProjectId) {
+      if (selectedProjectId) {
+        await fetchActivities();
+      }
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    try {
+      const projectIdNum = projects.find(p => p.uuid === selectedProjectId || String(p.id) === selectedProjectId)?.id;
+      const searchResults = await masterDataAPI.searchActivities(query, projectIdNum || selectedProjectId);
+      
+      // Transform API response
+      const transformedActivities = searchResults.map((activity: any) => ({
+        id: activity.uuid || String(activity.id),
+        uuid: activity.uuid,
+        name: activity.activities || activity.name || '',
+        activities: activity.activities || '',
+        project: activity.project?.project_name || activity.project_name || '',
+        project_id: activity.project_id || activity.project?.id,
+        subproject: activity.subproject?.name || activity.subproject_name || '',
+        subproject_id: activity.subproject_id || activity.subproject?.id,
+        type: activity.type || '',
+        unit: activity.unit?.unit || activity.unit || '',
+        unit_id: activity.unit_id || activity.unit?.id,
+        qty: activity.qty || activity.quantity || 0,
+        quantity: activity.quantity || activity.qty || 0,
+        rate: activity.rate || 0,
+        amount: activity.amount || 0,
+        startDate: activity.start_date || activity.startDate || '',
+        start_date: activity.start_date || '',
+        endDate: activity.end_date || activity.endDate || '',
+        end_date: activity.end_date || '',
+        heading: activity.heading || activity.parent_id,
+        parent_id: activity.parent_id || activity.heading,
+        createdAt: activity.created_at || activity.createdAt,
+      }));
+      setActivities(transformedActivities);
+    } catch (error: any) {
+      console.error('Search failed:', error);
+      toast.showError(error.message || 'Search failed. Please try again.');
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // Debounced search
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (searchQuery.trim() && selectedProjectId) {
+        handleSearch(searchQuery);
+      } else if (selectedProjectId) {
+        fetchActivities();
+      }
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [searchQuery]);
+
+  // Filter activities (client-side filtering is optional since we're using API search)
+  const filteredActivities = useMemo(() => {
+    return activities;
+  }, [activities]);
+
+  const handleEditActivity = async (activity: ActivityItem) => {
+    try {
+      // Fetch full activity details from API
+      const activityDetails = await masterDataAPI.getActivity(activity.id);
+      setEditingActivityId(activity.id);
+      // Open modal with activity data - CreateActivityModal will handle this
+      setShowCreateModal(true);
+    } catch (error: any) {
+      console.error('Failed to fetch activity details:', error);
+      toast.showError('Failed to load activity details');
+    }
+  };
+
+  const handleDeleteActivity = async (activityId: string) => {
+    if (window.confirm('Are you sure you want to delete this activity?')) {
+      try {
+        await masterDataAPI.deleteActivity(activityId);
+        toast.showSuccess('Activity deleted successfully');
+        // Refresh activities list
+        await fetchActivities();
+      } catch (error: any) {
+        console.error('Failed to delete activity:', error);
+        toast.showError(error.message || 'Failed to delete activity');
+      }
+    }
+  };
+
+  const handleActivityCreated = async () => {
+    // Refresh activities list after create/update
+    await fetchActivities();
   };
 
   const handleDownloadExcel = () => {
@@ -242,57 +345,128 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
 
       {/* Project and Subproject Selectors */}
       <div className={`p-6 rounded-xl border ${cardClass}`}>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Select Project
+              Select Project <span className="text-red-500">*</span>
             </label>
-            <select
-              value={selectedProject}
-              onChange={(e) => {
-                setSelectedProject(e.target.value);
-                setSelectedSubproject(''); // Reset subproject when project changes
-              }}
-              className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
-                isDark 
-                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
-                  : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-            >
-              <option value="">-- Select Project --</option>
-              {availableProjects.map((project, idx) => (
-                <option key={idx} value={project.name}>
-                  {project.name} ({project.code})
-                </option>
-              ))}
-            </select>
+            {isLoadingProjects ? (
+              <div className={`w-full px-4 py-3 rounded-lg text-sm ${textSecondary} flex items-center gap-2`}>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Loading projects...
+              </div>
+            ) : (
+              <select
+                value={selectedProjectId}
+                onChange={(e) => {
+                  setSelectedProjectId(e.target.value);
+                  setSelectedSubprojectId(''); // Reset subproject when project changes
+                  setActivities([]); // Clear activities
+                }}
+                className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+                  isDark 
+                    ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
+                    : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
+                } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+              >
+                <option value="">-- Select Project --</option>
+                {projects.map((project) => (
+                  <option key={project.uuid || project.id} value={project.uuid || String(project.id)}>
+                    {project.project_name}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Select Subproject
+              Select Subproject (Optional)
             </label>
-            <select
-              value={selectedSubproject}
-              onChange={(e) => setSelectedSubproject(e.target.value)}
-              disabled={!selectedProject}
-              className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
-                isDark 
-                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
-                  : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none ${!selectedProject ? 'opacity-50 cursor-not-allowed' : ''}`}
-            >
-              <option value="">-- Select Subproject --</option>
-              {projectSubprojects.map((subproject, idx) => (
-                <option key={idx} value={subproject.name}>
-                  {subproject.name}
-                </option>
-              ))}
-            </select>
+            {isLoadingSubprojects ? (
+              <div className={`w-full px-4 py-3 rounded-lg text-sm ${textSecondary} flex items-center gap-2`}>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Loading subprojects...
+              </div>
+            ) : (
+              <select
+                value={selectedSubprojectId}
+                onChange={(e) => {
+                  setSelectedSubprojectId(e.target.value);
+                  // Refetch activities when subproject changes
+                  if (selectedProjectId) {
+                    fetchActivities();
+                  }
+                }}
+                disabled={!selectedProjectId}
+                className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+                  isDark 
+                    ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
+                    : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
+                } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none ${!selectedProjectId ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                <option value="">-- All Subprojects --</option>
+                {subprojects.map((subproject) => (
+                  <option key={subproject.uuid || subproject.id} value={subproject.uuid || String(subproject.id)}>
+                    {subproject.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+          <div>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+              Search Activities
+            </label>
+            <div className="relative">
+              <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
+              <input
+                type="text"
+                placeholder="Search by activity name..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                disabled={!selectedProjectId || isSearching}
+                className={`w-full pl-10 pr-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                  isDark 
+                    ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
+                    : 'bg-white border-slate-200 text-slate-900'
+                } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+              />
+              {isSearching && (
+                <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                  <Loader2 className="w-4 h-4 animate-spin text-[#C2D642]" />
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
 
-      {filteredActivities.length > 0 ? (
+      {/* Loading State */}
+      {isLoadingActivities && (
+        <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
+          <Loader2 className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50 animate-spin`} />
+          <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>Loading Activities...</h3>
+          <p className={`text-sm ${textSecondary}`}>Please wait while we fetch your activities</p>
+        </div>
+      )}
+
+      {/* Error State */}
+      {activitiesError && !isLoadingActivities && (
+        <div className={`p-12 rounded-xl border text-center ${cardClass} border-red-500`}>
+          <Activity className={`w-16 h-16 mx-auto mb-4 text-red-500 opacity-50`} />
+          <h3 className={`text-lg font-black mb-2 text-red-500`}>Error Loading Activities</h3>
+          <p className={`text-sm ${textSecondary} mb-4`}>{activitiesError}</p>
+          <button
+            onClick={fetchActivities}
+            className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Activities Table */}
+      {!isLoadingActivities && !activitiesError && selectedProjectId && filteredActivities.length > 0 ? (
         <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -318,7 +492,12 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
                         className={`w-4 h-4 rounded ${isDark ? 'border-slate-600 bg-slate-700' : 'border-slate-300 bg-white'} cursor-pointer`}
                       />
                     </td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.name}</td>
+                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
+                      {row.name || row.activities || '-'}
+                      {row.type === 'heading' && (
+                        <span className="ml-2 text-xs text-[#C2D642]">(Heading)</span>
+                      )}
+                    </td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.unit || '-'}</td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.qty || '-'}</td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.rate || '-'}</td>
@@ -326,13 +505,22 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.startDate || '-'}</td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.endDate || '-'}</td>
                     <td className="px-6 py-4 text-right">
-                      <button 
-                        onClick={() => handleDeleteActivity(row.id)}
-                        className={`p-2 rounded-lg text-red-500 hover:bg-red-500/10 transition-colors`}
-                        title="Delete"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                        <button 
+                          onClick={() => handleEditActivity(row)}
+                          className={`p-2 rounded-lg text-blue-500 hover:bg-blue-500/10 transition-colors`}
+                          title="Edit"
+                        >
+                          <Edit className="w-4 h-4" />
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteActivity(row.id)}
+                          className={`p-2 rounded-lg text-red-500 hover:bg-red-500/10 transition-colors`}
+                          title="Delete"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -340,13 +528,21 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
             </table>
           </div>
         </div>
-      ) : (
+      ) : !isLoadingActivities && !activitiesError ? (
         <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
           <Activity className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
-          <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>No Data Available</h3>
-          <p className={`text-sm ${textSecondary}`}>Start by adding your first activity entry</p>
+          <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>
+            {!selectedProjectId 
+              ? 'Please select a project to view activities' 
+              : searchQuery.trim()
+                ? `No activities found matching "${searchQuery}"`
+                : 'No activities found for this project/subproject'}
+          </h3>
+          <p className={`text-sm ${textSecondary}`}>
+            {selectedProjectId && !searchQuery.trim() && 'Start by adding your first activity entry'}
+          </p>
         </div>
-      )}
+      ) : null}
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className={`p-4 rounded-xl border ${cardClass}`}>
@@ -367,26 +563,17 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
       <CreateActivityModal
         theme={theme}
         isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        onSuccess={() => {
-          // Reload activities from localStorage
-          const savedActivities = localStorage.getItem('activities');
-          if (savedActivities) {
-            try {
-              const parsed = JSON.parse(savedActivities);
-              if (Array.isArray(parsed)) {
-                setUserActivities(parsed);
-              }
-            } catch (e) {
-              // Keep current activities if parsing fails
-            }
-          }
+        onClose={() => {
+          setShowCreateModal(false);
+          setEditingActivityId(null);
         }}
-        defaultActivities={defaultActivities}
-        userActivities={userActivities}
-        availableProjects={availableProjects}
-        availableSubprojects={availableSubprojects}
-        onActivityCreated={handleActivityCreated}
+        onSuccess={handleActivityCreated}
+        editingActivityId={editingActivityId}
+        activities={activities}
+        projects={projects}
+        subprojects={subprojects}
+        defaultProjectId={selectedProjectId}
+        defaultSubprojectId={selectedSubprojectId}
       />
     </div>
   );

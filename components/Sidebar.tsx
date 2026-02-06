@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { ViewType, ThemeType } from '@/types';
 import { useUser } from '@/contexts/UserContext';
+import { authAPI } from '@/services/api';
 
 interface NavItemChild {
   label: string;
@@ -55,10 +56,24 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
   const isDark = theme === 'dark';
   const getThemeClass = (prefix: string) => `${prefix}-${theme}`;
 
-  const handleLogout = () => {
-    localStorage.removeItem('isAuthenticated');
-    localStorage.removeItem('userEmail');
-    router.push('/');
+  const handleLogout = async () => {
+    const { removeCookie } = require('../utils/cookies');
+    try {
+      // Call logout API
+      await authAPI.logout();
+    } catch (error) {
+      console.error('Logout API error:', error);
+      // Continue with logout even if API call fails
+    } finally {
+      // Clear cookies and local storage
+      removeCookie('auth_token');
+      removeCookie('isAuthenticated');
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('isAuthenticated');
+      localStorage.removeItem('userEmail');
+      // Redirect to home
+      router.push('/');
+    }
   };
 
   const navItems: NavItem[] = [

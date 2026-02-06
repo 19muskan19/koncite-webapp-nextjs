@@ -3,15 +3,20 @@
 import React, { useState, useEffect } from 'react';
 import { ThemeType } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
-import { X } from 'lucide-react';
+import { X, Loader2 } from 'lucide-react';
+import { masterDataAPI } from '@/services/api';
 
 interface Unit {
   id: string;
+  uuid?: string;
   name: string;
-  code: string;
-  conversion: string;
-  factor: string;
-  status: 'Active' | 'Inactive';
+  unit?: string;
+  code?: string;
+  conversion?: string;
+  unit_coversion?: string;
+  factor?: string;
+  unit_coversion_factor?: string;
+  status?: 'Active' | 'Inactive';
 }
 
 interface CreateUnitModalProps {
@@ -19,9 +24,8 @@ interface CreateUnitModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
-  defaultUnits?: Unit[];
-  userUnits?: Unit[];
-  onUnitCreated?: (unit: Unit) => void;
+  editingUnitId?: string | null; // UUID for GET /unit-edit/{uuid}
+  editingUnitNumericId?: string | number | null; // Numeric ID for POST /unit-add with updateId
 }
 
 const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
@@ -29,17 +33,16 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
   isOpen,
   onClose,
   onSuccess,
-  defaultUnits = [],
-  userUnits = [],
-  onUnitCreated
+  editingUnitId = null,
+  editingUnitNumericId = null
 }) => {
   const toast = useToast();
   const [formData, setFormData] = useState({
-    name: '',
-    code: '',
-    conversion: '',
-    factor: ''
+    unit: '', // Required: unit name
+    unit_coversion: '', // Optional: conversion unit name
+    unit_coversion_factor: '' // Required if unit_coversion is provided
   });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -47,83 +50,115 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
   const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
 
+  const isEditing = !!editingUnitId && !!editingUnitNumericId;
+
+  // Load unit data when editing
+  useEffect(() => {
+    if (isOpen && editingUnitId) {
+      const loadUnitData = async () => {
+        try {
+          const unitData = await masterDataAPI.getUnit(editingUnitId);
+          setFormData({
+            unit: unitData.unit || unitData.name || '',
+            unit_coversion: unitData.unit_coversion || unitData.conversion || '',
+            unit_coversion_factor: unitData.unit_coversion_factor || unitData.factor || ''
+          });
+        } catch (error: any) {
+          console.error('Failed to load unit data:', error);
+          toast.showError('Failed to load unit data');
+        }
+      };
+      loadUnitData();
+    } else if (isOpen && !editingUnitId) {
+      // Reset form for new unit
+      setFormData({
+        unit: '',
+        unit_coversion: '',
+        unit_coversion_factor: ''
+      });
+    }
+  }, [isOpen, editingUnitId]);
+
   // Reset form when modal closes
   useEffect(() => {
     if (!isOpen) {
       setFormData({
-        name: '',
-        code: '',
-        conversion: '',
-        factor: ''
+        unit: '',
+        unit_coversion: '',
+        unit_coversion_factor: ''
       });
+      setIsSubmitting(false);
     }
   }, [isOpen]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
     setFormData({
       ...formData,
-      [e.target.name]: e.target.value
+      [name]: value
     });
   };
 
-  const handleCreateUnit = () => {
-    const missingFields: string[] = [];
-    
-    if (!formData.name) missingFields.push('Unit Name');
-    if (!formData.code) missingFields.push('Unit Code');
-    if (!formData.conversion) missingFields.push('Unit Conversion');
-    if (!formData.factor) missingFields.push('Unit Conversion Factor');
-    
-    if (missingFields.length > 0) {
-      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
+  const validateForm = (): boolean => {
+    if (!formData.unit.trim()) {
+      toast.showWarning('Unit name is required');
+      return false;
+    }
+
+    // If unit_coversion is provided, unit_coversion_factor is required
+    if (formData.unit_coversion.trim() && !formData.unit_coversion_factor.trim()) {
+      toast.showWarning('Unit conversion factor is required when conversion unit is provided');
+      return false;
+    }
+
+    return true;
+  };
+
+  const handleSubmit = async () => {
+    if (!validateForm()) {
       return;
     }
 
-    // Check if unit code already exists
-    const allUnits = [...defaultUnits, ...userUnits];
-    const codeExists = allUnits.some(unit => unit.code.toLowerCase() === formData.code.toLowerCase());
-    if (codeExists) {
-      toast.showError('Unit code already exists. Please use a different code.');
-      return;
-    }
+    setIsSubmitting(true);
+    try {
+      const payload: any = {
+        unit: formData.unit.trim()
+      };
 
-    const newUnit: Unit = {
-      id: Date.now().toString(),
-      name: formData.name,
-      code: formData.code,
-      conversion: formData.conversion,
-      factor: formData.factor,
-      status: 'Active'
-    };
-
-    // Save to localStorage
-    const savedUnits = localStorage.getItem('units');
-    let existingUnits: any[] = [];
-    if (savedUnits) {
-      try {
-        existingUnits = JSON.parse(savedUnits);
-      } catch (e) {
-        console.error('Error parsing units:', e);
+      // Add optional fields if provided
+      if (formData.unit_coversion.trim()) {
+        payload.unit_coversion = formData.unit_coversion.trim();
+        payload.unit_coversion_factor = formData.unit_coversion_factor.trim();
       }
-    }
 
-    existingUnits.push(newUnit);
-    localStorage.setItem('units', JSON.stringify(existingUnits));
-    
-    // Trigger event to update other components
-    window.dispatchEvent(new Event('unitsUpdated'));
+      if (isEditing && editingUnitNumericId) {
+        // Update existing unit
+        // Backend POST /unit-add with updateId expects numeric ID (where('id', $updateId))
+        // Note: When editing via modal, preserve existing is_active status (don't override)
+        console.log('📝 Updating unit with numeric ID:', editingUnitNumericId);
+        const updateResponse = await masterDataAPI.updateUnit(String(editingUnitNumericId), payload);
+        console.log('✅ Unit update response:', updateResponse);
+        toast.showSuccess('Unit updated successfully!');
+      } else {
+        // Create new unit - set is_active to 1 (active) by default
+        payload.is_active = 1;
+        console.log('📦 Creating new unit with is_active = 1 (active by default)');
+        const createResponse = await masterDataAPI.createUnit(payload);
+        console.log('✅ Unit create response:', createResponse);
+        toast.showSuccess('Unit created successfully!');
+      }
 
-    toast.showSuccess('Unit created successfully!');
-    
-    if (onUnitCreated) {
-      onUnitCreated(newUnit);
+      if (onSuccess) {
+        onSuccess();
+      }
+
+      onClose();
+    } catch (error: any) {
+      console.error('Failed to save unit:', error);
+      toast.showError(error.message || 'Failed to save unit');
+    } finally {
+      setIsSubmitting(false);
     }
-    
-    if (onSuccess) {
-      onSuccess();
-    }
-    
-    onClose();
   };
 
   if (!isOpen) return null;
@@ -134,12 +169,17 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
         {/* Modal Header */}
         <div className="flex items-center justify-between p-6 border-b border-inherit">
           <div>
-            <h2 className={`text-xl font-black ${textPrimary}`}>Create New Unit</h2>
-            <p className={`text-sm ${textSecondary} mt-1`}>Enter unit details below</p>
+            <h2 className={`text-xl font-black ${textPrimary}`}>
+              {isEditing ? 'Edit Unit' : 'Create New Unit'}
+            </h2>
+            <p className={`text-sm ${textSecondary} mt-1`}>
+              {isEditing ? 'Update unit details below' : 'Enter unit details below'}
+            </p>
           </div>
           <button
             onClick={onClose}
-            className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+            disabled={isSubmitting}
+            className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors disabled:opacity-50`}
           >
             <X className={`w-5 h-5 ${textSecondary}`} />
           </button>
@@ -154,73 +194,65 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
             </label>
             <input
               type="text"
-              name="name"
-              value={formData.name}
+              name="unit"
+              value={formData.unit}
               onChange={handleInputChange}
-              placeholder="Enter unit name (e.g., Bags, Nos, Cum)"
+              placeholder="Enter unit name (e.g., Bags, Nos, MT, Kgs, Cft, Sft, Hrs, Day)"
+              disabled={isSubmitting}
               className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                 isDark 
                   ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
                   : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
             />
           </div>
 
-          {/* Unit Code */}
+          {/* Unit Conversion (Optional) */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Unit Code <span className="text-red-500">*</span>
+              Unit Conversion <span className="text-xs text-slate-500">(Optional)</span>
             </label>
             <input
               type="text"
-              name="code"
-              value={formData.code}
+              name="unit_coversion"
+              value={formData.unit_coversion}
               onChange={handleInputChange}
-              placeholder="Enter unit code (e.g., Bags, Nos)"
+              placeholder="Enter conversion unit name (e.g., Base Unit, Cubic Meter, Metric Ton)"
+              disabled={isSubmitting}
               className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                 isDark 
                   ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
                   : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
             />
+            <p className={`text-xs mt-1 ${textSecondary}`}>
+              If provided, conversion factor is required
+            </p>
           </div>
 
-          {/* Unit Conversion */}
+          {/* Unit Conversion Factor (Required if conversion is provided) */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Unit Conversion <span className="text-red-500">*</span>
+              Unit Conversion Factor{' '}
+              {formData.unit_coversion.trim() && <span className="text-red-500">*</span>}
+              {!formData.unit_coversion.trim() && <span className="text-xs text-slate-500">(Optional)</span>}
             </label>
             <input
               type="text"
-              name="conversion"
-              value={formData.conversion}
+              name="unit_coversion_factor"
+              value={formData.unit_coversion_factor}
               onChange={handleInputChange}
-              placeholder="Enter conversion type (e.g., Base Unit, Cubic Meter)"
+              placeholder="Enter conversion factor (e.g., 1, 0.9144, 100, 1000)"
+              disabled={isSubmitting}
               className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                 isDark 
                   ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
                   : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
             />
-          </div>
-
-          {/* Unit Conversion Factor */}
-          <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Unit Conversion Factor <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              name="factor"
-              value={formData.factor}
-              onChange={handleInputChange}
-              placeholder="Enter conversion factor (e.g., 1, 0.9144, 100)"
-              className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                isDark 
-                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
-                  : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-            />
+            <p className={`text-xs mt-1 ${textSecondary}`}>
+              Required when conversion unit is provided
+            </p>
           </div>
         </div>
 
@@ -228,19 +260,22 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
         <div className={`flex items-center justify-end gap-3 p-6 border-t border-inherit`}>
           <button
             onClick={onClose}
+            disabled={isSubmitting}
             className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
               isDark
                 ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
                 : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-            }`}
+            } disabled:opacity-50`}
           >
             Cancel
           </button>
           <button
-            onClick={handleCreateUnit}
-            className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642]/90 text-white transition-all shadow-md"
+            onClick={handleSubmit}
+            disabled={isSubmitting}
+            className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642]/90 text-white transition-all shadow-md disabled:opacity-50 flex items-center gap-2"
           >
-            Create
+            {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+            {isEditing ? 'Update' : 'Create'}
           </button>
         </div>
       </div>

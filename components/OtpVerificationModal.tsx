@@ -68,9 +68,13 @@ const OtpVerificationModal: React.FC<OtpVerificationModalProps> = ({
       } else {
         response = await authAPI.verifyOtp(email, otp);
         
-        // Store token if provided - handle Laravel response format
+        // Store token in cookies if provided - handle Laravel response format
         const token = response.data?.token || response.token || response.access_token;
         if (token) {
+          const { setCookie } = require('../utils/cookies');
+          setCookie('auth_token', token, 30);
+          setCookie('isAuthenticated', 'true', 30);
+          // Also store in localStorage for backward compatibility
           localStorage.setItem('auth_token', token);
           localStorage.setItem('isAuthenticated', 'true');
           

@@ -3,17 +3,20 @@
 import React, { useState, useEffect } from 'react';
 import { ThemeType } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
-import { X } from 'lucide-react';
+import { X, Loader2 } from 'lucide-react';
+import { masterDataAPI } from '@/services/api';
 
 interface WarehouseData {
   id: string;
+  uuid?: string;
   name: string;
-  code: string;
-  project: string;
+  code?: string;
+  project?: string;
+  project_id?: number;
+  tag_project?: number;
   location: string;
-  capacity?: string;
-  status: string;
-  createdAt?: string;
+  logo?: string;
+  status?: string;
 }
 
 interface CreateWarehouseModalProps {
@@ -21,10 +24,11 @@ interface CreateWarehouseModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
-  defaultWarehouses?: WarehouseData[];
-  userWarehouses?: WarehouseData[];
-  availableProjects?: Array<{ name: string; code: string }>;
-  onWarehouseCreated?: (warehouse: WarehouseData) => void;
+  editingWarehouseId?: string | null; // UUID for display
+  editingWarehouseNumericId?: number | string | null; // Numeric ID for API calls
+  warehouses?: WarehouseData[];
+  projects?: Array<{ id: number; name: string; uuid?: string }>;
+  selectedProjectId?: number | string | null; // Pre-select project when adding new warehouse
 }
 
 const CreateWarehouseModal: React.FC<CreateWarehouseModalProps> = ({
@@ -32,19 +36,75 @@ const CreateWarehouseModal: React.FC<CreateWarehouseModalProps> = ({
   isOpen,
   onClose,
   onSuccess,
-  defaultWarehouses = [],
-  userWarehouses = [],
-  availableProjects = [],
-  onWarehouseCreated
+  editingWarehouseId = null,
+  editingWarehouseNumericId = null,
+  warehouses = [],
+  projects = [],
+  selectedProjectId = null
 }) => {
   const toast = useToast();
   const [formData, setFormData] = useState({
-    project: '',
-    warehouseName: '',
-    location: ''
+    name: '', // Required: warehouse/store name
+    location: '', // Required: store location
+    tag_project: '' // Required: project ID to link
   });
-
-  const [projects, setProjects] = useState<Array<{ name: string; code: string }>>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [localProjects, setLocalProjects] = useState<Array<{ id: number; name: string; uuid?: string }>>(projects);
+  const [isLoadingProjects, setIsLoadingProjects] = useState(false);
+  
+  // Fetch projects when modal opens if not already provided
+  useEffect(() => {
+    const fetchProjectsIfNeeded = async () => {
+      if (!isOpen) return;
+      
+      // If projects are already provided, use them
+      if (projects && projects.length > 0) {
+        setLocalProjects(projects);
+        console.log('📋 Using provided projects:', projects.length);
+        return;
+      }
+      
+      // Otherwise, fetch projects from API
+      setIsLoadingProjects(true);
+      try {
+        console.log('📋 Fetching projects for warehouse modal...');
+        const fetchedProjects = await masterDataAPI.getProjects();
+        const transformedProjects = fetchedProjects.map((project: any) => ({
+          id: project.id,
+          uuid: project.uuid,
+          name: project.project_name || project.name || '',
+        }));
+        setLocalProjects(transformedProjects);
+        console.log('✅ Projects fetched:', transformedProjects.length);
+      } catch (error: any) {
+        console.error('❌ Failed to fetch projects:', error);
+        toast.showError(error.message || 'Failed to load projects');
+        setLocalProjects([]);
+      } finally {
+        setIsLoadingProjects(false);
+      }
+    };
+    
+    fetchProjectsIfNeeded();
+  }, [isOpen, projects]);
+  
+  // Update local projects when prop changes
+  useEffect(() => {
+    if (projects && projects.length > 0) {
+      setLocalProjects(projects);
+    }
+  }, [projects]);
+  
+  // Log projects when modal opens or projects change
+  useEffect(() => {
+    if (isOpen) {
+      console.log('📋 CreateWarehouseModal - Projects available:', {
+        projectsCount: localProjects.length,
+        projects: localProjects,
+        isEditing: !!(editingWarehouseId && editingWarehouseNumericId)
+      });
+    }
+  }, [isOpen, localProjects, editingWarehouseId, editingWarehouseNumericId]);
 
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -52,129 +112,267 @@ const CreateWarehouseModal: React.FC<CreateWarehouseModalProps> = ({
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
   const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
 
-  // Load projects from localStorage
+  const isEditing = !!editingWarehouseId && !!editingWarehouseNumericId;
+
+  // Load warehouse data when editing
   useEffect(() => {
-    const loadProjects = () => {
-      const defaultProjectNames = [
-        'Residential Complex A',
-        'Commercial Tower B',
-        'Highway Infrastructure Project',
-        'Shopping Mall Development',
-      ];
-
-      const savedProjects = localStorage.getItem('projects');
-      let projectList: Array<{ name: string; code: string }> = [];
-
-      // Add default projects
-      projectList = defaultProjectNames.map(name => ({
-        name,
-        code: ''
-      }));
-
-      if (savedProjects) {
+    if (isOpen && editingWarehouseId && editingWarehouseNumericId && localProjects.length > 0) {
+      const loadWarehouseData = async () => {
         try {
-          const parsed = JSON.parse(savedProjects);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            const userProjects = parsed.map((p: any) => ({
-              name: p.projectName || p.name || '',
-              code: p.code || ''
-            })).filter((p: { name: string; code: string }) => p.name);
-            projectList = [...projectList, ...userProjects];
+          console.log('📖 Loading warehouse data for editing:', {
+            editingWarehouseId: editingWarehouseId,
+            editingWarehouseNumericId: editingWarehouseNumericId
+          });
+          
+          // Use numeric ID for API call (backend queries numeric id column)
+          const warehouseData = await masterDataAPI.getWarehouse(String(editingWarehouseNumericId));
+          console.log('✅ Loaded warehouse data:', warehouseData);
+          console.log('📋 All warehouse data fields:', Object.keys(warehouseData));
+          console.log('📋 Warehouse data values:', {
+            name: warehouseData.name,
+            location: warehouseData.location,
+            store_location: warehouseData.store_location,
+            tag_project: warehouseData.tag_project,
+            project_id: warehouseData.project_id,
+            project: warehouseData.project,
+            projects: warehouseData.projects // Check plural form
+          });
+          
+          // Extract project ID - try multiple possible field names
+          // API response uses "projects" (plural) as an object with id and project_name
+          let projectId = warehouseData.projects?.id ||           // Check plural first (from API response)
+                         warehouseData.tag_project || 
+                         warehouseData.project_id || 
+                         warehouseData.project?.id ||
+                         '';
+          
+          console.log('🔍 Extracted project ID:', {
+            fromProjectsId: warehouseData.projects?.id,
+            fromTagProject: warehouseData.tag_project,
+            fromProjectId: warehouseData.project_id,
+            fromProjectObject: warehouseData.project?.id,
+            finalProjectId: projectId
+          });
+          
+          // Try to find matching project in projects list to ensure correct ID format
+          // Dropdown uses: value={project.id || project.uuid}
+          // So we need to match and use the same format
+          if (projectId && localProjects.length > 0) {
+            // Try multiple matching strategies
+            let matchedProject = localProjects.find((p: any) => 
+              String(p.id) === String(projectId)
+            );
+            
+            // If not found by id, try uuid
+            if (!matchedProject) {
+              matchedProject = localProjects.find((p: any) => 
+                String(p.uuid) === String(projectId)
+              );
+            }
+            
+            // If still not found, try matching with warehouseData.projects?.id
+            if (!matchedProject && warehouseData.projects?.id) {
+              matchedProject = localProjects.find((p: any) => 
+                String(p.id) === String(warehouseData.projects.id) ||
+                String(p.uuid) === String(warehouseData.projects.id)
+              );
+            }
+            
+            // If still not found, try matching with other project ID fields
+            if (!matchedProject) {
+              matchedProject = localProjects.find((p: any) => 
+                String(p.id) === String(warehouseData.project_id) ||
+                String(p.id) === String(warehouseData.tag_project) ||
+                String(p.uuid) === String(warehouseData.project_id) ||
+                String(p.uuid) === String(warehouseData.tag_project)
+              );
+            }
+            
+            if (matchedProject) {
+              // Use the project ID from the projects list in the same format as dropdown options
+              // Dropdown uses: value={project.id || project.uuid}
+              projectId = String(matchedProject.id || matchedProject.uuid || projectId);
+              console.log('✅ Found matching project:', {
+                projectName: matchedProject.name,
+                projectId: projectId,
+                matchedProjectId: matchedProject.id,
+                matchedProjectUuid: matchedProject.uuid,
+                dropdownValue: matchedProject.id || matchedProject.uuid
+              });
+            } else {
+              console.warn('⚠️ Project ID not found in projects list:', projectId);
+              console.warn('Available projects:', localProjects.map((p: any) => ({
+                id: p.id,
+                uuid: p.uuid,
+                name: p.name,
+                dropdownValue: p.id || p.uuid
+              })));
+              console.warn('Warehouse project data:', {
+                projects: warehouseData.projects,
+                project_id: warehouseData.project_id,
+                tag_project: warehouseData.tag_project
+              });
+              // Keep the original projectId even if not matched - might still work
+              projectId = String(projectId);
+            }
+          } else if (!projectId) {
+            console.warn('⚠️ No project ID found in warehouse data');
+            projectId = '';
+          } else if (localProjects.length === 0) {
+            console.warn('⚠️ Projects list is empty, cannot match project ID');
+            // Keep the projectId as string for form
+            projectId = String(projectId || '');
+          } else {
+            // Convert to string for form
+            projectId = String(projectId);
           }
-        } catch (e) {
-          console.error('Error parsing projects:', e);
+          
+          // Extract location - try multiple possible field names
+          const location = warehouseData.location || 
+                         warehouseData.store_location ||
+                         warehouseData.address ||
+                         '';
+          
+          // Extract name
+          const name = warehouseData.name || 
+                      warehouseData.store_name ||
+                      warehouseData.warehouse_name ||
+                      '';
+          
+          console.log('📝 Extracted values:', {
+            name: name,
+            location: location,
+            projectId: projectId,
+            projectIdType: typeof projectId,
+            projectIdString: String(projectId),
+            projectsAvailable: localProjects.length
+          });
+          
+          // Populate ALL form fields from API response to preserve all previously filled data
+          // User can decide which fields to edit/update
+          // Ensure projectId is a string and matches dropdown option format
+          const formProjectId = projectId ? String(projectId) : '';
+          
+          setFormData({
+            name: name,
+            location: location,
+            tag_project: formProjectId
+          });
+          
+          console.log('✅ Form populated with all fields for editing:', {
+            name: name,
+            location: location,
+            tag_project: formProjectId,
+            formDataTagProject: formProjectId,
+            matchingDropdownValue: localProjects.find((p: any) => 
+              String(p.id || p.uuid) === formProjectId
+            )?.name || 'Not found'
+          });
+        } catch (error: any) {
+          console.error('❌ Failed to load warehouse data:', error);
+          console.error('❌ Error details:', {
+            message: error.message,
+            status: error.status,
+            response: error.response?.data
+          });
+          toast.showError(error.message || 'Failed to load warehouse data');
         }
-      }
-
-      // Combine with availableProjects prop
-      const allProjects = [...availableProjects, ...projectList];
-      // Remove duplicates based on name
-      const uniqueProjects = Array.from(
-        new Map(allProjects.map(p => [p.name, p])).values()
-      );
-      setProjects(uniqueProjects);
-    };
-
-    if (isOpen) {
-      loadProjects();
-    }
-  }, [isOpen, availableProjects]);
-
-  // Reset form when modal closes
-  useEffect(() => {
-    if (!isOpen) {
+      };
+      loadWarehouseData();
+    } else if (isOpen && editingWarehouseId && editingWarehouseNumericId && localProjects.length === 0) {
+      // Wait for projects to load before populating form
+      console.log('⏳ Waiting for projects to load before populating form...');
+    } else if (isOpen && !editingWarehouseId && !editingWarehouseNumericId) {
+      // Reset form for new warehouse, pre-select project if provided
+      // Only reset if not editing - preserve form data when editing
       setFormData({
-        project: '',
-        warehouseName: '',
-        location: ''
+        name: '',
+        location: '',
+        tag_project: selectedProjectId ? String(selectedProjectId) : ''
       });
     }
-  }, [isOpen]);
+    // If editing, don't reset - preserve existing form data
+  }, [isOpen, editingWarehouseId, editingWarehouseNumericId, selectedProjectId, localProjects]);
+
+  // Reset form when modal closes (only if not editing)
+  useEffect(() => {
+    if (!isOpen && !editingWarehouseId && !editingWarehouseNumericId) {
+      setFormData({
+        name: '',
+        location: '',
+        tag_project: ''
+      });
+      setIsSubmitting(false);
+    }
+  }, [isOpen, editingWarehouseId, editingWarehouseNumericId]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
     setFormData({
       ...formData,
-      [e.target.name]: e.target.value
+      [name]: value
     });
   };
 
-  const handleCreateWarehouse = () => {
-    const missingFields: string[] = [];
-    
-    if (!formData.project) missingFields.push('Project');
-    if (!formData.warehouseName) missingFields.push('Warehouse Name');
-    if (!formData.location) missingFields.push('Location');
-    
-    if (missingFields.length > 0) {
-      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
+  const validateForm = (): boolean => {
+    if (!formData.name.trim()) {
+      toast.showWarning('Warehouse name is required');
+      return false;
+    }
+
+    if (!formData.location.trim()) {
+      toast.showWarning('Location is required');
+      return false;
+    }
+
+    if (!formData.tag_project) {
+      toast.showWarning('Project selection is required');
+      return false;
+    }
+
+    return true;
+  };
+
+  const handleSubmit = async () => {
+    if (!validateForm()) {
       return;
     }
 
-    // Generate a code from the warehouse name
-    const code = formData.warehouseName
-      .split(' ')
-      .map(word => word.charAt(0).toUpperCase())
-      .join('')
-      .substring(0, 6) + String(defaultWarehouses.length + userWarehouses.length + 1).padStart(3, '0');
+    setIsSubmitting(true);
+    try {
+      const payload: any = {
+        name: formData.name.trim(),
+        location: formData.location.trim(),
+        tag_project: Number(formData.tag_project)
+      };
 
-    const newWarehouse: WarehouseData = {
-      id: Date.now().toString(),
-      name: formData.warehouseName,
-      code: code,
-      project: formData.project,
-      location: formData.location,
-      status: 'Active',
-      createdAt: new Date().toISOString()
-    };
-
-    // Save to localStorage
-    const savedWarehouses = localStorage.getItem('warehouses');
-    let existingWarehouses: any[] = [];
-    if (savedWarehouses) {
-      try {
-        existingWarehouses = JSON.parse(savedWarehouses);
-      } catch (e) {
-        console.error('Error parsing warehouses:', e);
+      if (isEditing && editingWarehouseNumericId) {
+        // Update existing warehouse
+        // Note: Laravel uses 'upadteId' (typo) instead of 'updateId'
+        // Backend update function uses where('id', $upadteId) which queries numeric id column
+        // So we use numeric ID for the update
+        console.log('📝 Updating warehouse with numeric ID:', editingWarehouseNumericId);
+        await masterDataAPI.updateWarehouse(String(editingWarehouseNumericId), payload);
+        toast.showSuccess('Warehouse updated successfully!');
+      } else {
+        // Create new warehouse - set is_active to 1 (active) by default
+        payload.is_active = 1;
+        console.log('📦 Creating new warehouse with is_active = 1 (active by default)');
+        await masterDataAPI.createWarehouse(payload);
+        toast.showSuccess('Warehouse created successfully!');
       }
-    }
 
-    existingWarehouses.push(newWarehouse);
-    localStorage.setItem('warehouses', JSON.stringify(existingWarehouses));
-    
-    // Trigger event to update other components
-    window.dispatchEvent(new Event('warehousesUpdated'));
+      if (onSuccess) {
+        onSuccess();
+      }
 
-    toast.showSuccess('Warehouse created successfully!');
-    
-    if (onWarehouseCreated) {
-      onWarehouseCreated(newWarehouse);
+      onClose();
+    } catch (error: any) {
+      console.error('Failed to save warehouse:', error);
+      toast.showError(error.message || 'Failed to save warehouse');
+    } finally {
+      setIsSubmitting(false);
     }
-    
-    if (onSuccess) {
-      onSuccess();
-    }
-    
-    onClose();
   };
 
   if (!isOpen) return null;
@@ -185,12 +383,17 @@ const CreateWarehouseModal: React.FC<CreateWarehouseModalProps> = ({
         {/* Modal Header */}
         <div className="flex items-center justify-between p-6 border-b border-inherit">
           <div>
-            <h2 className={`text-xl font-black ${textPrimary}`}>Create New Warehouse</h2>
-            <p className={`text-sm ${textSecondary} mt-1`}>Enter warehouse details below</p>
+            <h2 className={`text-xl font-black ${textPrimary}`}>
+              {isEditing ? 'Edit Warehouse' : 'Create New Warehouse'}
+            </h2>
+            <p className={`text-sm ${textSecondary} mt-1`}>
+              {isEditing ? 'Update warehouse details below' : 'Enter warehouse details below'}
+            </p>
           </div>
           <button
             onClick={onClose}
-            className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+            disabled={isSubmitting}
+            className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors disabled:opacity-50`}
           >
             <X className={`w-5 h-5 ${textSecondary}`} />
           </button>
@@ -204,22 +407,34 @@ const CreateWarehouseModal: React.FC<CreateWarehouseModalProps> = ({
               Select Project <span className="text-red-500">*</span>
             </label>
             <select
-              name="project"
-              value={formData.project}
+              name="tag_project"
+              value={formData.tag_project}
               onChange={handleInputChange}
+              disabled={isSubmitting}
               className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
                 isDark 
                   ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
                   : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
             >
               <option value="">-- Select Project --</option>
-              {projects.map((project, idx) => (
-                <option key={idx} value={project.name}>
-                  {project.name} {project.code ? `(${project.code})` : ''}
-                </option>
-              ))}
+              {isLoadingProjects ? (
+                <option value="" disabled>Loading projects...</option>
+              ) : localProjects && localProjects.length > 0 ? (
+                localProjects.map((project) => (
+                  <option key={project.id || project.uuid} value={project.id || project.uuid}>
+                    {project.name || project.project_name || 'Unnamed Project'}
+                  </option>
+                ))
+              ) : (
+                <option value="" disabled>No projects available</option>
+              )}
             </select>
+            {localProjects.length === 0 && !isLoadingProjects && (
+              <p className={`text-xs mt-1 ${textSecondary}`}>
+                No projects available. Please create a project first.
+              </p>
+            )}
           </div>
 
           {/* Warehouse Name */}
@@ -229,15 +444,16 @@ const CreateWarehouseModal: React.FC<CreateWarehouseModalProps> = ({
             </label>
             <input
               type="text"
-              name="warehouseName"
-              value={formData.warehouseName}
+              name="name"
+              value={formData.name}
               onChange={handleInputChange}
-              placeholder="Enter warehouse name"
+              placeholder="Enter warehouse/store name"
+              disabled={isSubmitting}
               className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                 isDark 
                   ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
                   : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
             />
           </div>
 
@@ -252,11 +468,12 @@ const CreateWarehouseModal: React.FC<CreateWarehouseModalProps> = ({
               value={formData.location}
               onChange={handleInputChange}
               placeholder="Enter warehouse location"
+              disabled={isSubmitting}
               className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                 isDark 
                   ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
                   : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
             />
           </div>
         </div>
@@ -265,19 +482,22 @@ const CreateWarehouseModal: React.FC<CreateWarehouseModalProps> = ({
         <div className={`flex items-center justify-end gap-3 p-6 border-t border-inherit`}>
           <button
             onClick={onClose}
+            disabled={isSubmitting}
             className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
               isDark
                 ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
                 : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-            }`}
+            } disabled:opacity-50`}
           >
             Cancel
           </button>
           <button
-            onClick={handleCreateWarehouse}
-            className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642]/90 text-white transition-all shadow-md"
+            onClick={handleSubmit}
+            disabled={isSubmitting}
+            className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642]/90 text-white transition-all shadow-md disabled:opacity-50 flex items-center gap-2"
           >
-            Create
+            {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+            {isEditing ? 'Update' : 'Create'}
           </button>
         </div>
       </div>

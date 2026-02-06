@@ -4,13 +4,13 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
 import { masterDataAPI } from '../../services/api';
+import { useUser } from '../../contexts/UserContext';
 import { 
   FolderKanban,
   Building2,
   MapPin,
   Calendar,
   DollarSign,
-  MoreVertical,
   Search,
   Filter,
   Plus,
@@ -18,15 +18,20 @@ import {
   Upload,
   Users,
   Download,
-  Loader2
+  Loader2,
+  Edit,
+  Trash2
 } from 'lucide-react';
 import CreateProjectModal from './Modals/CreateProjectModal';
 
 interface Project {
-  id: string;
+  id: string; // For display/UI purposes (can be uuid or id)
+  numericId?: number | string; // Original numeric ID from database for API calls
+  uuid?: string; // UUID if available
   name: string;
   code: string;
   company: string;
+  companyId?: string; // Store company ID for lookup
   companyLogo: string;
   startDate: string;
   endDate: string;
@@ -47,128 +52,224 @@ interface ProjectsProps {
 
 const Projects: React.FC<ProjectsProps> = ({ theme }) => {
   const toast = useToast();
+  const { isAuthenticated } = useUser();
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [isSearching, setIsSearching] = useState<boolean>(false);
   const [sortFilter, setSortFilter] = useState<'recent' | 'oldest' | 'none'>('none');
   const [showFilterDropdown, setShowFilterDropdown] = useState<boolean>(false);
   const [showProjectModal, setShowProjectModal] = useState<boolean>(false);
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [viewingProjectId, setViewingProjectId] = useState<string | null>(null);
-  const [userProjects, setUserProjects] = useState<Project[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string | null>(null);
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
+  const [editingProjectData, setEditingProjectData] = useState<any | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [isLoadingProjects, setIsLoadingProjects] = useState<boolean>(false);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
+  const [allCompanies, setAllCompanies] = useState<any[]>([]);
+  const [rawProjects, setRawProjects] = useState<any[]>([]);
   
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
 
-  // Dummy data for dropdowns
-
-  const defaultProjects: Project[] = [
-    { 
-      id: '1',
-      name: 'Residential Complex A', 
-      code: 'PRJ001', 
-      company: 'ABC Construction Ltd',
-      companyLogo: 'https://ui-avatars.com/api/?name=ABC+Construction&background=6366f1&color=fff&size=64',
-      startDate: '2024-01-15',
-      endDate: '2024-12-31',
-      status: 'In Progress',
-      progress: 65,
-      location: '123 Main Street, New York, NY 10001',
-      logo: 'https://ui-avatars.com/api/?name=Residential+Complex&background=6366f1&color=fff&size=128',
-      isContractor: true,
-      projectManager: 'John Doe',
-      createdAt: '2024-01-15T00:00:00.000Z'
-    },
-    { 
-      id: '2',
-      name: 'Commercial Tower B', 
-      code: 'PRJ002', 
-      company: 'XYZ Builders Inc',
-      companyLogo: 'https://ui-avatars.com/api/?name=XYZ+Builders&background=10b981&color=fff&size=64',
-      startDate: '2024-02-20',
-      endDate: '2025-06-30',
-      status: 'Planning',
-      progress: 15,
-      location: '456 Oak Avenue, Los Angeles, CA 90001',
-      logo: 'https://ui-avatars.com/api/?name=Commercial+Tower&background=10b981&color=fff&size=128',
-      isContractor: false,
-      projectManager: 'Jane Smith',
-      createdAt: '2024-02-20T00:00:00.000Z'
-    },
-    { 
-      id: '3',
-      name: 'Highway Infrastructure Project', 
-      code: 'PRJ003', 
-      company: 'ABC Construction Ltd',
-      companyLogo: 'https://ui-avatars.com/api/?name=ABC+Construction&background=6366f1&color=fff&size=64',
-      startDate: '2024-03-01',
-      endDate: '2025-11-15',
-      status: 'In Progress',
-      progress: 42,
-      location: '789 Business Park, Chicago, IL 60601',
-      logo: 'https://ui-avatars.com/api/?name=Highway+Infrastructure&background=f59e0b&color=fff&size=128',
-      isContractor: true,
-      projectManager: 'John Doe',
-      createdAt: '2024-03-01T00:00:00.000Z'
-    },
-    { 
-      id: '4',
-      name: 'Shopping Mall Development', 
-      code: 'PRJ004', 
-      company: 'XYZ Builders Inc',
-      companyLogo: 'https://ui-avatars.com/api/?name=XYZ+Builders&background=10b981&color=fff&size=64',
-      startDate: '2024-01-10',
-      endDate: '2024-10-20',
-      status: 'In Progress',
-      progress: 78,
-      location: '321 Commerce Drive, Houston, TX 77001',
-      logo: 'https://ui-avatars.com/api/?name=Shopping+Mall&background=ef4444&color=fff&size=128',
-      isContractor: false,
-      projectManager: 'Jane Smith',
-      createdAt: '2024-01-10T00:00:00.000Z'
-    },
-  ];
-
-  // Fetch projects from API on mount
-  useEffect(() => {
-    fetchProjects();
-  }, []);
-
+  // Fetch projects from API
   const fetchProjects = async () => {
+    console.log('🔵 fetchProjects() called');
+    console.log('isAuthenticated:', isAuthenticated);
+    
+    if (!isAuthenticated) {
+      console.warn('⚠️ Not authenticated, clearing projects');
+      setProjects([]);
+      setIsLoadingProjects(false);
+      return;
+    }
+    
+    setIsLoadingProjects(true);
+    setProjectsError(null);
     try {
-      setIsLoading(true);
-      setError(null);
-      const projects = await masterDataAPI.getProjects();
-      // Transform API response to match Project interface if needed
-      setUserProjects(projects.map((p: any) => ({
-        id: String(p.id),
-        name: p.name || '',
-        code: p.code || '',
-        company: p.company || p.company_name || '',
-        companyLogo: p.company_logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.company || p.company_name || '')}&background=6366f1&color=fff&size=64`,
-        startDate: p.start_date || p.startDate || '',
-        endDate: p.end_date || p.endDate || '',
-        status: p.status || 'Planning',
-        progress: p.progress || 0,
-        budget: p.budget,
-        location: p.location || '',
-        logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.name || '')}&background=6366f1&color=fff&size=128`,
-        teamSize: p.team_size || p.teamSize,
-        createdAt: p.created_at || p.createdAt,
-        isContractor: p.is_contractor || p.isContractor,
-        projectManager: p.project_manager || p.projectManager,
-      })));
+      console.log('📡 Fetching projects from API...');
+      const fetchedProjects = await masterDataAPI.getProjects();
+      console.log('✅ Fetched projects from API:', fetchedProjects);
+      console.log('Number of projects:', fetchedProjects?.length || 0);
+      console.log('Type:', typeof fetchedProjects, 'Is array:', Array.isArray(fetchedProjects));
+      
+      if (!Array.isArray(fetchedProjects)) {
+        console.error('❌ API did not return an array:', fetchedProjects);
+        setProjects([]);
+        setProjectsError('Invalid response format from API');
+        return;
+      }
+      
+      // Store raw projects for company lookup
+      setRawProjects(fetchedProjects);
+      
+      // Transform API response to match Project interface
+      const transformedProjects = fetchedProjects.map((p: any, index: number) => {
+        // Store companies_id for later lookup - keep original format (number or string)
+        // API returns companies_id as numeric ID
+        // Also check nested companies object (API response includes companies: { id: 109, registration_name: "vj", ... })
+        const companiesId = p.companies_id || p.companies?.id || p.company_id || '';
+        const companyName = p.companies?.registration_name || p.companies?.name || p.company || p.company_name || '';
+        const companyLogo = p.companies?.logo || p.company_logo || '';
+        
+        // Preserve original numeric ID for API calls (backend expects numeric id)
+        // API returns: { id: 107, uuid: "ecfa3c96-..." }
+        const numericId = p.id; // This is the numeric ID from database (e.g., 107)
+        const uuid = p.uuid; // UUID if available (e.g., "ecfa3c96-...")
+        
+        // Ensure companiesId is stored as string for consistent matching
+        const companyIdForStorage = companiesId ? String(companiesId) : '';
+        
+        const transformed = {
+          id: uuid || String(numericId), // Use UUID for display if available, otherwise numeric ID as string
+          numericId: numericId, // Store original numeric ID for API calls (MUST be numeric)
+          uuid: uuid, // Store UUID if available
+          name: p.project_name || p.name || '',
+          code: p.code || '',
+          company: companyName, // Use company name from nested companies object or fallback
+          companyId: companyIdForStorage, // Store company ID as string for lookup
+          companyLogo: companyLogo || `https://ui-avatars.com/api/?name=${encodeURIComponent(companyName)}&background=6366f1&color=fff&size=64`,
+          startDate: p.planned_start_date || p.start_date || p.startDate || '',
+          endDate: p.planned_end_date || p.end_date || p.endDate || '',
+          status: p.status || 'Planning',
+          progress: p.progress || 0,
+          budget: p.budget,
+          location: p.address || p.location || '',
+          logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name || p.name || '')}&background=6366f1&color=fff&size=128`,
+          teamSize: p.team_size || p.teamSize,
+          createdAt: p.created_at || p.createdAt,
+          isContractor: p.own_project_or_contractor === 'yes' || p.is_contractor || p.isContractor,
+          projectManager: p.project_manager || p.projectManager,
+        };
+        console.log(`Project ${index + 1}:`, {
+          id: transformed.id,
+          name: transformed.name,
+          company: transformed.company,
+          companyId: transformed.companyId,
+          companyIdType: typeof transformed.companyId,
+          rawCompaniesId: p.companies_id,
+          rawCompanyId: p.company_id,
+          nestedCompaniesId: p.companies?.id,
+          nestedCompanyName: p.companies?.registration_name,
+          rawCompaniesIdType: typeof p.companies_id,
+          startDate: transformed.startDate
+        });
+        return transformed;
+      });
+      
+      console.log('✅ Transformed projects:', transformedProjects);
+      console.log('Setting projects state with', transformedProjects.length, 'projects');
+      setProjects(transformedProjects);
     } catch (err: any) {
-      console.error('Failed to fetch projects:', err);
-      setError(err.message || 'Failed to load projects');
+      console.error('❌ Failed to fetch projects:', err);
+      console.error('Error details:', {
+        message: err.message,
+        response: err.response?.data,
+        status: err.response?.status
+      });
+      setProjectsError(err.message || 'Failed to load projects');
+      setProjects([]);
       toast.showError(err.message || 'Failed to load projects');
-      setUserProjects([]);
     } finally {
-      setIsLoading(false);
+      setIsLoadingProjects(false);
+      console.log('🔵 fetchProjects() completed');
     }
   };
+
+  // Fetch companies to match with projects
+  const fetchCompanies = async () => {
+    if (!isAuthenticated) {
+      setAllCompanies([]);
+      return;
+    }
+    
+    try {
+      console.log('📦 Fetching companies for project company name lookup...');
+      const companies = await masterDataAPI.getCompanies();
+      console.log('✅ Fetched companies:', companies?.length || 0);
+      setAllCompanies(companies || []);
+    } catch (error: any) {
+      console.error('Failed to fetch companies for project lookup:', error);
+      setAllCompanies([]);
+    }
+  };
+
+  // Load projects from API on mount and when auth changes
+  useEffect(() => {
+    fetchProjects();
+    fetchCompanies();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
+
+  // Search projects using API
+  const handleSearch = async (query: string) => {
+    if (!query.trim()) {
+      // If search is empty, fetch all projects
+      await fetchProjects();
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    try {
+      const searchResults = await masterDataAPI.searchProjects(query);
+      // Transform API response to match Project interface
+      const transformedProjects = searchResults.map((p: any) => {
+        // Store companies_id for later lookup - keep original format
+        // Also check nested companies object (API response includes companies: { id: 109, registration_name: "vj", ... })
+        const companiesId = p.companies_id || p.companies?.id || p.company_id || '';
+        const companyName = p.companies?.registration_name || p.companies?.name || p.company || p.company_name || '';
+        const companyLogo = p.companies?.logo || p.company_logo || '';
+        
+        // Preserve original numeric ID for API calls
+        const numericId = p.id; // Numeric ID from database
+        const uuid = p.uuid; // UUID if available
+        
+        return {
+          id: uuid || String(numericId), // Use UUID for display if available, otherwise numeric ID as string
+          numericId: numericId, // Store original numeric ID for API calls
+          uuid: uuid, // Store UUID if available
+          name: p.project_name || p.name || '',
+          code: p.code || '',
+          company: companyName, // Use company name from nested companies object or fallback
+          companyId: companiesId ? String(companiesId) : '', // Store company ID as string for lookup
+          companyLogo: companyLogo || `https://ui-avatars.com/api/?name=${encodeURIComponent(companyName)}&background=6366f1&color=fff&size=64`,
+          startDate: p.planned_start_date || p.start_date || p.startDate || '',
+          endDate: p.planned_end_date || p.end_date || p.endDate || '',
+          status: p.status || 'Planning',
+          progress: p.progress || 0,
+          budget: p.budget,
+          location: p.address || p.location || '',
+          logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name || p.name || '')}&background=6366f1&color=fff&size=128`,
+          teamSize: p.team_size || p.teamSize,
+          createdAt: p.created_at || p.createdAt,
+          isContractor: p.own_project_or_contractor === 'yes' || p.is_contractor || p.isContractor,
+          projectManager: p.project_manager || p.projectManager,
+        };
+      });
+      setProjects(transformedProjects);
+    } catch (error: any) {
+      console.error('Search failed:', error);
+      toast.showError(error.message || 'Search failed. Please try again.');
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // Debounced search
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (searchQuery.trim()) {
+        handleSearch(searchQuery);
+      } else {
+        fetchProjects();
+      }
+    }, 500); // Wait 500ms after user stops typing
+
+    return () => clearTimeout(timeoutId);
+  }, [searchQuery]);
 
   const handleViewProject = (project: Project) => {
     setViewingProjectId(project.id);
@@ -178,6 +279,196 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
   const handleCloseModal = () => {
     setShowProjectModal(false);
     setViewingProjectId(null);
+    setEditingProjectId(null);
+  };
+
+  const handleEditProject = async (project: Project) => {
+    console.log('📝 Editing project:', {
+      id: project.id,
+      numericId: project.numericId,
+      uuid: project.uuid,
+      name: project.name,
+      idType: typeof project.id,
+      numericIdType: typeof project.numericId
+    });
+    setViewingProjectId(null);
+    
+    // Backend expects numeric ID, not UUID
+    // Backend function uses: where('id', $uuid) which queries the numeric 'id' column
+    // Use numericId if available, otherwise fall back to id (which might be numeric)
+    const projectId = project.numericId || project.id;
+    if (!projectId) {
+      toast.showError('Invalid project ID. Cannot edit project.');
+      return;
+    }
+    
+    console.log('Using project ID for API call:', projectId, 'Type:', typeof projectId);
+    
+    // Fetch project details using the edit API (GET /project-edit/{id})
+    // Even though route parameter is named {uuid}, backend queries numeric id column
+    try {
+      const projectData = await masterDataAPI.getProject(String(projectId));
+      console.log('✅ Fetched project data for editing:', projectData);
+      
+      // Store project data and numeric ID for the modal
+      setEditingProjectId(project.id); // Keep UUID for display
+      
+      // Extract companies_id from projectData (API returns it)
+      const companiesId = projectData.companies_id || 
+                         projectData.company_id || 
+                         project.companyId || 
+                         '';
+      
+      console.log('🏢 Company ID extracted from project data:', {
+        companies_id: projectData.companies_id,
+        company_id: projectData.company_id,
+        projectCompanyId: project.companyId,
+        finalCompaniesId: companiesId
+      });
+      
+      // Store ALL project data from API response to preserve all fields for editing
+      setEditingProjectData({
+        ...projectData, // Include all fields from API response
+        numericId: project.numericId || projectId, // Store numeric ID for update
+        companies_id: companiesId, // Ensure companies_id is included
+        companyId: companiesId, // Also set companyId for compatibility
+        // Map API field names to form-friendly names
+        name: projectData.project_name || projectData.name || project.name || '',
+        location: projectData.address || projectData.location || project.location || '',
+        startDate: projectData.planned_start_date || projectData.start_date || project.startDate || '',
+        endDate: projectData.planned_end_date || projectData.end_date || project.endDate || '',
+        isContractor: projectData.own_project_or_contractor === 'yes' || projectData.is_contractor || project.isContractor || false,
+        logo: projectData.logo || project.logo || '',
+        // Preserve all other fields from API response
+        code: projectData.code || project.code || '',
+        status: projectData.status || project.status || 'Planning',
+        progress: projectData.progress || project.progress || 0,
+        projectManager: projectData.project_manager || project.projectManager || ''
+      });
+      
+      console.log('✅ Stored editing project data with all fields:', {
+        ...projectData,
+        numericId: project.numericId || projectId,
+        companies_id: companiesId
+      });
+      setShowCreateModal(true);
+    } catch (error: any) {
+      console.error('❌ Failed to fetch project details:', error);
+      console.error('Error status:', error.status);
+      console.error('Error message:', error.message);
+      console.error('Full error object:', error);
+      
+      const errorMsg = error.message || 'Failed to load project details from server';
+      toast.showError(errorMsg);
+    }
+  };
+
+  const handleDeleteProject = async (projectId: string | null) => {
+    console.log('🗑️ handleDeleteProject called with projectId:', projectId);
+    
+    if (!projectId) {
+      console.error('❌ No projectId provided');
+      toast.showError('No project selected for deletion.');
+      return;
+    }
+    
+    // Find the project to get its numeric ID
+    console.log('🗑️ Searching for project with id:', projectId);
+    console.log('🗑️ Available project IDs:', projects.map(p => ({ id: p.id, numericId: p.numericId, name: p.name })));
+    const project = projects.find(p => p.id === projectId);
+    
+    if (!project) {
+      console.error('❌ Project not found:', projectId);
+      console.error('❌ Available projects:', projects);
+      toast.showError('Project not found. Please refresh the page and try again.');
+      return;
+    }
+    
+    console.log('✅ Project found:', project);
+    
+    // Backend delete function likely uses: where('id', $uuid) which queries the numeric 'id' column
+    // So we need to send the numeric ID, not the UUID
+    let numericId: number | string | null = project.numericId ?? null;
+    
+    // Fallback: if numericId is not set, try to extract from projectId
+    if (!numericId) {
+      // Check if projectId is numeric (not a UUID)
+      if (projectId && !isNaN(Number(projectId)) && !projectId.includes('-')) {
+        numericId = Number(projectId);
+        console.warn('⚠️ Using projectId as numericId:', numericId);
+      } else {
+        console.error('❌ No numeric ID found for project:', {
+          project,
+          id: project.id,
+          numericId: project.numericId,
+          uuid: project.uuid
+        });
+        toast.showError('Invalid project ID. Cannot delete project. Please refresh the page.');
+        return;
+      }
+    }
+    
+    console.log('🗑️ Deleting project - Numeric ID extraction:', {
+      projectId, // The ID used to find the project
+      numericId, // The numeric ID to send to API
+      projectName: project.name,
+      numericIdType: typeof numericId,
+      projectDetails: {
+        id: project.id, // Display ID (UUID if available)
+        uuid: project.uuid, // UUID from API response
+        numericId: project.numericId, // Numeric ID from database
+        name: project.name
+      },
+      validation: {
+        hasNumericId: !!project.numericId,
+        numericIdValue: project.numericId,
+        extractedNumericId: numericId,
+        isNumericIdValid: numericId !== null && numericId !== undefined
+      }
+    });
+    
+    if (!numericId || (typeof numericId === 'number' && isNaN(numericId))) {
+      console.error('❌ Invalid numeric ID for project:', {
+        project,
+        extractedNumericId: numericId,
+        projectNumericId: project.numericId,
+        projectId: projectId
+      });
+      toast.showError('Invalid project ID. Cannot delete project. Please refresh the page.');
+      return;
+    }
+    
+    try {
+      // Backend route: DELETE /projects/{uuid} or /project-delete/{uuid}
+      // But backend function likely uses where('id', $uuid) which queries numeric 'id' column
+      // So we send the numeric ID even though route parameter is named {uuid}
+      console.log('🗑️ Calling delete API with numeric ID:', numericId);
+      await masterDataAPI.deleteProject(String(numericId));
+      console.log('✅ Project deleted successfully');
+      
+      // Refresh projects list
+      await fetchProjects();
+      setDeleteConfirmId(null);
+      if (viewingProjectId === projectId) {
+        setViewingProjectId(null);
+        setShowProjectModal(false);
+      }
+      toast.showSuccess('Project deleted successfully!');
+    } catch (error: any) {
+      console.error('❌ Error deleting project:', error);
+      console.error('Error details:', {
+        message: error.message,
+        status: error.status,
+        response: error.response?.data,
+        fullError: error
+      });
+      
+      const errorMsg = error.message || 
+                      error.response?.data?.message ||
+                      error.response?.data?.error ||
+                      'Failed to delete project. Please try again.';
+      toast.showError(errorMsg);
+    }
   };
 
   const handleProjectCreated = async (newProject: Project) => {
@@ -208,10 +499,12 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
     }
   };
 
-  // Use only API projects (no default projects)
+  // Use API projects
   const allProjects = useMemo(() => {
-    return userProjects;
-  }, [userProjects]);
+    console.log('📊 allProjects useMemo - projects:', projects);
+    console.log('Number of projects:', projects.length);
+    return [...projects];
+  }, [projects]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -230,13 +523,22 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
 
   // Memoize filtered and sorted projects
   const filteredAndSortedProjects = useMemo(() => {
+    console.log('🔍 filteredAndSortedProjects useMemo');
+    console.log('allProjects:', allProjects);
+    console.log('searchQuery:', searchQuery);
+    console.log('isSearching:', isSearching);
+    console.log('sortFilter:', sortFilter);
+    
     let filtered = [...allProjects];
+    console.log('Initial filtered count:', filtered.length);
 
-    // Apply search filter by project name
-    if (searchQuery.trim()) {
+    // Client-side filtering is now optional since we're using API search
+    // But keep it for default projects
+    if (searchQuery.trim() && !isSearching) {
       filtered = filtered.filter(project =>
         project.name.toLowerCase().includes(searchQuery.toLowerCase())
       );
+      console.log('After search filter:', filtered.length);
     }
 
     // Apply sort filter
@@ -246,16 +548,19 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
         const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
         return dateB - dateA; // Most recent first
       });
+      console.log('Sorted by recent');
     } else if (sortFilter === 'oldest') {
       filtered = [...filtered].sort((a, b) => {
         const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
         const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
         return dateA - dateB; // Oldest first
       });
+      console.log('Sorted by oldest');
     }
 
+    console.log('Final filteredAndSortedProjects count:', filtered.length);
     return filtered;
-  }, [searchQuery, sortFilter, allProjects]);
+  }, [searchQuery, sortFilter, allProjects, isSearching]);
 
   const handleDownloadExcel = () => {
     const headers = ['Project Name', 'Code', 'Company', 'Address', 'Is Contractor', 'Planned Start Date', 'Planned End Date', 'Project Manager', 'Status'];
@@ -336,8 +641,14 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
             placeholder="Search by project name..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+            disabled={isSearching}
+            className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
           />
+          {isSearching && (
+            <div className="absolute right-3 top-1/2 -translate-y-1/2">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-[#C2D642]"></div>
+            </div>
+          )}
         </div>
         <div className="relative filter-dropdown">
           <button 
@@ -401,7 +712,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
       </div>
 
       {/* Loading State */}
-      {isLoading && (
+      {isLoadingProjects && (
         <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
           <Loader2 className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50 animate-spin`} />
           <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>Loading Projects...</h3>
@@ -410,11 +721,11 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
       )}
 
       {/* Error State */}
-      {error && !isLoading && (
+      {projectsError && !isLoadingProjects && (
         <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
           <FolderKanban className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
           <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>Error Loading Projects</h3>
-          <p className={`text-sm ${textSecondary} mb-4`}>{error}</p>
+          <p className={`text-sm ${textSecondary} mb-4`}>{projectsError}</p>
           <button
             onClick={fetchProjects}
             className="px-4 py-2 bg-[#C2D642] hover:bg-[#A8B838] text-white rounded-lg font-semibold transition-colors"
@@ -425,7 +736,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
       )}
 
       {/* Projects Bars View */}
-      {!isLoading && !error && filteredAndSortedProjects.length > 0 ? (
+      {!isLoadingProjects && !projectsError && filteredAndSortedProjects.length > 0 ? (
         <div className="space-y-2">
           {filteredAndSortedProjects.map((project) => (
             <div 
@@ -439,7 +750,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                 <div className="flex items-center gap-4 flex-1 min-w-0">
                   <div className="w-12 h-12 rounded-lg overflow-hidden border-2 border-[#C2D642]/20 flex-shrink-0">
                     <img 
-                      src={project.logo} 
+                      src={project.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(project.name)}&background=6366f1&color=fff&size=128`}
                       alt={project.name}
                       className="w-full h-full object-cover"
                       onError={(e) => {
@@ -450,17 +761,11 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                   </div>
                   <h3 className={`text-base font-black ${textPrimary} truncate`}>{project.name}</h3>
                 </div>
-                <button 
-                  onClick={(e) => e.stopPropagation()}
-                  className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
-                >
-                  <MoreVertical className={`w-4 h-4 ${textSecondary}`} />
-                </button>
               </div>
             </div>
           ))}
         </div>
-      ) : !isLoading && !error ? (
+      ) : !isLoadingProjects && !projectsError ? (
         <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
           <FolderKanban className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
           <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>No Projects Found</h3>
@@ -488,16 +793,83 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
       <CreateProjectModal
         theme={theme}
         isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
+        onClose={() => {
+          setShowCreateModal(false);
+          setEditingProjectId(null);
+          setEditingProjectData(null);
+        }}
         onSuccess={async () => {
           setShowCreateModal(false);
+          setEditingProjectId(null);
+          setEditingProjectData(null);
           // Reload projects from API
           await fetchProjects();
         }}
-        defaultProjects={defaultProjects}
-        userProjects={userProjects}
+        projectUpdateId={editingProjectData?.numericId || null}
+        editingProject={editingProjectData ? {
+          id: editingProjectId || '',
+          name: editingProjectData.project_name || editingProjectData.name || '',
+          code: editingProjectData.code || '',
+          company: editingProjectData.company || editingProjectData.company_name || '',
+          companyLogo: editingProjectData.company_logo || '',
+          startDate: editingProjectData.planned_start_date || editingProjectData.start_date || '',
+          endDate: editingProjectData.planned_end_date || editingProjectData.end_date || '',
+          status: editingProjectData.status || 'Planning',
+          progress: editingProjectData.progress || 0,
+          location: editingProjectData.address || editingProjectData.location || '',
+          logo: editingProjectData.logo || '',
+          isContractor: editingProjectData.own_project_or_contractor === 'yes' || editingProjectData.is_contractor || false,
+          projectManager: editingProjectData.project_manager || ''
+        } : null}
+        userProjects={projects}
         onProjectCreated={handleProjectCreated}
       />
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirmId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className={`w-full max-w-md rounded-xl border ${cardClass} shadow-2xl`}>
+            <div className={`p-6 border-b border-inherit`}>
+              <h2 className={`text-xl font-black ${textPrimary}`}>Delete Project</h2>
+              <p className={`text-sm ${textSecondary} mt-1`}>
+                Are you sure you want to delete this project? This action cannot be undone.
+              </p>
+            </div>
+            <div className={`flex items-center justify-end gap-3 p-6`}>
+              <button
+                onClick={() => setDeleteConfirmId(null)}
+                className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
+                  isDark
+                    ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
+                    : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
+                }`}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  console.log('🗑️ Delete button clicked!');
+                  console.log('deleteConfirmId:', deleteConfirmId);
+                  if (deleteConfirmId) {
+                    console.log('🗑️ Calling handleDeleteProject with:', deleteConfirmId);
+                    try {
+                      await handleDeleteProject(deleteConfirmId);
+                    } catch (error) {
+                      console.error('❌ Error in delete button onClick:', error);
+                    }
+                  } else {
+                    console.error('❌ No deleteConfirmId set!');
+                    toast.showError('No project selected for deletion.');
+                  }
+                }}
+                className="px-6 py-2.5 rounded-lg text-sm font-bold bg-red-600 hover:bg-red-700 text-white transition-all shadow-md"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* View Project Modal */}
       {showProjectModal && viewingProjectId && (
@@ -526,12 +898,119 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
               const viewingProject = allProjects.find(p => p.id === viewingProjectId);
               if (!viewingProject) return null;
               
+              // Find the company name from companies_id
+              // Check both companyId field and also look in raw project data if available
+              const projectCompanyId = (viewingProject as any).companyId || 
+                                      (viewingProject as any).companies_id ||
+                                      '';
+              
+              // Also check if we have company name directly from the project (from nested companies object)
+              const directCompanyName = (viewingProject as any).company || '';
+              
+              console.log('🔍 Starting company lookup:', {
+                projectId: viewingProject.id,
+                projectName: viewingProject.name,
+                projectCompanyId: projectCompanyId,
+                projectCompanyIdType: typeof projectCompanyId,
+                allCompaniesCount: allCompanies.length,
+                allCompaniesLoaded: allCompanies.length > 0
+              });
+              
+              // Try to match company by both UUID and numeric ID (handle all formats)
+              let matchedCompany: any = null;
+              
+              if (projectCompanyId && allCompanies.length > 0) {
+                matchedCompany = allCompanies.find((c: any) => {
+                  // Get company identifiers
+                  const companyUuid = c.uuid ? String(c.uuid).trim() : '';
+                  const companyId = c.id ? String(c.id).trim() : '';
+                  const companyNumericId = c.numericId ? String(c.numericId).trim() : '';
+                  const projectIdStr = String(projectCompanyId).trim();
+                  
+                  // Try multiple matching strategies
+                  const matchByUuid = companyUuid && companyUuid === projectIdStr;
+                  const matchById = companyId && companyId === projectIdStr;
+                  
+                  // Match by numeric ID (most important - companies_id is numeric)
+                  const matchByNumericId = companyNumericId && companyNumericId === projectIdStr;
+                  
+                  // Also try numeric comparison if both are numbers
+                  const matchByNumeric = !isNaN(Number(companyId)) && 
+                                        !isNaN(Number(projectIdStr)) && 
+                                        Number(companyId) === Number(projectIdStr);
+                  
+                  // Also try matching company.id if it's numeric
+                  const matchByIdNumeric = !isNaN(Number(companyId)) && 
+                                          !isNaN(Number(projectIdStr)) && 
+                                          Number(companyId) === Number(projectIdStr);
+                  
+                  const isMatch = matchByUuid || matchById || matchByNumericId || matchByNumeric || matchByIdNumeric;
+                  
+                  if (isMatch) {
+                    console.log('✅ Company match found:', {
+                      companyUuid,
+                      companyId,
+                      companyNumericId,
+                      projectIdStr,
+                      matchByUuid,
+                      matchById,
+                      matchByNumericId,
+                      matchByNumeric,
+                      matchByIdNumeric,
+                      registration_name: c.registration_name
+                    });
+                  }
+                  
+                  return isMatch;
+                });
+              }
+              
+              // Prioritize registration_name for company display
+              // If we have a direct company name from nested companies object, use it
+              // Otherwise, try to match from companies list
+              let companyName = 'Not tagged';
+              if (directCompanyName && directCompanyName.trim() !== '') {
+                companyName = directCompanyName;
+                console.log('✅ Using direct company name from project:', companyName);
+              } else if (matchedCompany) {
+                companyName = matchedCompany.registration_name || matchedCompany.name || 'Not tagged';
+                console.log('✅ Using matched company name:', companyName);
+              } else if (viewingProject.company && viewingProject.company.trim() !== '') {
+                companyName = viewingProject.company;
+                console.log('✅ Using project.company fallback:', companyName);
+              }
+              
+              const companyLogo = matchedCompany
+                ? (matchedCompany.logo || matchedCompany.logo_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(companyName)}&background=6366f1&color=fff&size=64`)
+                : viewingProject.companyLogo;
+              
+              console.log('🔍 Project company lookup result:', {
+                projectId: viewingProject.id,
+                projectName: viewingProject.name,
+                projectCompanyId: projectCompanyId,
+                projectCompanyIdType: typeof projectCompanyId,
+                allCompaniesCount: allCompanies.length,
+                companiesSample: allCompanies.slice(0, 3).map((c: any) => ({
+                  uuid: c.uuid,
+                  id: c.id,
+                  idType: typeof c.id,
+                  registration_name: c.registration_name
+                })),
+                matchedCompany: matchedCompany ? {
+                  uuid: matchedCompany.uuid,
+                  id: matchedCompany.id,
+                  idType: typeof matchedCompany.id,
+                  registration_name: matchedCompany.registration_name
+                } : 'Not found',
+                companyName: companyName
+              });
+              
               return (
                 <div className="p-6 space-y-6">
                   <div className="flex items-center gap-4 mb-6">
                     <div className="w-20 h-20 rounded-xl overflow-hidden border-2 border-[#C2D642]/20 flex-shrink-0">
                       <img 
-                        src={viewingProject.logo} 
+                        src={viewingProject.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(viewingProject.name)}&background=6366f1&color=fff&size=128`}
                         alt={viewingProject.name}
                         className="w-full h-full object-cover"
                         onError={(e) => {
@@ -592,16 +1071,21 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                       </label>
                       <div className="flex items-center gap-2">
                         <img 
-                          src={viewingProject.companyLogo} 
-                          alt={viewingProject.company}
+                          src={companyLogo} 
+                          alt={companyName}
                           className="w-6 h-6 rounded-full"
                           onError={(e) => {
                             const target = e.target as HTMLImageElement;
-                            target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(viewingProject.company)}&background=6366f1&color=fff&size=64`;
+                            target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(companyName)}&background=6366f1&color=fff&size=64`;
                           }}
                         />
-                        <p className={`text-sm font-bold ${textPrimary}`}>{viewingProject.company}</p>
+                        <p className={`text-sm font-bold ${textPrimary}`}>{companyName}</p>
                       </div>
+                      {projectCompanyId && (
+                        <p className={`text-[10px] ${textSecondary} mt-1`}>
+                          Company ID: {projectCompanyId}
+                        </p>
+                      )}
                     </div>
 
                     {/* Tag Project Manager */}
@@ -648,6 +1132,35 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
               >
                 Close
               </button>
+              {viewingProjectId && (() => {
+                const viewingProject = allProjects.find(p => p.id === viewingProjectId);
+                if (!viewingProject) return null;
+                return (
+                  <>
+                    <button
+                      onClick={() => {
+                        handleEditProject(viewingProject);
+                        handleCloseModal();
+                      }}
+                      className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642] text-white transition-all shadow-md flex items-center gap-2"
+                    >
+                      <Edit className="w-4 h-4" />
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => {
+                        console.log('🗑️ Delete button clicked from modal for project:', viewingProject.id);
+                        setDeleteConfirmId(viewingProject.id);
+                        handleCloseModal();
+                      }}
+                      className="px-6 py-2.5 rounded-lg text-sm font-bold bg-red-600 hover:bg-red-700 text-white transition-all shadow-md flex items-center gap-2"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Delete
+                    </button>
+                  </>
+                );
+              })()}
             </div>
           </div>
         </div>

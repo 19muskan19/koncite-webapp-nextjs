@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
 import { useUser } from '@/contexts/UserContext';
+import { authAPI } from '@/services/api';
 import Sidebar from './Sidebar';
 
 const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -35,10 +36,24 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
     }
   }, []);
 
-  const handleLogout = () => {
-    localStorage.removeItem('isAuthenticated');
-    localStorage.removeItem('userEmail');
-    router.push('/');
+  const handleLogout = async () => {
+    const { removeCookie } = require('../utils/cookies');
+    try {
+      // Call logout API
+      await authAPI.logout();
+    } catch (error) {
+      console.error('Logout API error:', error);
+      // Continue with logout even if API call fails
+    } finally {
+      // Clear cookies and local storage
+      removeCookie('auth_token');
+      removeCookie('isAuthenticated');
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('isAuthenticated');
+      localStorage.removeItem('userEmail');
+      // Redirect to home
+      router.push('/');
+    }
   };
 
   const getThemeClass = (prefix: string) => `${prefix}-${theme}`;

@@ -8,7 +8,6 @@ import {
   Plus,
   Search,
   Filter,
-  MoreVertical,
   MapPin,
   Phone,
   Mail,
@@ -19,9 +18,13 @@ import {
   Download
 } from 'lucide-react';
 import CreateCompanyModal from './Modals/CreateCompanyModal';
+import { masterDataAPI } from '../../services/api';
+import { useUser } from '../../contexts/UserContext';
 
 interface Company {
-  id: string;
+  id: string; // For display/UI purposes (can be uuid or id)
+  numericId?: number | string; // Original numeric ID from database for API calls
+  uuid?: string; // UUID if available
   name: string;
   code: string;
   address: string;
@@ -33,6 +36,7 @@ interface Company {
   projects?: number;
   employees?: number;
   createdAt?: string;
+  updatedAt?: string;
 }
 
 interface CompaniesProps {
@@ -41,16 +45,21 @@ interface CompaniesProps {
 
 const Companies: React.FC<CompaniesProps> = ({ theme }) => {
   const toast = useToast();
+  const { isAuthenticated, user } = useUser();
   const [showCompanyModal, setShowCompanyModal] = useState<boolean>(false);
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [editingCompanyId, setEditingCompanyId] = useState<string | null>(null);
   const [viewingCompanyId, setViewingCompanyId] = useState<string | null>(null);
-  const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [isLoadingCompanies, setIsLoadingCompanies] = useState<boolean>(false);
+  const [companiesError, setCompaniesError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [isSearching, setIsSearching] = useState<boolean>(false);
   const [sortFilter, setSortFilter] = useState<'recent' | 'oldest' | 'none'>('none');
   const [showFilterDropdown, setShowFilterDropdown] = useState<boolean>(false);
+  const [allProjects, setAllProjects] = useState<any[]>([]);
+  const [isLoadingProjects, setIsLoadingProjects] = useState<boolean>(false);
   const [formData, setFormData] = useState({
     registrationName: '',
     registeredAddress: '',
@@ -64,102 +73,152 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
 
-  // Memoize default companies
-  const defaultCompanies = useMemo(() => [
-    { 
-      id: '1',
-      name: 'ABC Construction Ltd', 
-      code: 'ABC001', 
-      address: '123 Main Street, New York, NY 10001', 
-      contact: '+1-234-567-8900',
-      email: 'contact@abcconstruction.com',
-      logo: 'https://ui-avatars.com/api/?name=ABC+Construction&background=6366f1&color=fff&size=128',
-      registrationNo: 'REG001',
-      status: 'Active',
-      projects: 12,
-      employees: 245,
-      createdAt: '2024-01-15T00:00:00.000Z'
-    },
-    { 
-      id: '2',
-      name: 'XYZ Builders Inc', 
-      code: 'XYZ002', 
-      address: '456 Oak Avenue, Los Angeles, CA 90001',
-      contact: '+1-234-567-8901',
-      email: 'info@xyzbuilders.com',
-      logo: 'https://ui-avatars.com/api/?name=XYZ+Builders&background=10b981&color=fff&size=128',
-      registrationNo: 'REG002',
-      status: 'Active',
-      projects: 8,
-      employees: 180,
-      createdAt: '2024-02-20T00:00:00.000Z'
-    },
-    { 
-      id: '3',
-      name: 'Premier Infrastructure Group', 
-      code: 'PIG003', 
-      address: '789 Business Park, Chicago, IL 60601',
-      contact: '+1-234-567-8902',
-      email: 'hello@premierinfra.com',
-      logo: 'https://ui-avatars.com/api/?name=Premier+Infrastructure&background=f59e0b&color=fff&size=128',
-      registrationNo: 'REG003',
-      status: 'Active',
-      projects: 15,
-      employees: 320,
-      createdAt: '2024-03-10T00:00:00.000Z'
-    },
-    { 
-      id: '4',
-      name: 'Elite Construction Solutions', 
-      code: 'ECS004', 
-      address: '321 Commerce Drive, Houston, TX 77001',
-      contact: '+1-234-567-8903',
-      email: 'contact@eliteconstruction.com',
-      logo: 'https://ui-avatars.com/api/?name=Elite+Construction&background=ef4444&color=fff&size=128',
-      registrationNo: 'REG004',
-      status: 'Active',
-      projects: 6,
-      employees: 95,
-      createdAt: '2024-04-05T00:00:00.000Z'
-    },
-  ], []);
-
-  // Load companies from localStorage on mount
-  useEffect(() => {
-    const savedCompanies = localStorage.getItem('companies');
-    if (savedCompanies) {
-      try {
-        const parsed = JSON.parse(savedCompanies);
-        setCompanies(parsed);
-      } catch (e) {
-        setCompanies([]);
-      }
-    } else {
+  // Fetch companies from API
+  const fetchCompanies = async () => {
+    console.log('🔵 fetchCompanies() called');
+    console.log('isAuthenticated:', isAuthenticated);
+    
+    if (!isAuthenticated) {
+      console.warn('⚠️ Not authenticated, clearing companies');
       setCompanies([]);
+      setIsLoadingCompanies(false);
+      return;
     }
-  }, []);
-
-  // Save companies to localStorage whenever companies state changes
-  useEffect(() => {
-    const defaultIds = ['1', '2', '3', '4'];
-    const userCompanies = companies.filter(c => !defaultIds.includes(c.id));
-    if (userCompanies.length > 0) {
-      try {
-        localStorage.setItem('companies', JSON.stringify(userCompanies));
-      } catch (error) {
-        console.error('Error saving to localStorage:', error);
-        if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-          toast.showWarning('Storage limit exceeded. Some data may not be saved. Please clear browser storage or use smaller images.');
+    
+    console.log('✅ Authenticated, fetching companies...');
+    setIsLoadingCompanies(true);
+    setCompaniesError(null);
+    try {
+      console.log('=== FETCH COMPANIES START ===');
+      console.log('User:', user);
+      console.log('User ID:', user?.id);
+      console.log('Is Authenticated:', isAuthenticated);
+      console.log('Auth Token:', localStorage.getItem('auth_token') ? 'Present' : 'Missing');
+      console.log('About to call masterDataAPI.getCompanies()...');
+      
+      const fetchedCompanies = await masterDataAPI.getCompanies();
+      console.log('✅ masterDataAPI.getCompanies() returned:', fetchedCompanies);
+      
+      console.log('=== FETCH COMPANIES DEBUG ===');
+      console.log('Fetched companies from API (raw):', fetchedCompanies);
+      console.log('Type of fetchedCompanies:', typeof fetchedCompanies);
+      console.log('Is array:', Array.isArray(fetchedCompanies));
+      console.log('Number of companies fetched:', fetchedCompanies?.length || 0);
+      
+      // Ensure we have an array
+      if (!Array.isArray(fetchedCompanies)) {
+        console.error('API did not return an array:', fetchedCompanies);
+        console.error('Type:', typeof fetchedCompanies);
+        console.error('Value:', JSON.stringify(fetchedCompanies, null, 2));
+        setCompanies([]);
+        return;
+      }
+      
+      if (fetchedCompanies.length === 0) {
+        console.warn('⚠️ No companies returned from API. This might be normal if user has no companies yet.');
+        console.warn('User ID:', user?.id);
+        console.warn('Check if backend is filtering correctly by user_id');
+      } else {
+        console.log('✅ Companies found:', fetchedCompanies.length);
+        fetchedCompanies.forEach((company, index) => {
+          console.log(`Company ${index + 1}:`, {
+            id: company.id || company.uuid,
+            name: company.registration_name || company.name,
+            code: company.code,
+            user_id: company.user_id || company.created_by || 'not shown'
+          });
+        });
+      }
+      console.log('=============================');
+      
+      // Transform API response to match Company interface
+      const transformedCompanies = fetchedCompanies.map((company: any) => {
+        const companyName = company.registration_name || company.name || '';
+        const logoUrl = company.logo || company.logo_url;
+        // Use default avatar if no logo is provided
+        const defaultLogo = `https://ui-avatars.com/api/?name=${encodeURIComponent(companyName)}&background=6366f1&color=fff&size=128`;
+        
+        // Preserve original numeric ID for API calls (backend expects numeric id)
+        // API returns: { id: 107, uuid: "ecfa3c96-..." }
+        const numericId = company.id; // This is the numeric ID from database (e.g., 107)
+        const uuid = company.uuid; // UUID if available (e.g., "ecfa3c96-...")
+        
+        // Validate numericId exists and is numeric
+        if (!numericId && !uuid) {
+          console.warn('⚠️ Company missing both id and uuid:', company);
         }
-      }
-    } else {
-      try {
-        localStorage.removeItem('companies');
-      } catch (error) {
-        console.error('Error clearing localStorage:', error);
-      }
+        
+        const transformed = {
+          id: uuid || String(numericId), // Use UUID for display if available, otherwise numeric ID as string
+          numericId: numericId, // Store original numeric ID for API calls (MUST be numeric)
+          uuid: uuid, // Store UUID if available
+          name: companyName,
+          code: company.code || '',
+          address: company.registered_address || company.address || '',
+          registrationNo: company.company_registration_no || company.registration_no || company.registrationNo || '',
+          logo: logoUrl || defaultLogo,
+          contact: company.phone || company.contact || '',
+          email: company.email || '',
+          status: company.is_active === 1 || company.is_active === true ? 'Active' : 'Inactive',
+          projects: company.projects_count || company.projects || 0,
+          employees: company.employees_count || company.employees || 0,
+          createdAt: company.created_at || company.createdAt,
+          updatedAt: company.updated_at || company.updatedAt,
+        };
+        console.log('Transforming company:', {
+          raw: company,
+          transformed: transformed,
+          idFields: {
+            originalId: company.id,
+            originalUuid: company.uuid,
+            transformedId: transformed.id,
+            transformedNumericId: transformed.numericId,
+            transformedUuid: transformed.uuid
+          }
+        });
+        return transformed;
+      });
+      
+      console.log('Transformed companies:', transformedCompanies);
+      console.log('Setting companies state with', transformedCompanies.length, 'companies');
+      setCompanies(transformedCompanies);
+    } catch (err: any) {
+      console.error('Failed to fetch companies:', err);
+      setCompaniesError(err.message || 'Failed to load companies');
+      setCompanies([]);
+      toast.showError(err.message || 'Failed to load companies');
+    } finally {
+      setIsLoadingCompanies(false);
     }
-  }, [companies]);
+  };
+
+  // Fetch all projects to count projects per company
+  const fetchAllProjects = async () => {
+    if (!isAuthenticated) {
+      setAllProjects([]);
+      return;
+    }
+    
+    setIsLoadingProjects(true);
+    try {
+      console.log('📦 Fetching all projects for company project count...');
+      const projects = await masterDataAPI.getProjects();
+      console.log('✅ Fetched projects for company count:', projects?.length || 0);
+      setAllProjects(projects || []);
+    } catch (error: any) {
+      console.error('Failed to fetch projects for company count:', error);
+      setAllProjects([]);
+    } finally {
+      setIsLoadingProjects(false);
+    }
+  };
+
+  // Load companies from API on mount and when auth changes
+  useEffect(() => {
+    fetchCompanies();
+    fetchAllProjects();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
 
   // Compress and resize image before storing
   const compressImage = (file: File, maxWidth: number = 200, maxHeight: number = 200, quality: number = 0.7): Promise<string> => {
@@ -230,8 +289,12 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
     });
   };
 
-  const handleCompanyCreated = (newCompany: Company) => {
-    setCompanies(prev => [...prev, newCompany]);
+  const handleCompanyCreated = async (newCompany: Company) => {
+    // Refresh companies list from API
+    await fetchCompanies();
+    // Refresh projects to update project counts
+    await fetchAllProjects();
+    toast.showSuccess('Company created successfully!');
   };
 
   // Listen for companiesUpdated event
@@ -281,21 +344,88 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
   const handleViewCompany = (company: Company) => {
     setViewingCompanyId(company.id);
     setShowCompanyModal(true);
-    setOpenDropdownId(null);
   };
 
-  const handleEditCompany = (company: Company) => {
-    setEditingCompanyId(company.id);
-    setViewingCompanyId(null);
-    setFormData({
-      registrationName: company.name,
-      registeredAddress: company.address,
-      companyRegistrationNo: company.registrationNo,
-      logo: null,
-      logoPreview: company.logo || null
+  const handleEditCompany = async (company: Company) => {
+    console.log('📝 Editing company:', {
+      id: company.id,
+      numericId: company.numericId,
+      uuid: company.uuid,
+      name: company.name,
+      idType: typeof company.id,
+      numericIdType: typeof company.numericId
     });
+    
+    // Backend expects numeric ID, not UUID
+    // Use numericId if available, otherwise fall back to id (which might be numeric)
+    const companyId = company.numericId || company.id;
+    if (!companyId) {
+      toast.showError('Invalid company ID. Cannot edit company.');
+      return;
+    }
+    
+    console.log('Using company ID for API call:', companyId, 'Type:', typeof companyId);
+    
+    setEditingCompanyId(String(companyId)); // Store as string for consistency
+    setViewingCompanyId(null);
+    
+    // Fetch full company details from API using GET /companies-edit/{id}
+    // Backend uses where('id', $uuid) so it expects the numeric id field
+    try {
+      const companyData = await masterDataAPI.getCompany(String(companyId));
+      console.log('✅ Fetched company data from API:', companyData);
+      console.log('Company data type:', typeof companyData);
+      console.log('Company data is null?', companyData === null);
+      console.log('Company data keys:', companyData ? Object.keys(companyData) : 'null');
+      
+      // Check if companyData is null or empty
+      if (!companyData || (typeof companyData === 'object' && Object.keys(companyData).length === 0)) {
+        console.warn('⚠️ Company data is null or empty, using fallback data');
+        // Fallback to existing company data
+        setFormData({
+          registrationName: company.name,
+          registeredAddress: company.address,
+          companyRegistrationNo: company.registrationNo,
+          logo: null,
+          logoPreview: company.logo || null
+        });
+        setShowCompanyModal(true);
+        return;
+      }
+      
+      // Safely extract data with null checks
+      setFormData({
+        registrationName: companyData?.registration_name || companyData?.name || company.name || '',
+        registeredAddress: companyData?.registered_address || companyData?.address || company.address || '',
+        companyRegistrationNo: companyData?.company_registration_no || companyData?.registration_no || company.registrationNo || '',
+        logo: null,
+        logoPreview: companyData?.logo || companyData?.logo_url || company.logo || null
+      });
+    } catch (error: any) {
+      console.error('❌ Failed to fetch company details:', error);
+      console.error('Error status:', error.status);
+      console.error('Error message:', error.message);
+      console.error('Full error object:', error);
+      
+      // Show error message to user
+      const errorMsg = error.message || 'Failed to load company details from server';
+      toast.showError(errorMsg);
+      
+      // Fallback to existing company data
+      setFormData({
+        registrationName: company.name || '',
+        registeredAddress: company.address || '',
+        companyRegistrationNo: company.registrationNo || '',
+        logo: null,
+        logoPreview: company.logo || null
+      });
+      
+      // Still open the modal with cached data
+      setShowCompanyModal(true);
+      return;
+    }
+    
     setShowCompanyModal(true);
-    setOpenDropdownId(null);
   };
 
   const handleUpdateCompany = async () => {
@@ -310,77 +440,180 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
       return;
     }
 
-    if (!editingCompanyId) return;
-
-    let logoUrl = '';
-
-    if (formData.logo) {
-      try {
-        logoUrl = await compressImage(formData.logo, 200, 200, 0.7);
-      } catch (error) {
-        console.error('Error compressing image:', error);
-        toast.showError('Error processing image. Please try again.');
-        return;
-      }
-    } else {
-      logoUrl = formData.logoPreview || `https://ui-avatars.com/api/?name=${encodeURIComponent(formData.registrationName)}&background=6366f1&color=fff&size=128`;
-    }
-
-    try {
-      setCompanies(prev => prev.map(company => 
-        company.id === editingCompanyId
-          ? {
-              ...company,
-              name: formData.registrationName,
-              address: formData.registeredAddress,
-              registrationNo: formData.companyRegistrationNo,
-              logo: logoUrl,
-              createdAt: new Date().toISOString()
-            }
-          : company
-      ));
-      handleCloseModal();
-      setEditingCompanyId(null);
-    } catch (error) {
-      console.error('Error updating company:', error);
-      if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-        toast.showError('Storage limit exceeded. Please clear some data or use a smaller image.');
-      } else {
-        toast.showError('Error updating company. Please try again.');
-      }
-    }
-  };
-
-  const handleDeleteCompany = (companyId: string) => {
-    const defaultIds = ['1', '2', '3', '4'];
-    if (defaultIds.includes(companyId)) {
-      toast.showWarning('Cannot delete sample companies');
+    if (!editingCompanyId) {
+      toast.showError('No company selected for editing.');
       return;
     }
 
-    if (window.confirm('Are you sure you want to delete this company?')) {
-      setCompanies(prev => prev.filter(company => company.id !== companyId));
+    try {
+      console.log('📝 Updating company:', {
+        id: editingCompanyId,
+        idType: typeof editingCompanyId,
+        formData: {
+          registrationName: formData.registrationName,
+          registeredAddress: formData.registeredAddress,
+          companyRegistrationNo: formData.companyRegistrationNo,
+          hasLogo: !!formData.logo
+        }
+      });
+      
+      // Prepare FormData for API - matching database field names
+      const updateData = new FormData();
+      updateData.append('registration_name', formData.registrationName);
+      updateData.append('registered_address', formData.registeredAddress);
+      updateData.append('company_registration_no', formData.companyRegistrationNo);
+      
+      if (formData.logo) {
+        updateData.append('logo', formData.logo);
+      }
+
+      // Use editingCompanyId which should be the numeric ID
+      console.log('Updating company with ID:', editingCompanyId);
+      await masterDataAPI.updateCompany(editingCompanyId, updateData);
+      
+      // Refresh companies list
+      await fetchCompanies();
+      // Refresh projects to update project counts
+      await fetchAllProjects();
+      handleCloseModal();
+      setEditingCompanyId(null);
+      toast.showSuccess('Company updated successfully!');
+    } catch (error: any) {
+      console.error('❌ Error updating company:', error);
+      console.error('Error details:', {
+        message: error.message,
+        status: error.status,
+        errors: error.errors,
+        fullError: error
+      });
+      
+      // Extract error message from various possible locations
+      const errorMessage = error.message || 
+                          error.response?.data?.message || 
+                          error.response?.data?.error ||
+                          (error.errors && Object.values(error.errors).flat().join(', ')) ||
+                          'Company Update/Creation Failed';
+      
+      toast.showError(errorMessage);
+    }
+  };
+
+  const handleDeleteCompany = async (companyId: string | null) => {
+    console.log('🗑️ handleDeleteCompany called with companyId:', companyId);
+    console.log('🗑️ Current companies array length:', companies.length);
+    
+    if (!companyId) {
+      console.error('❌ No companyId provided');
+      toast.showError('No company selected for deletion.');
+      return;
+    }
+    
+    // Find the company to get its UUID
+    console.log('🗑️ Searching for company with id:', companyId);
+    console.log('🗑️ Available company IDs:', companies.map(c => ({ id: c.id, uuid: c.uuid, name: c.name })));
+    const company = companies.find(c => c.id === companyId);
+    
+    if (!company) {
+      console.error('❌ Company not found:', companyId);
+      console.error('❌ Available companies:', companies);
+      toast.showError('Company not found. Please refresh the page and try again.');
+      return;
+    }
+    
+    console.log('✅ Company found:', company);
+    
+    // Backend delete function uses: where('id', $uuid)
+    // Even though route parameter is named {uuid}, backend queries the numeric 'id' column
+    // So we need to send the numeric ID, not the UUID
+    let numericId: number | string | null = company.numericId ?? null;
+    
+    // Fallback: if numericId is not set, try to extract from company.id
+    if (!numericId) {
+      // Check if company.id is numeric (not a UUID)
+      if (company.id && !isNaN(Number(company.id)) && !company.id.includes('-')) {
+        numericId = Number(company.id);
+        console.warn('⚠️ Using company.id as numericId:', numericId);
+      } else {
+        console.error('❌ No numeric ID found for company:', {
+          company,
+          id: company.id,
+          numericId: company.numericId,
+          uuid: company.uuid
+        });
+        toast.showError('Invalid company ID. Cannot delete company. Please refresh the page.');
+        return;
+      }
+    }
+    
+    console.log('🗑️ Deleting company - Numeric ID extraction:', {
+      companyId, // The ID used to find the company
+      numericId, // The numeric ID to send to API
+      companyName: company.name,
+      numericIdType: typeof numericId,
+      companyDetails: {
+        id: company.id, // Display ID (UUID if available)
+        uuid: company.uuid, // UUID from API response
+        numericId: company.numericId, // Numeric ID from database
+        name: company.name
+      },
+      validation: {
+        hasNumericId: !!company.numericId,
+        numericIdValue: company.numericId,
+        extractedNumericId: numericId,
+        isNumericIdValid: numericId !== null && numericId !== undefined
+      }
+    });
+    
+    if (!numericId || (typeof numericId === 'number' && isNaN(numericId))) {
+      console.error('❌ Invalid numeric ID for company:', {
+        company,
+        extractedNumericId: numericId,
+        companyNumericId: company.numericId,
+        companyId: companyId
+      });
+      toast.showError('Invalid company ID. Cannot delete company. Please refresh the page.');
+      return;
+    }
+    
+    try {
+      // Backend route: DELETE /companies-delete/{uuid}
+      // But backend function uses where('id', $uuid) which queries numeric 'id' column
+      // So we send the numeric ID even though route parameter is named {uuid}
+      console.log('🗑️ Calling delete API with numeric ID:', numericId);
+      await masterDataAPI.deleteCompany(String(numericId));
+      console.log('✅ Company deleted successfully');
+      
+      // Refresh companies list
+      await fetchCompanies();
+      // Refresh projects to update project counts
+      await fetchAllProjects();
       setDeleteConfirmId(null);
-      setOpenDropdownId(null);
       if (viewingCompanyId === companyId) {
         setViewingCompanyId(null);
         setShowCompanyModal(false);
       }
+      toast.showSuccess('Company deleted successfully!');
+    } catch (error: any) {
+      console.error('❌ Error deleting company:', error);
+      console.error('Error status:', error.status);
+      console.error('Error details:', {
+        message: error.message,
+        status: error.status,
+        response: error.response?.data,
+        fullError: error
+      });
+      
+      const errorMsg = error.message || 
+                      error.response?.data?.message ||
+                      error.response?.data?.error ||
+                      'Failed to delete company. Please try again.';
+      toast.showError(errorMsg);
     }
-  };
-
-  const toggleDropdown = (companyId: string) => {
-    setOpenDropdownId(openDropdownId === companyId ? null : companyId);
-    setDeleteConfirmId(null);
   };
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
-      if (!target.closest('.dropdown-menu') && !target.closest('.dropdown-trigger')) {
-        setOpenDropdownId(null);
-        setDeleteConfirmId(null);
-      }
       if (!target.closest('.filter-dropdown') && !target.closest('.filter-trigger')) {
         setShowFilterDropdown(false);
       }
@@ -392,38 +625,134 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
     };
   }, []);
 
+  // Search companies using API
+  const handleSearch = async (query: string) => {
+    if (!query.trim()) {
+      // If search is empty, fetch all companies
+      await fetchCompanies();
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    try {
+      const searchResults = await masterDataAPI.searchCompanies(query);
+      // Transform API response to match Company interface - matching database field names
+      const transformedCompanies = searchResults.map((company: any) => ({
+        id: company.uuid || company.id,
+        numericId: company.id, // Store numeric ID if available
+        uuid: company.uuid, // Store UUID if available
+        name: company.registration_name || company.name || '',
+        code: company.code || '',
+        address: company.registered_address || company.address || '',
+        registrationNo: company.company_registration_no || company.registration_no || company.registrationNo || '',
+        logo: company.logo || company.logo_url || '',
+        contact: company.phone || company.contact || '',
+        email: company.email || '',
+        status: company.is_active === 1 || company.is_active === true ? 'Active' : 'Inactive',
+        projects: company.projects_count || company.projects || 0,
+        employees: company.employees_count || company.employees || 0,
+        createdAt: company.created_at || company.createdAt,
+        updatedAt: company.updated_at || company.updatedAt,
+      }));
+      setCompanies(transformedCompanies);
+    } catch (error: any) {
+      console.error('Search failed:', error);
+      toast.showError(error.message || 'Search failed. Please try again.');
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // Debounced search
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (searchQuery.trim()) {
+        handleSearch(searchQuery);
+      } else {
+        fetchCompanies();
+      }
+    }, 500); // Wait 500ms after user stops typing
+
+    return () => clearTimeout(timeoutId);
+  }, [searchQuery]);
+
   // Memoize sorted companies
   const sortedCompanies = useMemo(() => {
-    const defaultIds = new Set(defaultCompanies.map(c => c.id));
-    const newCompanies = companies.filter(c => !defaultIds.has(c.id));
-    let allCompanies = [...defaultCompanies, ...newCompanies];
+    let allCompanies = [...companies];
     
-    if (searchQuery.trim()) {
+    // Client-side filtering is now optional since we're using API search
+    if (searchQuery.trim() && !isSearching) {
       allCompanies = allCompanies.filter(company =>
         company.name.toLowerCase().includes(searchQuery.toLowerCase())
       );
     }
 
     if (sortFilter === 'recent') {
+      // Sort by newest: Use the most recent date between createdAt and updatedAt
       allCompanies = [...allCompanies].sort((a, b) => {
-        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return dateB - dateA;
+        // Get the most recent date for each company (updatedAt if available, otherwise createdAt)
+        const getMostRecentDate = (company: Company): number => {
+          const createdDate = company.createdAt ? new Date(company.createdAt).getTime() : 0;
+          const updatedDate = company.updatedAt ? new Date(company.updatedAt).getTime() : 0;
+          // Return the most recent date (larger timestamp)
+          return Math.max(createdDate, updatedDate);
+        };
+        
+        const dateA = getMostRecentDate(a);
+        const dateB = getMostRecentDate(b);
+        return dateB - dateA; // Descending order (newest first)
       });
     } else if (sortFilter === 'oldest') {
+      // Sort by oldest: Use createdAt (oldest creation date)
       allCompanies = [...allCompanies].sort((a, b) => {
         const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
         const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return dateA - dateB;
+        return dateA - dateB; // Ascending order (oldest first)
       });
     }
     
     return allCompanies;
-  }, [companies, sortFilter, searchQuery, defaultCompanies]);
+  }, [companies, sortFilter, searchQuery, isSearching]);
 
   const viewingCompany = viewingCompanyId 
-    ? [...defaultCompanies, ...companies].find(c => c.id === viewingCompanyId)
+    ? companies.find(c => c.id === viewingCompanyId)
     : null;
+  
+  // Calculate projects count for viewing company
+  // Priority: Use count from API response (company.projects), otherwise count from allProjects
+  const viewingCompanyProjectsCount = useMemo(() => {
+    if (!viewingCompany) {
+      return 0;
+    }
+    
+    // First priority: Use the projects count from the API response (from companies-list)
+    // This is the most accurate count from the backend
+    if (viewingCompany.projects !== undefined && viewingCompany.projects !== null) {
+      console.log(`📊 Using API projects count for company "${viewingCompany.name}":`, viewingCompany.projects);
+      return viewingCompany.projects;
+    }
+    
+    // Fallback: Count projects where companies_id matches the company's numeric ID
+    if (allProjects.length > 0 && viewingCompany.numericId) {
+      const companyNumericId = viewingCompany.numericId;
+      const count = allProjects.filter((project: any) => {
+        // Match by numeric ID (companies_id is numeric in the database)
+        const projectCompanyId = project.companies_id || project.company_id;
+        return String(projectCompanyId) === String(companyNumericId);
+      }).length;
+      
+      console.log(`📊 Calculated projects count for company "${viewingCompany.name}" (numericId: ${companyNumericId}):`, count);
+      return count;
+    }
+    
+    // If projects are still loading, return 0
+    if (isLoadingProjects) {
+      return 0;
+    }
+    
+    return 0;
+  }, [viewingCompany, allProjects, isLoadingProjects]);
 
   const handleDownloadExcel = () => {
     // Prepare data for Excel export
@@ -487,6 +816,21 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
             title="Download as Excel"
           >
             <Download className="w-4 h-4" />
+          </button>
+          <button 
+            onClick={async () => {
+              console.log('🔄 Manual refresh triggered');
+              setSearchQuery('');
+              await fetchCompanies();
+            }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+              isDark 
+                ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' 
+                : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
+            } shadow-sm`}
+            title="Refresh Companies List"
+          >
+            <Search className="w-4 h-4" /> Refresh
           </button>
           <button 
             onClick={() => {
@@ -572,8 +916,31 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
         </div>
       </div>
 
+      {/* Loading State */}
+      {isLoadingCompanies && (
+        <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#C2D642] mx-auto mb-4"></div>
+          <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>Loading Companies...</h3>
+          <p className={`text-sm ${textSecondary}`}>Please wait while we fetch your companies.</p>
+        </div>
+      )}
+
+      {/* Error State */}
+      {companiesError && !isLoadingCompanies && (
+        <div className={`p-12 rounded-xl border text-center ${cardClass} border-red-500`}>
+          <h3 className={`text-lg font-black mb-2 text-red-500`}>Error Loading Companies</h3>
+          <p className={`text-sm ${textSecondary}`}>{companiesError}</p>
+          <button 
+            onClick={fetchCompanies} 
+            className="mt-4 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Companies Bars View */}
-      {sortedCompanies.length > 0 ? (
+      {!isLoadingCompanies && !companiesError && sortedCompanies.length > 0 ? (
         <div className="space-y-2">
           {sortedCompanies.map((company, idx) => (
             <div 
@@ -587,7 +954,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                 <div className="flex items-center gap-4 flex-1 min-w-0">
                   <div className="w-12 h-12 rounded-lg overflow-hidden border-2 border-[#C2D642]/20 flex-shrink-0">
                     <img 
-                      src={company.logo} 
+                      src={company.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=6366f1&color=fff&size=128`}
                       alt={company.name}
                       className="w-full h-full object-cover"
                       onError={(e) => {
@@ -597,47 +964,6 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                     />
                   </div>
                   <h3 className={`text-base font-black ${textPrimary} truncate`}>{company.name}</h3>
-                </div>
-                <div className="relative dropdown-menu" onClick={(e) => e.stopPropagation()}>
-                  <button 
-                    onClick={() => toggleDropdown(company.id)}
-                    className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors dropdown-trigger`}
-                  >
-                    <MoreVertical className={`w-4 h-4 ${textSecondary}`} />
-                  </button>
-                  {openDropdownId === company.id && (
-                    <div className={`absolute right-0 top-10 z-10 w-48 rounded-lg border shadow-lg ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
-                      <div className="py-1">
-                        <button
-                          onClick={() => handleEditCompany(company)}
-                          className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors ${
-                            isDark 
-                              ? 'hover:bg-slate-700 text-slate-100' 
-                              : 'hover:bg-slate-50 text-slate-900'
-                          }`}
-                        >
-                          <Edit className="w-4 h-4" />
-                          Edit
-                        </button>
-                        {!['1', '2', '3', '4'].includes(company.id) && (
-                          <button
-                            onClick={() => {
-                              setDeleteConfirmId(company.id);
-                              setOpenDropdownId(null);
-                            }}
-                            className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors ${
-                              isDark 
-                                ? 'hover:bg-red-500/20 text-red-400' 
-                                : 'hover:bg-red-50 text-red-600'
-                            }`}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                            Delete
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
             </div>
@@ -671,22 +997,33 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
       <CreateCompanyModal
         theme={theme}
         isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        onSuccess={() => {
+        onClose={() => {
           setShowCreateModal(false);
-          // Reload companies from localStorage
-          const savedCompanies = localStorage.getItem('companies');
-          if (savedCompanies) {
-            try {
-              const parsed = JSON.parse(savedCompanies);
-              setCompanies(parsed);
-            } catch (e) {
-              setCompanies([]);
-            }
-          }
         }}
-        defaultCompanies={defaultCompanies}
-        userCompanies={companies.filter(c => !['1', '2', '3', '4'].includes(c.id))}
+        onSuccess={async () => {
+          console.log('=== COMPANY CREATED - REFRESHING LIST ===');
+          // Clear search query to show all companies including the new one
+          setSearchQuery('');
+          // Small delay to ensure database transaction is committed
+          console.log('Waiting 500ms for database transaction...');
+          await new Promise(resolve => setTimeout(resolve, 500));
+          // Reload companies from API
+          console.log('Calling fetchCompanies()...');
+          try {
+            await fetchCompanies();
+            // Refresh projects to update project counts
+            await fetchAllProjects();
+            console.log('fetchCompanies() completed successfully');
+          } catch (error) {
+            console.error('Error refreshing companies list:', error);
+            toast.showError('Company created but failed to refresh list. Please refresh the page.');
+          }
+          // Close the modal after refresh completes
+          console.log('Closing modal...');
+          setShowCreateModal(false);
+          console.log('=== REFRESH COMPLETE ===');
+        }}
+        userCompanies={companies}
         onCompanyCreated={handleCompanyCreated}
       />
 
@@ -718,7 +1055,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                 <div className="flex items-center gap-4 mb-6">
                   <div className="w-20 h-20 rounded-xl overflow-hidden border-2 border-[#C2D642]/20 flex-shrink-0">
                     <img 
-                      src={viewingCompany.logo} 
+                      src={viewingCompany.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(viewingCompany.name)}&background=6366f1&color=fff&size=128`}
                       alt={viewingCompany.name}
                       className="w-full h-full object-cover"
                       onError={(e) => {
@@ -778,7 +1115,13 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                       <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>
                         Projects
                       </label>
-                      <p className={`text-xl font-black ${textPrimary}`}>{viewingCompany.projects || 0}</p>
+                      <p className={`text-xl font-black ${textPrimary}`}>
+                        {isLoadingProjects ? (
+                          <span className="text-sm opacity-50">Loading...</span>
+                        ) : (
+                          viewingCompanyProjectsCount
+                        )}
+                      </p>
                     </div>
                     <div>
                       <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>
@@ -925,15 +1268,28 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                     Close
                   </button>
                   {viewingCompany && (
-                    <button
-                      onClick={() => {
-                        handleEditCompany(viewingCompany);
-                      }}
-                      className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642] text-white transition-all shadow-md flex items-center gap-2"
-                    >
-                      <Edit className="w-4 h-4" />
-                      Edit
-                    </button>
+                    <>
+                      <button
+                        onClick={() => {
+                          handleEditCompany(viewingCompany);
+                        }}
+                        className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642] text-white transition-all shadow-md flex items-center gap-2"
+                      >
+                        <Edit className="w-4 h-4" />
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => {
+                          console.log('🗑️ Delete button clicked from modal for company:', viewingCompany.id);
+                          setDeleteConfirmId(viewingCompany.id);
+                          handleCloseModal();
+                        }}
+                        className="px-6 py-2.5 rounded-lg text-sm font-bold bg-red-600 hover:bg-red-700 text-white transition-all shadow-md flex items-center gap-2"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        Delete
+                      </button>
+                    </>
                   )}
                 </>
               ) : (
@@ -983,7 +1339,21 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                 Cancel
               </button>
               <button
-                onClick={() => handleDeleteCompany(deleteConfirmId)}
+                onClick={async () => {
+                  console.log('🗑️ Delete button clicked!');
+                  console.log('deleteConfirmId:', deleteConfirmId);
+                  if (deleteConfirmId) {
+                    console.log('🗑️ Calling handleDeleteCompany with:', deleteConfirmId);
+                    try {
+                      await handleDeleteCompany(deleteConfirmId);
+                    } catch (error) {
+                      console.error('❌ Error in delete button onClick:', error);
+                    }
+                  } else {
+                    console.error('❌ No deleteConfirmId set!');
+                    toast.showError('No company selected for deletion.');
+                  }
+                }}
                 className="px-6 py-2.5 rounded-lg text-sm font-bold bg-red-600 hover:bg-red-700 text-white transition-all shadow-md"
               >
                 Delete

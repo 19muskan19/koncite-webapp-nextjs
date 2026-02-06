@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode } from 'react';
 import { userAPI } from '../services/api';
 
 interface User {
@@ -17,6 +17,7 @@ interface UserContextType {
   user: User | null;
   isLoading: boolean;
   error: string | null;
+  isAuthenticated: boolean;
   refreshUser: () => Promise<void>;
   clearUser: () => void;
 }
@@ -27,6 +28,16 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  
+  // Derive isAuthenticated from user and token (reactive)
+  // Check cookies first, then fallback to localStorage for backward compatibility
+  const isAuthenticated = useMemo(() => {
+    if (typeof window === 'undefined') return false;
+    const { getCookie } = require('../utils/cookies');
+    const token = getCookie('auth_token') || localStorage.getItem('auth_token');
+    const authFlag = getCookie('isAuthenticated') === 'true' || localStorage.getItem('isAuthenticated') === 'true';
+    return !!(user && token && authFlag);
+  }, [user]);
 
   const fetchUserProfile = async () => {
     // Check if user is authenticated
@@ -35,8 +46,10 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return;
     }
 
-    const token = localStorage.getItem('auth_token');
-    const isAuthenticated = localStorage.getItem('isAuthenticated') === 'true';
+    const { getCookie } = require('../utils/cookies');
+    // Check cookies first, then fallback to localStorage for backward compatibility
+    const token = getCookie('auth_token') || localStorage.getItem('auth_token');
+    const isAuthenticated = getCookie('isAuthenticated') === 'true' || localStorage.getItem('isAuthenticated') === 'true';
 
     if (!token || !isAuthenticated) {
       setUser(null);
@@ -50,35 +63,73 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       
       // Try to fetch user profile, but don't fail if endpoint doesn't exist
       try {
-        console.log('UserContext: Fetching user profile...');
+        console.log('UserContext: Fetching user profile from /profile-list...');
         const response = await userAPI.getProfile();
         console.log('UserContext: Profile response:', response);
-        const userData = response.data?.user || response.user;
+        
+        // Handle response structure: { status: true, data: { ...user... }, user: { ...user... } }
+        // The user data is directly in response.data (not nested in data.user)
+        const userData = response.data || response.user;
         
         if (userData && userData.name) {
           console.log('UserContext: Setting user from profile:', userData.name);
+          console.log('UserContext: User ID:', userData.id);
+          console.log('UserContext: User company_id:', userData.company_id);
           setUser(userData);
         } else {
           console.warn('UserContext: Profile fetched but no user data or name found:', response);
+          console.warn('UserContext: Response structure:', JSON.stringify(response, null, 2));
           setUser(null);
         }
       } catch (profileErr: any) {
-        // If 404, endpoint doesn't exist - this is okay, user will be set from login event
-        if (profileErr.status === 404) {
+        // Check for 404 or if error response status is 404
+        const is404 = profileErr.status === 404 || 
+                      profileErr.response?.status === 404 ||
+                      (profileErr.message && profileErr.message.includes('404'));
+        
+        if (is404) {
           console.log('UserContext: Profile endpoint not available (404), user will be set from login event');
           setUser(null); // Will be set when userLoggedIn event fires
+          // Don't throw - this is expected if endpoint doesn't exist
+          return;
         } else {
-          console.error('UserContext: Error fetching profile:', profileErr);
-          throw profileErr; // Re-throw other errors
+          // Log the full error for debugging
+          console.error('UserContext: Error fetching profile:', {
+            error: profileErr,
+            status: profileErr.status || profileErr.response?.status,
+            message: profileErr.message || profileErr.response?.data?.message,
+            response: profileErr.response?.data
+          });
+          // Don't throw - just log and continue, user will be set from login event
+          setUser(null);
+          return;
         }
       }
     } catch (err: any) {
-      console.error('Failed to fetch user profile:', err);
-      setError(err.message || 'Failed to load user profile');
+      // Only log non-404 errors
+      const is404 = err.status === 404 || 
+                    err.response?.status === 404 ||
+                    (err.message && err.message.includes('404'));
+      
+      if (!is404) {
+        console.error('UserContext: Failed to fetch user profile:', {
+          error: err,
+          status: err.status || err.response?.status,
+          message: err.message || err.response?.data?.message,
+          response: err.response?.data
+        });
+        setError(err.message || err.response?.data?.message || 'Failed to load user profile');
+      } else {
+        console.log('UserContext: Profile endpoint not found (404) - this is expected if endpoint doesn\'t exist');
+      }
+      
       setUser(null);
       
-      // If 401, clear auth
-      if (err.status === 401) {
+      // If 401, clear auth (cookies and localStorage)
+      if (err.status === 401 || err.response?.status === 401) {
+        const { removeCookie } = require('../utils/cookies');
+        removeCookie('auth_token');
+        removeCookie('isAuthenticated');
         localStorage.removeItem('auth_token');
         localStorage.removeItem('isAuthenticated');
       }
@@ -94,6 +145,14 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const clearUser = () => {
     setUser(null);
     setError(null);
+    // Clear cookies and localStorage
+    const { removeCookie } = require('../utils/cookies');
+    removeCookie('auth_token');
+    removeCookie('isAuthenticated');
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('isAuthenticated');
+    }
   };
 
   // Fetch user profile on mount and when auth changes
@@ -155,7 +214,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, []);
 
   return (
-    <UserContext.Provider value={{ user, isLoading, error, refreshUser, clearUser }}>
+    <UserContext.Provider value={{ user, isLoading, error, isAuthenticated, refreshUser, clearUser }}>
       {children}
     </UserContext.Provider>
   );

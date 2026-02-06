@@ -145,7 +145,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
           columns: ['Contractor Name', 'Code', 'Specialization', 'Projects', 'Status'],
           sampleData: [
             { name: 'ABC Contractors Ltd', code: 'CON001', specialization: 'Civil Works', projects: '3', status: 'Active' },
-            { name: 'XYZ Builders Inc', code: 'CON002', specialization: 'Electrical', projects: '2', status: 'Active' },
+            { name: 'DEF Contractors Ltd', code: 'CON002', specialization: 'Electrical', projects: '2', status: 'Active' },
           ]
         };
       case ViewType.SUBSCRIPTION:

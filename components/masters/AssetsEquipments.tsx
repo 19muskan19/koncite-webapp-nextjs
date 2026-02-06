@@ -3,16 +3,28 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
-import { Wrench, MoreVertical, Download, Plus, Search, FileSpreadsheet, Upload, ArrowUpDown } from 'lucide-react';
+import { Wrench, MoreVertical, Download, Plus, Search, FileSpreadsheet, Upload, ArrowUpDown, Loader2, Edit, Trash2 } from 'lucide-react';
 import CreateAssetEquipmentModal from './Modals/CreateAssetEquipmentModal';
+import { masterDataAPI } from '../../services/api';
+import { useUser } from '../../contexts/UserContext';
 
 interface AssetEquipment {
-  id: string;
+  id: string; // UUID or string for display
+  numericId?: number | string; // Numeric ID from database for API calls
+  uuid?: string; // UUID if available
   name: string;
-  code: string;
-  unit: string;
+  code?: string;
+  unit?: string;
+  unit_id?: number;
+  unit_data?: {
+    id: number;
+    unit: string;
+    unit_coversion?: string;
+    unit_coversion_factor?: string;
+  };
   specification: string;
-  status: 'Active' | 'Inactive';
+  status?: 'Active' | 'Inactive';
+  is_active?: number; // 1 = active, 0 = inactive
   createdAt?: string;
 }
 
@@ -22,12 +34,19 @@ interface AssetsEquipmentsProps {
 
 const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
   const toast = useToast();
+  const { isAuthenticated } = useUser();
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [isSearching, setIsSearching] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'list' | 'bulkUpload' | 'openingStock'>('list');
   const [openingStockSubTab, setOpeningStockSubTab] = useState<'bulkUpload' | 'available'>('bulkUpload');
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
-  const [userAssets, setUserAssets] = useState<AssetEquipment[]>([]);
-  const [defaultAssetsStatus, setDefaultAssetsStatus] = useState<Record<string, 'Active' | 'Inactive'>>({});
+  const [editingAssetId, setEditingAssetId] = useState<string | null>(null); // UUID for display
+  const [editingAssetNumericId, setEditingAssetNumericId] = useState<number | string | null>(null); // Numeric ID for API calls
+  const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
+  const [assets, setAssets] = useState<AssetEquipment[]>([]);
+  const [isLoadingAssets, setIsLoadingAssets] = useState<boolean>(false);
+  const [assetsError, setAssetsError] = useState<string | null>(null);
+  const [togglingAssetId, setTogglingAssetId] = useState<string | null>(null); // Track which asset is being toggled
   const [openingStockForm, setOpeningStockForm] = useState({
     project: 'Demo Data',
     storeWarehouse: 'Main Store',
@@ -86,154 +105,340 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
     { name: 'Storage Facility B', code: 'WH003' },
   ];
 
-  const defaultAssets: AssetEquipment[] = [
-    { id: '1', name: 'Machinery Hire', code: 'AST001', unit: 'Hrs', specification: 'Heavy Machinery', status: 'Active', createdAt: '2024-01-15T00:00:00.000Z' },
-    { id: '2', name: 'Excavator Hire', code: 'AST002', unit: 'Hrs', specification: 'Excavator Equipment', status: 'Active', createdAt: '2024-02-20T00:00:00.000Z' },
-  ];
+  // Fetch assets from API
+  const fetchAssets = async () => {
+    if (!isAuthenticated) {
+      setAssets([]);
+      setIsLoadingAssets(false);
+      return;
+    }
+    
+    setIsLoadingAssets(true);
+    setAssetsError(null);
+    try {
+      const fetchedAssets = await masterDataAPI.getAssetsEquipments();
+      // Transform API response to match AssetEquipment interface
+      const transformedAssets: AssetEquipment[] = fetchedAssets.map((asset: any) => {
+        const numericId = asset.id; // Numeric ID from database
+        const uuid = asset.uuid; // UUID if available
+        
+        // Handle is_active: can be 1, "1", true, or undefined/null
+        // Default to Active if undefined/null
+        const isActiveValue = asset.is_active;
+        const isActive = isActiveValue === 1 || 
+                        isActiveValue === '1' || 
+                        isActiveValue === true || 
+                        isActiveValue === 'true' ||
+                        isActiveValue === undefined || // Default to active
+                        isActiveValue === null; // Default to active
+        
+        return {
+          id: uuid || String(numericId), // Use UUID for display if available, otherwise numeric ID as string
+          numericId: numericId, // Store numeric ID for API calls
+          uuid: uuid, // Store UUID if available
+          name: asset.name || '',
+          code: asset.code || '',
+          specification: asset.specification || '',
+          unit: asset.unit?.unit || asset.unit || '',
+          unit_id: asset.unit_id || asset.unit?.id,
+          unit_data: asset.unit || undefined,
+          status: (isActive ? 'Active' : 'Inactive') as 'Active' | 'Inactive',
+          is_active: isActive ? 1 : 0,
+          createdAt: asset.created_at || asset.createdAt,
+        };
+      });
+      setAssets(transformedAssets);
+    } catch (err: any) {
+      console.error('Failed to fetch assets:', err);
+      setAssetsError(err.message || 'Failed to load assets');
+      setAssets([]);
+      toast.showError(err.message || 'Failed to load assets');
+    } finally {
+      setIsLoadingAssets(false);
+    }
+  };
 
-  // Load assets from localStorage on mount
+  // Load assets from API on mount and when auth changes
   useEffect(() => {
-    const savedAssets = localStorage.getItem('assetsEquipments');
-    if (savedAssets) {
-      try {
-        const parsed = JSON.parse(savedAssets);
-        setUserAssets(parsed);
-      } catch (e) {
-        setUserAssets([]);
-      }
-    } else {
-      setUserAssets([]);
+    fetchAssets();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
+
+  // Search assets using API
+  const handleSearch = async (query: string) => {
+    if (!query.trim()) {
+      // If search is empty, fetch all assets
+      await fetchAssets();
+      setIsSearching(false);
+      return;
     }
 
-    // Load default assets status from localStorage
-    const savedDefaultStatus = localStorage.getItem('defaultAssetsStatus');
-    if (savedDefaultStatus) {
-      try {
-        const parsed = JSON.parse(savedDefaultStatus);
-        setDefaultAssetsStatus(parsed);
-      } catch (e) {
-        setDefaultAssetsStatus({});
-      }
+    setIsSearching(true);
+    try {
+      const searchResults = await masterDataAPI.searchAssetsEquipments(query);
+      // Transform API response to match AssetEquipment interface
+      const transformedAssets: AssetEquipment[] = searchResults.map((asset: any) => {
+        const numericId = asset.id; // Numeric ID from database
+        const uuid = asset.uuid; // UUID if available
+        
+        // Handle is_active: can be 1, "1", true, or undefined/null
+        // Default to Active if undefined/null
+        const isActiveValue = asset.is_active;
+        const isActive = isActiveValue === 1 || 
+                        isActiveValue === '1' || 
+                        isActiveValue === true || 
+                        isActiveValue === 'true' ||
+                        isActiveValue === undefined || // Default to active
+                        isActiveValue === null; // Default to active
+        
+        return {
+          id: uuid || String(numericId), // Use UUID for display if available, otherwise numeric ID as string
+          numericId: numericId, // Store numeric ID for API calls
+          uuid: uuid, // Store UUID if available
+          name: asset.name || '',
+          code: asset.code || '',
+          specification: asset.specification || '',
+          unit: asset.unit?.unit || asset.unit || '',
+          unit_id: asset.unit_id || asset.unit?.id,
+          unit_data: asset.unit || undefined,
+          status: (isActive ? 'Active' : 'Inactive') as 'Active' | 'Inactive',
+          is_active: isActive ? 1 : 0,
+          createdAt: asset.created_at || asset.createdAt,
+        };
+      });
+      setAssets(transformedAssets);
+    } catch (error: any) {
+      console.error('Search failed:', error);
+      toast.showError(error.message || 'Search failed. Please try again.');
+    } finally {
+      setIsSearching(false);
     }
-  }, []);
+  };
 
-  // Save assets to localStorage whenever userAssets state changes
+  // Debounced search
   useEffect(() => {
-    const defaultIds = ['1', '2'];
-    const userAddedAssets = userAssets.filter(a => !defaultIds.includes(a.id));
-    if (userAddedAssets.length > 0) {
-      try {
-        localStorage.setItem('assetsEquipments', JSON.stringify(userAddedAssets));
-      } catch (error) {
-        console.error('Error saving to localStorage:', error);
-        if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-          toast.showWarning('Storage limit exceeded. Some data may not be saved.');
-        }
+    const timeoutId = setTimeout(() => {
+      if (searchQuery.trim()) {
+        handleSearch(searchQuery);
+      } else {
+        fetchAssets();
       }
-    } else {
-      try {
-        localStorage.removeItem('assetsEquipments');
-      } catch (error) {
-        console.error('Error clearing localStorage:', error);
-      }
-    }
-  }, [userAssets]);
+    }, 500);
 
-  // Combine default and user assets with status updates
-  const allAssets = useMemo(() => {
-    const defaultIds = ['1', '2'];
-    const updatedDefaultAssets = defaultAssets.map(asset => ({
-      ...asset,
-      status: defaultAssetsStatus[asset.id] || asset.status
-    }));
-    return [...updatedDefaultAssets, ...userAssets];
-  }, [userAssets, defaultAssetsStatus]);
+    return () => clearTimeout(timeoutId);
+  }, [searchQuery]);
 
-  // Filter assets based on search query
+  // Filter assets (client-side filtering is optional since we're using API search)
   const filteredAssets = useMemo(() => {
-    if (!searchQuery.trim()) return allAssets;
+    let filtered = [...assets];
     
-    return allAssets.filter(asset =>
-      asset.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      asset.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      asset.unit.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      asset.specification.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }, [searchQuery, allAssets]);
+    // Client-side filtering is optional since we're using API search
+    // But keep it for additional filtering if needed
+    if (searchQuery.trim() && !isSearching) {
+      filtered = filtered.filter(asset =>
+        asset.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (asset.code && asset.code.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (asset.unit && asset.unit.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        asset.specification.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+    }
+    
+    return filtered;
+  }, [assets, searchQuery, isSearching]);
 
-  const handleAssetCreated = (newAsset: AssetEquipment) => {
-    setUserAssets(prev => [...prev, newAsset]);
+  const handleEditAsset = async (asset: AssetEquipment) => {
+    try {
+      // Use UUID for GET /assets-edit/{uuid} API
+      const assetUuid = asset.uuid || asset.id;
+      
+      console.log('📝 Editing asset:', {
+        assetId: asset.id,
+        uuid: asset.uuid,
+        numericId: asset.numericId,
+        usingUuidForGet: assetUuid
+      });
+      
+      // Fetch full asset details from API using UUID
+      const assetDetails = await masterDataAPI.getAssetEquipment(String(assetUuid));
+      console.log('✅ Asset details fetched:', assetDetails);
+      
+      setEditingAssetId(String(assetUuid)); // UUID for GET /assets-edit/{uuid}
+      setEditingAssetNumericId(asset.numericId || null); // Numeric ID for update if needed
+      
+      // Open modal with asset data - CreateAssetEquipmentModal will handle this
+      setShowCreateModal(true);
+    } catch (error: any) {
+      console.error('❌ Failed to fetch asset details:', error);
+      toast.showError(error.message || 'Failed to load asset details');
+    }
   };
 
-  // Listen for assetsEquipmentsUpdated event
+  const handleDeleteAsset = async (assetId: string) => {
+    // Find the asset to get its UUID
+    const asset = assets.find(a => a.id === assetId);
+    const deleteUuid = asset?.uuid || assetId; // Use UUID for delete API
+    
+    console.log('🗑️ Deleting asset:', {
+      assetId: assetId,
+      uuid: asset?.uuid,
+      numericId: asset?.numericId,
+      usingUuid: deleteUuid
+    });
+    
+    if (window.confirm('Are you sure you want to delete this asset?')) {
+      try {
+        await masterDataAPI.deleteAssetEquipment(String(deleteUuid));
+        toast.showSuccess('Asset deleted successfully');
+        // Refresh assets list
+        await fetchAssets();
+      } catch (error: any) {
+        console.error('Failed to delete asset:', error);
+        toast.showError(error.message || 'Failed to delete asset');
+      }
+    }
+  };
+
+  const handleToggleStatus = async (asset: AssetEquipment) => {
+    console.log('🔄 handleToggleStatus called with asset:', {
+      id: asset.id,
+      name: asset.name,
+      status: asset.status,
+      is_active: asset.is_active,
+      togglingAssetId: togglingAssetId,
+      isLoadingAssets: isLoadingAssets
+    });
+    
+    // Prevent multiple simultaneous toggles
+    if (togglingAssetId === asset.id) {
+      console.log('⏳ Toggle already in progress for this asset');
+      return;
+    }
+
+    if (isLoadingAssets) {
+      console.log('⏳ Assets are loading, cannot toggle');
+      return;
+    }
+
+    try {
+      setTogglingAssetId(asset.id);
+      
+      // Determine current status
+      const currentStatus = asset.status || (asset.is_active === 1 || asset.is_active === '1' || asset.is_active === true ? 'Active' : 'Inactive');
+      const newStatus = currentStatus === 'Active' ? 'Inactive' : 'Active';
+      const isActive = newStatus === 'Active' ? 1 : 0;
+      
+      console.log('🔄 Status toggle calculation:', {
+        currentStatus: currentStatus,
+        currentIsActive: asset.is_active,
+        newStatus: newStatus,
+        newIsActive: isActive
+      });
+      
+      // Use UUID for assets-edit/{uuid} API
+      const assetUuid = asset.uuid || asset.id;
+      
+      console.log('🔄 Toggling asset status:', {
+        assetId: asset.id,
+        uuid: assetUuid,
+        currentStatus: asset.status,
+        currentIsActive: asset.is_active,
+        newStatus: newStatus,
+        newIsActive: isActive
+      });
+
+      // First, fetch current asset data using assets-edit/{uuid} API to ensure we have latest data
+      let currentAssetData;
+      try {
+        console.log('📖 Fetching current asset data via assets-edit/{uuid}');
+        currentAssetData = await masterDataAPI.getAssetEquipment(String(assetUuid));
+        console.log('✅ Current asset data:', currentAssetData);
+      } catch (fetchError: any) {
+        console.warn('⚠️ Failed to fetch asset data, using existing data:', fetchError);
+        // Fallback to existing asset data if fetch fails
+        currentAssetData = {
+          name: asset.name,
+          code: asset.code,
+          specification: asset.specification,
+          unit_id: asset.unit_id,
+          is_active: asset.is_active
+        };
+      }
+
+      // Optimistically update UI immediately
+      setAssets(prevAssets => 
+        prevAssets.map(a => 
+          a.id === asset.id 
+            ? { ...a, status: newStatus, is_active: isActive }
+            : a
+        )
+      );
+
+      // Update asset status using updateAssetEquipment API with UUID
+      // The API uses POST /assets-add with updateId parameter
+      const updatePayload = {
+        name: currentAssetData.name || asset.name,
+        code: currentAssetData.code || asset.code,
+        specification: currentAssetData.specification || asset.specification,
+        unit_id: currentAssetData.unit_id || asset.unit_id,
+        is_active: isActive // Explicitly set the new status
+      };
+      
+      console.log('📝 Updating asset with payload:', {
+        uuid: assetUuid,
+        updatePayload: updatePayload
+      });
+      
+      await masterDataAPI.updateAssetEquipment(String(assetUuid), updatePayload);
+      
+      toast.showSuccess(`Asset ${newStatus.toLowerCase()} successfully`);
+      
+      // Refresh assets list to ensure UI reflects database state
+      await fetchAssets();
+      
+    } catch (error: any) {
+      console.error('❌ Failed to toggle asset status:', error);
+      console.error('❌ Error details:', {
+        message: error.message,
+        status: error.status,
+        response: error.response?.data
+      });
+      
+      // Revert optimistic update on error
+      setAssets(prevAssets => 
+        prevAssets.map(a => 
+          a.id === asset.id 
+            ? { ...a, status: asset.status, is_active: asset.is_active }
+            : a
+        )
+      );
+      
+      toast.showError(error.message || 'Failed to update asset status');
+    } finally {
+      setTogglingAssetId(null);
+    }
+  };
+
+  const handleAssetCreated = async () => {
+    // Refresh assets list after create/update
+    await fetchAssets();
+  };
+
+  // Close dropdown when clicking outside
   useEffect(() => {
-    const handleAssetsUpdated = () => {
-      const savedAssets = localStorage.getItem('assetsEquipments');
-      if (savedAssets) {
-        try {
-          const parsed = JSON.parse(savedAssets);
-          if (Array.isArray(parsed)) {
-            setUserAssets(parsed);
-          }
-        } catch (e) {
-          // Keep current assets if parsing fails
-        }
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest('.dropdown-menu') && !target.closest('.dropdown-trigger')) {
+        setOpenDropdownId(null);
       }
     };
 
-    window.addEventListener('assetsEquipmentsUpdated', handleAssetsUpdated);
-    return () => {
-      window.removeEventListener('assetsEquipmentsUpdated', handleAssetsUpdated);
-    };
-  }, []);
-
-  const handleToggleStatus = (e: React.MouseEvent<HTMLButtonElement>, assetId: string) => {
-    e?.stopPropagation?.();
-    
-    const defaultIds = ['1', '2'];
-    
-    if (defaultIds.includes(assetId)) {
-      // Toggle default asset status
-      setDefaultAssetsStatus(prev => {
-        const currentStatus = prev[assetId] || defaultAssets.find(a => a.id === assetId)?.status || 'Active';
-        const newStatus: 'Active' | 'Inactive' = currentStatus === 'Active' ? 'Inactive' : 'Active';
-        const updated: Record<string, 'Active' | 'Inactive'> = { ...prev, [assetId]: newStatus };
-        
-        // Save to localStorage
-        try {
-          localStorage.setItem('defaultAssetsStatus', JSON.stringify(updated));
-        } catch (error) {
-          console.error('Error saving default assets status:', error);
-        }
-        
-        return updated;
-      });
-    } else {
-      // Toggle user-added asset status
-      setUserAssets(prev => {
-        const updated = prev.map(asset =>
-          asset.id === assetId
-            ? { ...asset, status: (asset.status === 'Active' ? 'Inactive' : 'Active') as 'Active' | 'Inactive' }
-            : asset
-        );
-        
-        // Save to localStorage
-        const defaultIds = ['1', '2'];
-        const userAddedAssets = updated.filter(a => !defaultIds.includes(a.id));
-        try {
-          if (userAddedAssets.length > 0) {
-            localStorage.setItem('assetsEquipments', JSON.stringify(userAddedAssets));
-          } else {
-            localStorage.removeItem('assetsEquipments');
-          }
-        } catch (error) {
-          console.error('Error saving assets:', error);
-        }
-        
-        return updated;
-      });
+    if (openDropdownId) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
     }
-  };
+  }, [openDropdownId]);
 
   const handleDownloadExcel = () => {
     const headers = ['Machinery Name', 'Code', 'Unit', 'Asset Specification', 'Status'];
@@ -265,7 +470,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
 
   const handleExportMasterData = () => {
     const headers = ['Name', 'Code', 'Specification', 'Unit', 'Status'];
-    const rows = allAssets.map(asset => [
+    const rows = assets.map(asset => [
       asset.name,
       asset.code,
       asset.specification,
@@ -400,15 +605,46 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
               <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
               <input 
                 type="text" 
-                placeholder="Search..."
+                placeholder="Search by asset name..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                disabled={isSearching}
+                className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
               />
+              {isSearching && (
+                <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-[#C2D642]"></div>
+                </div>
+              )}
             </div>
           </div>
 
-      {filteredAssets.length > 0 ? (
+      {/* Loading State */}
+      {isLoadingAssets && (
+        <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
+          <Loader2 className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50 animate-spin`} />
+          <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>Loading Assets...</h3>
+          <p className={`text-sm ${textSecondary}`}>Please wait while we fetch your assets</p>
+        </div>
+      )}
+
+      {/* Error State */}
+      {assetsError && !isLoadingAssets && (
+        <div className={`p-12 rounded-xl border text-center ${cardClass} border-red-500`}>
+          <Wrench className={`w-16 h-16 mx-auto mb-4 text-red-500 opacity-50`} />
+          <h3 className={`text-lg font-black mb-2 text-red-500`}>Error Loading Assets</h3>
+          <p className={`text-sm ${textSecondary} mb-4`}>{assetsError}</p>
+          <button
+            onClick={fetchAssets}
+            className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Assets Table */}
+      {!isLoadingAssets && !assetsError && filteredAssets.length > 0 ? (
         <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[640px]">
@@ -447,21 +683,31 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                         <span className="md:hidden text-xs opacity-70 mt-1">{row.specification}</span>
                       </div>
                     </td>
-                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.code}</td>
-                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary} hidden md:table-cell`}>{row.specification}</td>
-                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.unit}</td>
+                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.code || '-'}</td>
+                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary} hidden md:table-cell`}>{row.specification || '-'}</td>
+                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.unit || '-'}</td>
                     <td className={`px-3 sm:px-6 py-3 sm:py-4`}>
                       <button
-                        onClick={(e) => handleToggleStatus(e, row.id)}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#C2D642] focus:ring-offset-2 cursor-pointer ${
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          console.log('🔄 Toggle button clicked for asset:', {
+                            id: row.id,
+                            name: row.name,
+                            currentStatus: row.status,
+                            currentIsActive: row.is_active,
+                            togglingAssetId: togglingAssetId,
+                            isLoadingAssets: isLoadingAssets
+                          });
+                          handleToggleStatus(row);
+                        }}
+                        disabled={isLoadingAssets || togglingAssetId === row.id}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#C2D642]/50 focus:ring-offset-2 ${
                           row.status === 'Active'
-                            ? 'bg-[#C2D642]'
-                            : 'bg-slate-400'
-                        }`}
-                        role="switch"
-                        aria-checked={row.status === 'Active'}
-                        title={row.status === 'Active' ? 'Click to disable' : 'Click to enable'}
-                        type="button"
+                            ? 'bg-green-600'
+                            : isDark ? 'bg-slate-700' : 'bg-slate-300'
+                        } ${(isLoadingAssets || togglingAssetId === row.id) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                        title={row.status === 'Active' ? 'Click to deactivate' : 'Click to activate'}
                       >
                         <span
                           className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
@@ -471,13 +717,45 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                       </button>
                     </td>
                     <td className="px-3 sm:px-6 py-3 sm:py-4 text-right">
-                      <button 
-                        className={`p-1.5 sm:p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
-                        disabled={row.status === 'Inactive'}
-                        title={row.status === 'Inactive' ? 'Asset is disabled' : ''}
-                      >
-                        <MoreVertical className={`w-4 h-4 ${row.status === 'Inactive' ? 'opacity-50' : textSecondary}`} />
-                      </button>
+                      <div className="relative">
+                        <button 
+                          onClick={() => setOpenDropdownId(openDropdownId === row.id ? null : row.id)}
+                          className={`dropdown-trigger p-1.5 sm:p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+                          title="Actions"
+                        >
+                          <MoreVertical className={`w-4 h-4 ${textSecondary}`} />
+                        </button>
+                        {openDropdownId === row.id && (
+                          <div className={`dropdown-menu absolute right-0 top-full mt-1 w-32 rounded-lg border shadow-lg z-20 ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                            <div className="py-1">
+                              <button
+                                onClick={() => {
+                                  handleEditAsset(row);
+                                  setOpenDropdownId(null);
+                                }}
+                                className={`w-full flex items-center gap-2 px-4 py-2 text-sm font-bold transition-colors text-left ${
+                                  isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
+                                }`}
+                              >
+                                <Edit className="w-4 h-4" />
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => {
+                                  handleDeleteAsset(row.id);
+                                  setOpenDropdownId(null);
+                                }}
+                                className={`w-full flex items-center gap-2 px-4 py-2 text-sm font-bold transition-colors text-left ${
+                                  isDark ? 'hover:bg-slate-700 text-red-400' : 'hover:bg-slate-50 text-red-600'
+                                }`}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -485,13 +763,17 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
             </table>
           </div>
         </div>
-      ) : (
+      ) : !isLoadingAssets && !assetsError ? (
         <div className={`p-8 sm:p-12 rounded-xl border text-center ${cardClass}`}>
           <Wrench className={`w-12 h-12 sm:w-16 sm:h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
-          <h3 className={`text-base sm:text-lg font-black mb-2 ${textPrimary}`}>No Data Available</h3>
-          <p className={`text-xs sm:text-sm ${textSecondary}`}>Start by adding your first equipment entry</p>
+          <h3 className={`text-base sm:text-lg font-black mb-2 ${textPrimary}`}>No Assets Found</h3>
+          <p className={`text-xs sm:text-sm ${textSecondary}`}>
+            {searchQuery.trim() 
+              ? `No assets found matching "${searchQuery}"` 
+              : 'Start by adding your first equipment entry'}
+          </p>
         </div>
-      )}
+      ) : null}
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className={`p-4 rounded-xl border ${cardClass}`}>
@@ -976,26 +1258,15 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
       <CreateAssetEquipmentModal
         theme={theme}
         isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        onSuccess={() => {
-          // Reload assets from localStorage
-          const savedAssets = localStorage.getItem('assetsEquipments');
-          if (savedAssets) {
-            try {
-              const parsed = JSON.parse(savedAssets);
-              if (Array.isArray(parsed)) {
-                setUserAssets(parsed);
-              }
-            } catch (e) {
-              // Keep current assets if parsing fails
-            }
-          }
+        onClose={() => {
+          setShowCreateModal(false);
+          setEditingAssetId(null);
+          setEditingAssetNumericId(null);
         }}
-        defaultAssets={defaultAssets}
-        userAssets={userAssets}
-        machineryOptions={machineryOptions}
-        unitOptions={unitOptions}
-        onAssetCreated={handleAssetCreated}
+        onSuccess={handleAssetCreated}
+        editingAssetId={editingAssetId}
+        editingAssetNumericId={editingAssetNumericId}
+        assets={assets}
       />
     </div>
   );

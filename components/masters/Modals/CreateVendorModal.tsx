@@ -3,19 +3,23 @@
 import React, { useState, useEffect } from 'react';
 import { ThemeType } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
-import { X } from 'lucide-react';
+import { X, Loader2 } from 'lucide-react';
+import { masterDataAPI } from '@/services/api';
 
 interface Vendor {
   id: string;
+  uuid?: string;
   name: string;
   gstNo?: string;
+  gst_no?: string;
   address: string;
   type: 'contractor' | 'supplier' | 'both';
-  contactPersonName: string;
+  contactPersonName?: string;
+  contact_person_name?: string;
   phone: string;
   email: string;
-  status: 'Active' | 'Inactive';
-  createdAt?: string;
+  country_code?: string;
+  status?: 'Active' | 'Inactive';
 }
 
 interface CreateVendorModalProps {
@@ -23,9 +27,8 @@ interface CreateVendorModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
-  defaultVendors?: Vendor[];
-  userVendors?: Vendor[];
-  onVendorCreated?: (vendor: Vendor) => void;
+  editingVendorId?: string | null;
+  vendors?: Vendor[];
 }
 
 const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
@@ -33,20 +36,21 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
   isOpen,
   onClose,
   onSuccess,
-  defaultVendors = [],
-  userVendors = [],
-  onVendorCreated
+  editingVendorId = null,
+  vendors = []
 }) => {
   const toast = useToast();
   const [formData, setFormData] = useState({
-    name: '',
-    gstNo: '',
-    address: '',
-    type: '',
-    contactPersonName: '',
-    phone: '',
-    email: ''
+    name: '', // Required: vendor/company name
+    address: '', // Required: vendor address
+    type: '', // Required: must be "both", "supplier", or "contractor"
+    contact_person_name: '', // Required: contact person name
+    country_code: '91', // Required: must be "91" or "971"
+    phone: '', // Required: contact phone number
+    email: '', // Required: valid email
+    gst_no: '' // Optional: GST number
   });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -54,84 +58,170 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
   const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
 
+  const isEditing = !!editingVendorId;
+
+  const countryCodeOptions = [
+    { value: '91', label: '+91 (India)' },
+    { value: '971', label: '+971 (UAE)' },
+  ];
+
+  const typeOptions = [
+    { value: 'supplier', label: 'Supplier' },
+    { value: 'contractor', label: 'Contractor' },
+    { value: 'both', label: 'Both' },
+  ];
+
+  // Load vendor data when editing
+  useEffect(() => {
+    if (isOpen && editingVendorId) {
+      const loadVendorData = async () => {
+        try {
+          const vendorData = await masterDataAPI.getVendor(editingVendorId);
+          setFormData({
+            name: vendorData.name || '',
+            address: vendorData.address || '',
+            type: vendorData.type || '',
+            contact_person_name: vendorData.contact_person_name || vendorData.contactPersonName || '',
+            country_code: vendorData.country_code || '91',
+            phone: vendorData.phone || '',
+            email: vendorData.email || '',
+            gst_no: vendorData.gst_no || vendorData.gstNo || ''
+          });
+        } catch (error: any) {
+          console.error('Failed to load vendor data:', error);
+          toast.showError('Failed to load vendor data');
+        }
+      };
+      loadVendorData();
+    } else if (isOpen && !editingVendorId) {
+      // Reset form for new vendor
+      setFormData({
+        name: '',
+        address: '',
+        type: '',
+        contact_person_name: '',
+        country_code: '91',
+        phone: '',
+        email: '',
+        gst_no: ''
+      });
+    }
+  }, [isOpen, editingVendorId]);
+
   // Reset form when modal closes
   useEffect(() => {
     if (!isOpen) {
       setFormData({
         name: '',
-        gstNo: '',
         address: '',
         type: '',
-        contactPersonName: '',
+        contact_person_name: '',
+        country_code: '91',
         phone: '',
-        email: ''
+        email: '',
+        gst_no: ''
       });
+      setIsSubmitting(false);
     }
   }, [isOpen]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
     setFormData({
       ...formData,
-      [e.target.name]: e.target.value
+      [name]: value
     });
   };
 
-  const handleCreateVendor = () => {
-    const missingFields: string[] = [];
-    
-    if (!formData.name) missingFields.push('Vendor Name');
-    if (!formData.address) missingFields.push('Address');
-    if (!formData.type) missingFields.push('Type');
-    if (!formData.contactPersonName) missingFields.push('Contact Person Name');
-    if (!formData.phone) missingFields.push('Phone');
-    if (!formData.email) missingFields.push('Email');
-    
-    if (missingFields.length > 0) {
-      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
+  const validateForm = (): boolean => {
+    if (!formData.name.trim()) {
+      toast.showWarning('Vendor name is required');
+      return false;
+    }
+
+    if (!formData.address.trim()) {
+      toast.showWarning('Address is required');
+      return false;
+    }
+
+    if (!formData.type || !['both', 'supplier', 'contractor'].includes(formData.type)) {
+      toast.showWarning('Type must be one of: both, supplier, or contractor');
+      return false;
+    }
+
+    if (!formData.contact_person_name.trim()) {
+      toast.showWarning('Contact person name is required');
+      return false;
+    }
+
+    if (!formData.country_code || !['91', '971'].includes(formData.country_code)) {
+      toast.showWarning('Country code must be 91 or 971');
+      return false;
+    }
+
+    if (!formData.phone.trim()) {
+      toast.showWarning('Phone number is required');
+      return false;
+    }
+
+    if (!formData.email.trim()) {
+      toast.showWarning('Email is required');
+      return false;
+    }
+
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(formData.email.trim())) {
+      toast.showWarning('Please enter a valid email address');
+      return false;
+    }
+
+    return true;
+  };
+
+  const handleSubmit = async () => {
+    if (!validateForm()) {
       return;
     }
 
-    const newVendor: Vendor = {
-      id: Date.now().toString(),
-      name: formData.name,
-      gstNo: formData.gstNo || undefined,
-      address: formData.address,
-      type: formData.type as 'contractor' | 'supplier' | 'both',
-      contactPersonName: formData.contactPersonName,
-      phone: formData.phone,
-      email: formData.email,
-      status: 'Active',
-      createdAt: new Date().toISOString()
-    };
+    setIsSubmitting(true);
+    try {
+      const payload: any = {
+        name: formData.name.trim(),
+        address: formData.address.trim(),
+        type: formData.type,
+        contact_person_name: formData.contact_person_name.trim(),
+        country_code: formData.country_code,
+        phone: formData.phone.trim(),
+        email: formData.email.trim().toLowerCase()
+      };
 
-    // Save to localStorage
-    const savedVendors = localStorage.getItem('vendors');
-    let existingVendors: any[] = [];
-    if (savedVendors) {
-      try {
-        existingVendors = JSON.parse(savedVendors);
-      } catch (e) {
-        console.error('Error parsing vendors:', e);
+      // Add optional fields if provided
+      if (formData.gst_no.trim()) {
+        payload.gst_no = formData.gst_no.trim();
       }
-    }
 
-    existingVendors.push(newVendor);
-    localStorage.setItem('vendors', JSON.stringify(existingVendors));
-    
-    // Trigger event to update other components
-    window.dispatchEvent(new Event('vendorsUpdated'));
+      if (isEditing && editingVendorId) {
+        // Update existing vendor
+        await masterDataAPI.updateVendor(editingVendorId, payload);
+        toast.showSuccess('Vendor updated successfully!');
+      } else {
+        // Create new vendor
+        await masterDataAPI.createVendor(payload);
+        toast.showSuccess('Vendor created successfully!');
+      }
 
-    toast.showSuccess('Vendor created successfully!');
-    
-    if (onVendorCreated) {
-      onVendorCreated(newVendor);
+      if (onSuccess) {
+        onSuccess();
+      }
+
+      onClose();
+    } catch (error: any) {
+      console.error('Failed to save vendor:', error);
+      toast.showError(error.message || 'Failed to save vendor');
+    } finally {
+      setIsSubmitting(false);
     }
-    
-    if (onSuccess) {
-      onSuccess();
-    }
-    
-    onClose();
   };
 
   if (!isOpen) return null;
@@ -142,12 +232,17 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
         {/* Modal Header */}
         <div className="flex items-center justify-between p-6 border-b border-inherit">
           <div>
-            <h2 className={`text-xl font-black ${textPrimary}`}>Create New Vendor</h2>
-            <p className={`text-sm ${textSecondary} mt-1`}>Enter vendor details below</p>
+            <h2 className={`text-xl font-black ${textPrimary}`}>
+              {isEditing ? 'Edit Vendor' : 'Create New Vendor'}
+            </h2>
+            <p className={`text-sm ${textSecondary} mt-1`}>
+              {isEditing ? 'Update vendor details below' : 'Enter vendor details below'}
+            </p>
           </div>
           <button
             onClick={onClose}
-            className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+            disabled={isSubmitting}
+            className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors disabled:opacity-50`}
           >
             <X className={`w-5 h-5 ${textSecondary}`} />
           </button>
@@ -168,11 +263,12 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
                 value={formData.name}
                 onChange={handleInputChange}
                 placeholder="Enter Vendor Name"
+                disabled={isSubmitting}
                 className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                   isDark 
                     ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
                     : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-                } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
               />
             </div>
 
@@ -185,16 +281,19 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
                 name="type"
                 value={formData.type}
                 onChange={handleInputChange}
+                disabled={isSubmitting}
                 className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
                   isDark 
                     ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
                     : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none ${!formData.type ? 'border-red-500' : ''}`}
+                } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
               >
                 <option value="">----Select Vendor Type----</option>
-                <option value="supplier">Supplier</option>
-                <option value="contractor">Contractor</option>
-                <option value="both">Both</option>
+                {typeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -205,15 +304,16 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
               </label>
               <input
                 type="text"
-                name="gstNo"
-                value={formData.gstNo}
+                name="gst_no"
+                value={formData.gst_no}
                 onChange={handleInputChange}
                 placeholder="Enter Your GST No. (If Any)"
+                disabled={isSubmitting}
                 className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                   isDark 
                     ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
                     : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-                } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
               />
             </div>
 
@@ -228,11 +328,12 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
                 value={formData.address}
                 onChange={handleInputChange}
                 placeholder="Enter Your Address"
+                disabled={isSubmitting}
                 className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                   isDark 
                     ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
                     : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-                } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
               />
             </div>
           </div>
@@ -251,35 +352,56 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
                 </label>
                 <input
                   type="text"
-                  name="contactPersonName"
-                  value={formData.contactPersonName}
+                  name="contact_person_name"
+                  value={formData.contact_person_name}
                   onChange={handleInputChange}
                   placeholder="Enter Contact Person Name"
+                  disabled={isSubmitting}
                   className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                     isDark 
                       ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
                       : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
                 />
               </div>
 
-              {/* Mobile No */}
+              {/* Country Code and Phone */}
               <div>
                 <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Mobile No <span className="text-red-500">*</span>
+                  Country Code & Phone <span className="text-red-500">*</span>
                 </label>
-                <input
-                  type="tel"
-                  name="phone"
-                  value={formData.phone}
-                  onChange={handleInputChange}
-                  placeholder="Enter Your Mobile No."
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                    isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
-                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                />
+                <div className="flex gap-2">
+                  <select
+                    name="country_code"
+                    value={formData.country_code}
+                    onChange={handleInputChange}
+                    disabled={isSubmitting}
+                    className={`w-32 px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+                      isDark 
+                        ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
+                        : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
+                    } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+                  >
+                    {countryCodeOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="tel"
+                    name="phone"
+                    value={formData.phone}
+                    onChange={handleInputChange}
+                    placeholder="Enter Your Mobile No."
+                    disabled={isSubmitting}
+                    className={`flex-1 px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                      isDark 
+                        ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
+                        : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+                    } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+                  />
+                </div>
               </div>
 
               {/* Email */}
@@ -293,11 +415,12 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
                   value={formData.email}
                   onChange={handleInputChange}
                   placeholder="Enter Your Email Id"
+                  disabled={isSubmitting}
                   className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                     isDark 
                       ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
                       : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
                 />
               </div>
             </div>
@@ -308,19 +431,22 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
         <div className={`flex items-center justify-end gap-3 p-6 border-t border-inherit`}>
           <button
             onClick={onClose}
+            disabled={isSubmitting}
             className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
               isDark
                 ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
                 : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-            }`}
+            } disabled:opacity-50`}
           >
             Cancel
           </button>
           <button
-            onClick={handleCreateVendor}
-            className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642]/90 text-white transition-all shadow-md"
+            onClick={handleSubmit}
+            disabled={isSubmitting}
+            className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642]/90 text-white transition-all shadow-md disabled:opacity-50 flex items-center gap-2"
           >
-            Create
+            {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+            {isEditing ? 'Update' : 'Create'}
           </button>
         </div>
       </div>

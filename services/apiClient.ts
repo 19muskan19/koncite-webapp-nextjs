@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosError } from 'axios';
+import { getCookie } from '../utils/cookies';
 
 // API Base URL Configuration
 // Production: https://koncite.com/api
@@ -6,12 +7,9 @@ import axios, { AxiosInstance, AxiosRequestConfig, AxiosError } from 'axios';
 // Local: http://localhost/api
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging.koncite.com/api';
 
-// Get auth token from storage
+// Get auth token from cookies
 export const getAuthToken = (): string | null => {
-  if (typeof window !== 'undefined') {
-    return localStorage.getItem('auth_token');
-  }
-  return null;
+  return getCookie('auth_token');
 };
 
 // Create axios instance with default config
@@ -30,6 +28,10 @@ apiClient.interceptors.request.use(
     
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
+      // Log token presence for debugging (don't log full token for security)
+      console.log(`🔐 Adding auth token to ${config.method?.toUpperCase()} ${config.url}`);
+    } else {
+      console.warn(`⚠️ No auth token available for ${config.method?.toUpperCase()} ${config.url}`);
     }
     
     // Don't set Content-Type for FormData (multipart/form-data)
@@ -56,6 +58,10 @@ apiClient.interceptors.response.use(
         case 401:
           // Unauthorized - clear auth and redirect to login
           if (typeof window !== 'undefined') {
+            const { removeCookie } = require('../utils/cookies');
+            removeCookie('auth_token');
+            removeCookie('isAuthenticated');
+            // Also clear localStorage for backward compatibility
             localStorage.removeItem('auth_token');
             localStorage.removeItem('isAuthenticated');
             window.location.href = '/';
@@ -67,7 +73,7 @@ apiClient.interceptors.response.use(
         case 404:
           // Only log 404 errors for non-profile endpoints to avoid console spam
           const url = error.config?.url || '';
-          if (!url.includes('/get-profile')) {
+          if (!url.includes('/profile-list')) {
             console.error('Not Found: The requested resource does not exist', url);
           }
           break;
@@ -76,6 +82,13 @@ apiClient.interceptors.response.use(
           break;
         case 500:
           console.error('Server Error: Something went wrong on the server');
+          console.error('Error details:', {
+            url: error.config?.url,
+            method: error.config?.method,
+            status: error.response?.status,
+            data: error.response?.data,
+            message: error.response?.data?.message || error.message
+          });
           break;
         default:
           console.error('An error occurred:', error.message);

@@ -1,23 +1,28 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
-import { X } from 'lucide-react';
+import { X, Loader2 } from 'lucide-react';
+import { masterDataAPI } from '@/services/api';
 
 interface ActivityItem {
   id: string;
-  name: string;
-  project: string;
-  subproject: string;
-  type: 'heading' | 'activity';
-  unit?: string;
+  uuid?: string;
+  name?: string;
+  activities?: string;
+  project_id?: number;
+  subproject_id?: number;
+  type: 'heading' | 'activity' | 'activites';
+  unit_id?: number;
   qty?: number;
+  quantity?: number;
   rate?: number;
   amount?: number;
-  startDate?: string;
-  endDate?: string;
-  createdAt?: string;
+  start_date?: string;
+  end_date?: string;
+  heading?: number;
+  parent_id?: number;
 }
 
 interface CreateActivityModalProps {
@@ -25,13 +30,12 @@ interface CreateActivityModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
-  defaultActivities?: ActivityItem[];
-  userActivities?: ActivityItem[];
-  availableProjects?: Array<{ name: string; code: string }>;
-  availableSubprojects?: Array<{ name: string; project: string }>;
-  defaultProject?: string;
-  defaultSubproject?: string;
-  onActivityCreated?: (activity: ActivityItem) => void;
+  editingActivityId?: string | null;
+  activities?: ActivityItem[];
+  projects?: Array<{ id: number; uuid: string; project_name: string }>;
+  subprojects?: Array<{ id: number; uuid: string; name: string; project_id?: number }>;
+  defaultProjectId?: string;
+  defaultSubprojectId?: string;
 }
 
 const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
@@ -39,24 +43,32 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
   isOpen,
   onClose,
   onSuccess,
-  defaultActivities = [],
-  userActivities = [],
-  availableProjects = [],
-  availableSubprojects = [],
-  defaultProject = '',
-  defaultSubproject = '',
-  onActivityCreated
+  editingActivityId = null,
+  activities = [],
+  projects = [],
+  subprojects = [],
+  defaultProjectId = '',
+  defaultSubprojectId = ''
 }) => {
   const toast = useToast();
   const [formData, setFormData] = useState({
-    project: '',
-    subproject: '',
-    type: '',
-    name: ''
+    project: '', // Required: project ID
+    subproject: '', // Optional: subproject ID
+    type: '', // Required: "heading" or "activites"
+    activities: '', // Required: activity name/description
+    heading: '', // Conditional: parent activity ID (required if type = 'activites')
+    unit_id: '', // Conditional: unit ID (required if type = 'activites')
+    quantity: '', // Optional: quantity (defaults to 0)
+    rate: '', // Optional: rate (defaults to 0)
+    amount: '', // Optional: amount (defaults to 0)
+    start_date: '', // Optional: start date
+    end_date: '' // Optional: end date
   });
-
-  const [projects, setProjects] = useState<Array<{ name: string; code: string }>>([]);
-  const [subprojects, setSubprojects] = useState<Array<{ name: string; project: string }>>([]);
+  const [availableHeadings, setAvailableHeadings] = useState<Array<{ id: number; uuid: string; activities: string }>>([]);
+  const [units, setUnits] = useState<Array<{ id: number; unit: string; uuid?: string }>>([]);
+  const [isLoadingUnits, setIsLoadingUnits] = useState<boolean>(false);
+  const [isLoadingHeadings, setIsLoadingHeadings] = useState<boolean>(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -64,132 +76,139 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
   const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
 
-  // Load projects from localStorage
+  const isEditing = !!editingActivityId;
+
+  // Fetch units from API
   useEffect(() => {
-    const loadProjects = () => {
-      const defaultProjectNames = [
-        'Residential Complex A',
-        'Commercial Tower B',
-        'Highway Infrastructure Project',
-        'Shopping Mall Development',
-      ];
-
-      const savedProjects = localStorage.getItem('projects');
-      let projectList: Array<{ name: string; code: string }> = [];
-
-      // Add default projects
-      projectList = defaultProjectNames.map(name => ({
-        name,
-        code: ''
-      }));
-
-      if (savedProjects) {
-        try {
-          const parsed = JSON.parse(savedProjects);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            const userProjects = parsed.map((p: any) => ({
-              name: p.projectName || p.name || '',
-              code: p.code || ''
-            })).filter((p: { name: string; code: string }) => p.name);
-            projectList = [...projectList, ...userProjects];
-          }
-        } catch (e) {
-          console.error('Error parsing projects:', e);
-        }
+    const fetchUnits = async () => {
+      if (!isOpen) return;
+      
+      setIsLoadingUnits(true);
+      try {
+        const fetchedUnits = await masterDataAPI.getUnits();
+        const transformedUnits = fetchedUnits.map((unit: any) => ({
+          id: unit.id,
+          unit: unit.unit || unit.name || '',
+          uuid: unit.uuid
+        }));
+        setUnits(transformedUnits);
+      } catch (error: any) {
+        console.error('Failed to fetch units:', error);
+        toast.showError('Failed to load units');
+      } finally {
+        setIsLoadingUnits(false);
       }
-
-      // Combine with availableProjects prop
-      const allProjects = [...availableProjects, ...projectList];
-      // Remove duplicates based on name
-      const uniqueProjects = Array.from(
-        new Map(allProjects.map(p => [p.name, p])).values()
-      );
-      setProjects(uniqueProjects);
     };
 
-    if (isOpen) {
-      loadProjects();
-    }
-  }, [isOpen, availableProjects]);
+    fetchUnits();
+  }, [isOpen]);
 
-  // Load subprojects from localStorage and filter by selected project
+  // Fetch headings when project and type are selected
   useEffect(() => {
-    const loadSubprojects = () => {
-      if (!formData.project) {
-        setSubprojects([]);
+    const fetchHeadings = async () => {
+      if (!isOpen || !formData.project || formData.type !== 'activites') {
+        setAvailableHeadings([]);
         return;
       }
-
-      const savedSubprojects = localStorage.getItem('subprojects');
-      let subprojectList: Array<{ name: string; project: string }> = [];
-
-      // Add default subprojects for the selected project
-      const defaultSubs = availableSubprojects.filter(sub => sub.project === formData.project);
-      subprojectList = [...defaultSubs];
-
-      if (savedSubprojects) {
-        try {
-          const parsed = JSON.parse(savedSubprojects);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            const userSubs = parsed
-              .map((s: any) => ({
-                name: s.subprojectName || s.name || '',
-                project: s.projectName || s.project || ''
-              }))
-              .filter((s: { name: string; project: string }) => s.name && s.project === formData.project);
-            subprojectList = [...subprojectList, ...userSubs];
-          }
-        } catch (e) {
-          console.error('Error parsing subprojects:', e);
-        }
+      
+      setIsLoadingHeadings(true);
+      try {
+        const projectIdNum = projects.find(p => p.uuid === formData.project || String(p.id) === formData.project)?.id;
+        const fetchedActivities = await masterDataAPI.getActivities(projectIdNum || formData.project);
+        // Filter headings (type = 'heading')
+        const headings = fetchedActivities
+          .filter((a: any) => a.type === 'heading')
+          .map((a: any) => ({
+            id: a.id,
+            uuid: a.uuid || String(a.id),
+            activities: a.activities || a.name || ''
+          }));
+        setAvailableHeadings(headings);
+      } catch (error: any) {
+        console.error('Failed to fetch headings:', error);
+        toast.showError('Failed to load headings');
+      } finally {
+        setIsLoadingHeadings(false);
       }
-
-      // Remove duplicates based on name
-      const uniqueSubprojects = Array.from(
-        new Map(subprojectList.map(s => [s.name, s])).values()
-      );
-      setSubprojects(uniqueSubprojects);
     };
 
-    if (isOpen && formData.project) {
-      loadSubprojects();
-    } else if (!formData.project) {
-      setSubprojects([]);
-    }
-  }, [isOpen, formData.project, availableSubprojects]);
+    fetchHeadings();
+  }, [isOpen, formData.project, formData.type]);
 
-  // Reset form when modal closes or set defaults when opens
+  // Load activity data when editing
+  useEffect(() => {
+    if (isOpen && editingActivityId) {
+      const loadActivityData = async () => {
+        try {
+          const activityData = await masterDataAPI.getActivity(editingActivityId);
+          setFormData({
+            project: String(activityData.project_id || activityData.project?.id || ''),
+            subproject: activityData.subproject_id || activityData.subproject?.id ? String(activityData.subproject_id || activityData.subproject?.id) : '',
+            type: activityData.type || '',
+            activities: activityData.activities || activityData.name || '',
+            heading: activityData.heading || activityData.parent_id ? String(activityData.heading || activityData.parent_id) : '',
+            unit_id: activityData.unit_id || activityData.unit?.id ? String(activityData.unit_id || activityData.unit?.id) : '',
+            quantity: activityData.quantity || activityData.qty ? String(activityData.quantity || activityData.qty) : '',
+            rate: activityData.rate ? String(activityData.rate) : '',
+            amount: activityData.amount ? String(activityData.amount) : '',
+            start_date: activityData.start_date || activityData.startDate || '',
+            end_date: activityData.end_date || activityData.endDate || ''
+          });
+        } catch (error: any) {
+          console.error('Failed to load activity data:', error);
+          toast.showError('Failed to load activity data');
+        }
+      };
+      loadActivityData();
+    } else if (isOpen && !editingActivityId) {
+      // Reset form for new activity
+      setFormData({
+        project: defaultProjectId || '',
+        subproject: defaultSubprojectId || '',
+        type: '',
+        activities: '',
+        heading: '',
+        unit_id: '',
+        quantity: '',
+        rate: '',
+        amount: '',
+        start_date: '',
+        end_date: ''
+      });
+    }
+  }, [isOpen, editingActivityId, defaultProjectId, defaultSubprojectId]);
+
+  // Reset form when modal closes
   useEffect(() => {
     if (!isOpen) {
       setFormData({
         project: '',
         subproject: '',
         type: '',
-        name: ''
+        activities: '',
+        heading: '',
+        unit_id: '',
+        quantity: '',
+        rate: '',
+        amount: '',
+        start_date: '',
+        end_date: ''
       });
-    } else if (isOpen && defaultProject && defaultSubproject) {
-      // Pre-fill project and subproject when modal opens
-      setFormData(prev => ({
-        project: defaultProject,
-        subproject: defaultSubproject,
-        type: prev.type,
-        name: prev.name
-      }));
+      setIsSubmitting(false);
     }
-  }, [isOpen, defaultProject, defaultSubproject]);
+  }, [isOpen]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     
-    // Reset subproject when project changes
-    if (name === 'project') {
-      setFormData(prev => ({
-        ...prev,
-        project: value,
-        subproject: '',
-        type: prev.type,
-        name: prev.name
-      }));
+    // Reset heading and unit_id when type changes
+    if (name === 'type') {
+      setFormData({
+        ...formData,
+        type: value,
+        heading: '',
+        unit_id: ''
+      });
     } else {
       setFormData({
         ...formData,
@@ -198,57 +217,105 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
     }
   };
 
-  const handleCreateActivity = () => {
-    const missingFields: string[] = [];
-    
-    if (!formData.project) missingFields.push('Project');
-    if (!formData.subproject) missingFields.push('Subproject');
-    if (!formData.type) missingFields.push('Type');
-    if (!formData.name) missingFields.push('Name');
-    
-    if (missingFields.length > 0) {
-      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
-      return;
+  const validateForm = (): boolean => {
+    if (!formData.project) {
+      toast.showWarning('Project is required');
+      return false;
     }
 
-    const newActivity: ActivityItem = {
-      id: Date.now().toString(),
-      name: formData.name,
-      project: formData.project,
-      subproject: formData.subproject,
-      type: formData.type as 'heading' | 'activity',
-      createdAt: new Date().toISOString()
-    };
+    if (!formData.type || !['heading', 'activites'].includes(formData.type)) {
+      toast.showWarning('Type must be "heading" or "activites"');
+      return false;
+    }
 
-    // Save to localStorage
-    const savedActivities = localStorage.getItem('activities');
-    let existingActivities: any[] = [];
-    if (savedActivities) {
-      try {
-        existingActivities = JSON.parse(savedActivities);
-      } catch (e) {
-        console.error('Error parsing activities:', e);
+    if (!formData.activities.trim()) {
+      toast.showWarning('Activity name is required');
+      return false;
+    }
+
+    // If type is 'activites', heading and unit_id are required
+    if (formData.type === 'activites') {
+      if (!formData.heading) {
+        toast.showWarning('Heading (parent activity) is required for activities');
+        return false;
+      }
+      if (!formData.unit_id) {
+        toast.showWarning('Unit is required for activities');
+        return false;
       }
     }
 
-    existingActivities.push(newActivity);
-    localStorage.setItem('activities', JSON.stringify(existingActivities));
-    
-    // Trigger event to update other components
-    window.dispatchEvent(new Event('activitiesUpdated'));
-
-    toast.showSuccess('Activity created successfully!');
-    
-    if (onActivityCreated) {
-      onActivityCreated(newActivity);
-    }
-    
-    if (onSuccess) {
-      onSuccess();
-    }
-    
-    onClose();
+    return true;
   };
+
+  const handleSubmit = async () => {
+    if (!validateForm()) {
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const projectIdNum = projects.find(p => p.uuid === formData.project || String(p.id) === formData.project)?.id;
+      
+      const payload: any = {
+        project: projectIdNum || formData.project,
+        type: formData.type,
+        activities: formData.activities.trim()
+      };
+
+      // Add optional subproject if provided
+      if (formData.subproject) {
+        const subprojectIdNum = subprojects.find(s => s.uuid === formData.subproject || String(s.id) === formData.subproject)?.id;
+        payload.subproject = subprojectIdNum || formData.subproject;
+      }
+
+      // Add conditional fields if type is 'activites'
+      if (formData.type === 'activites') {
+        const headingIdNum = availableHeadings.find(h => h.uuid === formData.heading || String(h.id) === formData.heading)?.id;
+        payload.heading = headingIdNum || formData.heading;
+        payload.unit_id = Number(formData.unit_id);
+      }
+
+      // Add optional fields if provided
+      if (formData.quantity) payload.quantity = Number(formData.quantity);
+      if (formData.rate) payload.rate = Number(formData.rate);
+      if (formData.amount) payload.amount = Number(formData.amount);
+      if (formData.start_date) payload.start_date = formData.start_date;
+      if (formData.end_date) payload.end_date = formData.end_date;
+
+      if (isEditing && editingActivityId) {
+        // Update existing activity
+        await masterDataAPI.updateActivity(editingActivityId, payload);
+        toast.showSuccess('Activity updated successfully!');
+      } else {
+        // Create new activity
+        await masterDataAPI.createActivity(payload);
+        toast.showSuccess('Activity created successfully!');
+      }
+
+      if (onSuccess) {
+        onSuccess();
+      }
+
+      onClose();
+    } catch (error: any) {
+      console.error('Failed to save activity:', error);
+      toast.showError(error.message || 'Failed to save activity');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Get filtered subprojects for selected project
+  const filteredSubprojects = useMemo(() => {
+    if (!formData.project) return [];
+    const projectIdNum = projects.find(p => p.uuid === formData.project || String(p.id) === formData.project)?.id;
+    return subprojects.filter(s => 
+      s.project_id === projectIdNum || 
+      s.uuid === formData.project || 
+      String(s.id) === formData.project
+    );
+  }, [formData.project, subprojects, projects]);
 
   if (!isOpen) return null;
 
@@ -258,12 +325,17 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
         {/* Modal Header */}
         <div className="flex items-center justify-between p-6 border-b border-inherit">
           <div>
-            <h2 className={`text-xl font-black ${textPrimary}`}>Create New Activity/Heading</h2>
-            <p className={`text-sm ${textSecondary} mt-1`}>Enter activity details below</p>
+            <h2 className={`text-xl font-black ${textPrimary}`}>
+              {isEditing ? 'Edit Activity' : 'Create New Activity/Heading'}
+            </h2>
+            <p className={`text-sm ${textSecondary} mt-1`}>
+              {isEditing ? 'Update activity details below' : 'Enter activity details below'}
+            </p>
           </div>
           <button
             onClick={onClose}
-            className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+            disabled={isSubmitting}
+            className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors disabled:opacity-50`}
           >
             <X className={`w-5 h-5 ${textSecondary}`} />
           </button>
@@ -274,22 +346,23 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
           {/* Project */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Select Project <span className="text-red-500">*</span>
+              Project <span className="text-red-500">*</span>
             </label>
             <select
               name="project"
               value={formData.project}
               onChange={handleInputChange}
+              disabled={isSubmitting || isEditing}
               className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
                 isDark 
                   ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
                   : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
             >
               <option value="">-- Select Project --</option>
-              {projects.map((project, idx) => (
-                <option key={idx} value={project.name}>
-                  {project.name} {project.code ? `(${project.code})` : ''}
+              {projects.map((project) => (
+                <option key={project.uuid || project.id} value={project.uuid || String(project.id)}>
+                  {project.project_name}
                 </option>
               ))}
             </select>
@@ -298,22 +371,22 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
           {/* Subproject */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Select Subproject <span className="text-red-500">*</span>
+              Subproject (Optional)
             </label>
             <select
               name="subproject"
               value={formData.subproject}
               onChange={handleInputChange}
-              disabled={!formData.project}
+              disabled={!formData.project || isSubmitting}
               className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
                 isDark 
                   ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
                   : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none ${!formData.project ? 'opacity-50 cursor-not-allowed' : ''}`}
+              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
             >
-              <option value="">-- Select Subproject --</option>
-              {subprojects.map((subproject, idx) => (
-                <option key={idx} value={subproject.name}>
+              <option value="">-- Select Subproject (Optional) --</option>
+              {filteredSubprojects.map((subproject: { id: number; uuid: string; name: string; project_id?: number }) => (
+                <option key={subproject.uuid || subproject.id} value={subproject.uuid || String(subproject.id)}>
                   {subproject.name}
                 </option>
               ))}
@@ -329,37 +402,202 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
               name="type"
               value={formData.type}
               onChange={handleInputChange}
+              disabled={isSubmitting}
               className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
                 isDark 
                   ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
                   : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
             >
               <option value="">-- Select Type --</option>
               <option value="heading">Heading</option>
-              <option value="activity">Activities</option>
+              <option value="activites">Activities</option>
             </select>
           </div>
 
-          {/* Activity Name / Heading Name */}
-          {formData.type && (
-            <div>
-              <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                {formData.type === 'heading' ? 'Heading Name' : 'Activity Name'} <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                name="name"
-                value={formData.name}
-                onChange={handleInputChange}
-                placeholder={formData.type === 'heading' ? 'Enter Heading Name' : 'Enter Activity Name'}
-                className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                  isDark 
-                    ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
-                    : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-                } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-              />
-            </div>
+          {/* Activity Name */}
+          <div>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+              {formData.type === 'heading' ? 'Heading Name' : 'Activity Name'} <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              name="activities"
+              value={formData.activities}
+              onChange={handleInputChange}
+              placeholder={formData.type === 'heading' ? 'Enter Heading Name' : 'Enter Activity Name'}
+              disabled={isSubmitting}
+              className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                isDark 
+                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
+                  : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+            />
+          </div>
+
+          {/* Conditional Fields for Activities */}
+          {formData.type === 'activites' && (
+            <>
+              {/* Heading (Parent Activity) */}
+              <div>
+                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                  Heading (Parent Activity) <span className="text-red-500">*</span>
+                </label>
+                {isLoadingHeadings ? (
+                  <div className={`w-full px-4 py-3 rounded-lg text-sm ${textSecondary} flex items-center gap-2`}>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Loading headings...
+                  </div>
+                ) : (
+                  <select
+                    name="heading"
+                    value={formData.heading}
+                    onChange={handleInputChange}
+                    disabled={isSubmitting || isLoadingHeadings}
+                    className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+                      isDark 
+                        ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
+                        : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
+                    } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+                  >
+                    <option value="">-- Select Heading --</option>
+                    {availableHeadings.map((heading) => (
+                      <option key={heading.uuid || heading.id} value={heading.uuid || String(heading.id)}>
+                        {heading.activities}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              {/* Unit */}
+              <div>
+                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                  Unit <span className="text-red-500">*</span>
+                </label>
+                {isLoadingUnits ? (
+                  <div className={`w-full px-4 py-3 rounded-lg text-sm ${textSecondary} flex items-center gap-2`}>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Loading units...
+                  </div>
+                ) : (
+                  <select
+                    name="unit_id"
+                    value={formData.unit_id}
+                    onChange={handleInputChange}
+                    disabled={isSubmitting || isLoadingUnits}
+                    className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+                      isDark 
+                        ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
+                        : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
+                    } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+                  >
+                    <option value="">-- Select Unit --</option>
+                    {units.map((unit) => (
+                      <option key={unit.id} value={unit.id}>
+                        {unit.unit}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              {/* Quantity, Rate, Amount */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                    Quantity (Optional)
+                  </label>
+                  <input
+                    type="number"
+                    name="quantity"
+                    value={formData.quantity}
+                    onChange={handleInputChange}
+                    placeholder="0"
+                    disabled={isSubmitting}
+                    className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                      isDark 
+                        ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
+                        : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+                    } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                    Rate (Optional)
+                  </label>
+                  <input
+                    type="number"
+                    name="rate"
+                    value={formData.rate}
+                    onChange={handleInputChange}
+                    placeholder="0"
+                    disabled={isSubmitting}
+                    className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                      isDark 
+                        ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
+                        : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+                    } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                    Amount (Optional)
+                  </label>
+                  <input
+                    type="number"
+                    name="amount"
+                    value={formData.amount}
+                    onChange={handleInputChange}
+                    placeholder="0"
+                    disabled={isSubmitting}
+                    className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                      isDark 
+                        ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
+                        : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+                    } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+                  />
+                </div>
+              </div>
+
+              {/* Start Date and End Date */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                    Start Date (Optional)
+                  </label>
+                  <input
+                    type="date"
+                    name="start_date"
+                    value={formData.start_date}
+                    onChange={handleInputChange}
+                    disabled={isSubmitting}
+                    className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                      isDark 
+                        ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
+                        : 'bg-white border-slate-200 text-slate-900'
+                    } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                    End Date (Optional)
+                  </label>
+                  <input
+                    type="date"
+                    name="end_date"
+                    value={formData.end_date}
+                    onChange={handleInputChange}
+                    disabled={isSubmitting}
+                    className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                      isDark 
+                        ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
+                        : 'bg-white border-slate-200 text-slate-900'
+                    } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+                  />
+                </div>
+              </div>
+            </>
           )}
         </div>
 
@@ -367,19 +605,22 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
         <div className={`flex items-center justify-end gap-3 p-6 border-t border-inherit`}>
           <button
             onClick={onClose}
+            disabled={isSubmitting}
             className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
               isDark
                 ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
                 : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-            }`}
+            } disabled:opacity-50`}
           >
             Cancel
           </button>
           <button
-            onClick={handleCreateActivity}
-            className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642]/90 text-white transition-all shadow-md"
+            onClick={handleSubmit}
+            disabled={isSubmitting || isLoadingUnits || isLoadingHeadings}
+            className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642]/90 text-white transition-all shadow-md disabled:opacity-50 flex items-center gap-2"
           >
-            Create
+            {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+            {isEditing ? 'Update' : 'Create'}
           </button>
         </div>
       </div>

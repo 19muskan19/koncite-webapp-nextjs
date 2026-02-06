@@ -3,16 +3,20 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
-import { Boxes, MoreVertical, Download, Plus, Search, ArrowUpDown, FileSpreadsheet, Upload } from 'lucide-react';
+import { Boxes, MoreVertical, Download, Plus, Search, ArrowUpDown, FileSpreadsheet, Upload, Loader2, Edit, Trash2 } from 'lucide-react';
 import CreateMaterialModal from './Modals/CreateMaterialModal';
+import { masterDataAPI } from '../../services/api';
+import { useUser } from '../../contexts/UserContext';
 
 interface Material {
   id: string;
+  uuid?: string;
   class: 'A' | 'B' | 'C';
   code: string;
   name: string;
-  specification: string;
-  unit: string;
+  specification?: string;
+  unit?: string;
+  unit_id?: number;
   createdAt?: string;
 }
 
@@ -22,11 +26,17 @@ interface MaterialsProps {
 
 const Materials: React.FC<MaterialsProps> = ({ theme }) => {
   const toast = useToast();
+  const { isAuthenticated } = useUser();
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [isSearching, setIsSearching] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'list' | 'bulkUpload' | 'openingStock'>('list');
   const [openingStockSubTab, setOpeningStockSubTab] = useState<'bulkUpload' | 'available'>('bulkUpload');
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
-  const [userMaterials, setUserMaterials] = useState<Material[]>([]);
+  const [editingMaterialId, setEditingMaterialId] = useState<string | null>(null);
+  const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
+  const [materials, setMaterials] = useState<Material[]>([]);
+  const [isLoadingMaterials, setIsLoadingMaterials] = useState<boolean>(false);
+  const [materialsError, setMaterialsError] = useState<string | null>(null);
   const [openingStockForm, setOpeningStockForm] = useState({
     project: '',
     storeWarehouse: '',
@@ -51,11 +61,6 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
     { value: 'C', label: 'Class C' },
   ];
 
-  const unitOptions = [
-    'Bags', 'Nos', 'Cum', 'Sqm', 'Rmt', 'Brass', 'Yard', 'Packet', 'LS', 
-    'Bulk', 'Bundles', 'MT', 'Cft', 'Sft', 'Rft', 'Kgs', 'Ltr', 'Hrs', 'Day'
-  ];
-
   const availableProjects = [
     { name: 'Residential Complex A', code: 'PRJ001' },
     { name: 'Commercial Tower B', code: 'PRJ002' },
@@ -69,103 +74,167 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
     { name: 'Storage Facility B', code: 'WH003' },
   ];
 
-  const defaultMaterials: Material[] = [
-    { id: '1', class: 'A', code: 'M685270', name: 'Cement', specification: 'OPC testy', unit: 'Packet', createdAt: '2024-01-15T00:00:00.000Z' },
-    { id: '2', class: 'A', code: 'M984236', name: 'RMC', specification: 'M40', unit: 'Cft', createdAt: '2024-01-16T00:00:00.000Z' },
-    { id: '3', class: 'B', code: 'M211203', name: 'Measuring Tape', specification: '1/2 Inches', unit: 'Nos', createdAt: '2024-01-17T00:00:00.000Z' },
-    { id: '4', class: 'B', code: 'M257929', name: 'Hose Pipe', specification: '1 Inches', unit: 'Nos', createdAt: '2024-01-18T00:00:00.000Z' },
-    { id: '5', class: 'B', code: 'M205837', name: 'Hose Pipe', specification: '', unit: 'Rft', createdAt: '2024-01-19T00:00:00.000Z' },
-    { id: '6', class: 'B', code: 'M987837', name: 'Nylon Rope', specification: '', unit: 'Rft', createdAt: '2024-01-20T00:00:00.000Z' },
-    { id: '7', class: 'C', code: 'M183654', name: 'Oil', specification: '', unit: 'Ltr', createdAt: '2024-01-21T00:00:00.000Z' },
-    { id: '8', class: 'C', code: 'M976735', name: 'Cover Blocks', specification: '20mm', unit: 'Nos', createdAt: '2024-01-22T00:00:00.000Z' },
-    { id: '9', class: 'C', code: 'M421512', name: 'Cover Blocks', specification: '25mm', unit: 'Nos', createdAt: '2024-01-23T00:00:00.000Z' },
-    { id: '10', class: 'C', code: 'M625759', name: 'Petrol', specification: '', unit: 'Ltr', createdAt: '2024-01-24T00:00:00.000Z' },
-    { id: '11', class: 'C', code: 'M232620', name: 'Diesel', specification: '', unit: 'Ltr', createdAt: '2024-01-25T00:00:00.000Z' },
-    { id: '12', class: 'B', code: 'M932823', name: 'UPVC', specification: '12 inch', unit: 'Rmt', createdAt: '2024-01-26T00:00:00.000Z' },
-    { id: '13', class: 'A', code: 'M880841', name: 'Tmt Concrete', specification: '', unit: 'Cft', createdAt: '2024-01-27T00:00:00.000Z' },
-    { id: '14', class: 'A', code: 'M100439', name: 'Cement', specification: 'OPC 53 grade', unit: 'Bags', createdAt: '2024-01-28T00:00:00.000Z' },
-  ];
-
-  // Load materials from localStorage on mount
-  useEffect(() => {
-    const savedMaterials = localStorage.getItem('materials');
-    if (savedMaterials) {
-      try {
-        const parsed = JSON.parse(savedMaterials);
-        setUserMaterials(parsed);
-      } catch (e) {
-        setUserMaterials([]);
-      }
-    } else {
-      setUserMaterials([]);
+  // Fetch materials from API
+  const fetchMaterials = async () => {
+    if (!isAuthenticated) {
+      setMaterials([]);
+      setIsLoadingMaterials(false);
+      return;
     }
-  }, []);
-
-  // Save materials to localStorage whenever userMaterials state changes
-  useEffect(() => {
-    const defaultIds = defaultMaterials.map(m => m.id);
-    const userAddedMaterials = userMaterials.filter(m => !defaultIds.includes(m.id));
-    if (userAddedMaterials.length > 0) {
-      try {
-        localStorage.setItem('materials', JSON.stringify(userAddedMaterials));
-      } catch (error) {
-        console.error('Error saving to localStorage:', error);
-        if (error instanceof DOMException && error.name === 'QuotaExceededError') {
-          toast.showWarning('Storage limit exceeded. Some data may not be saved.');
-        }
-      }
-    } else {
-      try {
-        localStorage.removeItem('materials');
-      } catch (error) {
-        console.error('Error clearing localStorage:', error);
-      }
-    }
-  }, [userMaterials]);
-
-  // Combine default and user materials
-  const allMaterials = useMemo(() => {
-    return [...defaultMaterials, ...userMaterials];
-  }, [userMaterials]);
-
-  // Filter materials based on search query
-  const filteredMaterials = useMemo(() => {
-    if (!searchQuery.trim()) return allMaterials;
     
-    return allMaterials.filter(material =>
-      material.class.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      material.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      material.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      material.specification.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      material.unit.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }, [searchQuery, allMaterials]);
-
-  const handleMaterialCreated = (newMaterial: Material) => {
-    setUserMaterials(prev => [...prev, newMaterial]);
+    setIsLoadingMaterials(true);
+    setMaterialsError(null);
+    try {
+      const fetchedMaterials = await masterDataAPI.getMaterials();
+      // Transform API response to match Material interface
+      const transformedMaterials = fetchedMaterials.map((material: any) => {
+        // Handle class field - API returns formatted object with title and value
+        const materialClass = material.class?.value || material.class || '';
+        return {
+          id: material.uuid || String(material.id),
+          uuid: material.uuid,
+          class: materialClass as 'A' | 'B' | 'C',
+          code: material.code || '',
+          name: material.name || '',
+          specification: material.specification || '',
+          unit: material.unit?.unit || material.unit || '',
+          unit_id: material.unit_id || material.unit?.id,
+          createdAt: material.created_at || material.createdAt,
+        };
+      });
+      setMaterials(transformedMaterials);
+    } catch (err: any) {
+      console.error('Failed to fetch materials:', err);
+      setMaterialsError(err.message || 'Failed to load materials');
+      setMaterials([]);
+      toast.showError(err.message || 'Failed to load materials');
+    } finally {
+      setIsLoadingMaterials(false);
+    }
   };
 
-  // Listen for materialsUpdated event
+  // Load materials from API on mount and when auth changes
   useEffect(() => {
-    const handleMaterialsUpdated = () => {
-      const savedMaterials = localStorage.getItem('materials');
-      if (savedMaterials) {
-        try {
-          const parsed = JSON.parse(savedMaterials);
-          if (Array.isArray(parsed)) {
-            setUserMaterials(parsed);
-          }
-        } catch (e) {
-          // Keep current materials if parsing fails
-        }
+    fetchMaterials();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
+
+  // Search materials using API
+  const handleSearch = async (query: string) => {
+    if (!query.trim()) {
+      // If search is empty, fetch all materials
+      await fetchMaterials();
+      setIsSearching(false);
+      return;
+    }
+
+    setIsSearching(true);
+    try {
+      const searchResults = await masterDataAPI.searchMaterials(query);
+      // Transform API response to match Material interface
+      const transformedMaterials = searchResults.map((material: any) => {
+        const materialClass = material.class?.value || material.class || '';
+        return {
+          id: material.uuid || String(material.id),
+          uuid: material.uuid,
+          class: materialClass as 'A' | 'B' | 'C',
+          code: material.code || '',
+          name: material.name || '',
+          specification: material.specification || '',
+          unit: material.unit?.unit || material.unit || '',
+          unit_id: material.unit_id || material.unit?.id,
+          createdAt: material.created_at || material.createdAt,
+        };
+      });
+      setMaterials(transformedMaterials);
+    } catch (error: any) {
+      console.error('Search failed:', error);
+      toast.showError(error.message || 'Search failed. Please try again.');
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // Debounced search
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (searchQuery.trim()) {
+        handleSearch(searchQuery);
+      } else {
+        fetchMaterials();
+      }
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [searchQuery]);
+
+  // Filter materials (client-side filtering is optional since we're using API search)
+  const filteredMaterials = useMemo(() => {
+    let filtered = [...materials];
+    
+    // Client-side filtering is optional since we're using API search
+    // But keep it for additional filtering if needed
+    if (searchQuery.trim() && !isSearching) {
+      filtered = filtered.filter(material =>
+        material.class.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        material.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        material.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (material.specification && material.specification.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (material.unit && material.unit.toLowerCase().includes(searchQuery.toLowerCase()))
+      );
+    }
+    
+    return filtered;
+  }, [materials, searchQuery, isSearching]);
+
+  const handleEditMaterial = async (material: Material) => {
+    try {
+      // Fetch full material details from API
+      const materialDetails = await masterDataAPI.getMaterial(material.id);
+      setEditingMaterialId(material.id);
+      // Open modal with material data - CreateMaterialModal will handle this
+      setShowCreateModal(true);
+    } catch (error: any) {
+      console.error('Failed to fetch material details:', error);
+      toast.showError('Failed to load material details');
+    }
+  };
+
+  const handleDeleteMaterial = async (materialId: string) => {
+    if (window.confirm('Are you sure you want to delete this material?')) {
+      try {
+        await masterDataAPI.deleteMaterial(materialId);
+        toast.showSuccess('Material deleted successfully');
+        // Refresh materials list
+        await fetchMaterials();
+      } catch (error: any) {
+        console.error('Failed to delete material:', error);
+        toast.showError(error.message || 'Failed to delete material');
+      }
+    }
+  };
+
+  const handleMaterialCreated = async () => {
+    // Refresh materials list after create/update
+    await fetchMaterials();
+  };
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (!target.closest('.dropdown-menu') && !target.closest('.dropdown-trigger')) {
+        setOpenDropdownId(null);
       }
     };
 
-    window.addEventListener('materialsUpdated', handleMaterialsUpdated);
-    return () => {
-      window.removeEventListener('materialsUpdated', handleMaterialsUpdated);
-    };
-  }, []);
+    if (openDropdownId) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
+    }
+  }, [openDropdownId]);
 
   const handleDownloadExcel = () => {
     const headers = ['Class', 'Code', 'Name', 'Specification', 'Unit'];
@@ -197,17 +266,17 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
 
   const handleExportMaterialsData = () => {
     const headers = ['Class', 'Code', 'Name', 'Specification', 'Unit'];
-    const rows = allMaterials.map(material => [
+    const rows = materials.map((material: Material) => [
       material.class,
       material.code,
       material.name,
       material.specification || '',
-      material.unit
+      material.unit || ''
     ]);
 
     const csvContent = [
       headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
+      ...rows.map((row: string[]) => row.map((cell: string) => `"${cell}"`).join(','))
     ].join('\n');
 
     const BOM = '\uFEFF';
@@ -330,15 +399,46 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
               <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
               <input 
                 type="text" 
-                placeholder="Search by class, code, name, specification, or unit..."
+                placeholder="Search by material name or code..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                disabled={isSearching}
+                className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
               />
+              {isSearching && (
+                <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-[#C2D642]"></div>
+                </div>
+              )}
             </div>
           </div>
 
-      {filteredMaterials.length > 0 ? (
+      {/* Loading State */}
+      {isLoadingMaterials && (
+        <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
+          <Loader2 className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50 animate-spin`} />
+          <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>Loading Materials...</h3>
+          <p className={`text-sm ${textSecondary}`}>Please wait while we fetch your materials</p>
+        </div>
+      )}
+
+      {/* Error State */}
+      {materialsError && !isLoadingMaterials && (
+        <div className={`p-12 rounded-xl border text-center ${cardClass} border-red-500`}>
+          <Boxes className={`w-16 h-16 mx-auto mb-4 text-red-500 opacity-50`} />
+          <h3 className={`text-lg font-black mb-2 text-red-500`}>Error Loading Materials</h3>
+          <p className={`text-sm ${textSecondary} mb-4`}>{materialsError}</p>
+          <button
+            onClick={fetchMaterials}
+            className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Materials Table */}
+      {!isLoadingMaterials && !materialsError && filteredMaterials.length > 0 ? (
         <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -386,9 +486,45 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.specification || '-'}</td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.unit}</td>
                     <td className="px-6 py-4 text-right">
-                      <button className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}>
-                        <MoreVertical className={`w-4 h-4 ${textSecondary}`} />
-                      </button>
+                      <div className="relative">
+                        <button 
+                          onClick={() => setOpenDropdownId(openDropdownId === row.id ? null : row.id)}
+                          className={`dropdown-trigger p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+                          title="Actions"
+                        >
+                          <MoreVertical className={`w-4 h-4 ${textSecondary}`} />
+                        </button>
+                        {openDropdownId === row.id && (
+                          <div className={`dropdown-menu absolute right-0 top-full mt-1 w-32 rounded-lg border shadow-lg z-20 ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                            <div className="py-1">
+                              <button
+                                onClick={() => {
+                                  handleEditMaterial(row);
+                                  setOpenDropdownId(null);
+                                }}
+                                className={`w-full flex items-center gap-2 px-4 py-2 text-sm font-bold transition-colors text-left ${
+                                  isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
+                                }`}
+                              >
+                                <Edit className="w-4 h-4" />
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => {
+                                  handleDeleteMaterial(row.id);
+                                  setOpenDropdownId(null);
+                                }}
+                                className={`w-full flex items-center gap-2 px-4 py-2 text-sm font-bold transition-colors text-left ${
+                                  isDark ? 'hover:bg-slate-700 text-red-400' : 'hover:bg-slate-50 text-red-600'
+                                }`}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -396,13 +532,17 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
             </table>
           </div>
         </div>
-      ) : (
+      ) : !isLoadingMaterials && !materialsError ? (
         <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
           <Boxes className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
-          <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>No Data Available</h3>
-          <p className={`text-sm ${textSecondary}`}>Start by adding your first material entry</p>
+          <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>No Materials Found</h3>
+          <p className={`text-sm ${textSecondary}`}>
+            {searchQuery.trim() 
+              ? `No materials found matching "${searchQuery}"` 
+              : 'Start by adding your first material entry'}
+          </p>
         </div>
-      )}
+      ) : null}
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className={`p-4 rounded-xl border ${cardClass}`}>
@@ -855,26 +995,14 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
       <CreateMaterialModal
         theme={theme}
         isOpen={showCreateModal}
-        onClose={() => setShowCreateModal(false)}
-        onSuccess={() => {
-          // Reload materials from localStorage
-          const savedMaterials = localStorage.getItem('materials');
-          if (savedMaterials) {
-            try {
-              const parsed = JSON.parse(savedMaterials);
-              if (Array.isArray(parsed)) {
-                setUserMaterials(parsed);
-              }
-            } catch (e) {
-              // Keep current materials if parsing fails
-            }
-          }
+        onClose={() => {
+          setShowCreateModal(false);
+          setEditingMaterialId(null);
         }}
-        defaultMaterials={defaultMaterials}
-        userMaterials={userMaterials}
+        onSuccess={handleMaterialCreated}
+        editingMaterialId={editingMaterialId}
+        materials={materials}
         classOptions={classOptions}
-        unitOptions={unitOptions}
-        onMaterialCreated={handleMaterialCreated}
       />
     </div>
   );
