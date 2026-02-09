@@ -4,6 +4,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import Navbar from './Navbar';
 import Footer from './Footer';
 import ContactModal from './ContactModal';
+import ConstructionBackground from './ConstructionBackground';
 
 interface HomePageProps {
   onLoginClick: () => void;
@@ -198,9 +199,9 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
   const borderClass = isDark ? 'border-slate-800' : 'border-slate-200';
-  const sectionBg = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
-  const sectionBgAlt = isDark ? 'bg-[#0a0a0a]' : 'bg-[#faf9f6]'; // Cream/off-white for light theme
-  const sectionBgCream = isDark ? 'bg-[#0a0a0a]' : 'bg-[#fefcf8]'; // Warm off-white for light theme
+  const sectionBg = isDark ? 'bg-[#0a0a0a]/70' : 'bg-white/70';
+  const sectionBgAlt = isDark ? 'bg-[#0a0a0a]/70' : 'bg-[#faf9f6]/70'; // Cream/off-white for light theme with transparency
+  const sectionBgCream = isDark ? 'bg-[#0a0a0a]/70' : 'bg-[#fefcf8]/70'; // Warm off-white for light theme with transparency
 
   return (
     <>
@@ -322,7 +323,9 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
           }
         }
       `}</style>
-      <div className={`min-h-screen flex flex-col transition-colors duration-500 ${bgClass}`}>
+      <div className={`min-h-screen flex flex-col transition-colors duration-500 ${bgClass} relative`}>
+        <ConstructionBackground />
+        <div className="relative z-20">
         <Navbar 
         onLoginClick={onLoginClick}
         onNavigateToAbout={onNavigateToAbout}
@@ -337,7 +340,7 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
             {/* AI-Powered Badge */}
             <div
               // onClick={() => scrollToSection('ai-features')}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-[#0a0a0a] mb-8 hover:border-[#C2D642] hover:shadow-md transition-all "
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-[#0a0a0a]/80 mb-8 hover:border-[#C2D642] hover:shadow-md transition-all "
             >
               <div className="w-2 h-2 rounded-full bg-[#C2D642]"></div>
               <span className={`text-sm font-semibold ${isDark ? textSecondary : 'text-[#C2D642]'} hover:text-[#C2D642] transition-colors`}>AI-Powered Construction Management</span>
@@ -967,9 +970,9 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
 
 
         {/* Ready to Transform CTA */}
-        <section className={`py-16 md:py-24 px-4 sm:px-6 lg:px-8 'bg-[#0a0a0a]' }`}>
+        <section className={`py-16 md:py-24 px-4 sm:px-6 lg:px-8 ${sectionBgAlt}`}>
           <div className="max-w-5xl mx-auto" ref={ctaRef}>
-            <div className={`${isDark ? 'bg-[#0a0a0a]' : 'bg-white'} rounded-2xl p-8 md:p-12 lg:p-16 shadow-2xl`}>
+            <div className={`${isDark ? 'bg-[#0a0a0a]/80' : 'bg-white/80'} rounded-2xl p-8 md:p-12 lg:p-16 shadow-2xl`}>
               <div className="text-center max-w-3xl mx-auto">
                 <h2 className={`text-3xl md:text-4xl lg:text-5xl xl:text-6xl font-black ${isDark ? 'text-white' : 'text-slate-900'} mb-4 md:mb-6 leading-tight`}>
                   Ready to transform your construction projects?
@@ -1009,7 +1012,12 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
 
       </main>
 
-      <Footer scrollToSection={scrollToSection} onContactClick={() => setShowContactModal(true)} />
+      <Footer 
+        scrollToSection={scrollToSection} 
+        onContactClick={() => setShowContactModal(true)}
+        onNavigateToAbout={onNavigateToAbout}
+      />
+        </div>
       </div>
       
       <ContactModal 

@@ -93,11 +93,19 @@ const OtpVerificationModal: React.FC<OtpVerificationModalProps> = ({
       localStorage.removeItem('pendingVerificationEmail');
       
       // Call onVerified callback with OTP (needed for forgot password flow)
+      // For forgot password flow, don't close modal immediately - let parent handle navigation
       if (onVerified) {
         onVerified(otp);
+        // If it's forgot password flow, don't close - parent will handle step transition
+        if (isForgotPassword) {
+          setOtp('');
+          // Don't call onClose() here - parent component will handle closing/navigation
+          setIsLoading(false);
+          return;
+        }
       }
       
-      // Close modal
+      // Close modal (for non-forgot-password flows)
       setOtp('');
       onClose();
     } catch (error: any) {

@@ -44,6 +44,7 @@ interface Project {
   createdAt?: string;
   isContractor?: boolean;
   projectManager?: string;
+  azure_folder_path?: string; // Azure Blob Storage folder path for documents
 }
 
 interface ProjectsProps {
@@ -142,6 +143,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
           createdAt: p.created_at || p.createdAt,
           isContractor: p.own_project_or_contractor === 'yes' || p.is_contractor || p.isContractor,
           projectManager: p.project_manager || p.projectManager,
+          azure_folder_path: p.azure_folder_path || p.azureFolderPath, // Store Azure folder path for document management
         };
         console.log(`Project ${index + 1}:`, {
           id: transformed.id,
@@ -161,6 +163,16 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
       
       console.log('✅ Transformed projects:', transformedProjects);
       console.log('Setting projects state with', transformedProjects.length, 'projects');
+      
+      // Log Azure folder paths for debugging
+      transformedProjects.forEach((project, index) => {
+        if (project.azure_folder_path) {
+          console.log(`📁 Project ${index + 1} (${project.name}) Azure folder:`, project.azure_folder_path);
+        } else {
+          console.warn(`⚠️ Project ${index + 1} (${project.name}) missing azure_folder_path`);
+        }
+      });
+      
       setProjects(transformedProjects);
     } catch (err: any) {
       console.error('❌ Failed to fetch projects:', err);

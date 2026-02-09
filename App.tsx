@@ -30,6 +30,7 @@ import SignupModal from './components/SignupModal';
 import OtpVerificationModal from './components/OtpVerificationModal';
 import ForgotPasswordModal from './components/ForgotPasswordModal';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
+import { UserProvider, useUser } from './contexts/UserContext';
 import { ViewType, ThemeType } from './types';
 import { authAPI } from './services/api';
 
@@ -76,8 +77,11 @@ const AppContent: React.FC = () => {
     };
 
     const handleOpenForgotPasswordModal = () => {
-      setShowForgotPasswordModal(true);
       setShowLoginModal(false);
+      // Small delay to ensure login modal closes first
+      setTimeout(() => {
+        setShowForgotPasswordModal(true);
+      }, 100);
     };
 
     window.addEventListener('openSignupModal' as any, handleOpenSignupModal);
@@ -433,7 +437,9 @@ const AppContent: React.FC = () => {
 const App: React.FC = () => {
   return (
     <ThemeProvider>
-      <AppContent />
+      <UserProvider>
+        <AppContent />
+      </UserProvider>
     </ThemeProvider>
   );
 };

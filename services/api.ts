@@ -386,13 +386,15 @@ export const authAPI = {
   /**
    * Update password after OTP verification
    * POST /api/forgot-password-update
+   * This is called after OTP verification to update the password
    */
   forgotPasswordUpdate: async (email: string, newPassword: string): Promise<{ message?: string; errors?: Record<string, string[]> }> => {
     try {
-      const response = await apiClient.post('/forgot-password-update', { 
-        email, 
-        newPassword 
-      });
+      const payload: { email: string; newPassword: string } = { 
+        email,
+        newPassword
+      };
+      const response = await apiClient.post('/forgot-password-update', payload);
       return response.data;
     } catch (error: any) {
       throw {
@@ -605,6 +607,53 @@ export const masterDataAPI = {
         },
       });
       console.log('✅ Project created successfully:', response.data);
+      
+      // Log Azure folder path if present - CRITICAL for blob storage operations
+      // Backend API: POST /api/project-add creates folder and saves to projects.azure_folder_path
+      // Path format: {company_azure_folder_path}/projects/{sanitized-project-name}_{project-uuid}
+      const azureFolderPath = response.data?.data?.azure_folder_path || 
+                              response.data?.azure_folder_path ||
+                              response.data?.project?.azure_folder_path;
+      
+      if (azureFolderPath) {
+        // Validate path format matches backend structure
+        const pathParts = azureFolderPath.split('/');
+        const isValidFormat = pathParts.length >= 3 && 
+                             pathParts[pathParts.length - 2] === 'projects' &&
+                             pathParts[pathParts.length - 1].includes('_');
+        
+        console.log('📁 ✅ Azure folder path created:', azureFolderPath);
+        console.log('📁 Path details:', {
+          fullPath: azureFolderPath,
+          pathParts: pathParts,
+          isValidFormat: isValidFormat,
+          expectedFormat: '{company_azure_folder_path}/projects/{sanitized-name}_{project-uuid}',
+          folderMarker: `${azureFolderPath}/.folder`,
+          expectedLocation: 'Azure Blob Storage container: documents',
+          databaseColumn: 'projects.azure_folder_path',
+        });
+        
+        if (!isValidFormat) {
+          console.warn('⚠️ Azure folder path format may be incorrect!');
+          console.warn('  Expected: {company-path}/projects/{sanitized-name}_{uuid}');
+          console.warn('  Actual:', azureFolderPath);
+        }
+      } else {
+        console.error('❌ CRITICAL: Azure folder path NOT found in response!');
+        console.error('Backend API: POST /api/project-add');
+        console.error('Controller: App\\Http\\Controllers\\API\\ProjectController::projectAdd()');
+        console.error('Database column: projects.azure_folder_path');
+        console.error('Expected path format: {company_azure_folder_path}/projects/{sanitized-project-name}_{project-uuid}');
+        console.error('Response structure:', {
+          hasData: !!response.data,
+          hasDataData: !!response.data?.data,
+          dataKeys: response.data ? Object.keys(response.data) : [],
+          dataDataKeys: response.data?.data ? Object.keys(response.data.data) : [],
+          fullResponse: JSON.stringify(response.data, null, 2),
+        });
+        console.warn('⚠️ File operations (upload, delete) will NOT work until azure_folder_path is set!');
+      }
+      
       return response.data;
     } catch (error: any) {
       throw {
@@ -1917,6 +1966,236 @@ export const masterDataAPI = {
   },
 };
 
+// Document Management API - Matching Laravel routes
+export const documentAPI = {
+  /**
+   * Get documents
+   * GET /api/documents
+   */
+  getDocuments: async (params: {
+    category: 'office' | 'project' | 'shared';
+    project_id?: number;
+    folder_uuid?: string;
+    folder_path?: string;
+  }): Promise<any> => {
+    try {
+      // Verify token before making request
+      const { getAuthToken } = require('./apiClient');
+      const token = getAuthToken();
+      console.log('📄 Calling /documents API with params:', params);
+      console.log('📄 Auth token check:', {
+        hasToken: !!token,
+        tokenLength: token?.length || 0,
+        tokenPreview: token ? `${token.substring(0, 20)}...` : 'none',
+      });
+      
+      const response = await apiClient.get('/documents', { params });
+      console.log('✅ /documents API response:', response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ /documents API error:', {
+        status: error.response?.status,
+        message: error.response?.data?.message,
+        data: error.response?.data,
+        url: error.config?.url,
+        headers: error.config?.headers,
+        hasAuthHeader: !!error.config?.headers?.Authorization,
+      });
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch documents',
+        errors: error.response?.data?.errors || {},
+        status: error.response?.status,
+        response: error.response,
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Upload documents
+   * POST /api/documents/upload
+   */
+  uploadDocuments: async (formData: FormData): Promise<any> => {
+    try {
+      const response = await apiClient.post('/documents/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to upload documents',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Create folder
+   * POST /api/documents/folder
+   */
+  createFolder: async (data: {
+    folder_name: string;
+    category: 'office' | 'project';
+    project_id?: number;
+    subproject_id?: number;
+    parent_folder_uuid?: string;
+    folder_path?: string;
+  }): Promise<any> => {
+    try {
+      const response = await apiClient.post('/documents/folder', data);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to create folder',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Download document
+   * POST /api/documents/download
+   */
+  downloadDocument: async (file_path: string, original_name?: string): Promise<any> => {
+    try {
+      const response = await apiClient.post('/documents/download', {
+        file_path,
+        original_name,
+      }, {
+        responseType: 'blob',
+      });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to download document',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Delete file
+   * DELETE /api/documents/delete
+   */
+  deleteFile: async (file_path: string): Promise<any> => {
+    try {
+      const response = await apiClient.delete('/documents/delete', {
+        data: { file_path },
+      });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to delete file',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Share items
+   * POST /api/documents/share
+   */
+  shareItems: async (data: {
+    items: Array<{
+      type: 'folder' | 'document';
+      uuid: string;
+      name: string;
+      section: string;
+      path?: string;
+      projectId?: string;
+      metadata?: any;
+    }>;
+    shared_with?: number[];
+    is_public?: boolean;
+    expires_in_days?: number;
+    password?: string;
+    email_addresses?: string[];
+    email_message?: string;
+  }): Promise<any> => {
+    try {
+      const response = await apiClient.post('/documents/share', data);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to share items',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Get shared items
+   * GET /api/documents/shared
+   */
+  getSharedItems: async (): Promise<any> => {
+    try {
+      const response = await apiClient.get('/documents/shared');
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch shared items',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Unshare item
+   * DELETE /api/documents/unshare
+   */
+  unshareItem: async (uuid: string): Promise<any> => {
+    try {
+      const response = await apiClient.delete('/documents/unshare', {
+        data: { uuid },
+      });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to unshare item',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Get team members
+   * GET /api/documents/team-members
+   */
+  getTeamMembers: async (): Promise<any> => {
+    try {
+      const response = await apiClient.get('/documents/team-members');
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch team members',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Get gallery images
+   * GET /api/documents/gallery
+   */
+  getGalleryImages: async (params?: {
+    project_id?: number;
+    category?: 'office' | 'project' | 'shared';
+    page?: number;
+    per_page?: number;
+  }): Promise<any> => {
+    try {
+      const response = await apiClient.get('/documents/gallery', { params });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch gallery images',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
 // Common API - Countries, States, Cities
 export interface Country {
   id: number;
@@ -2008,5 +2287,6 @@ export default {
   auth: authAPI,
   user: userAPI,
   masterData: masterDataAPI,
+  document: documentAPI,
   common: commonAPI,
 };

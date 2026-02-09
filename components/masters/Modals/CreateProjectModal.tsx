@@ -492,6 +492,66 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         response = await masterDataAPI.createProject(projectFormData);
         console.log('✅ Project creation response:', response);
         
+        // Check for azure_folder_path in different response structures
+        // Backend API: POST /api/project-add returns azure_folder_path in response.data.azure_folder_path
+        const azureFolderPath = response?.data?.azure_folder_path || 
+                                response?.data?.data?.azure_folder_path ||
+                                response?.azure_folder_path;
+        const projectId = response?.data?.id || response?.data?.data?.id;
+        const projectUuid = response?.data?.uuid || response?.data?.data?.uuid;
+        const projectName = response?.data?.project_name || response?.data?.data?.project_name || formData.project_name;
+        
+        console.log('📁 Checking Azure folder path in response:', {
+          hasAzureFolderPath: !!azureFolderPath,
+          azureFolderPath: azureFolderPath,
+          projectId: projectId,
+          projectUuid: projectUuid,
+          projectName: projectName,
+          responseStructure: {
+            hasData: !!response?.data,
+            hasDataData: !!response?.data?.data,
+            dataKeys: response?.data ? Object.keys(response.data) : [],
+            dataDataKeys: response?.data?.data ? Object.keys(response.data.data) : [],
+          },
+        });
+        
+        // Verify Azure folder was created - CRITICAL: Backend MUST create this
+        if (!azureFolderPath) {
+          console.error('❌ CRITICAL: Project created but azure_folder_path is missing!');
+          console.error('Backend API: POST /api/project-add should create folder at:');
+          console.error('  Format: {company_azure_folder_path}/projects/{sanitized-project-name}_{project-uuid}');
+          console.error('  Example: acme-corp_abc-123/demo-company_ghi-789/projects/building-a_proj-xyz-456');
+          console.error('  Database column: projects.azure_folder_path');
+          console.error('Full response:', JSON.stringify(response, null, 2));
+          toast.showError('Project created, but Azure folder path is missing! Backend must create the folder. Please check backend logs.');
+          
+          // Still show success but with warning
+          toast.showWarning('⚠️ Azure storage folder was not created. File operations may not work until folder is created.');
+        } else {
+          // Validate path format: {company-path}/projects/{project-name}_{uuid}
+          const pathParts = azureFolderPath.split('/');
+          const isValidFormat = pathParts.length >= 3 && 
+                               pathParts[pathParts.length - 2] === 'projects' &&
+                               pathParts[pathParts.length - 1].includes('_');
+          
+          console.log('✅ Azure folder path created successfully:', azureFolderPath);
+          console.log('📁 Path validation:', {
+            fullPath: azureFolderPath,
+            pathParts: pathParts,
+            isValidFormat: isValidFormat,
+            expectedFormat: '{company-path}/projects/{sanitized-name}_{uuid}',
+            folderMarker: `${azureFolderPath}/.folder`,
+            expectedLocation: 'Azure Blob Storage container: documents',
+          });
+          
+          if (!isValidFormat) {
+            console.warn('⚠️ Azure folder path format may be incorrect. Expected: {company-path}/projects/{name}_{uuid}');
+            console.warn('  Actual path:', azureFolderPath);
+          }
+          
+          toast.showSuccess(`Project created successfully! Azure folder: ${azureFolderPath}`);
+        }
+        
         toast.showSuccess(response?.message || 'Project created successfully!');
         
         // Reset form

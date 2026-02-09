@@ -1,20 +1,16 @@
 'use client';
 
 import React, { useState } from 'react';
-import { X, Mail, Loader2, Lock, ArrowLeft } from 'lucide-react';
-import { useTheme } from '../contexts/ThemeContext';
-import { useToast } from '../contexts/ToastContext';
-import { authAPI } from '../services/api';
-import OtpVerificationModal from './OtpVerificationModal';
-
-interface ForgotPasswordModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-}
+import { Mail, Loader2, ArrowLeft, Lock, X } from 'lucide-react';
+import { useTheme } from '@/contexts/ThemeContext';
+import { useToast } from '@/contexts/ToastContext';
+import { authAPI } from '@/services/api';
+import Link from 'next/link';
+import OtpVerificationModal from '@/components/OtpVerificationModal';
 
 type Step = 'email' | 'otp' | 'password';
 
-const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ isOpen, onClose }) => {
+export default function ForgotPasswordPage() {
   const { isDark } = useTheme();
   const toast = useToast();
   const [step, setStep] = useState<Step>('email');
@@ -23,15 +19,14 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ isOpen, onClo
   const [error, setError] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [otpVerified, setOtpVerified] = useState(false);
-
-  if (!isOpen) return null;
+  const [showOtpModal, setShowOtpModal] = useState(false);
 
   const cardClass = isDark ? 'card-dark' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
   const borderClass = isDark ? 'border-slate-700' : 'border-slate-300';
   const inputBg = isDark ? 'bg-slate-800' : 'bg-white';
+  const bgClass = isDark ? 'bg-[#0a0a0a]' : 'bg-slate-50';
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,7 +36,7 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ isOpen, onClo
     try {
       const response = await authAPI.forgotEmail(email);
       toast.showSuccess(response.message || 'OTP sent to your email!');
-      setStep('otp');
+      setShowOtpModal(true);
     } catch (error: any) {
       const errorMessage = error.message || 'Failed to send OTP. Please try again.';
       setError(errorMessage);
@@ -51,74 +46,41 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ isOpen, onClo
     }
   };
 
-  const handleOtpVerified = (otp?: string) => {
-    // OTP has been verified successfully
-    setOtpVerified(true);
+  const handleOtpVerified = () => {
+    setShowOtpModal(false);
     setStep('password');
-    // Clear any previous errors
-    setError('');
   };
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
-    // Validation: Check if password is provided
-    if (!password || password.trim() === '') {
-      setError('Password is required');
-      return;
-    }
-
-    // Validation: Check minimum length
     if (password.length < 6) {
       setError('Password must be at least 6 characters');
       return;
     }
 
-    // Validation: Check if confirm password is provided
-    if (!confirmPassword || confirmPassword.trim() === '') {
-      setError('Please confirm your password');
-      return;
-    }
-
-    // Validation: Check if passwords match
     if (password !== confirmPassword) {
       setError('Passwords do not match');
-      return;
-    }
-
-    // Validation: Check if email is still available (should be from previous step)
-    if (!email || email.trim() === '') {
-      setError('Email is required. Please start over.');
-      setStep('email');
-      return;
-    }
-
-    // Validation: Check if OTP was verified
-    if (!otpVerified) {
-      setError('Please verify OTP first');
-      setStep('otp');
       return;
     }
 
     setIsLoading(true);
 
     try {
-      // Call API to update password
       const response = await authAPI.forgotPasswordUpdate(email, password);
       toast.showSuccess(response.message || 'Password updated successfully!');
       
-      // Reset all fields
+      // Reset and redirect
       setEmail('');
       setPassword('');
       setConfirmPassword('');
       setStep('email');
-      setOtpVerified(false);
       
-      // Close modal after short delay to show success message
+      // Redirect to login after a short delay
       setTimeout(() => {
-        onClose();
-      }, 1500);
+        window.location.href = '/';
+      }, 2000);
     } catch (error: any) {
       const errorMessage = error.message || 'Failed to update password. Please try again.';
       setError(errorMessage);
@@ -128,39 +90,24 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ isOpen, onClo
     }
   };
 
-  const handleClose = () => {
-    setEmail('');
-    setPassword('');
-    setConfirmPassword('');
-    setStep('email');
-    setError('');
-    setOtpVerified(false);
-    onClose();
-  };
-
   return (
     <>
-      {step === 'email' && (
-        <div 
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
-          onClick={handleClose}
-        >
-          <div 
-            className={`${cardClass} ${isDark ? 'bg-slate-800' : 'bg-white'} rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 relative border ${borderClass} z-[101]`}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              onClick={handleClose}
-              className={`absolute top-4 right-4 p-2 ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'} rounded-lg transition-colors`}
+      <div className={`min-h-screen flex items-center justify-center ${bgClass} px-4 py-12`}>
+        {step === 'email' && (
+          <div className={`${cardClass} ${isDark ? 'bg-slate-800' : 'bg-white'} rounded-xl shadow-2xl w-full max-w-md p-6 md:p-8 relative border ${borderClass}`}>
+            <Link
+              href="/"
+              className={`absolute top-4 left-4 p-2 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'} rounded-lg transition-colors flex items-center gap-2 ${textSecondary} hover:${textPrimary}`}
             >
-              <X className={`w-5 h-5 ${textSecondary}`} />
-            </button>
+              <ArrowLeft className="w-5 h-5" />
+              <span className="text-sm font-medium">Back</span>
+            </Link>
 
-            <div className="text-center mb-6">
+            <div className="text-center mb-6 mt-4">
               <div className={`inline-flex items-center justify-center w-16 h-16 ${isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/10'} rounded-full mb-4`}>
                 <Mail className="w-8 h-8 text-[#C2D642]" />
               </div>
-              <h2 className={`text-2xl font-black ${textPrimary} mb-2`}>Forgot Password</h2>
+              <h2 className={`text-2xl md:text-3xl font-black ${textPrimary} mb-2`}>Forgot Password</h2>
               <p className={`text-sm ${textSecondary}`}>Enter your email to receive an OTP</p>
             </div>
 
@@ -208,55 +155,34 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ isOpen, onClo
                   </>
                 )}
               </button>
+
+              <div className="text-center mt-4">
+                <Link
+                  href="/"
+                  className={`text-sm ${textSecondary} hover:text-[#C2D642] transition-colors`}
+                >
+                  Back to Login
+                </Link>
+              </div>
             </form>
           </div>
-        </div>
-      )}
+        )}
 
-      {step === 'otp' && (
-        <OtpVerificationModal
-          isOpen={step === 'otp'}
-          onClose={() => {
-            setStep('email');
-            setError('');
-            setOtpVerified(false);
-          }}
-          email={email}
-          onVerified={handleOtpVerified}
-          isForgotPassword={true}
-        />
-      )}
-
-      {step === 'password' && (
-        <div 
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
-          onClick={handleClose}
-        >
-          <div 
-            className={`${cardClass} ${isDark ? 'bg-slate-800' : 'bg-white'} rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 relative border ${borderClass} z-[101]`}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              onClick={() => {
-                setStep('otp');
-                setError('');
-              }}
-              className={`absolute top-4 left-4 p-2 ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'} rounded-lg transition-colors`}
+        {step === 'password' && (
+          <div className={`${cardClass} ${isDark ? 'bg-slate-800' : 'bg-white'} rounded-xl shadow-2xl w-full max-w-md p-6 md:p-8 relative border ${borderClass}`}>
+            <Link
+              href="/"
+              className={`absolute top-4 left-4 p-2 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'} rounded-lg transition-colors flex items-center gap-2 ${textSecondary} hover:${textPrimary}`}
             >
-              <ArrowLeft className={`w-5 h-5 ${textSecondary}`} />
-            </button>
-            <button
-              onClick={handleClose}
-              className={`absolute top-4 right-4 p-2 ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'} rounded-lg transition-colors`}
-            >
-              <X className={`w-5 h-5 ${textSecondary}`} />
-            </button>
+              <ArrowLeft className="w-5 h-5" />
+              <span className="text-sm font-medium">Back</span>
+            </Link>
 
-            <div className="text-center mb-6">
+            <div className="text-center mb-6 mt-4">
               <div className={`inline-flex items-center justify-center w-16 h-16 ${isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/10'} rounded-full mb-4`}>
                 <Lock className="w-8 h-8 text-[#C2D642]" />
               </div>
-              <h2 className={`text-2xl font-black ${textPrimary} mb-2`}>Set New Password</h2>
+              <h2 className={`text-2xl md:text-3xl font-black ${textPrimary} mb-2`}>Set New Password</h2>
               <p className={`text-sm ${textSecondary}`}>Enter your new password</p>
             </div>
 
@@ -269,54 +195,42 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ isOpen, onClo
 
               <div>
                 <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>
-                  New Password <span className="text-red-500">*</span>
+                  New Password
                 </label>
                 <div className="relative">
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                   <input
                     type="password"
-                    name="password"
                     value={password}
                     onChange={(e) => {
                       setPassword(e.target.value);
                       setError('');
                     }}
-                    className={`w-full pl-10 pr-4 py-3 border ${error && !password ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
-                    placeholder="Enter new password (min. 6 characters)"
-                    minLength={6}
+                    className={`w-full pl-10 pr-4 py-3 border ${borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
+                    placeholder="Enter new password"
                     required
-                    autoComplete="new-password"
                   />
                 </div>
-                {password && password.length < 6 && (
-                  <p className="text-xs text-amber-500 mt-1">Password must be at least 6 characters</p>
-                )}
               </div>
 
               <div>
                 <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>
-                  Confirm Password <span className="text-red-500">*</span>
+                  Confirm Password
                 </label>
                 <div className="relative">
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                   <input
                     type="password"
-                    name="confirmPassword"
                     value={confirmPassword}
                     onChange={(e) => {
                       setConfirmPassword(e.target.value);
                       setError('');
                     }}
-                    className={`w-full pl-10 pr-4 py-3 border ${error && password !== confirmPassword ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
+                    className={`w-full pl-10 pr-4 py-3 border ${borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
                     placeholder="Confirm new password"
-                    minLength={6}
                     required
-                    autoComplete="new-password"
                   />
                 </div>
-                {confirmPassword && password !== confirmPassword && (
-                  <p className="text-xs text-red-500 mt-1">Passwords do not match</p>
-                )}
               </div>
 
               <button
@@ -336,12 +250,32 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ isOpen, onClo
                   </>
                 )}
               </button>
+
+              <div className="text-center mt-4">
+                <Link
+                  href="/"
+                  className={`text-sm ${textSecondary} hover:text-[#C2D642] transition-colors`}
+                >
+                  Back to Login
+                </Link>
+              </div>
             </form>
           </div>
-        </div>
+        )}
+      </div>
+
+      {showOtpModal && (
+        <OtpVerificationModal
+          isOpen={showOtpModal}
+          onClose={() => {
+            setShowOtpModal(false);
+            setStep('email');
+          }}
+          email={email}
+          onVerified={handleOtpVerified}
+          isForgotPassword={true}
+        />
       )}
     </>
   );
-};
-
-export default ForgotPasswordModal;
+}

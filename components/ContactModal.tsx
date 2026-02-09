@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
-import { X, Mail, User, Building, MessageSquare } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Mail, User, Phone, FileText, MessageSquare, ChevronDown, Loader2 } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 
 interface ContactModalProps {
@@ -9,16 +9,104 @@ interface ContactModalProps {
   onClose: () => void;
 }
 
+interface CountryCode {
+  code: string;
+  dialCode: string;
+  name: string;
+  flag: string;
+}
+
+// Helper function to get flag image URL
+const getFlagUrl = (countryCode: string) => {
+  return `https://flagcdn.com/w20/${countryCode.toLowerCase()}.png`;
+};
+
 const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) => {
   const { isDark } = useTheme();
   const [formData, setFormData] = useState({
     name: '',
     email: '',
-    company: '',
+    countryCode: '91', // Default to India
+    phone: '',
+    subject: '',
     message: ''
   });
+  const [isCountryDropdownOpen, setIsCountryDropdownOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitStatus, setSubmitStatus] = useState<'success' | 'error' | null>(null);
+  const [countryCodes, setCountryCodes] = useState<CountryCode[]>([]);
+  const [isLoadingCountries, setIsLoadingCountries] = useState(false);
+  const [countriesError, setCountriesError] = useState<string | null>(null);
+
+  // Fetch countries from API when modal opens
+  useEffect(() => {
+    if (isOpen && countryCodes.length === 0 && !isLoadingCountries) {
+      fetchCountries();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  const fetchCountries = async () => {
+    setIsLoadingCountries(true);
+    setCountriesError(null);
+    try {
+      // Using REST Countries API v3.1
+      const response = await fetch('https://restcountries.com/v3.1/all?fields=name,cca2,idd,flags');
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch countries');
+      }
+
+      const data = await response.json();
+      
+      // Transform API data to our format
+      const transformedCountries: CountryCode[] = data
+        .filter((country: any) => {
+          // Only include countries with calling codes
+          return country.idd && country.idd.root && country.cca2;
+        })
+        .map((country: any) => {
+          // Extract dial code (remove + and root)
+          const root = country.idd.root || '';
+          const suffixes = country.idd.suffixes || [''];
+          // Use first suffix if available, otherwise just root
+          const dialCode = suffixes.length > 0 && suffixes[0] 
+            ? `${root}${suffixes[0]}`.replace(/\+/g, '')
+            : root.replace(/\+/g, '');
+          
+          return {
+            code: country.cca2, // ISO 3166-1 alpha-2 code
+            dialCode: dialCode || '',
+            name: country.name.common || country.name.official,
+            flag: country.flags?.png || getFlagUrl(country.cca2)
+          };
+        })
+        .filter((country: CountryCode) => country.dialCode) // Remove entries without dial codes
+        .sort((a: CountryCode, b: CountryCode) => {
+          // Sort by dial code (as number) then by name
+          const dialA = parseInt(a.dialCode) || 0;
+          const dialB = parseInt(b.dialCode) || 0;
+          if (dialA !== dialB) {
+            return dialA - dialB;
+          }
+          return a.name.localeCompare(b.name);
+        });
+
+      setCountryCodes(transformedCountries);
+    } catch (error) {
+      console.error('Error fetching countries:', error);
+      setCountriesError('Failed to load countries. Please try again.');
+      // Fallback to a few common countries
+      setCountryCodes([
+        { code: 'IN', dialCode: '91', name: 'India', flag: getFlagUrl('IN') },
+        { code: 'US', dialCode: '1', name: 'United States', flag: getFlagUrl('US') },
+        { code: 'GB', dialCode: '44', name: 'United Kingdom', flag: getFlagUrl('GB') },
+        { code: 'AE', dialCode: '971', name: 'United Arab Emirates', flag: getFlagUrl('AE') },
+      ]);
+    } finally {
+      setIsLoadingCountries(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -35,6 +123,20 @@ const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) => {
     });
   };
 
+  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    // Only allow numbers and limit to 10 digits
+    const value = e.target.value.replace(/\D/g, '').slice(0, 10);
+    setFormData({
+      ...formData,
+      phone: value
+    });
+  };
+
+  const selectedCountry = countryCodes.find(c => c.dialCode === formData.countryCode) || 
+    countryCodes.find(c => c.dialCode === '91') || // Default to India
+    countryCodes[0] || 
+    { code: 'IN', dialCode: '91', name: 'India', flag: getFlagUrl('IN') };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
@@ -47,7 +149,9 @@ const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) => {
       setFormData({
         name: '',
         email: '',
-        company: '',
+        countryCode: '91',
+        phone: '',
+        subject: '',
         message: ''
       });
       
@@ -73,8 +177,13 @@ const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) => {
           <div className={`inline-flex items-center justify-center w-16 h-16 ${isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/10'} rounded-full mb-4`}>
             <MessageSquare className="w-8 h-8 text-[#C2D642]" />
           </div>
-          <h2 className={`text-2xl md:text-3xl font-black ${textPrimary} mb-2`}>Get in touch</h2>
-          <p className={`text-sm ${textSecondary}`}>Have questions? We'd love to hear from you.</p>
+          <h2 className={`text-2xl md:text-3xl font-black ${textPrimary} mb-2`}>Get in Touch</h2>
+          <div className={`mt-4 ${textSecondary}`}>
+            <p className="text-sm font-semibold mb-1">Mail Us</p>
+            <a href="mailto:info@koncite.com" className={`text-sm ${isDark ? 'text-[#C2D642] hover:text-[#C2D642]/80' : 'text-[#a8b835] hover:text-[#a8b835]/80'} transition-colors`}>
+              info@koncite.com
+            </a>
+          </div>
         </div>
 
         {submitStatus === 'success' && (
@@ -84,6 +193,7 @@ const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) => {
             </p>
           </div>
         )}
+
 
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="grid md:grid-cols-2 gap-6">
@@ -99,7 +209,7 @@ const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) => {
                   value={formData.name}
                   onChange={handleInputChange}
                   className={`w-full pl-10 pr-4 py-3 border ${borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
-                  placeholder="Your name"
+                  placeholder="Your Name"
                   required
                 />
               </div>
@@ -116,7 +226,7 @@ const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) => {
                   value={formData.email}
                   onChange={handleInputChange}
                   className={`w-full pl-10 pr-4 py-3 border ${borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
-                  placeholder="your.email@example.com"
+                  placeholder="Your Email"
                   required
                 />
               </div>
@@ -125,17 +235,127 @@ const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) => {
 
           <div>
             <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>
-              Company
+              Phone
+            </label>
+            <div className="flex gap-2">
+              {/* Country Code Selector */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setIsCountryDropdownOpen(!isCountryDropdownOpen)}
+                  className={`flex items-center gap-2 px-3 py-3 border ${borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none min-w-[120px] hover:bg-opacity-80 transition-colors`}
+                >
+                  <img 
+                    src={selectedCountry.flag || getFlagUrl(selectedCountry.code)} 
+                    alt={selectedCountry.name}
+                    className="w-5 h-4 object-cover rounded border border-slate-300"
+                    loading="lazy"
+                    onError={(e) => {
+                      // Fallback to flagcdn if API flag fails
+                      const target = e.target as HTMLImageElement;
+                      target.src = getFlagUrl(selectedCountry.code);
+                    }}
+                  />
+                  <span className="text-sm font-medium">+{selectedCountry.dialCode}</span>
+                  <ChevronDown className={`w-4 h-4 transition-transform ${isCountryDropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
+                
+                {isCountryDropdownOpen && (
+                  <>
+                    <div 
+                      className="fixed inset-0 z-40" 
+                      onClick={() => setIsCountryDropdownOpen(false)}
+                    />
+                    <div className={`absolute top-full left-0 mt-1 z-[60] w-64 max-h-60 overflow-y-auto ${inputBg} border ${borderClass} rounded-lg shadow-xl`}>
+                      {isLoadingCountries ? (
+                        <div className="p-4 flex items-center justify-center">
+                          <Loader2 className="w-5 h-5 animate-spin text-[#C2D642]" />
+                          <span className={`ml-2 text-sm ${textSecondary}`}>Loading countries...</span>
+                        </div>
+                      ) : countriesError ? (
+                        <div className="p-4">
+                          <p className={`text-sm ${textSecondary}`}>{countriesError}</p>
+                        </div>
+                      ) : countryCodes.length > 0 ? (
+                        <div className="p-2">
+                          {countryCodes.map((country) => (
+                            <button
+                              key={`${country.code}-${country.dialCode}`}
+                              type="button"
+                              onClick={() => {
+                                setFormData({ ...formData, countryCode: country.dialCode });
+                                setIsCountryDropdownOpen(false);
+                              }}
+                              className={`w-full flex items-center gap-3 px-3 py-2 rounded-md hover:bg-opacity-80 transition-colors ${
+                                formData.countryCode === country.dialCode 
+                                  ? isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/10'
+                                  : isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'
+                              }`}
+                            >
+                              <img 
+                                src={country.flag || getFlagUrl(country.code)} 
+                                alt={country.name}
+                                className="w-6 h-4 object-cover rounded border border-slate-300"
+                                loading="lazy"
+                                onError={(e) => {
+                                  // Fallback to flagcdn if API flag fails
+                                  const target = e.target as HTMLImageElement;
+                                  target.src = getFlagUrl(country.code);
+                                }}
+                              />
+                              <span className={`flex-1 text-left text-sm ${textPrimary}`}>{country.name}</span>
+                              <span className={`text-sm ${textSecondary}`}>+{country.dialCode}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="p-4">
+                          <p className={`text-sm ${textSecondary}`}>No countries available</p>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+              
+              {/* Phone Number Input */}
+              <div className="flex-1 relative">
+                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                <input
+                  type="tel"
+                  name="phone"
+                  value={formData.phone}
+                  onChange={handlePhoneChange}
+                  onKeyPress={(e) => {
+                    // Only allow numbers
+                    if (!/[0-9]/.test(e.key) && e.key !== 'Backspace' && e.key !== 'Delete' && e.key !== 'Tab' && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') {
+                      e.preventDefault();
+                    }
+                  }}
+                  pattern="[0-9]*"
+                  inputMode="numeric"
+                  maxLength={10}
+                  className={`w-full pl-10 pr-4 py-3 border ${borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
+                  placeholder="Your Phone"
+                  required
+                />
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>
+              Subject
             </label>
             <div className="relative">
-              <Building className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+              <FileText className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
               <input
                 type="text"
-                name="company"
-                value={formData.company}
+                name="subject"
+                value={formData.subject}
                 onChange={handleInputChange}
                 className={`w-full pl-10 pr-4 py-3 border ${borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
-                placeholder="Your company"
+                placeholder="Enter Subject"
                 required
               />
             </div>
@@ -169,7 +389,7 @@ const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) => {
             ) : (
               <>
                 <MessageSquare className="w-5 h-5" />
-                Send Message
+                submit now
               </>
             )}
           </button>

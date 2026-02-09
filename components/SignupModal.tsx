@@ -1,10 +1,23 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { X, UserPlus, Mail, Lock, Phone, Building, Loader2 } from 'lucide-react';
+import { X, UserPlus, Mail, Lock, Phone, Building, Loader2, ChevronDown } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from '../contexts/ToastContext';
-import { authAPI, commonAPI, Country } from '../services/api';
+import { authAPI } from '../services/api';
+import TermsAndPrivacyModal from './TermsAndPrivacyModal';
+
+interface CountryCode {
+  code: string;
+  dialCode: string;
+  name: string;
+  flag: string;
+}
+
+// Helper function to get flag image URL
+const getFlagUrl = (countryCode: string) => {
+  return `https://flagcdn.com/w20/${countryCode.toLowerCase()}.png`;
+};
 
 interface SignupModalProps {
   isOpen: boolean;
@@ -12,18 +25,22 @@ interface SignupModalProps {
   onSignup?: (data: SignupData) => void;
 }
 
+interface CountryFromAPI {
+  id: string; // ISO code (cca2) used as ID
+  name: string;
+  code: string; // ISO code (cca2)
+  phone_code?: string; // Dial code
+}
+
 interface SignupData {
   name: string;
   email: string;
   phone: string;
-  country: number | string; // Country ID
+  country: number | string; // Country ID or ISO code
   countryCode: string; // Country code for user phone (e.g., '91', '971')
   password: string;
   confirmPassword: string;
   companyName: string;
-  companyAddress: string;
-  companyPhone: string;
-  companyCountryCode: string; // Country code for company phone
   profileImage: File | null;
   agreedToTerms: boolean;
 }
@@ -40,18 +57,126 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
     password: '',
     confirmPassword: '',
     companyName: '',
-    companyAddress: '',
-    companyPhone: '',
-    companyCountryCode: '91', // Default to India
     profileImage: null,
     agreedToTerms: false
   });
   const [errors, setErrors] = useState<Partial<SignupData>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [countries, setCountries] = useState<Country[]>([]);
+  const [countries, setCountries] = useState<CountryFromAPI[]>([]);
   const [isLoadingCountries, setIsLoadingCountries] = useState(false);
+  const [showTermsModal, setShowTermsModal] = useState(false);
+  const [countryCodes, setCountryCodes] = useState<CountryCode[]>([]);
+  const [isLoadingCountryCodes, setIsLoadingCountryCodes] = useState(false);
+  const [isCountryDropdownOpen, setIsCountryDropdownOpen] = useState(false);
 
-  // Fetch countries on mount
+  // Priority mapping for dial codes to preferred country ISO codes
+  // This ensures correct country selection when multiple countries share the same dial code
+  const dialCodeToCountryMapping: Record<string, string> = {
+    '91': 'IN', // India (not British Indian Territory)
+    '1': 'US', // United States
+    '44': 'GB', // United Kingdom
+    '971': 'AE', // United Arab Emirates
+    '86': 'CN', // China
+    '81': 'JP', // Japan
+    '49': 'DE', // Germany
+    '33': 'FR', // France
+    '39': 'IT', // Italy
+    '34': 'ES', // Spain
+    '61': 'AU', // Australia
+    '7': 'RU', // Russia
+    '82': 'KR', // South Korea
+    '65': 'SG', // Singapore
+    '60': 'MY', // Malaysia
+    '66': 'TH', // Thailand
+  };
+
+  // Helper function to find matching country
+  const findMatchingCountry = (dialCode: string, countryCodeObj: CountryCode | undefined, countriesList: CountryFromAPI[]) => {
+    if (!countryCodeObj || countriesList.length === 0) return null;
+    
+    const dialCodeStr = String(dialCode).replace(/^\+/, '');
+    
+    // First, try to find by preferred mapping (for common dial codes)
+    const preferredCountryCode = dialCodeToCountryMapping[dialCodeStr];
+    if (preferredCountryCode) {
+      const preferredCountry = countriesList.find((country) => 
+        country.code && country.code.toLowerCase() === preferredCountryCode.toLowerCase()
+      );
+      if (preferredCountry) {
+        return preferredCountry;
+      }
+    }
+    
+    // Try matching by ISO code from countryCodeObj (most reliable)
+    const matchByIso = countriesList.find((country) => {
+      if (country.code && country.code.toLowerCase() === countryCodeObj.code.toLowerCase()) {
+        return true;
+      }
+      return false;
+    });
+    if (matchByIso) {
+      return matchByIso;
+    }
+    
+    // Try matching by phone_code, but prefer main countries over territories
+    const matchesByPhone = countriesList.filter((country) => {
+      if (country.phone_code) {
+        const phoneCodeStr = String(country.phone_code).replace(/^\+/, '');
+        return phoneCodeStr === dialCodeStr;
+      }
+      return false;
+    });
+    
+    if (matchesByPhone.length > 0) {
+      // If we have a preferred mapping, use it
+      if (preferredCountryCode) {
+        const preferred = matchesByPhone.find(c => c.code.toLowerCase() === preferredCountryCode.toLowerCase());
+        if (preferred) return preferred;
+      }
+      // Otherwise, prefer countries that match the countryCodeObj name
+      const nameMatch = matchesByPhone.find((country) => {
+        if (country.name && countryCodeObj.name) {
+          const countryName = country.name.toLowerCase().trim();
+          const codeName = countryCodeObj.name.toLowerCase().trim();
+          return countryName === codeName;
+        }
+        return false;
+      });
+      if (nameMatch) return nameMatch;
+      
+      // Filter out territories and use the first main country
+      const mainCountries = matchesByPhone.filter(c => 
+        !c.name.toLowerCase().includes('territory') &&
+        !c.name.toLowerCase().includes('dependency') &&
+        !c.name.toLowerCase().includes('island')
+      );
+      if (mainCountries.length > 0) {
+        return mainCountries[0];
+      }
+      
+      // Fallback to first match
+      return matchesByPhone[0];
+    }
+    
+    // Try matching by country name (case-insensitive) as final fallback
+    if (countryCodeObj.name) {
+      const nameMatch = countriesList.find((country) => {
+        if (country.name) {
+          const countryName = country.name.toLowerCase().trim();
+          const codeName = countryCodeObj.name.toLowerCase().trim();
+          return countryName === codeName || 
+                 countryName.includes(codeName) || 
+                 codeName.includes(countryName);
+        }
+        return false;
+      });
+      if (nameMatch) return nameMatch;
+    }
+    
+    return null;
+  };
+
+  // Fetch countries on mount - using API
   useEffect(() => {
     if (isOpen && countries.length === 0 && !isLoadingCountries) {
       fetchCountries();
@@ -59,17 +184,168 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
-  // Fetch countries from API
+  // Auto-select country when country code is selected and countries are loaded
+  useEffect(() => {
+    if (formData.countryCode && countries.length > 0 && countryCodes.length > 0) {
+      // Find the selected country code object
+      const selectedCountryCode = countryCodes.find(c => c.dialCode === formData.countryCode);
+      
+      if (selectedCountryCode) {
+        // Find matching country using helper function
+        const matchingCountry = findMatchingCountry(formData.countryCode, selectedCountryCode, countries);
+        
+        // Update if we found a match and it's different from current selection
+        if (matchingCountry && formData.country !== matchingCountry.id) {
+          setFormData(prev => {
+            console.log('Auto-selecting country via useEffect:', matchingCountry.name, 'for dial code:', formData.countryCode);
+            return { ...prev, country: matchingCountry.id };
+          });
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData.countryCode, countries, countryCodes]);
+
+  // Fetch country codes from API when modal opens
+  useEffect(() => {
+    if (isOpen && countryCodes.length === 0 && !isLoadingCountryCodes) {
+      fetchCountryCodes();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  // Fetch countries from REST Countries API (third-party)
   const fetchCountries = async () => {
     setIsLoadingCountries(true);
     try {
-      const fetchedCountries = await commonAPI.getCountries();
-      setCountries(fetchedCountries);
+      // Using REST Countries API v3.1 to get all countries with name, ISO code, and dial codes
+      const response = await fetch('https://restcountries.com/v3.1/all?fields=name,cca2,idd,flags');
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch countries');
+      }
+
+      const data = await response.json();
+      
+      // Transform API data to our format
+      const transformedCountries: CountryFromAPI[] = data
+        .map((country: any) => {
+          // Extract dial code
+          const root = country.idd?.root || '';
+          const suffixes = country.idd?.suffixes || [''];
+          const dialCode = suffixes.length > 0 && suffixes[0] 
+            ? `${root}${suffixes[0]}`.replace(/\+/g, '')
+            : root.replace(/\+/g, '');
+          
+          const countryName = country.name.common || country.name.official;
+          
+          return {
+            id: country.cca2, // Use ISO code as ID
+            name: countryName,
+            code: country.cca2, // ISO 3166-1 alpha-2 code
+            phone_code: dialCode || undefined
+          };
+        })
+        .filter((country: CountryFromAPI) => {
+          // Remove entries without ISO code
+          if (!country.code) return false;
+          
+          // Filter out territories and dependencies for common dial codes
+          const nameLower = country.name.toLowerCase();
+          const isTerritory = nameLower.includes('territory') || 
+                             nameLower.includes('dependency') ||
+                             nameLower.includes('british indian ocean territory');
+          
+          // For dial code 91, only keep India, filter out British Indian Territory
+          if (country.phone_code === '91') {
+            return country.code === 'IN'; // Only India
+          }
+          
+          // For other dial codes, prefer main countries but keep territories if no main country exists
+          return true;
+        })
+        .sort((a: CountryFromAPI, b: CountryFromAPI) => {
+          // Sort alphabetically by name, but prioritize main countries
+          // Put India first if sorting by dial code 91
+          if (a.phone_code === '91' && a.code === 'IN') return -1;
+          if (b.phone_code === '91' && b.code === 'IN') return 1;
+          
+          return a.name.localeCompare(b.name);
+        });
+
+      setCountries(transformedCountries);
     } catch (error) {
       console.error('Failed to fetch countries:', error);
       toast.showError('Failed to load countries. Please refresh the page.');
+      // Fallback to a few common countries
+      setCountries([
+        { id: 'IN', name: 'India', code: 'IN', phone_code: '91' },
+        { id: 'US', name: 'United States', code: 'US', phone_code: '1' },
+        { id: 'GB', name: 'United Kingdom', code: 'GB', phone_code: '44' },
+        { id: 'AE', name: 'United Arab Emirates', code: 'AE', phone_code: '971' },
+      ]);
     } finally {
       setIsLoadingCountries(false);
+    }
+  };
+
+  const fetchCountryCodes = async () => {
+    setIsLoadingCountryCodes(true);
+    try {
+      // Using REST Countries API v3.1
+      const response = await fetch('https://restcountries.com/v3.1/all?fields=name,cca2,idd,flags');
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch countries');
+      }
+
+      const data = await response.json();
+      
+      // Transform API data to our format
+      const transformedCountries: CountryCode[] = data
+        .filter((country: any) => {
+          // Only include countries with calling codes
+          return country.idd && country.idd.root && country.cca2;
+        })
+        .map((country: any) => {
+          // Extract dial code (remove + and root)
+          const root = country.idd.root || '';
+          const suffixes = country.idd.suffixes || [''];
+          // Use first suffix if available, otherwise just root
+          const dialCode = suffixes.length > 0 && suffixes[0] 
+            ? `${root}${suffixes[0]}`.replace(/\+/g, '')
+            : root.replace(/\+/g, '');
+          
+          return {
+            code: country.cca2, // ISO 3166-1 alpha-2 code
+            dialCode: dialCode || '',
+            name: country.name.common || country.name.official,
+            flag: country.flags?.png || getFlagUrl(country.cca2)
+          };
+        })
+        .filter((country: CountryCode) => country.dialCode) // Remove entries without dial codes
+        .sort((a: CountryCode, b: CountryCode) => {
+          // Sort by dial code (as number) then by name
+          const dialA = parseInt(a.dialCode) || 0;
+          const dialB = parseInt(b.dialCode) || 0;
+          if (dialA !== dialB) {
+            return dialA - dialB;
+          }
+          return a.name.localeCompare(b.name);
+        });
+
+      setCountryCodes(transformedCountries);
+    } catch (error) {
+      console.error('Error fetching country codes:', error);
+      // Fallback to a few common countries
+      setCountryCodes([
+        { code: 'IN', dialCode: '91', name: 'India', flag: getFlagUrl('IN') },
+        { code: 'US', dialCode: '1', name: 'United States', flag: getFlagUrl('US') },
+        { code: 'GB', dialCode: '44', name: 'United Kingdom', flag: getFlagUrl('GB') },
+        { code: 'AE', dialCode: '971', name: 'United Arab Emirates', flag: getFlagUrl('AE') },
+      ]);
+    } finally {
+      setIsLoadingCountryCodes(false);
     }
   };
 
@@ -88,8 +364,8 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
     const checked = (e.target as HTMLInputElement).checked;
     
     // Phone number validation - only allow numbers
-    if (name === 'phone' || name === 'companyPhone') {
-      const numericValue = value.replace(/\D/g, ''); // Remove all non-digit characters
+    if (name === 'phone') {
+      const numericValue = value.replace(/\D/g, '').slice(0, 10); // Remove all non-digit characters and limit to 10
       setFormData(prev => ({
         ...prev,
         [name]: numericValue
@@ -201,21 +477,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
       newErrors.companyName = 'Company name is required';
     }
 
-    if (!formData.companyAddress.trim()) {
-      newErrors.companyAddress = 'Company address is required';
-    }
 
-    if (!formData.companyPhone.trim()) {
-      newErrors.companyPhone = 'Company phone is required';
-    } else if (!/^\d+$/.test(formData.companyPhone)) {
-      newErrors.companyPhone = 'Company phone must contain only numbers';
-    } else if (formData.companyPhone.length < 10 || formData.companyPhone.length > 15) {
-      newErrors.companyPhone = 'Company phone must be between 10 and 15 digits';
-    }
-
-    if (!formData.companyCountryCode.trim()) {
-      newErrors.companyCountryCode = 'Company country code is required';
-    }
 
     if (!formData.countryCode.trim()) {
       newErrors.countryCode = 'Country code is required';
@@ -266,9 +528,6 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
       
       // Required company fields
       formDataToSend.append('company_name', formData.companyName.trim());
-      formDataToSend.append('company_address', formData.companyAddress.trim());
-      formDataToSend.append('company_phone', formData.companyPhone.trim());
-      formDataToSend.append('company_country_code', formData.companyCountryCode);
       
       // Optional fields
       if (formData.profileImage) {
@@ -306,23 +565,37 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
       console.log('======================');
 
       // Check if signup was successful
-      const signupSuccess = response.status !== false && (response.user || response.data?.user || response.data?.data?.user);
+      // The API returns response.data, so response is already the data object
+      // Check for success indicators: no status=false, has message, and optionally has user data
+      const hasErrorStatus = response.status === false;
+      const hasMessage = !!response.message;
+      const hasUserData = !!(response.user || response.data?.user || response.data?.data?.user);
+      
+      // Signup is successful if there's no error status and we have a success message
+      // User data is optional - some APIs don't return user data immediately after signup
+      const signupSuccess = !hasErrorStatus && hasMessage;
       
       if (signupSuccess) {
         const userData = response.user || response.data?.user || response.data?.data?.user;
-        console.log('Signup: User data found:', userData);
+        
+        if (userData) {
+          console.log('Signup: User data found:', userData);
+          // If user data is returned, dispatch event (though user still needs OTP verification)
+          if (typeof window !== 'undefined') {
+            console.log('Signup: Dispatching userCreated event with user:', userData);
+            window.dispatchEvent(new CustomEvent('userCreated', { detail: { user: userData } }));
+          }
+        } else {
+          console.log('Signup: No user data returned (this is normal if backend sends OTP first)');
+        }
         
         toast.showSuccess(response.message || 'Account created successfully! Please verify your email with OTP.');
-        
-        // If user data is returned, dispatch event (though user still needs OTP verification)
-        if (userData && typeof window !== 'undefined') {
-          console.log('Signup: Dispatching userCreated event with user:', userData);
-          window.dispatchEvent(new CustomEvent('userCreated', { detail: { user: userData } }));
-        }
       } else {
-        console.error('Signup: Response indicates failure or no user data returned');
+        console.error('Signup: Response indicates failure');
         console.error('Response structure:', response);
-        toast.showWarning('Signup request sent, but user data not returned. Please check database and Laravel logs.');
+        const errorMessage = response.message || 'Signup failed. Please try again.';
+        toast.showError(errorMessage);
+        return; // Don't proceed if signup failed
       }
       
       // Store email for OTP verification
@@ -343,9 +616,6 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
         password: '',
         confirmPassword: '',
         companyName: '',
-        companyAddress: '',
-        companyPhone: '',
-        companyCountryCode: '91',
         profileImage: null,
         agreedToTerms: false
       });
@@ -475,35 +745,135 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
               Phone Number <span className="text-red-500">*</span>
             </label>
             <div className="flex gap-2">
-              <div className="w-24">
-                <select
-                  name="countryCode"
-                  value={formData.countryCode}
-                  onChange={handleInputChange}
-                  className={`w-full px-3 py-3 border ${errors.countryCode ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
-                >
-                  <option value="91">+91 (IN)</option>
-                  <option value="971">+971 (AE)</option>
-                  <option value="1">+1 (US)</option>
-                  <option value="44">+44 (UK)</option>
-                </select>
+              {/* Country Code Selector */}
+              <div className="relative">
+                {isLoadingCountryCodes ? (
+                  <div className={`w-32 px-3 py-3 border ${borderClass} rounded-lg ${inputBg} flex items-center justify-center`}>
+                    <Loader2 className="w-4 h-4 animate-spin text-[#C2D642]" />
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setIsCountryDropdownOpen(!isCountryDropdownOpen)}
+                      className={`flex items-center gap-2 px-3 py-3 border ${errors.countryCode ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none min-w-[120px] hover:bg-opacity-80 transition-colors`}
+                    >
+                      {countryCodes.length > 0 ? (
+                        <>
+                          <img 
+                            src={(countryCodes.find(c => c.dialCode === formData.countryCode) || countryCodes.find(c => c.dialCode === '91') || countryCodes[0])?.flag || getFlagUrl('IN')} 
+                            alt="Flag"
+                            className="w-5 h-4 object-cover rounded border border-slate-300"
+                            loading="lazy"
+                            onError={(e) => {
+                              const target = e.target as HTMLImageElement;
+                              target.src = getFlagUrl((countryCodes.find(c => c.dialCode === formData.countryCode) || countryCodes.find(c => c.dialCode === '91') || countryCodes[0])?.code || 'IN');
+                            }}
+                          />
+                          <span className="text-sm font-medium">+{formData.countryCode}</span>
+                        </>
+                      ) : (
+                        <span className="text-sm font-medium">+91</span>
+                      )}
+                      <ChevronDown className={`w-4 h-4 transition-transform ${isCountryDropdownOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                    
+                    {isCountryDropdownOpen && (
+                      <>
+                        <div 
+                          className="fixed inset-0 z-40" 
+                          onClick={() => setIsCountryDropdownOpen(false)}
+                        />
+                        <div className={`absolute top-full left-0 mt-1 z-[60] w-64 max-h-60 overflow-y-auto ${inputBg} border ${borderClass} rounded-lg shadow-xl`}>
+                          {countryCodes.length > 0 ? (
+                            <div className="p-2">
+                              {countryCodes.map((countryCode) => (
+                                <button
+                                  key={`${countryCode.code}-${countryCode.dialCode}`}
+                                  type="button"
+                                  onClick={() => {
+                                    // Find matching country using helper function
+                                    const matchingCountry = findMatchingCountry(countryCode.dialCode, countryCode, countries);
+                                    
+                                    // Update form data with country code and matching country
+                                    setFormData(prev => {
+                                      const updated = {
+                                        ...prev,
+                                        countryCode: countryCode.dialCode
+                                      };
+                                      
+                                      // Auto-select matching country if found
+                                      if (matchingCountry) {
+                                        updated.country = matchingCountry.id; // Using ISO code as ID
+                                        console.log('Auto-selected country:', matchingCountry.name, 'for dial code:', countryCode.dialCode);
+                                      } else {
+                                        console.warn('No matching country found for dial code:', countryCode.dialCode, 'Country name:', countryCode.name);
+                                        // Clear country selection if no match found
+                                        updated.country = '';
+                                      }
+                                      
+                                      return updated;
+                                    });
+                                    
+                                    setIsCountryDropdownOpen(false);
+                                  }}
+                                  className={`w-full flex items-center gap-3 px-3 py-2 rounded-md hover:bg-opacity-80 transition-colors ${
+                                    formData.countryCode === countryCode.dialCode 
+                                      ? isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/10'
+                                      : isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'
+                                  }`}
+                                >
+                                  <img 
+                                    src={countryCode.flag || getFlagUrl(countryCode.code)} 
+                                    alt={countryCode.name}
+                                    className="w-6 h-4 object-cover rounded border border-slate-300"
+                                    loading="lazy"
+                                    onError={(e) => {
+                                      const target = e.target as HTMLImageElement;
+                                      target.src = getFlagUrl(countryCode.code);
+                                    }}
+                                  />
+                                  <span className={`flex-1 text-left text-sm ${textPrimary}`}>{countryCode.name}</span>
+                                  <span className={`text-sm ${textSecondary}`}>+{countryCode.dialCode}</span>
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="p-4">
+                              <p className={`text-sm ${textSecondary}`}>Loading countries...</p>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
               </div>
+              
+              {/* Phone Number Input */}
               <div className="flex-1 relative">
                 <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
                 <input
                   type="tel"
                   name="phone"
                   value={formData.phone}
-                  onChange={handleInputChange}
+                  onChange={(e) => {
+                    // Only allow numbers and limit to 10 digits
+                    const value = e.target.value.replace(/\D/g, '').slice(0, 10);
+                    setFormData({
+                      ...formData,
+                      phone: value
+                    });
+                  }}
                   onKeyPress={(e) => {
                     // Only allow numbers
-                    if (!/[0-9]/.test(e.key) && e.key !== 'Backspace' && e.key !== 'Delete' && e.key !== 'Tab') {
+                    if (!/[0-9]/.test(e.key) && e.key !== 'Backspace' && e.key !== 'Delete' && e.key !== 'Tab' && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') {
                       e.preventDefault();
                     }
                   }}
                   pattern="[0-9]*"
                   inputMode="numeric"
-                  maxLength={15}
+                  maxLength={10}
                   className={`w-full pl-10 pr-4 py-3 border ${errors.phone ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
                   placeholder="Enter phone number"
                   required
@@ -511,6 +881,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
               </div>
             </div>
             {errors.phone && <p className="text-red-500 text-xs mt-1">{typeof errors.phone === 'string' ? errors.phone : 'Invalid phone'}</p>}
+            {errors.countryCode && <p className="text-red-500 text-xs mt-1">{typeof errors.countryCode === 'string' ? errors.countryCode : 'Invalid country code'}</p>}
           </div>
 
           {/* Country Dropdown */}
@@ -599,70 +970,6 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
             {errors.companyName && <p className="text-red-500 text-xs mt-1">{typeof errors.companyName === 'string' ? errors.companyName : 'Invalid company name'}</p>}
           </div>
 
-          {/* Company Address */}
-          <div>
-            <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>
-              Company Address <span className="text-red-500">*</span>
-            </label>
-            <div className="relative">
-              <Building className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-              <input
-                type="text"
-                name="companyAddress"
-                value={formData.companyAddress}
-                onChange={handleInputChange}
-                className={`w-full pl-10 pr-4 py-3 border ${errors.companyAddress ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
-                placeholder="Enter company address"
-                required
-              />
-            </div>
-            {errors.companyAddress && <p className="text-red-500 text-xs mt-1">{typeof errors.companyAddress === 'string' ? errors.companyAddress : 'Invalid address'}</p>}
-          </div>
-
-          {/* Company Phone with Country Code */}
-          <div>
-            <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>
-              Company Phone <span className="text-red-500">*</span>
-            </label>
-            <div className="flex gap-2">
-              <div className="w-24">
-                <select
-                  name="companyCountryCode"
-                  value={formData.companyCountryCode}
-                  onChange={handleInputChange}
-                  className={`w-full px-3 py-3 border ${errors.companyCountryCode ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
-                >
-                  <option value="91">+91 (IN)</option>
-                  <option value="971">+971 (AE)</option>
-                  <option value="1">+1 (US)</option>
-                  <option value="44">+44 (UK)</option>
-                </select>
-              </div>
-              <div className="flex-1 relative">
-                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                <input
-                  type="tel"
-                  name="companyPhone"
-                  value={formData.companyPhone}
-                  onChange={handleInputChange}
-                  onKeyPress={(e) => {
-                    // Only allow numbers
-                    if (!/[0-9]/.test(e.key) && e.key !== 'Backspace' && e.key !== 'Delete' && e.key !== 'Tab') {
-                      e.preventDefault();
-                    }
-                  }}
-                  pattern="[0-9]*"
-                  inputMode="numeric"
-                  maxLength={15}
-                  className={`w-full pl-10 pr-4 py-3 border ${errors.companyPhone ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
-                  placeholder="Enter company phone number"
-                  required
-                />
-              </div>
-            </div>
-            {errors.companyPhone && <p className="text-red-500 text-xs mt-1">{typeof errors.companyPhone === 'string' ? errors.companyPhone : 'Invalid phone'}</p>}
-          </div>
-
           {/* Profile Image */}
           <div>
             <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>
@@ -696,9 +1003,16 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
               />
               <span className={`text-sm ${textSecondary}`}>
                 I have read and agree to the{' '}
-                <a href="#" className="text-[#C2D642] hover:underline font-semibold">Privacy Policy</a>
-                {' '}and{' '}
-                <a href="#" className="text-[#C2D642] hover:underline font-semibold">Terms and Conditions</a>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setShowTermsModal(true);
+                  }}
+                  className="text-[#C2D642] hover:underline font-semibold"
+                >
+                  Terms & Conditions and Privacy Policy
+                </button>
                 <span className="text-red-500">*</span>
               </span>
             </label>
@@ -724,6 +1038,12 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
             )}
           </button>
         </form>
+
+        {/* Terms and Privacy Modal */}
+        <TermsAndPrivacyModal
+          isOpen={showTermsModal}
+          onClose={() => setShowTermsModal(false)}
+        />
 
         <div className={`mt-6 pt-6 border-t ${borderClass}`}>
           <p className={`text-sm text-center ${textSecondary}`}>

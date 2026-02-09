@@ -3,6 +3,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ThemeType } from '../types';
 import { useToast } from '../contexts/ToastContext';
+import { useUser } from '../contexts/UserContext';
+import { masterDataAPI, documentAPI } from '../services/api';
 import {
   Folder,
   Briefcase,
@@ -32,7 +34,9 @@ import {
   Share2,
   Copy,
   RotateCcw,
-  Filter
+  Filter,
+  Cloud,
+  CloudOff
 } from 'lucide-react';
 
 interface FileItem {
@@ -52,6 +56,7 @@ interface FileItem {
 
 interface Project {
   id: string;
+  numericId?: number; // Store numeric ID for API calls
   name: string;
   code: string;
   company: string;
@@ -65,6 +70,10 @@ interface Project {
   isContractor?: boolean;
   projectManager?: string;
   createdAt?: string;
+  azure_folder_path?: string; // Azure Blob Storage folder path for documents
+  blobStorageConnected?: boolean; // Whether blob storage folder exists and is accessible
+  blobItemCount?: number; // Number of items in blob storage folder
+  blobError?: string; // Error message if blob storage verification failed
 }
 
 interface DocumentManagementProps {
@@ -80,6 +89,7 @@ interface ChatMessage {
 
 const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
   const toast = useToast();
+  const { isAuthenticated, isLoading } = useUser();
   const [selectedFolder, setSelectedFolder] = useState<string>('office');
   const [currentPath, setCurrentPath] = useState<string[]>(['office']); // Track navigation path
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
@@ -123,177 +133,490 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
   const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
   const bgSecondary = isDark ? 'bg-slate-800' : 'bg-slate-50';
 
-  const loadProjects = () => {
-    // Check if we're in the browser (localStorage is only available client-side)
-    if (typeof window === 'undefined' || !window.localStorage) {
+  // Fetch projects from API
+  const loadProjects = async () => {
+    // Check token instead of isAuthenticated (which requires user to be loaded)
+    if (typeof window !== 'undefined') {
+      const { getCookie } = require('../utils/cookies');
+      const token = getCookie('auth_token') || localStorage.getItem('auth_token');
+      const authFlag = getCookie('isAuthenticated') === 'true' || localStorage.getItem('isAuthenticated') === 'true';
+      
+      if (!token || !authFlag) {
+        console.warn('⚠️ Cannot load projects - no token or auth flag');
+        setProjects([]);
+        return;
+      }
+    } else {
       setProjects([]);
       return;
     }
     
-    const savedProjects = localStorage.getItem('projects');
-    const loadedProjects: Project[] = [];
-    
-    if (savedProjects) {
-      try {
-        const parsed = JSON.parse(savedProjects);
-        loadedProjects.push(...parsed);
-      } catch (e) {
-        console.error('Error loading projects:', e);
+    try {
+      console.log('📡 Fetching projects from API for document management...');
+      const fetchedProjects = await masterDataAPI.getProjects();
+      console.log('✅ Fetched projects from API:', fetchedProjects?.length || 0);
+      
+      if (!Array.isArray(fetchedProjects)) {
+        console.error('❌ API did not return an array:', fetchedProjects);
+        setProjects([]);
+        return;
       }
+      
+      // Transform API response to match Project interface
+      const transformedProjects: Project[] = fetchedProjects.map((p: any) => {
+        const companyName = p.companies?.registration_name || p.companies?.name || p.company || p.company_name || '';
+        const companyLogo = p.companies?.logo || p.company_logo || '';
+        const numericId = p.id;
+        const uuid = p.uuid;
+        
+        return {
+          id: uuid || String(numericId),
+          numericId: numericId, // Store numeric ID for API calls
+          name: p.project_name || p.name || '',
+          code: p.code || '',
+          company: companyName,
+          companyLogo: companyLogo || `https://ui-avatars.com/api/?name=${encodeURIComponent(companyName)}&background=6366f1&color=fff&size=64`,
+          startDate: p.planned_start_date || p.start_date || p.startDate || '',
+          endDate: p.planned_end_date || p.end_date || p.endDate || '',
+          status: p.status || 'Planning',
+          progress: p.progress || 0,
+          location: p.address || p.location || '',
+          logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name || p.name || '')}&background=6366f1&color=fff&size=128`,
+          isContractor: p.own_project_or_contractor === 'yes' || p.is_contractor || p.isContractor,
+          projectManager: p.project_manager || p.projectManager,
+          createdAt: p.created_at || p.createdAt,
+          azure_folder_path: p.azure_folder_path || p.azureFolderPath, // Store Azure folder path
+        };
+      });
+      
+      console.log('✅ Transformed projects for document management:', transformedProjects.length);
+      
+      // Log Azure folder paths for debugging
+      // Backend creates path at: {company_azure_folder_path}/projects/{sanitized-name}_{uuid}
+      transformedProjects.forEach((project, index) => {
+        if (project.azure_folder_path) {
+          // Validate path format
+          const pathParts = project.azure_folder_path.split('/');
+          const isValidFormat = pathParts.length >= 3 && 
+                               pathParts[pathParts.length - 2] === 'projects' &&
+                               pathParts[pathParts.length - 1].includes('_');
+          
+          console.log(`📁 Project ${index + 1} (${project.name}) Azure folder:`, project.azure_folder_path);
+          console.log(`   Format validation: ${isValidFormat ? '✅ Valid' : '⚠️ Invalid'}`, {
+            expectedFormat: '{company-path}/projects/{name}_{uuid}',
+            pathParts: pathParts,
+            folderMarker: `${project.azure_folder_path}/.folder`,
+          });
+        } else {
+          console.warn(`⚠️ Project ${index + 1} (${project.name}) missing azure_folder_path`);
+          console.warn(`   Backend API: POST /api/project-add should create this`);
+          console.warn(`   Expected format: {company_azure_folder_path}/projects/{sanitized-name}_{uuid}`);
+          console.warn(`   Database column: projects.azure_folder_path`);
+        }
+      });
+      
+      // Verify blob storage connection for each project
+      // This ensures projects have corresponding folders in Azure Blob Storage
+      const projectsWithBlobStorage = await Promise.all(
+        transformedProjects.map(async (project) => {
+          // If project doesn't have azure_folder_path, try to get it from backend
+          if (!project.azure_folder_path && project.numericId) {
+            console.warn(`⚠️ Project "${project.name}" missing azure_folder_path - attempting to fetch from backend...`);
+            try {
+              // Try to get project details from backend to get azure_folder_path
+              const projectDetails = await masterDataAPI.getProject(String(project.numericId));
+              if (projectDetails?.data?.azure_folder_path) {
+                project.azure_folder_path = projectDetails.data.azure_folder_path;
+                console.log(`✅ Retrieved azure_folder_path for project "${project.name}":`, project.azure_folder_path);
+              } else if (projectDetails?.azure_folder_path) {
+                project.azure_folder_path = projectDetails.azure_folder_path;
+                console.log(`✅ Retrieved azure_folder_path for project "${project.name}":`, project.azure_folder_path);
+              } else {
+                console.warn(`⚠️ Project "${project.name}" still missing azure_folder_path after fetch - backend may need to create folder`);
+                return { ...project, blobStorageConnected: false, blobError: 'Azure folder path not configured' };
+              }
+            } catch (err: any) {
+              console.error(`❌ Failed to fetch project details for "${project.name}":`, err.message);
+              return { ...project, blobStorageConnected: false, blobError: 'Failed to fetch project details' };
+            }
+          }
+          
+          if (!project.azure_folder_path || !project.numericId) {
+            console.warn(`⚠️ Project "${project.name}" missing azure_folder_path or numericId - skipping blob verification`);
+            return { ...project, blobStorageConnected: false, blobError: 'Missing azure_folder_path or numericId' };
+          }
+          
+          try {
+            // Try to list documents from blob storage to verify connection
+            console.log(`🔍 Verifying blob storage connection for project: ${project.name} (${project.azure_folder_path})`);
+            const testResponse = await documentAPI.getDocuments({
+              category: 'project',
+              project_id: project.numericId,
+              folder_path: project.azure_folder_path,
+            });
+            
+            if (testResponse.status) {
+              console.log(`✅ Blob storage connected for project: ${project.name}`, {
+                folderPath: project.azure_folder_path,
+                itemCount: testResponse.data?.length || 0,
+              });
+              return { ...project, blobStorageConnected: true, blobItemCount: testResponse.data?.length || 0 };
+            } else {
+              console.warn(`⚠️ Blob storage verification failed for project: ${project.name}`);
+              return { ...project, blobStorageConnected: false };
+            }
+          } catch (err: any) {
+            // If 401, it might be authentication issue, not blob storage issue
+            const is401 = err.response?.status === 401 || err.status === 401;
+            const is404 = err.response?.status === 404 || err.status === 404;
+            
+            if (is401) {
+              console.warn(`⚠️ Project "${project.name}" blob storage check returned 401 - authentication issue, not blob storage issue`);
+              // Still mark as connected since path exists, just auth issue
+              return { ...project, blobStorageConnected: true, blobError: 'Authentication required' };
+            } else if (is404) {
+              console.warn(`⚠️ Project "${project.name}" blob storage folder not found (404) - folder may not exist yet:`, project.azure_folder_path);
+              return { ...project, blobStorageConnected: false, blobError: 'Folder not found in blob storage' };
+            } else {
+              console.error(`❌ Error verifying blob storage for project "${project.name}":`, err.message || err.response?.data?.message);
+              return { ...project, blobStorageConnected: false, blobError: err.message || err.response?.data?.message };
+            }
+          }
+        })
+      );
+      
+      // Filter to show only projects with blob storage connection (or show all with warning)
+      // For now, show all projects but log which ones have blob storage
+      const connectedProjects = projectsWithBlobStorage.filter(p => p.blobStorageConnected);
+      const disconnectedProjects = projectsWithBlobStorage.filter(p => !p.blobStorageConnected);
+      
+      console.log(`📊 Blob Storage Connection Summary:`, {
+        total: projectsWithBlobStorage.length,
+        connected: connectedProjects.length,
+        disconnected: disconnectedProjects.length,
+        connectedProjects: connectedProjects.map(p => p.name),
+        disconnectedProjects: disconnectedProjects.map(p => ({ name: p.name, azure_folder_path: p.azure_folder_path })),
+      });
+      
+      // Set projects (include all, but mark connection status)
+      setProjects(projectsWithBlobStorage);
+      
+      // Show warning if some projects don't have blob storage connection
+      if (disconnectedProjects.length > 0) {
+        console.warn(`⚠️ ${disconnectedProjects.length} project(s) without blob storage connection:`, 
+          disconnectedProjects.map(p => p.name).join(', '));
+      }
+    } catch (err: any) {
+      console.error('❌ Failed to fetch projects:', err);
+      setProjects([]);
+      toast.showError(err.message || 'Failed to load projects');
     }
-    
-    setProjects(loadedProjects);
   };
 
-  // Load projects from localStorage
+  // Load projects from API when authenticated
+  // Wait for UserContext to finish loading before making API calls
   useEffect(() => {
-    loadProjects();
-  }, []);
+    // Don't load if still checking authentication or user profile
+    if (isLoading) {
+      console.log('⏳ Waiting for user profile to load before fetching projects...');
+      return;
+    }
+    
+    // Check if we have a token (even if user profile hasn't loaded yet)
+    if (typeof window !== 'undefined') {
+      const { getCookie } = require('../utils/cookies');
+      const token = getCookie('auth_token') || localStorage.getItem('auth_token');
+      const authFlag = getCookie('isAuthenticated') === 'true' || localStorage.getItem('isAuthenticated') === 'true';
+      
+      if (token && authFlag) {
+        loadProjects();
+      } else {
+        console.warn('⚠️ No token or auth flag found, skipping project load');
+        setProjects([]);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, isLoading]);
 
   // Get current folder path as string
   const getCurrentFolderPath = () => {
     return currentPath.join('/');
   };
 
-  const loadDocuments = () => {
-    // Check if we're in the browser (localStorage is only available client-side)
-    if (typeof window === 'undefined' || !window.localStorage) {
-      setDocuments([]);
+  // Load documents from API
+  const loadDocuments = async () => {
+    // Wait for user profile to be loaded (but don't require user to be set)
+    if (isLoading) {
+      console.log('⏳ Waiting for user profile to load...');
       return;
     }
-    
-    const folderPath = getCurrentFolderPath();
-    
-    // If viewing Image Gallery, load all images from all folders
-    if (currentPath[0] === 'image-gallery') {
-      const allImages: FileItem[] = [];
-      const imageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml', 'image/bmp'];
-      const seenImageKeys = new Map<string, FileItem>(); // Track seen images by name+size+timestamp to avoid duplicates
+
+    // Check token instead of isAuthenticated (which requires user to be loaded)
+    if (typeof window !== 'undefined') {
+      const { getCookie } = require('../utils/cookies');
+      const token = getCookie('auth_token') || localStorage.getItem('auth_token');
+      const authFlag = getCookie('isAuthenticated') === 'true' || localStorage.getItem('isAuthenticated') === 'true';
       
-      // First, load images from all folders except image-gallery and trash
-      // This gets images from their original locations
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith('documents_') && key !== 'documents_trash' && key !== 'documents_image-gallery') {
-          try {
-            const savedData = localStorage.getItem(key);
-            if (savedData) {
-              const parsed = JSON.parse(savedData);
-              // Filter only image files
-              const images = parsed.filter((doc: any) => {
-                const isImage = imageTypes.some(type => doc.name?.toLowerCase().endsWith(type.split('/')[1])) ||
-                  /\.(jpg|jpeg|png|gif|webp|svg|bmp)$/i.test(doc.name || '');
-                return isImage && doc.type === 'file';
-              });
-              
-              // Add original path info to images
-              const folderName = key.replace('documents_', '');
-              images.forEach((img: any) => {
-                // Create a unique key based on name, size, and lastModified to identify duplicates
-                const uniqueKey = `${img.name}_${img.size}_${img.lastModified}`;
-                
-                // Only add if we haven't seen this exact image before
-                if (!seenImageKeys.has(uniqueKey)) {
-                  const imageItem: FileItem = {
-                    ...img,
-                    originalPath: img.originalPath || folderName,
-                    lastModified: img.lastModified || new Date().toLocaleDateString()
-                  };
-                  seenImageKeys.set(uniqueKey, imageItem);
-                  allImages.push(imageItem);
-                }
-              });
-            }
-          } catch (e) {
-            console.error(`Error loading documents from ${key}:`, e);
-          }
-        }
-      }
-      
-      // Then, load from documents_image-gallery to catch images uploaded directly to gallery
-      // But skip duplicates that we already have from their original folders
-      try {
-        const savedGallery = localStorage.getItem('documents_image-gallery');
-        if (savedGallery) {
-          const parsed = JSON.parse(savedGallery);
-          const images = parsed.filter((doc: any) => {
-            const isImage = imageTypes.some(type => doc.name?.toLowerCase().endsWith(type.split('/')[1])) ||
-              /\.(jpg|jpeg|png|gif|webp|svg|bmp)$/i.test(doc.name || '');
-            return isImage && doc.type === 'file';
-          });
-          
-          images.forEach((img: any) => {
-            const uniqueKey = `${img.name}_${img.size}_${img.lastModified}`;
-            // Only add if we haven't seen this image before (from original folder)
-            // This prevents duplicates while still showing images uploaded directly to gallery
-            if (!seenImageKeys.has(uniqueKey)) {
-              const imageItem: FileItem = {
-                ...img,
-                originalPath: img.originalPath || 'image-gallery',
-                lastModified: img.lastModified || new Date().toLocaleDateString()
-              };
-              seenImageKeys.set(uniqueKey, imageItem);
-              allImages.push(imageItem);
-            }
-          });
-        }
-      } catch (e) {
-        console.error('Error loading gallery documents:', e);
-      }
-      
-      // Sort by lastModified (newest first)
-      allImages.sort((a, b) => {
-        const dateA = new Date(a.lastModified).getTime();
-        const dateB = new Date(b.lastModified).getTime();
-        return dateB - dateA;
-      });
-      
-      setDocuments(allImages);
-      setSelectedFiles(new Set());
-      return;
-    }
-    
-    // Regular folder loading
-    const savedDocuments = localStorage.getItem(`documents_${folderPath}`);
-    if (savedDocuments) {
-      try {
-        const parsed = JSON.parse(savedDocuments);
-        // Convert stored data back to FileItem format
-        setDocuments(parsed.map((doc: any) => {
-          // If fileData exists, create a File object from it
-          let fileObj: File | undefined;
-          if (doc.fileData && doc.mimeType) {
-            try {
-              const blob = base64ToBlob(doc.fileData, doc.mimeType);
-              fileObj = new File([blob], doc.name, { type: doc.mimeType });
-            } catch (e) {
-              console.error('Error creating file from base64:', e);
-            }
-          }
-          
-          return {
-            ...doc,
-            lastModified: doc.lastModified || new Date().toLocaleDateString(),
-            originalPath: doc.originalPath,
-            deletedAt: doc.deletedAt,
-            file: fileObj || doc.file
-          };
-        }));
-      } catch (e) {
-        console.error('Error loading documents:', e);
+      if (!token || !authFlag) {
+        console.warn('⚠️ User not authenticated (no token or auth flag), skipping document load');
+        console.warn('⚠️ Token check:', { hasToken: !!token, hasAuthFlag: !!authFlag, isAuthenticated });
         setDocuments([]);
+        return;
+      } else {
+        console.log('✅ Auth token and flag found, proceeding with document load');
       }
     } else {
       setDocuments([]);
+      return;
     }
+
+    try {
+      // Determine category and project_id from currentPath
+      const firstSegment = currentPath[0];
+      let category: 'office' | 'project' | 'shared' = 'office';
+      let projectId: number | undefined;
+      let folderUuid: string | undefined;
+      let folderPath: string | undefined;
+
+      // Check if we're in a project folder
+      if (firstSegment === 'projects' && currentPath.length > 1) {
+        category = 'project';
+        // Extract project ID from path (format: project_<id>)
+        const projectSegment = currentPath[1];
+        if (projectSegment.startsWith('project_')) {
+          const projectIdStr = projectSegment.replace('project_', '');
+          // Find project by ID to get numeric ID and azure_folder_path
+          const project = projects.find(p => p.id === projectIdStr || String(p.id) === projectIdStr);
+          if (project) {
+            // Use numericId if available, otherwise try to parse the ID
+            projectId = project.numericId || (typeof project.id === 'number' ? project.id : parseInt(projectIdStr));
+            
+            // If project has azure_folder_path, use it as base path
+            // Backend will use this to list blobs directly from Azure
+            if (project.azure_folder_path && currentPath.length === 2) {
+              // We're at the project root, use azure_folder_path for blob listing
+              folderPath = project.azure_folder_path;
+              console.log('📁 Using project azure_folder_path for blob listing:', folderPath);
+            } else if (!project.azure_folder_path && currentPath.length === 2) {
+              // Project doesn't have azure_folder_path - try to fetch it
+              console.warn(`⚠️ Project "${project.name}" missing azure_folder_path - attempting to fetch from backend...`);
+              try {
+                const projectDetails = await masterDataAPI.getProject(String(project.numericId));
+                if (projectDetails?.data?.azure_folder_path) {
+                  folderPath = projectDetails.data.azure_folder_path;
+                  // Update project in state
+                  setProjects(prev => prev.map(p => 
+                    p.id === project.id 
+                      ? { ...p, azure_folder_path: folderPath }
+                      : p
+                  ));
+                  console.log(`✅ Retrieved azure_folder_path for project "${project.name}":`, folderPath);
+                } else if (projectDetails?.azure_folder_path) {
+                  folderPath = projectDetails.azure_folder_path;
+                  setProjects(prev => prev.map(p => 
+                    p.id === project.id 
+                      ? { ...p, azure_folder_path: folderPath }
+                      : p
+                  ));
+                  console.log(`✅ Retrieved azure_folder_path for project "${project.name}":`, folderPath);
+                } else {
+                  console.error(`❌ Project "${project.name}" still missing azure_folder_path after fetch`);
+                  toast.showError(`Project "${project.name}" does not have an Azure folder path configured. Please contact administrator.`);
+                  setDocuments([]);
+                  return;
+                }
+              } catch (fetchErr: any) {
+                console.error(`❌ Failed to fetch project details for "${project.name}":`, fetchErr.message);
+                toast.showError(`Failed to load project folder. Project may not have Azure storage configured.`);
+                setDocuments([]);
+                return;
+              }
+            }
+          }
+        }
+        // Check if we're navigating into a folder
+        if (currentPath.length > 2) {
+          const folderSegment = currentPath[currentPath.length - 1];
+          // Check if it's a UUID format or a path
+          if (folderSegment.includes('/')) {
+            folderPath = folderSegment;
+          } else {
+            folderUuid = folderSegment;
+          }
+        }
+      } else if (firstSegment === 'shared') {
+        category = 'shared';
+      } else if (firstSegment === 'image-gallery') {
+        try {
+          // Load gallery images from API
+          let galleryProjectId: number | undefined;
+          if (selectedProjectFilter !== 'all') {
+            const projectIdStr = selectedProjectFilter.replace('project_', '');
+            const project = projects.find(p => p.id === projectIdStr || String(p.id) === projectIdStr);
+            galleryProjectId = project?.numericId || (typeof project?.id === 'number' ? project.id : parseInt(projectIdStr));
+          }
+          
+          const response = await documentAPI.getGalleryImages({
+            project_id: galleryProjectId,
+          });
+          
+          if (response.status && response.data) {
+            const galleryImages: FileItem[] = response.data.map((img: any) => ({
+              id: img.uuid || img.id,
+              name: img.name || img.original_name,
+              size: img.file_size ? `${(img.file_size / 1024).toFixed(2)} KB` : '0 KB',
+              lastModified: img.uploaded_at || new Date().toLocaleDateString(),
+              owner: img.uploaded_by || 'Unknown',
+              type: 'file' as const,
+              path: img.blob_path,
+              fileData: img.url, // Store URL for display
+              mimeType: img.mime_type,
+            }));
+            setDocuments(galleryImages);
+            setSelectedFiles(new Set());
+          } else {
+            setDocuments([]);
+          }
+        } catch (galleryErr: any) {
+          // Check if it's a 401 error - don't show error toast as interceptor handles logout
+          const is401 = galleryErr.response?.status === 401 || galleryErr.status === 401;
+          
+          if (!is401) {
+            toast.showError(galleryErr.message || 'Failed to load gallery images');
+          }
+          
+          setDocuments([]);
+        }
+        return;
+      }
+
+      // Call API to get documents
+      // Backend will handle:
+      // 1. Company isolation (filters by user's company_id -> child company IDs)
+      // 2. Permission checks (getAccessibleDocumentIds)
+      // 3. Azure blob listing (if project has azure_folder_path)
+      const params: any = {
+        category,
+      };
+      
+      if (projectId) {
+        params.project_id = projectId;
+      }
+      
+      if (folderUuid) {
+        params.folder_uuid = folderUuid;
+      }
+      
+      if (folderPath) {
+        params.folder_path = folderPath;
+      }
+
+      console.log('📄 Loading documents with params:', params);
+      const response = await documentAPI.getDocuments(params);
+      
+      if (response.status && response.data) {
+        // Transform API response to FileItem format
+        const fileItems: FileItem[] = response.data.map((doc: any) => ({
+          id: doc.uuid,
+          name: doc.name || doc.original_name,
+          size: doc.file_size ? `${(doc.file_size / 1024).toFixed(2)} KB` : '0 KB',
+          lastModified: doc.uploaded_at || new Date().toLocaleDateString(),
+          owner: doc.uploaded_by || 'Unknown',
+          type: doc.is_folder ? 'folder' : 'file',
+          path: doc.item_path || doc.full_path,
+          fileData: doc.file_url, // Store signed URL
+          mimeType: doc.mime_type,
+        }));
+        
+        setDocuments(fileItems);
+      } else {
+        setDocuments([]);
+      }
+    } catch (err: any) {
+      const errorStatus = err.status || err.response?.status;
+      const errorMessage = err.response?.data?.message || err.message || 'Failed to load documents';
+      const errorData = err.response?.data || {};
+      
+      console.error('❌ Failed to load documents:', {
+        error: err,
+        status: errorStatus,
+        message: errorMessage,
+        response: errorData,
+        url: err.config?.url,
+        headers: err.config?.headers,
+        hasAuthHeader: !!err.config?.headers?.Authorization,
+        authHeaderPreview: err.config?.headers?.Authorization ? `${err.config.headers.Authorization.substring(0, 30)}...` : 'none',
+      });
+      
+      // Check if it's a 401 error
+      const is401 = errorStatus === 401;
+      
+      if (is401) {
+        // For 401 on document endpoints, show detailed error message
+        const detailedMessage = errorMessage.includes('unauthenticated') || errorMessage.includes('Unauthenticated')
+          ? `Authentication failed: ${errorMessage}. Please check if you're logged in and try refreshing the page.`
+          : errorMessage;
+        
+        // Check token for logging
+        let hasToken = false;
+        if (typeof window !== 'undefined') {
+          const { getCookie } = require('../utils/cookies');
+          hasToken = !!(getCookie('auth_token') || localStorage.getItem('auth_token'));
+        }
+        
+        console.warn('⚠️ 401 Authentication failed on document endpoint:', {
+          message: errorMessage,
+          detailedMessage,
+          errorData,
+          hasToken,
+        });
+        
+        toast.showError(detailedMessage);
+        // Don't logout - let user try again or refresh
+      } else {
+        // Show error toast for other errors
+        toast.showError(errorMessage);
+      }
+      
+      setDocuments([]);
+    }
+    
     // Clear selection when folder changes
     setSelectedFiles(new Set());
   };
 
-  // Load documents when folder changes
+  // Load documents when folder changes or when authenticated
   useEffect(() => {
-    loadDocuments();
-  }, [currentPath]);
+    // Don't load if still checking authentication or user profile
+    if (isLoading) {
+      console.log('⏳ Still loading user profile, waiting...');
+      return;
+    }
+    
+    // Double-check token exists before making API call
+    // Use token check instead of isAuthenticated (which requires user to be loaded)
+    if (typeof window !== 'undefined') {
+      const { getCookie } = require('../utils/cookies');
+      const token = getCookie('auth_token') || localStorage.getItem('auth_token');
+      const authFlag = getCookie('isAuthenticated') === 'true' || localStorage.getItem('isAuthenticated') === 'true';
+      
+      if (!token || !authFlag) {
+        console.warn('⚠️ Cannot load documents - no token or auth flag:', {
+          hasToken: !!token,
+          hasAuthFlag: !!authFlag,
+          isAuthenticated, // This might be false if user profile hasn't loaded yet
+        });
+        setDocuments([]);
+        return;
+      }
+      
+      console.log('✅ Loading documents - token and auth flag present');
+      loadDocuments();
+    } else {
+      setDocuments([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPath, isLoading, selectedProjectFilter]);
 
   // Update currentPath when sidebar folder changes
   useEffect(() => {
@@ -452,7 +775,10 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
       icon: Briefcase,
       subItems: projects.map(project => ({
         id: `project_${project.id}`,
-        label: project.name
+        label: project.name,
+        blobStorageConnected: project.blobStorageConnected,
+        azure_folder_path: project.azure_folder_path,
+        blobItemCount: project.blobItemCount,
       }))
     },
     {
@@ -507,8 +833,12 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
   };
 
   // Navigate into a folder
-  const navigateToFolder = (folderId: string, folderName: string) => {
-    setCurrentPath(prev => [...prev, folderId]);
+  // For Azure blob folders, use the full path; for DB-tracked folders, use UUID
+  const navigateToFolder = (folderId: string, folderName: string, folderPath?: string) => {
+    // If folderPath is provided and looks like an Azure path (contains '/'), use it
+    // Otherwise, use folderId (UUID for DB-tracked folders)
+    const pathToUse = folderPath && folderPath.includes('/') ? folderPath : folderId;
+    setCurrentPath(prev => [...prev, pathToUse]);
     setSelectedFiles(new Set());
   };
 
@@ -545,31 +875,143 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
     return matchesSearch;
   });
 
-  const handleCreateFolder = () => {
+  const handleCreateFolder = async () => {
     if (!newFolderName.trim()) {
       toast.showWarning('Please enter a folder name');
       return;
     }
 
-    const folderName = newFolderName.trim();
-    const folderPath = getCurrentFolderPath();
-    const folderId = `${folderPath}/${folderName}_${Date.now()}`;
-    
-    const newFolder: FileItem = {
-      id: folderId,
-      name: folderName,
-      size: '-',
-      lastModified: 'Just now',
-      owner: 'You',
-      type: 'folder',
-      path: folderPath
-    };
+    // Check token instead of isAuthenticated (which requires user to be loaded)
+    if (typeof window !== 'undefined') {
+      const { getCookie } = require('../utils/cookies');
+      const token = getCookie('auth_token') || localStorage.getItem('auth_token');
+      const authFlag = getCookie('isAuthenticated') === 'true' || localStorage.getItem('isAuthenticated') === 'true';
+      
+      if (!token || !authFlag) {
+        toast.showError('Please log in to create folders');
+        return;
+      }
+    } else {
+      toast.showError('Please log in to create folders');
+      return;
+    }
 
-    setDocuments(prev => [...prev, newFolder]);
-    setNewFolderName('');
-    setShowCreateFolderModal(false);
-    setShowNewDropdown(false);
-    toast.showSuccess(`Folder "${folderName}" created successfully`);
+    const folderName = newFolderName.trim();
+    const firstSegment = currentPath[0];
+    const isShared = firstSegment === 'shared';
+    const isImageGallery = firstSegment === 'image-gallery';
+
+    // Don't allow folder creation in shared or image gallery
+    if (isShared || isImageGallery) {
+      toast.showError('Cannot create folders in shared or image gallery');
+      return;
+    }
+
+    // Determine category and project_id from currentPath
+    let category: 'office' | 'project' = 'office';
+    let projectId: number | undefined;
+    let subprojectId: number | undefined;
+    let parentFolderUuid: string | undefined;
+    let folderPathParam: string | undefined;
+
+    // Check if we're in a project folder
+    if (firstSegment === 'projects' && currentPath.length > 1) {
+      category = 'project';
+      const projectSegment = currentPath[1];
+      if (projectSegment.startsWith('project_')) {
+        const projectIdStr = projectSegment.replace('project_', '');
+        const project = projects.find(p => p.id === projectIdStr || String(p.id) === projectIdStr);
+        if (project) {
+          projectId = project.numericId || (typeof project.id === 'number' ? project.id : parseInt(projectIdStr));
+          
+          // If project has azure_folder_path and we're creating folder at project root,
+          // use the azure_folder_path as base path
+          if (project.azure_folder_path && currentPath.length === 2) {
+            folderPathParam = project.azure_folder_path;
+            console.log('📁 Using project azure_folder_path for folder creation:', folderPathParam);
+          }
+        }
+      }
+      // Check if we're in a subproject or nested folder
+      if (currentPath.length > 2) {
+        const folderSegment = currentPath[currentPath.length - 1];
+        if (folderSegment.includes('/')) {
+          folderPathParam = folderSegment;
+        } else {
+          parentFolderUuid = folderSegment;
+        }
+      }
+    } else if (firstSegment === 'office') {
+      category = 'office';
+      // For office, check if we're in a nested folder
+      if (currentPath.length > 1) {
+        const folderSegment = currentPath[currentPath.length - 1];
+        if (folderSegment.includes('/')) {
+          folderPathParam = folderSegment;
+        } else {
+          parentFolderUuid = folderSegment;
+        }
+      }
+    }
+
+    try {
+      const folderData: any = {
+        folder_name: folderName,
+        category,
+      };
+
+      if (projectId) {
+        folderData.project_id = projectId;
+      }
+
+      if (subprojectId) {
+        folderData.subproject_id = subprojectId;
+      }
+
+      if (parentFolderUuid) {
+        folderData.parent_folder_uuid = parentFolderUuid;
+      }
+
+      if (folderPathParam) {
+        folderData.folder_path = folderPathParam;
+      }
+
+      console.log('📁 Creating folder via API:', folderData);
+
+      toast.showInfo(`Creating folder "${folderName}"...`);
+
+      const response = await documentAPI.createFolder(folderData);
+
+      if (response.status && response.data) {
+        // Transform API response to FileItem format
+        const newFolder: FileItem = {
+          id: response.data.uuid,
+          name: response.data.name,
+          size: '-',
+          lastModified: response.data.created_at || new Date().toLocaleDateString(),
+          owner: 'You',
+          type: 'folder',
+          path: response.data.name,
+        };
+
+        // Update UI
+        setDocuments(prev => [...prev, newFolder]);
+        setNewFolderName('');
+        setShowCreateFolderModal(false);
+        setShowNewDropdown(false);
+        
+        // Reload documents to get latest from server
+        await loadDocuments();
+        
+        toast.showSuccess(response.message || `Folder "${folderName}" created successfully`);
+      } else {
+        toast.showError(response.message || 'Failed to create folder');
+      }
+    } catch (err: any) {
+      console.error('❌ Failed to create folder:', err);
+      const errorMessage = err.message || err.response?.data?.message || 'Failed to create folder';
+      toast.showError(errorMessage);
+    }
   };
 
   const handleUploadFiles = () => {
@@ -753,252 +1195,166 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
     }
   };
 
+  // Upload files to Azure Blob Storage via API
   const processFiles = async (files: File[]) => {
-    // Check if files are images
-    const imageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml', 'image/bmp'];
+    // Check token instead of isAuthenticated (which requires user to be loaded)
+    if (typeof window !== 'undefined') {
+      const { getCookie } = require('../utils/cookies');
+      const token = getCookie('auth_token') || localStorage.getItem('auth_token');
+      const authFlag = getCookie('isAuthenticated') === 'true' || localStorage.getItem('isAuthenticated') === 'true';
+      
+      if (!token || !authFlag) {
+        console.error('❌ No auth token or flag found for upload');
+        toast.showError('Authentication token not found. Please log in again.');
+        return;
+      }
+      console.log('✅ Auth token and flag verified for upload');
+    } else {
+      toast.showError('Please log in to upload files');
+      return;
+    }
+
     const folderPath = getCurrentFolderPath();
-    const isImageGallery = currentPath[0] === 'image-gallery';
-    const isShared = currentPath[0] === 'shared';
+    const firstSegment = currentPath[0];
+    const isImageGallery = firstSegment === 'image-gallery';
+    const isShared = firstSegment === 'shared';
     
-    let successCount = 0;
-    let failCount = 0;
-    
-    for (const file of files) {
-      try {
-        const isImage = imageTypes.includes(file.type) || /\.(jpg|jpeg|png|gif|webp|svg|bmp)$/i.test(file.name);
-        
-        if (isImage) {
-          // Images go to both current folder AND image gallery
-          const baseId = Date.now().toString() + Math.random();
+    // Determine category and project_id from currentPath
+    let category: 'office' | 'project' = 'office';
+    let projectId: number | undefined;
+    let subprojectId: number | undefined;
+    let parentFolderUuid: string | undefined;
+    let folderPathParam: string | undefined;
+
+    // Check if we're in a project folder
+    if (firstSegment === 'projects' && currentPath.length > 1) {
+      category = 'project';
+      const projectSegment = currentPath[1];
+      if (projectSegment.startsWith('project_')) {
+        const projectIdStr = projectSegment.replace('project_', '');
+        const project = projects.find(p => p.id === projectIdStr || String(p.id) === projectIdStr);
+        if (project) {
+          projectId = project.numericId || (typeof project.id === 'number' ? project.id : parseInt(projectIdStr));
           
-          const uploadTime = new Date().toLocaleString('en-US', {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-          });
-          
-          // Compress image before storing (skip SVG and other vector formats)
-          let processedFile = file;
-          let fileData: string;
-          const mimeType = file.type || 'image/jpeg';
-          
-          if (!file.type.includes('svg') && !file.type.includes('gif')) {
-            try {
-              // Compress images larger than 500KB
-              if (file.size > 500 * 1024) {
-                processedFile = await compressImage(file, 1920, 1920, 0.8);
-              }
-            } catch (compressError) {
-              console.warn('Failed to compress image, using original:', compressError);
-              processedFile = file;
-            }
-          }
-          
-          // Convert file to base64 for storage
-          fileData = await fileToBase64(processedFile);
-          
-          // Create file for current folder
-          const fileForCurrentFolder: FileItem = {
-            id: `${baseId}_current`,
-            name: file.name,
-            size: `${(processedFile.size / 1024).toFixed(2)} KB`,
-            lastModified: uploadTime,
-            owner: 'You',
-            type: 'file' as const,
-            file: processedFile,
-            path: folderPath,
-            fileData: fileData,
-            mimeType: mimeType
-          };
-          
-          // Create file for image gallery (with original path info)
-          const fileForGallery: FileItem = {
-            id: `${baseId}_gallery`,
-            name: file.name,
-            size: `${(processedFile.size / 1024).toFixed(2)} KB`,
-            lastModified: uploadTime,
-            owner: 'You',
-            type: 'file' as const,
-            file: processedFile,
-            path: 'image-gallery',
-            originalPath: folderPath, // Store where it was uploaded from
-            fileData: fileData,
-            mimeType: mimeType
-          };
-          
-          // Save to current folder
-          if (!isShared) {
-            const savedCurrentFolder = localStorage.getItem(`documents_${folderPath}`);
-            let currentFolderDocuments: FileItem[] = [];
-            if (savedCurrentFolder) {
-              try {
-                currentFolderDocuments = JSON.parse(savedCurrentFolder);
-              } catch (e) {
-                console.error('Error loading current folder documents:', e);
-              }
-            }
-            
-            const updatedCurrentFolder = [...currentFolderDocuments, fileForCurrentFolder];
-            const currentFolderToStore = updatedCurrentFolder.map(doc => ({
-              id: doc.id,
-              name: doc.name,
-              size: doc.size,
-              lastModified: doc.lastModified,
-              owner: doc.owner,
-              type: doc.type,
-              path: doc.path,
-              originalPath: (doc as any).originalPath,
-              deletedAt: (doc as any).deletedAt,
-              fileData: (doc as any).fileData,
-              mimeType: (doc as any).mimeType
-            }));
-            
-            const saved = safeSetItem(`documents_${folderPath}`, JSON.stringify(currentFolderToStore));
-            if (saved) {
-              // Update UI if viewing current folder
-              if (folderPath === getCurrentFolderPath()) {
-                setDocuments(prev => [...prev, fileForCurrentFolder]);
-              }
-            } else {
-              failCount++;
-              continue;
-            }
-          }
-          
-          // Save to image gallery
-          const savedGallery = localStorage.getItem('documents_image-gallery');
-          let galleryDocuments: FileItem[] = [];
-          if (savedGallery) {
-            try {
-              galleryDocuments = JSON.parse(savedGallery);
-            } catch (e) {
-              console.error('Error loading gallery documents:', e);
-            }
-          }
-          
-          const updatedGallery = [...galleryDocuments, fileForGallery];
-          const galleryToStore = updatedGallery.map(doc => ({
-            id: doc.id,
-            name: doc.name,
-            size: doc.size,
-            lastModified: doc.lastModified,
-            owner: doc.owner,
-            type: doc.type,
-            path: doc.path,
-            originalPath: (doc as any).originalPath,
-            deletedAt: (doc as any).deletedAt,
-            fileData: (doc as any).fileData,
-            mimeType: (doc as any).mimeType
-          }));
-          
-          const savedGalleryData = safeSetItem('documents_image-gallery', JSON.stringify(galleryToStore));
-          if (savedGalleryData) {
-            // Update UI if viewing image gallery
-            if (isImageGallery) {
-              setDocuments(prev => [...prev, fileForGallery]);
-            }
-            successCount++;
-          } else {
-            failCount++;
-          }
-        } else {
-          // Non-image files go only to current folder
-          const targetFolder = folderPath;
-          
-          // Load documents for the target folder
-          const savedDocuments = localStorage.getItem(`documents_${targetFolder}`);
-          let existingDocuments: FileItem[] = [];
-          if (savedDocuments) {
-            try {
-              existingDocuments = JSON.parse(savedDocuments);
-            } catch (e) {
-              console.error('Error loading documents:', e);
-            }
-          }
-          
-          // Check file size - warn if too large
-          if (file.size > 2 * 1024 * 1024) { // 2MB
-            toast.showWarning(`File "${file.name}" is large (${(file.size / 1024 / 1024).toFixed(2)} MB). Large files may not save properly.`);
-          }
-          
-          // Convert file to base64 for storage
-          const fileData = await fileToBase64(file);
-          const mimeType = file.type || 'application/octet-stream';
-          
-          const newFile: FileItem = {
-            id: Date.now().toString() + Math.random(),
-            name: file.name,
-            size: `${(file.size / 1024).toFixed(2)} KB`,
-            lastModified: 'Just now',
-            owner: 'You',
-            type: 'file' as const,
-            file: file,
-            path: targetFolder,
-            fileData: fileData,
-            mimeType: mimeType
-          };
-          
-          // Add to target folder's documents
-          const updatedDocuments = [...existingDocuments, newFile];
-          const documentsToStore = updatedDocuments.map(doc => ({
-            id: doc.id,
-            name: doc.name,
-            size: doc.size,
-            lastModified: doc.lastModified,
-            owner: doc.owner,
-            type: doc.type,
-            path: doc.path,
-            originalPath: (doc as any).originalPath,
-            deletedAt: (doc as any).deletedAt,
-            fileData: (doc as any).fileData,
-            mimeType: (doc as any).mimeType
-          }));
-          
-          const saved = safeSetItem(`documents_${targetFolder}`, JSON.stringify(documentsToStore));
-          if (saved) {
-            // If target folder is current folder, update UI
-            if (targetFolder === folderPath && !isShared) {
-              setDocuments(prev => [...prev, newFile]);
-            }
-            successCount++;
-          } else {
-            failCount++;
+          // If project has azure_folder_path and we're uploading to project root,
+          // use the azure_folder_path for folder_path parameter
+          // Backend will append filename to this path
+          if (project.azure_folder_path && currentPath.length === 2) {
+            folderPathParam = project.azure_folder_path;
+            console.log('📤 Using project azure_folder_path for upload:', folderPathParam);
           }
         }
-      } catch (error) {
-        console.error(`Error processing file ${file.name}:`, error);
-        toast.showError(`Failed to process "${file.name}": ${error instanceof Error ? error.message : 'Unknown error'}`);
-        failCount++;
+      }
+      // Check if we're in a subproject folder
+      if (currentPath.length > 2) {
+        const folderSegment = currentPath[currentPath.length - 1];
+        // Check if it's a folder path or UUID
+        if (folderSegment.includes('/')) {
+          folderPathParam = folderSegment;
+        } else {
+          parentFolderUuid = folderSegment;
+        }
+      }
+    } else if (firstSegment === 'office') {
+      category = 'office';
+      // For office, we might have nested folders
+      if (currentPath.length > 1) {
+        const folderSegment = currentPath[currentPath.length - 1];
+        if (folderSegment.includes('/')) {
+          folderPathParam = folderSegment;
+        } else {
+          parentFolderUuid = folderSegment;
+        }
       }
     }
-    
-    // Show notifications
-    if (successCount > 0) {
-      const uploadedImages = files.filter(file => {
-        const isImage = imageTypes.includes(file.type) || /\.(jpg|jpeg|png|gif|webp|svg|bmp)$/i.test(file.name);
-        return isImage;
+
+    // Don't allow uploads to shared or image gallery directly
+    if (isShared || isImageGallery) {
+      toast.showError('Cannot upload directly to shared or image gallery. Please select a folder.');
+      return;
+    }
+
+    try {
+      // Create FormData for API upload
+      const formData = new FormData();
+      
+      // Add all files - Laravel expects 'files' as array
+      // Use 'files[]' format for Laravel to parse as array
+      files.forEach((file) => {
+        formData.append('files[]', file);
       });
       
-      const nonImages = files.filter(file => {
-        const isImage = imageTypes.includes(file.type) || /\.(jpg|jpeg|png|gif|webp|svg|bmp)$/i.test(file.name);
-        return !isImage;
-      });
+      // Add required fields
+      formData.append('category', category);
       
-      if (uploadedImages.length > 0) {
-        if (isImageGallery) {
-          toast.showSuccess(`${successCount} image(s) uploaded successfully${failCount > 0 ? `, ${failCount} failed` : ''}`);
-        } else if (isShared) {
-          toast.showSuccess(`${successCount} image(s) uploaded to Image Gallery${failCount > 0 ? `, ${failCount} failed` : ''}`);
-        } else {
-          toast.showSuccess(`${successCount} image(s) uploaded to current folder and Image Gallery${failCount > 0 ? `, ${failCount} failed` : ''}`);
-        }
-      } else if (nonImages.length > 0 && !isShared) {
-        toast.showSuccess(`${successCount} file(s) uploaded successfully${failCount > 0 ? `, ${failCount} failed` : ''}`);
+      if (projectId) {
+        formData.append('project_id', projectId.toString());
       }
-    } else if (failCount > 0) {
-      toast.showError(`Failed to upload ${failCount} file(s). Storage may be full.`);
+      
+      if (subprojectId) {
+        formData.append('subproject_id', subprojectId.toString());
+      }
+      
+      if (parentFolderUuid) {
+        formData.append('parent_folder_uuid', parentFolderUuid);
+      }
+      
+      if (folderPathParam) {
+        formData.append('folder_path', folderPathParam);
+      }
+
+      // Verify token one more time before API call
+      if (typeof window !== 'undefined') {
+        const { getCookie } = require('../utils/cookies');
+        const token = getCookie('auth_token') || localStorage.getItem('auth_token');
+        console.log('📤 Uploading files to API:', {
+          category,
+          projectId,
+          subprojectId,
+          parentFolderUuid,
+          folderPathParam,
+          fileCount: files.length,
+          hasToken: !!token,
+          tokenLength: token?.length || 0,
+        });
+      }
+
+      // Show loading toast
+      toast.showInfo(`Uploading ${files.length} file(s)...`);
+
+      // Call API to upload files
+      const response = await documentAPI.uploadDocuments(formData);
+      
+      if (response.status && response.data) {
+        const uploadedFiles = response.data;
+        
+        // Transform API response to FileItem format
+        const fileItems: FileItem[] = uploadedFiles.map((doc: any) => ({
+          id: doc.uuid,
+          name: doc.name || doc.original_name,
+          size: doc.file_size ? `${(doc.file_size / 1024).toFixed(2)} KB` : '0 KB',
+          lastModified: doc.uploaded_at || new Date().toLocaleDateString(),
+          owner: doc.uploaded_by || 'You',
+          type: 'file' as const,
+          path: doc.file_path,
+          fileData: doc.file_url, // Signed URL from Azure
+          mimeType: doc.mime_type,
+        }));
+
+        // Update UI with uploaded files
+        setDocuments(prev => [...prev, ...fileItems]);
+        
+        // Reload documents to get latest from server
+        await loadDocuments();
+        
+        toast.showSuccess(response.message || `${uploadedFiles.length} file(s) uploaded successfully`);
+      } else {
+        toast.showError(response.message || 'Upload failed');
+      }
+    } catch (err: any) {
+      console.error('❌ Failed to upload files:', err);
+      const errorMessage = err.message || err.response?.data?.message || 'Failed to upload files';
+      toast.showError(errorMessage);
     }
   };
 
@@ -1628,9 +1984,44 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                       return (
                         <div key={subItem.id}>
                           <button
-                            onClick={() => {
+                            onClick={async () => {
+                              // Verify blob storage connection when clicking project
+                              const projectIdStr = subItem.id.replace('project_', '');
+                              const project = projects.find(p => p.id === projectIdStr || String(p.id) === projectIdStr);
+                              
+                              if (project && project.azure_folder_path && project.numericId) {
+                                // Verify blob storage connection
+                                if (!project.blobStorageConnected) {
+                                  console.log(`🔍 Verifying blob storage for project: ${project.name}`);
+                                  try {
+                                    const verifyResponse = await documentAPI.getDocuments({
+                                      category: 'project',
+                                      project_id: project.numericId,
+                                      folder_path: project.azure_folder_path,
+                                    });
+                                    
+                                    if (verifyResponse.status) {
+                                      console.log(`✅ Blob storage connected for project: ${project.name}`);
+                                      // Update project blob storage status
+                                      setProjects(prev => prev.map(p => 
+                                        p.id === project.id 
+                                          ? { ...p, blobStorageConnected: true, blobItemCount: verifyResponse.data?.length || 0 }
+                                          : p
+                                      ));
+                                    }
+                                  } catch (err: any) {
+                                    console.warn(`⚠️ Blob storage verification failed for project: ${project.name}`, err.message);
+                                    toast.showWarning(`Project "${project.name}" blob storage not accessible. Please check Azure configuration.`);
+                                  }
+                                } else {
+                                  console.log(`✅ Project "${project.name}" already connected to blob storage (${project.blobItemCount || 0} items)`);
+                                }
+                              } else if (project && !project.azure_folder_path) {
+                                toast.showWarning(`Project "${project.name}" does not have an Azure folder path configured.`);
+                              }
+                              
                               toggleFolder(subItem.id);
-                              setCurrentPath([subItem.id]);
+                              setCurrentPath(['projects', subItem.id]);
                               setSelectedFolder(subItem.id);
                               // Close sidebar on mobile after selection
                               if (window.innerWidth < 768) {
@@ -1642,7 +2033,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                                 ? isDark
                                   ? 'bg-[#5a7a1e] text-white'
                                   : 'bg-[#6B8E23]/20 text-[#5a7a1e]'
-                                : currentPath[0] === subItem.id
+                                : currentPath[0] === subItem.id || currentPath[1] === subItem.id
                                   ? isDark
                                     ? 'bg-[#6B8E23]/20 text-[#6B8E23]'
                                     : 'bg-[#6B8E23]/10 text-[#6B8E23]'
@@ -1650,6 +2041,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                                     ? 'hover:bg-[#6B8E23]/20 text-[#6B8E23]'
                                     : 'hover:bg-[#6B8E23]/10 text-[#6B8E23]'
                             }`}
+                            title={subItem.blobStorageConnected === false ? `Blob storage not connected - ${subItem.azure_folder_path || 'No Azure path'}` : subItem.blobStorageConnected ? `Blob storage connected (${subItem.blobItemCount || 0} items)` : 'Checking blob storage...'}
                           >
                             {projectFolderTree.length > 0 && (
                               <span className="w-4 flex items-center justify-center flex-shrink-0">
@@ -1662,7 +2054,18 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                             )}
                             {projectFolderTree.length === 0 && <span className="w-4" />}
                             <Briefcase className="w-4 h-4 flex-shrink-0" />
-                            <span className="flex-1 text-left">{subItem.label}</span>
+                            <span className="flex-1 text-left truncate">{subItem.label}</span>
+                            {/* Blob storage connection indicator */}
+                            {subItem.blobStorageConnected === true && (
+                              <span title={`Blob storage connected (${subItem.blobItemCount || 0} items)`}>
+                                <Cloud className={`w-3 h-3 flex-shrink-0 ${isDark ? 'text-green-400' : 'text-green-600'}`} />
+                              </span>
+                            )}
+                            {subItem.blobStorageConnected === false && (
+                              <span title="Blob storage not connected">
+                                <CloudOff className={`w-3 h-3 flex-shrink-0 ${isDark ? 'text-red-400' : 'text-red-600'}`} />
+                              </span>
+                            )}
                           </button>
                           {isProjectExpanded && projectFolderTree.length > 0 && (
                             <div className="ml-3 sm:ml-4 mt-1">
@@ -2020,7 +2423,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                             if (file.type === 'folder') {
                               // Double-click or Ctrl+Click to navigate into folder
                               if (e.detail === 2 || e.ctrlKey || e.metaKey) {
-                                navigateToFolder(file.id, file.name);
+                                navigateToFolder(file.id, file.name, file.path);
                               } else {
                                 toggleFileSelection(file.id);
                               }
@@ -2078,7 +2481,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                       if (file.type === 'folder') {
                         // Double-click to navigate into folder
                         if (e.detail === 2 || e.ctrlKey || e.metaKey) {
-                          navigateToFolder(file.id, file.name);
+                          navigateToFolder(file.id, file.name, file.path);
                         } else {
                           toggleFileSelection(file.id);
                         }

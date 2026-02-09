@@ -199,16 +199,22 @@ const Navbar: React.FC<NavbarProps> = ({ onLoginClick, onNavigateToAbout, scroll
                   <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#C2D642]"></span>
                 )}
               </button>
-              <div className={`flex flex-col gap-2 pt-4 border-t ${borderClass}`}>
+              <div className={`flex flex-col gap-3 pt-4 border-t ${borderClass}`}>
                 <button
-                  onClick={onLoginClick}
-                  className={`text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors text-left`}
+                  onClick={() => {
+                    onLoginClick();
+                    setMobileMenuOpen(false);
+                  }}
+                  className="px-4 py-2.5 bg-[#C2D642] hover:bg-[#A8B838] text-white rounded-lg text-sm font-semibold transition-all w-full text-center shadow-md hover:shadow-lg"
                 >
                   Log In
                 </button>
                 <button
-                  onClick={onLoginClick}
-                  className="px-4 py-2 border-2 border-[#C2D642] hover:bg-[#C2D642] text-[#C2D642] hover:text-white rounded-lg text-sm font-semibold transition-all w-full"
+                  onClick={() => {
+                    onLoginClick();
+                    setMobileMenuOpen(false);
+                  }}
+                  className="px-4 py-2.5 border-2 border-[#C2D642] hover:bg-[#C2D642] text-[#C2D642] hover:text-white rounded-lg text-sm font-semibold transition-all w-full text-center"
                 >
                   Book a Demo
                 </button>

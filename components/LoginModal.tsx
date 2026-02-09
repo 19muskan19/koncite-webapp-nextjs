@@ -128,18 +128,14 @@ const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin }) => 
               <input type="checkbox" className="w-4 h-4 text-[#C2D642] rounded" />
               <span className={textSecondary}>Remember me</span>
             </label>
-            <button 
-              type="button" 
-              onClick={() => {
-                onClose();
-                if (typeof window !== 'undefined') {
-                  window.dispatchEvent(new CustomEvent('openForgotPasswordModal'));
-                }
-              }}
-              className="text-[#C2D642] hover:underline font-semibold"
+            <a
+              href="/forgot-password"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[#C2D642] hover:underline font-semibold cursor-pointer"
             >
               Forgot password?
-            </button>
+            </a>
           </div>
 
           <button

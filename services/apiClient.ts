@@ -7,9 +7,24 @@ import { getCookie } from '../utils/cookies';
 // Local: http://localhost/api
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging.koncite.com/api';
 
-// Get auth token from cookies
+// Get auth token from cookies or localStorage (fallback)
 export const getAuthToken = (): string | null => {
-  return getCookie('auth_token');
+  // First try cookies
+  const cookieToken = getCookie('auth_token');
+  if (cookieToken) {
+    return cookieToken;
+  }
+  
+  // Fallback to localStorage
+  if (typeof window !== 'undefined') {
+    const localStorageToken = localStorage.getItem('auth_token');
+    if (localStorageToken) {
+      console.log('🔄 Using token from localStorage (cookie not found)');
+      return localStorageToken;
+    }
+  }
+  
+  return null;
 };
 
 // Create axios instance with default config
@@ -29,9 +44,18 @@ apiClient.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
       // Log token presence for debugging (don't log full token for security)
-      console.log(`🔐 Adding auth token to ${config.method?.toUpperCase()} ${config.url}`);
+      console.log(`🔐 Adding auth token to ${config.method?.toUpperCase()} ${config.url}`, {
+        tokenLength: token.length,
+        tokenPreview: `${token.substring(0, 20)}...`,
+        hasAuthHeader: !!config.headers.Authorization,
+      });
     } else {
-      console.warn(`⚠️ No auth token available for ${config.method?.toUpperCase()} ${config.url}`);
+      console.warn(`⚠️ No auth token available for ${config.method?.toUpperCase()} ${config.url}`, {
+        url: config.url,
+        method: config.method,
+        cookieToken: !!getCookie('auth_token'),
+        localStorageToken: typeof window !== 'undefined' ? !!localStorage.getItem('auth_token') : 'N/A',
+      });
     }
     
     // Don't set Content-Type for FormData (multipart/form-data)
@@ -57,14 +81,50 @@ apiClient.interceptors.response.use(
       switch (error.response.status) {
         case 401:
           // Unauthorized - clear auth and redirect to login
+          // But check if token exists first - if not, don't logout (might be expected)
           if (typeof window !== 'undefined') {
-            const { removeCookie } = require('../utils/cookies');
-            removeCookie('auth_token');
-            removeCookie('isAuthenticated');
-            // Also clear localStorage for backward compatibility
-            localStorage.removeItem('auth_token');
-            localStorage.removeItem('isAuthenticated');
-            window.location.href = '/';
+            const token = getAuthToken();
+            const url = error.config?.url || '';
+            const message = error.response?.data?.message || '';
+            const responseData = error.response?.data || {};
+            
+            // Don't logout for document endpoints if they return 401 - might be endpoint not found or permission issue
+            // Let the component handle the error instead
+            const isDocumentEndpoint = url.includes('/documents');
+            
+            console.error('❌ 401 Unauthorized Error:', {
+              url,
+              message,
+              tokenExists: !!token,
+              tokenLength: token?.length || 0,
+              isDocumentEndpoint,
+              responseData,
+              headers: error.config?.headers,
+            });
+            
+            if (isDocumentEndpoint) {
+              console.warn('⚠️ 401 Unauthorized on document endpoint - not logging out, letting component handle');
+              // Don't logout - let the component handle the error
+            } else if (token) {
+              // Only logout if token exists (meaning user was authenticated but token expired/invalid)
+              // If no token, this might be expected for unauthenticated requests
+              console.warn('⚠️ 401 Unauthorized - token exists but request failed. Logging out...', {
+                url,
+                message,
+              });
+              const { removeCookie } = require('../utils/cookies');
+              removeCookie('auth_token');
+              removeCookie('isAuthenticated');
+              // Also clear localStorage for backward compatibility
+              localStorage.removeItem('auth_token');
+              localStorage.removeItem('isAuthenticated');
+              window.location.href = '/';
+            } else {
+              console.warn('⚠️ 401 Unauthorized - no token found. This might be expected.', {
+                url,
+                message,
+              });
+            }
           }
           break;
         case 403:
