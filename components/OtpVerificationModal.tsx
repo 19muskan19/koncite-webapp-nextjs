@@ -69,7 +69,7 @@ const OtpVerificationModal: React.FC<OtpVerificationModalProps> = ({
         response = await authAPI.verifyOtp(email, otp);
         
         // Store token in cookies if provided - handle Laravel response format
-        const token = response.data?.token || response.token || response.access_token;
+        const token = response.data?.token;
         if (token) {
           const { setCookie } = require('../utils/cookies');
           setCookie('auth_token', token, 30);
@@ -79,7 +79,7 @@ const OtpVerificationModal: React.FC<OtpVerificationModalProps> = ({
           localStorage.setItem('isAuthenticated', 'true');
           
           // Extract user data and dispatch event
-          const user = response.data?.user || response.user;
+          const user = response.data?.user;
           if (user && typeof window !== 'undefined') {
             console.log('OTP Modal: Dispatching userLoggedIn event with user:', user);
             window.dispatchEvent(new CustomEvent('userLoggedIn', { detail: { user } }));
