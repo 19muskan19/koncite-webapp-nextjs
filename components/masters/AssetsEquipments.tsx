@@ -323,7 +323,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
       setTogglingAssetId(asset.id);
       
       // Determine current status
-      const currentStatus = asset.status || (asset.is_active === 1 || asset.is_active === '1' || asset.is_active === true ? 'Active' : 'Inactive');
+      const currentStatus = asset.status || (asset.is_active === 1 ? 'Active' : 'Inactive');
       const newStatus = currentStatus === 'Active' ? 'Inactive' : 'Active';
       const isActive = newStatus === 'Active' ? 1 : 0;
       
