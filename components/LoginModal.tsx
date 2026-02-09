@@ -40,7 +40,7 @@ const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin }) => 
       // Token is already stored in the API function
       // User data is dispatched via userLoggedIn event
       console.log('LoginModal: Login response:', response);
-      console.log('LoginModal: User data in response:', response.data?.user || response.data?.data?.user);
+      console.log('LoginModal: User data in response:', response.data?.user || response.user);
 
       toast.showSuccess(response.message || 'Login successful!');
       

@@ -557,26 +557,21 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
       // Verify response
       console.log('=== SIGNUP RESPONSE ===');
       console.log('Full Response:', JSON.stringify(response, null, 2));
-      console.log('Response status:', response.status);
       console.log('Response message:', response.message);
       console.log('User from response.user:', response.user);
-      console.log('User from response.data?.user:', response.data?.user);
-      console.log('User from response.data?.data?.user:', response.data?.data?.user);
       console.log('======================');
 
       // Check if signup was successful
-      // The API returns response.data, so response is already the data object
-      // Check for success indicators: no status=false, has message, and optionally has user data
-      const hasErrorStatus = response.status === false;
+      // Check for success indicators: has message (user data is optional)
       const hasMessage = !!response.message;
-      const hasUserData = !!(response.user || response.data?.user || response.data?.data?.user);
+      const hasUserData = !!response.user;
       
-      // Signup is successful if there's no error status and we have a success message
+      // Signup is successful if we have a success message
       // User data is optional - some APIs don't return user data immediately after signup
-      const signupSuccess = !hasErrorStatus && hasMessage;
+      const signupSuccess = hasMessage;
       
       if (signupSuccess) {
-        const userData = response.user || response.data?.user || response.data?.data?.user;
+        const userData = response.user;
         
         if (userData) {
           console.log('Signup: User data found:', userData);
