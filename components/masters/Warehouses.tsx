@@ -495,7 +495,7 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
           <h3 className={`text-lg font-black mb-2 text-red-500`}>Error Loading Warehouses</h3>
           <p className={`text-sm ${textSecondary} mb-4`}>{warehousesError}</p>
           <button
-            onClick={fetchWarehouses}
+            onClick={() => fetchWarehouses(selectedProjectId)}
             className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
           >
             Retry

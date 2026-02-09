@@ -3733,29 +3733,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             }
           }
         }}
-        defaultActivities={[
-          { id: '1', name: 'Excavation & Misc', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', unit: 'Cum', createdAt: '2024-01-15T00:00:00.000Z' },
-          { id: '2', name: 'PCC', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', unit: 'Cum', createdAt: '2024-01-16T00:00:00.000Z' },
-          { id: '3', name: 'Steel Reinforcement', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', unit: 'Kgs', createdAt: '2024-01-17T00:00:00.000Z' },
-          { id: '4', name: 'Concrete Work', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', unit: 'Cum', createdAt: '2024-01-18T00:00:00.000Z' },
-          { id: '5', name: 'Masonry', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Cum', createdAt: '2024-01-19T00:00:00.000Z' },
-          { id: '6', name: 'Plastering, Gypsum, POP', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Sqm', createdAt: '2024-01-20T00:00:00.000Z' },
-          { id: '7', name: 'Water Proofing', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Sqm', createdAt: '2024-01-21T00:00:00.000Z' },
-          { id: '8', name: 'Doors & Windows', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Nos', createdAt: '2024-01-22T00:00:00.000Z' },
-          { id: '9', name: 'Tiling & Paver Work', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Sqm', createdAt: '2024-01-23T00:00:00.000Z' },
-          { id: '10', name: 'Railing & Fabrication work', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Rmt', createdAt: '2024-01-24T00:00:00.000Z' },
-          { id: '11', name: 'Electrical', project: 'Residential Complex A', subproject: 'Plumbing Installation', type: 'activity', unit: 'Nos', createdAt: '2024-01-25T00:00:00.000Z' },
-          { id: '12', name: 'Plumbing', project: 'Residential Complex A', subproject: 'Plumbing Installation', type: 'activity', unit: 'Rmt', createdAt: '2024-01-26T00:00:00.000Z' },
-          { id: '13', name: 'Painting', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Sqm', createdAt: '2024-01-27T00:00:00.000Z' },
-          { id: '14', name: 'Bituminous Works', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', unit: 'Sqm', createdAt: '2024-01-28T00:00:00.000Z' },
-          { id: '15', name: 'Sub Activites 1.1', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'heading', createdAt: '2024-01-29T00:00:00.000Z' },
-        ]}
-        userActivities={activities.filter(a => !['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11', '12', '13', '14', '15'].includes(a.id))}
-        availableProjects={selectedProject ? [{ name: selectedProject.name, code: selectedProject.code || '' }] : []}
-        availableSubprojects={selectedSubproject ? [{ name: selectedSubproject.name, project: selectedProject?.name || '' }] : []}
-        defaultProject={selectedProject?.name || ''}
-        defaultSubproject={selectedSubproject?.name || ''}
-        onActivityCreated={handleActivityCreated}
+        activities={activities}
       />
 
       {/* Create Material Modal */}
@@ -3801,7 +3779,6 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             }
           }
         }}
-        onMaterialCreated={handleMaterialCreated}
       />
 
       {/* Create Labour Modal */}
@@ -3841,7 +3818,6 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             }
           }
         }}
-        onLabourCreated={handleLabourCreated}
       />
 
       {/* Create Asset Modal */}
@@ -3880,7 +3856,6 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             }
           }
         }}
-        onAssetCreated={handleAssetCreated}
       />
 
       {/* Create Subproject Modal */}

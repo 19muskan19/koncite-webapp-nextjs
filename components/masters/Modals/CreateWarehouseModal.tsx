@@ -423,7 +423,7 @@ const CreateWarehouseModal: React.FC<CreateWarehouseModalProps> = ({
               ) : localProjects && localProjects.length > 0 ? (
                 localProjects.map((project) => (
                   <option key={project.id || project.uuid} value={project.id || project.uuid}>
-                    {project.name || project.project_name || 'Unnamed Project'}
+                    {project.name || 'Unnamed Project'}
                   </option>
                 ))
               ) : (

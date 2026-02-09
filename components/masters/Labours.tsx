@@ -297,7 +297,7 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
       setTogglingLabourId(labour.id);
       
       // Determine current status
-      const currentStatus = labour.status || (labour.is_active === 1 || labour.is_active === '1' || labour.is_active === true ? 'Active' : 'Inactive');
+      const currentStatus = labour.status || (labour.is_active === 1 ? 'Active' : 'Inactive');
       const newStatus = currentStatus === 'Active' ? 'Inactive' : 'Active';
       const isActive = newStatus === 'Active' ? 1 : 0;
       

@@ -311,7 +311,7 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
       setTogglingUnitId(unit.id);
       
       // Determine current status - check both status field and is_active field
-      const currentStatus = unit.status || (unit.is_active === 1 || unit.is_active === '1' || unit.is_active === true ? 'Active' : 'Inactive');
+      const currentStatus = unit.status || (unit.is_active === 1 ? 'Active' : 'Inactive');
       const newStatus = currentStatus === 'Active' ? 'Inactive' : 'Active';
       const isActive = newStatus === 'Active' ? 1 : 0;
       

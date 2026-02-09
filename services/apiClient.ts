@@ -1,6 +1,12 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosError } from 'axios';
 import { getCookie } from '../utils/cookies';
 
+// Error response data interface
+interface ErrorResponseData {
+  message?: string;
+  [key: string]: any;
+}
+
 // API Base URL Configuration
 // Production: https://koncite.com/api
 // Staging: https://staging.koncite.com/api
@@ -85,8 +91,8 @@ apiClient.interceptors.response.use(
           if (typeof window !== 'undefined') {
             const token = getAuthToken();
             const url = error.config?.url || '';
-            const message = error.response?.data?.message || '';
-            const responseData = error.response?.data || {};
+            const responseData = (error.response?.data as ErrorResponseData) || {};
+            const message = responseData?.message || '';
             
             // Don't logout for document endpoints if they return 401 - might be endpoint not found or permission issue
             // Let the component handle the error instead
@@ -142,12 +148,13 @@ apiClient.interceptors.response.use(
           break;
         case 500:
           console.error('Server Error: Something went wrong on the server');
+          const errorData = (error.response?.data as ErrorResponseData) || {};
           console.error('Error details:', {
             url: error.config?.url,
             method: error.config?.method,
             status: error.response?.status,
             data: error.response?.data,
-            message: error.response?.data?.message || error.message
+            message: errorData?.message || error.message
           });
           break;
         default:

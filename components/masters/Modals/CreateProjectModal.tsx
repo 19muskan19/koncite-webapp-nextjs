@@ -176,7 +176,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       // The API returns companies_id as numeric ID, but we might receive it in different formats
       let companyId = (editingProject as any).companies_id || 
                      (editingProject as any).company_id || 
-                     editingProject.companyId || 
+                     (editingProject as any).companyId || 
                      '';
       
       // Convert to string and ensure we have a valid match
