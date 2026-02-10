@@ -349,9 +349,11 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
             {/* Main Heading */}
             <h1 className={`text-4xl md:text-6xl lg:text-7xl font-bold ${textPrimary} mb-6 leading-tight`}>
               <span className="inline-block opacity-0 animate-[fadeInUp_1s_ease-out_0.2s_forwards]">Build Smarter with</span>
-              <span className="inline-block opacity-0 animate-[slideInRight_0.8s_ease-out_0.5s_forwards] ml-2 md:ml-3">K</span>
-              <span className="text-[#C2D642] inline-block opacity-0 animate-[bounceIn_0.8s_ease-out_0.7s_forwards]">O</span>
-              <span className="inline-block opacity-0 animate-[slideInLeft_0.8s_ease-out_0.9s_forwards]">NCITE</span>
+              <span className="inline-block whitespace-nowrap ml-1 sm:ml-2 md:ml-3">
+                <span className="inline-block opacity-0 animate-[slideInRight_0.8s_ease-out_0.5s_forwards]">K</span>
+                <span className="text-[#C2D642] inline-block opacity-0 animate-[bounceIn_0.8s_ease-out_0.7s_forwards]">O</span>
+                <span className="inline-block opacity-0 animate-[slideInLeft_0.8s_ease-out_0.9s_forwards]">NCITE</span>
+              </span>
             </h1>
 
             {/* Tagline */}
