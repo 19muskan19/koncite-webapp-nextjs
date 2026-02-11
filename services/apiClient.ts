@@ -146,6 +146,9 @@ apiClient.interceptors.response.use(
         case 422:
           // Validation errors - these will be handled by the component
           break;
+        case 429:
+          console.error('Too Many Requests: Rate limit exceeded. Please wait a moment and try again.');
+          break;
         case 500:
           console.error('Server Error: Something went wrong on the server');
           const errorData = (error.response?.data as ErrorResponseData) || {};

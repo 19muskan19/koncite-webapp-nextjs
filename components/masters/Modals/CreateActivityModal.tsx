@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ThemeType } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
 import { X, Loader2 } from 'lucide-react';
@@ -65,9 +65,11 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
     end_date: '' // Optional: end date
   });
   const [availableHeadings, setAvailableHeadings] = useState<Array<{ id: number; uuid: string; activities: string }>>([]);
+  const [modalSubprojects, setModalSubprojects] = useState<Array<{ id: number; uuid: string; name: string; project_id?: number }>>([]);
   const [units, setUnits] = useState<Array<{ id: number; unit: string; uuid?: string }>>([]);
   const [isLoadingUnits, setIsLoadingUnits] = useState<boolean>(false);
   const [isLoadingHeadings, setIsLoadingHeadings] = useState<boolean>(false);
+  const [isLoadingSubprojects, setIsLoadingSubprojects] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const isDark = theme === 'dark';
@@ -103,7 +105,37 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
     fetchUnits();
   }, [isOpen]);
 
-  // Fetch headings when project and type are selected
+  // Fetch subprojects when project is selected in modal
+  useEffect(() => {
+    const fetchSubprojects = async () => {
+      if (!isOpen || !formData.project) {
+        setModalSubprojects([]);
+        return;
+      }
+      const projectIdNum = projects.find(p => p.uuid === formData.project || String(p.id) === formData.project)?.id;
+      const projectIdForApi = projectIdNum ?? formData.project;
+      setIsLoadingSubprojects(true);
+      try {
+        const result = await masterDataAPI.getSubprojects(projectIdForApi);
+        const list = Array.isArray(result) ? result : (result as any)?.subProject || (result as any)?.data || [];
+        setModalSubprojects(list.map((s: any) => ({
+          id: s.id,
+          uuid: s.uuid || String(s.id),
+          name: s.name || s.subproject_name || '',
+          project_id: s.project_id || s.tag_project
+        })));
+      } catch (error: any) {
+        console.error('Failed to fetch subprojects:', error);
+        setModalSubprojects([]);
+        toast.showError('Failed to load subprojects');
+      } finally {
+        setIsLoadingSubprojects(false);
+      }
+    };
+    fetchSubprojects();
+  }, [isOpen, formData.project, projects]);
+
+  // Fetch all headings (type='heading') when project and type are selected
   useEffect(() => {
     const fetchHeadings = async () => {
       if (!isOpen || !formData.project || formData.type !== 'activites') {
@@ -114,10 +146,19 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
       setIsLoadingHeadings(true);
       try {
         const projectIdNum = projects.find(p => p.uuid === formData.project || String(p.id) === formData.project)?.id;
-        const fetchedActivities = await masterDataAPI.getActivities(projectIdNum || formData.project);
-        // Filter headings (type = 'heading')
-        const headings = fetchedActivities
-          .filter((a: any) => a.type === 'heading')
+        const subprojectIdNum = formData.subproject
+          ? modalSubprojects.find(s => s.uuid === formData.subproject || String(s.id) === formData.subproject)?.id
+          : undefined;
+        // Fetch activities - with subproject when selected, else project-wide to get all headings
+        const result = await masterDataAPI.getActivities(projectIdNum || formData.project, subprojectIdNum);
+        const raw = Array.isArray(result) ? result : (result?.data ?? []);
+        // DB uses type column: list all items where type='heading' in Heading dropdown
+        const isHeading = (a: any) => {
+          const t = a.type ?? a.activity_type ?? '';
+          return t && String(t).toLowerCase() === 'heading';
+        };
+        const headings = raw
+          .filter(isHeading)
           .map((a: any) => ({
             id: a.id,
             uuid: a.uuid || String(a.id),
@@ -133,7 +174,7 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
     };
 
     fetchHeadings();
-  }, [isOpen, formData.project, formData.type]);
+  }, [isOpen, formData.project, formData.subproject, formData.type, projects, modalSubprojects]);
 
   // Load activity data when editing
   useEffect(() => {
@@ -209,6 +250,13 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
         heading: '',
         unit_id: ''
       });
+    } else if (name === 'project') {
+      // Reset subproject when project changes (subprojects are project-specific)
+      setFormData({
+        ...formData,
+        project: value,
+        subproject: ''
+      });
     } else {
       setFormData({
         ...formData,
@@ -270,7 +318,7 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
 
       // Add optional subproject if provided
       if (formData.subproject) {
-        const subprojectIdNum = subprojects.find(s => s.uuid === formData.subproject || String(s.id) === formData.subproject)?.id;
+        const subprojectIdNum = modalSubprojects.find(s => s.uuid === formData.subproject || String(s.id) === formData.subproject)?.id;
         payload.subproject = subprojectIdNum || formData.subproject;
       }
 
@@ -310,17 +358,6 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
       setIsSubmitting(false);
     }
   };
-
-  // Get filtered subprojects for selected project
-  const filteredSubprojects = useMemo(() => {
-    if (!formData.project) return [];
-    const projectIdNum = projects.find(p => p.uuid === formData.project || String(p.id) === formData.project)?.id;
-    return subprojects.filter(s => 
-      s.project_id === projectIdNum || 
-      s.uuid === formData.project || 
-      String(s.id) === formData.project
-    );
-  }, [formData.project, subprojects, projects]);
 
   if (!isOpen) return null;
 
@@ -378,24 +415,31 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
               Subproject (Optional)
             </label>
-            <select
-              name="subproject"
-              value={formData.subproject}
-              onChange={handleInputChange}
-              disabled={!formData.project || isSubmitting}
-              className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
-                isDark 
-                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
-                  : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
-            >
-              <option value="">-- Select Subproject (Optional) --</option>
-              {filteredSubprojects.map((subproject: { id: number; uuid: string; name: string; project_id?: number }) => (
-                <option key={subproject.uuid || subproject.id} value={subproject.uuid || String(subproject.id)}>
-                  {subproject.name}
-                </option>
-              ))}
-            </select>
+            {isLoadingSubprojects ? (
+              <div className={`w-full px-4 py-3 rounded-lg text-sm ${textSecondary} flex items-center gap-2`}>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Loading subprojects...
+              </div>
+            ) : (
+              <select
+                name="subproject"
+                value={formData.subproject}
+                onChange={handleInputChange}
+                disabled={!formData.project || isSubmitting}
+                className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+                  isDark 
+                    ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
+                    : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
+                } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+              >
+                <option value="">-- Select Subproject (Optional) --</option>
+                {modalSubprojects.map((subproject) => (
+                  <option key={subproject.uuid || subproject.id} value={subproject.uuid || String(subproject.id)}>
+                    {subproject.name}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
 
           {/* Type */}

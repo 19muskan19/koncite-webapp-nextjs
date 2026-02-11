@@ -1210,9 +1210,16 @@ export const masterDataAPI = {
       const response = await apiClient.post('/materials-add', data);
       return response.data;
     } catch (error: any) {
+      const errData = error.response?.data || {};
+      const errMsg = errData.message || 'Failed to create material';
+      const errs = errData.errors || {};
+      const firstErr = typeof errs === 'object' && Object.keys(errs).length > 0
+        ? Object.values(errs).flat().find((v: any) => v && String(v).trim())
+        : undefined;
+      const message = firstErr ? `${errMsg}: ${firstErr}` : errMsg;
       throw {
-        message: error.response?.data?.message || 'Failed to create material',
-        errors: error.response?.data?.errors || {},
+        message,
+        errors: errs,
       } as ApiError;
     }
   },
@@ -1260,6 +1267,69 @@ export const masterDataAPI = {
     } catch (error: any) {
       throw {
         message: error.response?.data?.message || 'Failed to delete material',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  // Materials History - Opening stock, history
+  getMaterialsHistoryList: async (): Promise<any[]> => {
+    try {
+      const response = await apiClient.get('/materials-history-list/');
+      return response.data?.data ?? response.data ?? [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch materials history',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  addMaterialsHistory: async (data: Record<string, any>): Promise<any> => {
+    try {
+      const response = await apiClient.post('/materials-history-add', data);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to add materials history',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  editMaterialsHistory: async (data: Record<string, any>): Promise<any> => {
+    try {
+      const response = await apiClient.post('/materials-history-edit', data);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to edit materials history',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  getMaterialsOpeningList: async (projectId?: number | string, storeId?: number | string): Promise<any> => {
+    try {
+      const payload: Record<string, any> = {};
+      if (projectId) payload.projectId = projectId;
+      if (storeId) payload.storeId = storeId;
+      const response = await apiClient.post('/materials-opening-list', payload);
+      return response.data?.data ?? response.data ?? [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch materials opening list',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  addMaterialOpeningStock: async (data: Record<string, any>): Promise<any> => {
+    try {
+      const response = await apiClient.post('/materials-opening-add', data);
+      return response.data;
+    } catch (error: any) {
+      const status = error.response?.status;
+      const msg = error.response?.data?.message || error.message || 'Failed to add opening stock';
+      const hint = status === 404 ? ' Backend endpoint /materials-opening-add may not exist. Add it to your Laravel backend.' : '';
+      throw {
+        message: msg + hint,
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
@@ -1421,7 +1491,7 @@ export const masterDataAPI = {
   },
 
   // Activities - Matching Laravel routes
-  getActivities: async (projectId?: number | string, subprojectId?: number | string): Promise<any[]> => {
+  getActivities: async (projectId?: number | string, subprojectId?: number | string): Promise<{ data: any[]; message?: string }> => {
     try {
       const payload: any = {};
       if (projectId) payload.project = projectId;
@@ -1431,7 +1501,9 @@ export const masterDataAPI = {
       const response = Object.keys(payload).length > 0
         ? await apiClient.post('/activities-list', payload)
         : await apiClient.get('/activities-list');
-      return response.data.data || response.data || [];
+      const data = response.data?.data ?? response.data ?? [];
+      const message = response.data?.message;
+      return { data: Array.isArray(data) ? data : [], message };
     } catch (error: any) {
       throw {
         message: error.response?.data?.message || 'Failed to fetch activities',

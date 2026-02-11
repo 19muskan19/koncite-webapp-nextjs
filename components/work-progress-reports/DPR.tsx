@@ -2460,7 +2460,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                   <Activity className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
                   <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>No activities available</h3>
                   <p className={`text-sm ${textSecondary}`}>
-                    There are no activities available for {selectedSubproject.name}. Please create activities first.
+                    There are no activities available for {selectedSubproject?.name ?? 'the selected subproject'}. Please create activities first.
                   </p>
                 </div>
               )}
