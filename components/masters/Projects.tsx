@@ -5,6 +5,7 @@ import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
 import { masterDataAPI } from '../../services/api';
 import { useUser } from '../../contexts/UserContext';
+import * as XLSX from 'xlsx';
 import { 
   FolderKanban,
   Building2,
@@ -574,8 +575,9 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
   }, [searchQuery, sortFilter, allProjects, isSearching]);
 
   const handleDownloadExcel = () => {
-    const headers = ['Project Name', 'Code', 'Company', 'Address', 'Is Contractor', 'Planned Start Date', 'Planned End Date', 'Project Manager', 'Status'];
-    const rows = filteredAndSortedProjects.map(project => [
+    const headers = ['SR No', 'Project Name', 'Code', 'Company', 'Address', 'Is Contractor', 'Planned Start Date', 'Planned End Date', 'Project Manager', 'Status'];
+    const rows = filteredAndSortedProjects.map((project, idx) => [
+      idx + 1,
       project.name,
       project.code,
       project.company,
@@ -587,22 +589,20 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
       project.status
     ]);
 
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n');
-
-    const BOM = '\uFEFF';
-    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
-    
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Projects');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `projects_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `projects_${new Date().toISOString().split('T')[0]}.xlsx`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (

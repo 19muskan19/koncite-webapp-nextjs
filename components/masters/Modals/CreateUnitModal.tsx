@@ -212,19 +212,22 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
               Unit Conversion <span className="text-xs text-slate-500">(Optional)</span>
             </label>
-            <input
-              type="text"
+            <select
               name="unit_coversion"
               value={formData.unit_coversion}
-              onChange={handleInputChange}
-              placeholder="Enter conversion unit name (e.g., Base Unit, Cubic Meter, Metric Ton)"
+              onChange={(e) => setFormData({ ...formData, unit_coversion: e.target.value })}
               disabled={isSubmitting}
-              className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                isDark 
-                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
+              className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+                isDark
+                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]'
                   : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
-            />
+              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50 pr-10`}
+            >
+              <option value="">-- Select Unit --</option>
+              {['Bags', 'MT', 'Cft', 'Sft', 'Rft', 'Kgs', 'Ltr', 'Hrs', 'Day', 'Nos', 'Cum', 'Sqm', 'Rmt', 'Brass', 'Yard', 'Packet', 'LS', 'Bulk', 'Bundles'].map((u) => (
+                <option key={u} value={u}>{u}</option>
+              ))}
+            </select>
             <p className={`text-xs mt-1 ${textSecondary}`}>
               If provided, conversion factor is required
             </p>

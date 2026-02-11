@@ -7,6 +7,7 @@ import { Activity, MoreVertical, Download, Plus, Trash2, Loader2, Edit, Search, 
 import CreateActivityModal from './Modals/CreateActivityModal';
 import { masterDataAPI } from '../../services/api';
 import { useUser } from '../../contexts/UserContext';
+import * as XLSX from 'xlsx';
 
 interface ActivityItem {
   id: string;
@@ -278,34 +279,32 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
   };
 
   const handleDownloadExcel = () => {
-    const headers = ['#', 'Activities', 'Unit', 'Qty', 'Rate', 'Amount', 'Start Date', 'End Date'];
+    const headers = ['SR No', 'Activities', 'Unit', 'Qty', 'Rate', 'Amount', 'Start Date', 'End Date'];
     const rows = filteredActivities.map((activity, idx) => [
-      String(idx + 1),
-      activity.name,
+      idx + 1,
+      activity.name || activity.activities,
       activity.unit || '',
-      activity.qty?.toString() || '',
-      activity.rate?.toString() || '',
-      activity.amount?.toString() || '',
+      activity.qty ?? '',
+      activity.rate ?? '',
+      activity.amount ?? '',
       activity.startDate || '',
       activity.endDate || ''
     ]);
 
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n');
-
-    const BOM = '\uFEFF';
-    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
-    
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Activities');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `activities_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `activities_${new Date().toISOString().split('T')[0]}.xlsx`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -576,21 +575,6 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
           </p>
         </div>
       ) : null}
-
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Total Records</p>
-          <p className={`text-2xl font-black ${textPrimary}`}>{filteredActivities.length}</p>
-        </div>
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Activities</p>
-          <p className={`text-2xl font-black text-[#C2D642]`}>{filteredActivities.filter(a => a.type === 'activity').length}</p>
-        </div>
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Headings</p>
-          <p className={`text-2xl font-black text-[#C2D642]`}>{filteredActivities.filter(a => a.type === 'heading').length}</p>
-        </div>
-      </div>
 
       {/* Create Activity Modal */}
       <CreateActivityModal

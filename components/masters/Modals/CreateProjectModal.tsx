@@ -403,6 +403,11 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       return;
     }
 
+    if (formData.planned_end_date && formData.planned_start_date && new Date(formData.planned_end_date) < new Date(formData.planned_start_date)) {
+      toast.showWarning('Please enter appropriate end date. End date must be greater than or equal to start date.');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       // Prepare FormData matching Laravel backend requirements

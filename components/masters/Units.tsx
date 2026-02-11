@@ -3,10 +3,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
-import { Package, MoreVertical, Search, ArrowUpDown, Download, Plus, Loader2, Edit, Trash2, RefreshCw } from 'lucide-react';
+import { Package, MoreVertical, Search, ArrowUpDown, Download, Plus, Loader2, Edit, Trash2, RefreshCw, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import CreateUnitModal from './Modals/CreateUnitModal';
 import { masterDataAPI } from '../../services/api';
 import { useUser } from '../../contexts/UserContext';
+import * as XLSX from 'xlsx';
 
 interface UnitsProps {
   theme: ThemeType;
@@ -41,6 +42,8 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
   const [isLoadingUnits, setIsLoadingUnits] = useState<boolean>(false);
   const [unitsError, setUnitsError] = useState<string | null>(null);
   const [togglingUnitId, setTogglingUnitId] = useState<string | null>(null); // Track which unit is being toggled
+  const [entriesPerPage, setEntriesPerPage] = useState<number>(25);
+  const [currentPage, setCurrentPage] = useState<number>(1);
 
   // Fetch units from API
   const fetchUnits = async () => {
@@ -224,26 +227,27 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
 
   const handleEditUnit = async (unit: Unit) => {
     try {
-      // Use UUID for GET /unit-edit/{uuid} API as per user request
-      // Backend edit() uses where('id', $uuid) but route parameter is {uuid}
-      // Try UUID first, fallback to numeric ID if UUID not available
-      const unitUuid = unit.uuid || unit.id;
-      const numericId = unit.numericId || unit.id;
+      // Backend edit() uses where('id', $uuid) - expects numeric ID in URL, despite route param name
+      const unitIdForApi = unit.numericId ?? unit.id;
+      const numericId = unit.numericId ?? unit.id;
+      
+      if (unitIdForApi == null || unitIdForApi === '') {
+        toast.showError('Invalid unit ID. Cannot edit unit.');
+        return;
+      }
       
       console.log('📝 Editing unit:', {
-        unitId: unit.id,
-        uuid: unit.uuid,
-        numericId: numericId,
-        usingUuidForGet: unitUuid, // GET /unit-edit/{uuid} - use UUID
-        usingNumericIdForUpdate: numericId // POST /unit-add with updateId expects numeric ID
+        idForApi: unitIdForApi,
+        numericId,
+        type: typeof unitIdForApi
       });
       
-      // Fetch full unit details from API using UUID for unit-edit/{uuid}
-      const unitDetails = await masterDataAPI.getUnit(String(unitUuid));
+      // Fetch full unit details - GET /unit-edit/{id} (backend queries by numeric id)
+      const unitDetails = await masterDataAPI.getUnit(String(unitIdForApi));
       console.log('✅ Unit details fetched:', unitDetails);
       
-      setEditingUnitId(String(unitUuid)); // UUID for GET /unit-edit/{uuid}
-      setEditingUnitNumericId(numericId); // Numeric ID for POST /unit-add with updateId
+      setEditingUnitId(String(unitIdForApi)); // Pass numeric ID - modal's getUnit expects it
+      setEditingUnitNumericId(numericId);
       
       // Open modal with unit data - CreateUnitModal will handle this
       setShowCreateModal(true);
@@ -322,27 +326,24 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
         newIsActive: isActive
       });
       
-      // Use UUID for unit-edit/{uuid} API, numeric ID for update
-      const unitUuid = unit.uuid || unit.id; // For GET unit-edit/{uuid}
-      const numericId = unit.numericId || unit.id; // For POST unit-add with updateId
+      // Backend unit-edit/{uuid} uses where('id', $uuid) - expects numeric ID
+      const unitIdForApi = unit.numericId ?? unit.id;
+      const numericId = unit.numericId ?? unit.id;
       
       console.log('🔄 Toggling unit status:', {
         unitId: unit.id,
-        numericId: numericId,
-        uuid: unitUuid,
+        numericId,
         currentStatus: unit.status,
         currentIsActive: unit.is_active,
         newStatus: newStatus,
-        newIsActive: isActive,
-        usingUuidForGet: unitUuid,
-        usingNumericIdForUpdate: numericId
+        newIsActive: isActive
       });
 
-      // First, fetch current unit data using unit-edit/{uuid} API to ensure we have latest data
+      // First, fetch current unit data - GET /unit-edit/{id} (backend queries by numeric id)
       let currentUnitData;
       try {
-        console.log('📖 Fetching current unit data via unit-edit/{uuid}');
-        currentUnitData = await masterDataAPI.getUnit(String(unitUuid));
+        console.log('📖 Fetching current unit data via unit-edit');
+        currentUnitData = await masterDataAPI.getUnit(String(unitIdForApi));
         console.log('✅ Current unit data:', currentUnitData);
       } catch (fetchError: any) {
         console.warn('⚠️ Failed to fetch unit data, using existing data:', fetchError);
@@ -439,31 +440,40 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
     return filtered;
   }, [units, searchQuery, isSearching]);
 
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(filteredUnits.length / entriesPerPage));
+  const startIndex = (currentPage - 1) * entriesPerPage;
+  const endIndex = Math.min(startIndex + entriesPerPage, filteredUnits.length);
+  const paginatedUnits = filteredUnits.slice(startIndex, endIndex);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, entriesPerPage]);
+
   const handleDownloadExcel = () => {
-    const headers = ['Unit', 'Unit Conversion', 'Unit Conversion Factor', 'Status'];
-    const rows = filteredUnits.map(unit => [
+    const headers = ['SR No', 'Unit', 'Unit Conversion', 'Unit Conversion Factor', 'Status'];
+    const rows = filteredUnits.map((unit, idx) => [
+      idx + 1,
       unit.name,
       unit.conversion,
       unit.factor,
       unit.status
     ]);
 
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n');
-
-    const BOM = '\uFEFF';
-    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
-    
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Units');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `units_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `units_${new Date().toISOString().split('T')[0]}.xlsx`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -616,7 +626,7 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-inherit">
-                {filteredUnits.map((row, rowIdx) => (
+                {paginatedUnits.map((row, rowIdx) => (
                   <tr 
                     key={rowIdx} 
                     className={`${
@@ -723,6 +733,92 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
                 ))}
               </tbody>
             </table>
+          </div>
+          {/* Pagination Bar */}
+          <div className={`flex flex-col sm:flex-row items-center justify-between gap-4 px-6 py-4 border-t ${isDark ? 'border-slate-700 bg-slate-800/20' : 'border-slate-200 bg-slate-50/50'}`}>
+            <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+              <button
+                onClick={() => setCurrentPage(1)}
+                disabled={currentPage <= 1}
+                className={`p-2 rounded transition-colors ${
+                  currentPage <= 1
+                    ? isDark ? 'text-slate-500 cursor-not-allowed' : 'text-slate-400 cursor-not-allowed'
+                    : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-200 text-slate-900'
+                }`}
+                title="First page"
+              >
+                <ChevronsLeft className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage <= 1}
+                className={`p-2 rounded transition-colors ${
+                  currentPage <= 1
+                    ? isDark ? 'text-slate-500 cursor-not-allowed' : 'text-slate-400 cursor-not-allowed'
+                    : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-200 text-slate-900'
+                }`}
+                title="Previous page"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <select
+                value={currentPage}
+                onChange={(e) => setCurrentPage(Number(e.target.value))}
+                className={`px-3 py-1.5 rounded text-sm font-bold border appearance-none cursor-pointer ${
+                  isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
+                }`}
+                title="Current page"
+              >
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+              <button
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+                className={`p-2 rounded transition-colors ${
+                  currentPage >= totalPages
+                    ? isDark ? 'text-slate-500 cursor-not-allowed' : 'text-slate-400 cursor-not-allowed'
+                    : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-200 text-slate-900'
+                }`}
+                title="Next page"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setCurrentPage(totalPages)}
+                disabled={currentPage >= totalPages}
+                className={`p-2 rounded transition-colors ${
+                  currentPage >= totalPages
+                    ? isDark ? 'text-slate-500 cursor-not-allowed' : 'text-slate-400 cursor-not-allowed'
+                    : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-200 text-slate-900'
+                }`}
+                title="Last page"
+              >
+                <ChevronsRight className="w-4 h-4" />
+              </button>
+              <div className={`h-6 w-px ${isDark ? 'bg-slate-600' : 'bg-slate-200'}`} />
+              <span className={`text-sm ${textSecondary}`}>Number of rows:</span>
+              <select
+                value={entriesPerPage}
+                onChange={(e) => {
+                  setEntriesPerPage(Number(e.target.value));
+                  setCurrentPage(1);
+                }}
+                className={`px-3 py-1.5 rounded text-sm font-bold border appearance-none cursor-pointer ${
+                  isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
+                }`}
+              >
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={500}>500</option>
+              </select>
+            </div>
+            <span className={`text-sm ${textSecondary}`}>
+              Page {currentPage} of {totalPages} ({filteredUnits.length} total)
+            </span>
           </div>
         </div>
       ) : !isLoadingUnits && !unitsError ? (

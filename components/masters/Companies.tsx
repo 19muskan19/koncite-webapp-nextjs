@@ -20,6 +20,7 @@ import {
 import CreateCompanyModal from './Modals/CreateCompanyModal';
 import { masterDataAPI } from '../../services/api';
 import { useUser } from '../../contexts/UserContext';
+import * as XLSX from 'xlsx';
 
 interface Company {
   id: string; // For display/UI purposes (can be uuid or id)
@@ -755,9 +756,9 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
   }, [viewingCompany, allProjects, isLoadingProjects]);
 
   const handleDownloadExcel = () => {
-    // Prepare data for Excel export
-    const headers = ['Company Name', 'Code', 'Address', 'Registration No', 'Contact', 'Email', 'Status', 'Projects', 'Employees'];
-    const rows = sortedCompanies.map(company => [
+    const headers = ['SR No', 'Company Name', 'Code', 'Address', 'Registration No', 'Contact', 'Email', 'Status', 'Projects', 'Employees'];
+    const rows = sortedCompanies.map((company, idx) => [
+      idx + 1,
       company.name,
       company.code,
       company.address,
@@ -769,25 +770,20 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
       company.employees?.toString() || '0'
     ]);
 
-    // Create CSV content
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n');
-
-    // Add BOM for UTF-8 to ensure Excel opens it correctly
-    const BOM = '\uFEFF';
-    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
-    
-    // Create download link
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Companies');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `companies_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `companies_${new Date().toISOString().split('T')[0]}.xlsx`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (

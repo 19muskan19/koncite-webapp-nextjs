@@ -3,10 +3,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
-import { Boxes, MoreVertical, Download, Plus, Search, ArrowUpDown, FileSpreadsheet, Upload, Loader2, Edit, Trash2, RefreshCw } from 'lucide-react';
+import { Boxes, MoreVertical, Download, Plus, Search, ArrowUpDown, FileSpreadsheet, Upload, Loader2, Edit, Trash2, RefreshCw, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import CreateMaterialModal from './Modals/CreateMaterialModal';
 import { masterDataAPI } from '../../services/api';
 import { useUser } from '../../contexts/UserContext';
+import * as XLSX from 'xlsx';
 
 interface Material {
   id: string;
@@ -49,6 +50,8 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
   });
   const [availableStockSearch, setAvailableStockSearch] = useState<string>('');
   const [entriesPerPage, setEntriesPerPage] = useState<number>(10);
+  const [listEntriesPerPage, setListEntriesPerPage] = useState<number>(25);
+  const [listCurrentPage, setListCurrentPage] = useState<number>(1);
   
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -187,6 +190,16 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
     return filtered;
   }, [materials, searchQuery, isSearching]);
 
+  // Pagination for main materials list
+  const listTotalPages = Math.max(1, Math.ceil(filteredMaterials.length / listEntriesPerPage));
+  const listStartIndex = (listCurrentPage - 1) * listEntriesPerPage;
+  const listEndIndex = Math.min(listStartIndex + listEntriesPerPage, filteredMaterials.length);
+  const paginatedMaterials = filteredMaterials.slice(listStartIndex, listEndIndex);
+
+  useEffect(() => {
+    setListCurrentPage(1);
+  }, [searchQuery, listEntriesPerPage]);
+
   const handleEditMaterial = async (material: Material) => {
     try {
       // Fetch full material details from API
@@ -237,8 +250,9 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
   }, [openDropdownId]);
 
   const handleDownloadExcel = () => {
-    const headers = ['Class', 'Code', 'Name', 'Specification', 'Unit'];
-    const rows = filteredMaterials.map(material => [
+    const headers = ['SR No', 'Class', 'Code', 'Name', 'Specification', 'Unit'];
+    const rows = filteredMaterials.map((material, idx) => [
+      idx + 1,
       material.class,
       material.code,
       material.name,
@@ -246,27 +260,26 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
       material.unit
     ]);
 
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n');
-
-    const BOM = '\uFEFF';
-    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
-    
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Materials');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `materials_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `materials_${new Date().toISOString().split('T')[0]}.xlsx`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handleExportMaterialsData = () => {
-    const headers = ['Class', 'Code', 'Name', 'Specification', 'Unit'];
-    const rows = materials.map((material: Material) => [
+    const headers = ['SR No', 'Class', 'Code', 'Name', 'Specification', 'Unit'];
+    const rows = materials.map((material: Material, idx: number) => [
+      idx + 1,
       material.class,
       material.code,
       material.name,
@@ -274,22 +287,20 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
       material.unit || ''
     ]);
 
-    const csvContent = [
-      headers.join(','),
-      ...rows.map((row: string[]) => row.map((cell: string) => `"${cell}"`).join(','))
-    ].join('\n');
-
-    const BOM = '\uFEFF';
-    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
-    
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Materials');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `materials_data_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `materials_data_${new Date().toISOString().split('T')[0]}.xlsx`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
     toast.showSuccess('Materials data exported successfully');
   };
 
@@ -509,7 +520,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-inherit">
-                {filteredMaterials.map((row) => (
+                {paginatedMaterials.map((row) => (
                   <tr key={row.id} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.class}</td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.code}</td>
@@ -562,6 +573,92 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
               </tbody>
             </table>
           </div>
+          {/* Pagination Bar */}
+          <div className={`flex flex-col sm:flex-row items-center justify-between gap-4 px-6 py-4 border-t ${isDark ? 'border-slate-700 bg-slate-800/20' : 'border-slate-200 bg-slate-50/50'}`}>
+            <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+              <button
+                onClick={() => setListCurrentPage(1)}
+                disabled={listCurrentPage <= 1}
+                className={`p-2 rounded transition-colors ${
+                  listCurrentPage <= 1
+                    ? isDark ? 'text-slate-500 cursor-not-allowed' : 'text-slate-400 cursor-not-allowed'
+                    : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-200 text-slate-900'
+                }`}
+                title="First page"
+              >
+                <ChevronsLeft className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setListCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={listCurrentPage <= 1}
+                className={`p-2 rounded transition-colors ${
+                  listCurrentPage <= 1
+                    ? isDark ? 'text-slate-500 cursor-not-allowed' : 'text-slate-400 cursor-not-allowed'
+                    : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-200 text-slate-900'
+                }`}
+                title="Previous page"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <select
+                value={listCurrentPage}
+                onChange={(e) => setListCurrentPage(Number(e.target.value))}
+                className={`px-3 py-1.5 rounded text-sm font-bold border appearance-none cursor-pointer ${
+                  isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
+                }`}
+                title="Current page"
+              >
+                {Array.from({ length: listTotalPages }, (_, i) => i + 1).map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+              <button
+                onClick={() => setListCurrentPage((p) => Math.min(listTotalPages, p + 1))}
+                disabled={listCurrentPage >= listTotalPages}
+                className={`p-2 rounded transition-colors ${
+                  listCurrentPage >= listTotalPages
+                    ? isDark ? 'text-slate-500 cursor-not-allowed' : 'text-slate-400 cursor-not-allowed'
+                    : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-200 text-slate-900'
+                }`}
+                title="Next page"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setListCurrentPage(listTotalPages)}
+                disabled={listCurrentPage >= listTotalPages}
+                className={`p-2 rounded transition-colors ${
+                  listCurrentPage >= listTotalPages
+                    ? isDark ? 'text-slate-500 cursor-not-allowed' : 'text-slate-400 cursor-not-allowed'
+                    : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-200 text-slate-900'
+                }`}
+                title="Last page"
+              >
+                <ChevronsRight className="w-4 h-4" />
+              </button>
+              <div className={`h-6 w-px ${isDark ? 'bg-slate-600' : 'bg-slate-200'}`} />
+              <span className={`text-sm ${textSecondary}`}>Number of rows:</span>
+              <select
+                value={listEntriesPerPage}
+                onChange={(e) => {
+                  setListEntriesPerPage(Number(e.target.value));
+                  setListCurrentPage(1);
+                }}
+                className={`px-3 py-1.5 rounded text-sm font-bold border appearance-none cursor-pointer ${
+                  isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
+                }`}
+              >
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={500}>500</option>
+              </select>
+            </div>
+            <span className={`text-sm ${textSecondary}`}>
+              Page {listCurrentPage} of {listTotalPages} ({filteredMaterials.length} total)
+            </span>
+          </div>
         </div>
       ) : !isLoadingMaterials && !materialsError ? (
         <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
@@ -574,25 +671,6 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
           </p>
         </div>
       ) : null}
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className={`p-4 rounded-xl border ${cardClass}`}>
-              <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Total Records</p>
-              <p className={`text-2xl font-black ${textPrimary}`}>{filteredMaterials.length}</p>
-            </div>
-            <div className={`p-4 rounded-xl border ${cardClass}`}>
-              <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Class A</p>
-              <p className={`text-2xl font-black text-[#C2D642]`}>{filteredMaterials.filter(m => m.class === 'A').length}</p>
-            </div>
-            <div className={`p-4 rounded-xl border ${cardClass}`}>
-              <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Class B</p>
-              <p className={`text-2xl font-black text-[#C2D642]`}>{filteredMaterials.filter(m => m.class === 'B').length}</p>
-            </div>
-            <div className={`p-4 rounded-xl border ${cardClass}`}>
-              <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Class C</p>
-              <p className={`text-2xl font-black text-amber-500`}>{filteredMaterials.filter(m => m.class === 'C').length}</p>
-            </div>
-          </div>
         </>
       )}
 

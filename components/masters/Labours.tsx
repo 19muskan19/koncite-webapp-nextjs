@@ -3,10 +3,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
-import { Users, Plus, Search, X, Download, Loader2, Edit, Trash2, MoreVertical } from 'lucide-react';
+import { Users, Plus, Search, X, Download, Loader2, Edit, Trash2, MoreVertical, RefreshCw, Upload, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import CreateLabourModal from './Modals/CreateLabourModal';
+import LabourBulkUploadModal from './Modals/LabourBulkUploadModal';
 import { masterDataAPI } from '../../services/api';
 import { useUser } from '../../contexts/UserContext';
+import * as XLSX from 'xlsx';
 
 interface Labour {
   id: string; // UUID or string for display
@@ -44,6 +46,9 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
   const [isLoadingLabours, setIsLoadingLabours] = useState<boolean>(false);
   const [laboursError, setLaboursError] = useState<string | null>(null);
   const [togglingLabourId, setTogglingLabourId] = useState<string | null>(null); // Track which labour is being toggled
+  const [showBulkUploadModal, setShowBulkUploadModal] = useState<boolean>(false);
+  const [entriesPerPage, setEntriesPerPage] = useState<number>(25);
+  const [currentPage, setCurrentPage] = useState<number>(1);
   
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -84,12 +89,15 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
                         isActiveValue === undefined || // Default to active
                         isActiveValue === null; // Default to active
         
+        // Code: use only from API (e.g. L415190 from DB) - never invent a code
+        const code = labour.code || labour.labour_code || '';
+        
         return {
           id: uuid || String(numericId), // Use UUID for display if available, otherwise numeric ID as string
           numericId: numericId, // Store numeric ID for API calls
           uuid: uuid, // Store UUID if available
           name: labour.name || '',
-          code: labour.code || '',
+          code,
           category,
           unit_id: labour.unit_id || labour.unit?.id,
           unit: labour.unit || undefined,
@@ -149,12 +157,15 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
                         isActiveValue === undefined || // Default to active
                         isActiveValue === null; // Default to active
         
+        // Code: use only from API (e.g. L415190 from DB) - never invent a code
+        const code = labour.code || labour.labour_code || '';
+        
         return {
           id: uuid || String(numericId), // Use UUID for display if available, otherwise numeric ID as string
           numericId: numericId, // Store numeric ID for API calls
           uuid: uuid, // Store UUID if available
           name: labour.name || '',
-          code: labour.code || '',
+          code,
           category,
           unit_id: labour.unit_id || labour.unit?.id,
           unit: labour.unit || undefined,
@@ -220,24 +231,34 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
     return filtered;
   }, [labours, searchQuery, isSearching]);
 
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(filteredLabours.length / entriesPerPage));
+  const startIndex = (currentPage - 1) * entriesPerPage;
+  const endIndex = Math.min(startIndex + entriesPerPage, filteredLabours.length);
+  const paginatedLabours = filteredLabours.slice(startIndex, endIndex);
+
+  // Reset to page 1 when search or rows-per-page changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, entriesPerPage]);
+
   const handleEditLabour = async (labour: Labour) => {
     try {
-      // Use UUID for GET /labour-edit/{uuid} API
-      const labourUuid = labour.uuid || labour.id;
+      // Backend labour-edit/{uuid} likely uses where('id', $uuid) - pass numeric ID
+      const labourIdForApi = labour.numericId ?? labour.id;
+      if (labourIdForApi == null || labourIdForApi === '') {
+        toast.showError('Invalid labour ID. Cannot edit labour.');
+        return;
+      }
       
-      console.log('📝 Editing labour:', {
-        labourId: labour.id,
-        uuid: labour.uuid,
-        numericId: labour.numericId,
-        usingUuidForGet: labourUuid
-      });
+      console.log('📝 Editing labour:', { idForApi: labourIdForApi, numericId: labour.numericId });
       
-      // Fetch full labour details from API using UUID
-      const labourDetails = await masterDataAPI.getLabour(String(labourUuid));
+      // Fetch full labour details - GET /labour-edit/{id}
+      const labourDetails = await masterDataAPI.getLabour(String(labourIdForApi));
       console.log('✅ Labour details fetched:', labourDetails);
       
-      setEditingLabourId(String(labourUuid)); // UUID for GET /labour-edit/{uuid}
-      setEditingLabourNumericId(labour.numericId || null); // Numeric ID for update if needed
+      setEditingLabourId(String(labourIdForApi)); // Pass ID for API (modal uses for getLabour/updateLabour)
+      setEditingLabourNumericId(labour.numericId ?? labour.id);
       
       // Open modal with labour data - CreateLabourModal will handle this
       setShowCreateModal(true);
@@ -248,20 +269,13 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
   };
 
   const handleDeleteLabour = async (labourId: string) => {
-    // Find the labour to get its UUID
     const labour = labours.find(l => l.id === labourId);
-    const deleteUuid = labour?.uuid || labourId; // Use UUID for delete API
-    
-    console.log('🗑️ Deleting labour:', {
-      labourId: labourId,
-      uuid: labour?.uuid,
-      numericId: labour?.numericId,
-      usingUuid: deleteUuid
-    });
+    // Backend labour-delete/{uuid} likely uses where('id', $uuid) - pass numeric ID
+    const deleteId = labour?.numericId ?? labourId;
     
     if (window.confirm('Are you sure you want to delete this labour?')) {
       try {
-        await masterDataAPI.deleteLabour(String(deleteUuid));
+        await masterDataAPI.deleteLabour(String(deleteId));
         toast.showSuccess('Labour deleted successfully');
         // Refresh labours list
         await fetchLabours();
@@ -308,12 +322,12 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
         newIsActive: isActive
       });
       
-      // Use UUID for labour-edit/{uuid} API
-      const labourUuid = labour.uuid || labour.id;
+      // Backend labour-edit/{uuid} likely uses where('id', $uuid) - pass numeric ID
+      const labourIdForApi = labour.numericId ?? labour.id;
       
       console.log('🔄 Toggling labour status:', {
         labourId: labour.id,
-        uuid: labourUuid,
+        idForApi: labourIdForApi,
         currentStatus: labour.status,
         currentIsActive: labour.is_active,
         newStatus: newStatus,
@@ -324,7 +338,7 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
       let currentLabourData;
       try {
         console.log('📖 Fetching current labour data via labour-edit/{uuid}');
-        currentLabourData = await masterDataAPI.getLabour(String(labourUuid));
+        currentLabourData = await masterDataAPI.getLabour(String(labourIdForApi));
         console.log('✅ Current labour data:', currentLabourData);
       } catch (fetchError: any) {
         console.warn('⚠️ Failed to fetch labour data, using existing data:', fetchError);
@@ -346,21 +360,28 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
         )
       );
 
-      // Update labour status using updateLabour API with UUID
-      // The API uses POST /labour-add with updateId parameter
-      const updatePayload = {
+      // Update labour status using updateLabour API
+      // Ensure unit_id is always numeric - API may return unit as object
+      let unitId = currentLabourData.unit_id ?? labour.unit_id ?? labour.unit?.id;
+      if (typeof unitId === 'object' && unitId !== null && (unitId as any).id != null) {
+        unitId = (unitId as any).id;
+      }
+      const numUnitId = unitId != null && !isNaN(Number(unitId)) ? Number(unitId) : undefined;
+      const updatePayload: Record<string, any> = {
         name: currentLabourData.name || labour.name,
         category: currentLabourData.category || labour.category,
-        unit_id: currentLabourData.unit_id || labour.unit_id,
-        is_active: isActive // Explicitly set the new status
+        is_active: isActive
       };
+      if (numUnitId != null) {
+        updatePayload.unit_id = numUnitId;
+      }
       
       console.log('📝 Updating labour with payload:', {
-        uuid: labourUuid,
+        idForApi: labourIdForApi,
         updatePayload: updatePayload
       });
       
-      await masterDataAPI.updateLabour(String(labourUuid), updatePayload);
+      await masterDataAPI.updateLabour(String(labourIdForApi), updatePayload);
       
       toast.showSuccess(`Labour ${newStatus.toLowerCase()} successfully`);
       
@@ -390,8 +411,39 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
     }
   };
 
-  const handleLabourCreated = async () => {
-    // Refresh labours list after create/update
+  const handleLabourCreated = async (createdLabour?: any, updatedLabour?: { labourId: string; unit_id: number; unit: { id: number; unit: string } }) => {
+    if (createdLabour) {
+      // Use the created labour from labour-add response (includes code e.g. "L415190")
+      const numericId = createdLabour.id;
+      const uuid = createdLabour.uuid;
+      const code = createdLabour.code || '';
+      const isActive = createdLabour.is_active === 1 || createdLabour.is_active === '1' || createdLabour.is_active === true;
+      const newLabour: Labour = {
+        id: uuid || String(numericId),
+        numericId: numericId,
+        uuid: uuid,
+        name: createdLabour.name || '',
+        code,
+        category: (createdLabour.category || 'skilled') as 'skilled' | 'semiskilled' | 'unskilled',
+        unit_id: createdLabour.unit_id ?? createdLabour.unit?.id,
+        unit: createdLabour.unit,
+        status: isActive ? 'Active' : 'Inactive',
+        is_active: isActive ? 1 : 0,
+      };
+      setLabours(prev => [newLabour, ...prev]);
+      return;
+    }
+    if (updatedLabour) {
+      // Update labour's unit in the list so table reflects the edit immediately
+      setLabours(prev => prev.map(l => {
+        const matchId = l.numericId ?? l.id;
+        if (String(matchId) === String(updatedLabour.labourId) || l.id === updatedLabour.labourId) {
+          return { ...l, unit_id: updatedLabour.unit_id, unit: updatedLabour.unit };
+        }
+        return l;
+      }));
+      return;
+    }
     await fetchLabours();
   };
 
@@ -413,34 +465,30 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
   }, [openDropdownId]);
 
   const handleDownloadExcel = () => {
-    // Prepare data for Excel export
-    const headers = ['Labour Type', 'Code', 'Category', 'Status'];
-    const rows = filteredLabours.map(labour => [
+    const headers = ['SR No', 'Name', 'Code', 'Category', 'Units', 'Status'];
+    const rows = filteredLabours.map((labour, idx) => [
+      idx + 1,
       labour.name,
-      labour.id,
+      labour.code || labour.id,
       labour.category,
+      labour.unit?.unit || 'Nos',
       labour.status
     ]);
 
-    // Create CSV content
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n');
-
-    // Add BOM for UTF-8 to ensure Excel opens it correctly
-    const BOM = '\uFEFF';
-    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
-    
-    // Create download link
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Labours');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `labours_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `labours_${new Date().toISOString().split('T')[0]}.xlsx`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -485,6 +533,15 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
             <RefreshCw className="w-4 h-4" /> Refresh
           </button>
           <button 
+            onClick={() => setShowBulkUploadModal(true)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+              isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
+            } shadow-sm`}
+            title="Bulk Upload Labours"
+          >
+            <Upload className="w-4 h-4" /> Bulk Upload
+          </button>
+          <button 
             onClick={() => setShowCreateModal(true)}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white' : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'} shadow-md`}
           >
@@ -515,7 +572,7 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
           <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
           <input 
             type="text" 
-            placeholder="Search by labour type, code, or category..."
+            placeholder="Search by name, code, or category..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
@@ -555,16 +612,16 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
               <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
                 <tr>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>SR No</th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Labour Type</th>
+                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Name</th>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Code</th>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Category</th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Unit</th>
+                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Units</th>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Status</th>
                   <th className={`px-6 py-4 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-inherit">
-                {filteredLabours.map((row, index) => (
+                {paginatedLabours.map((row, index) => (
                   <tr 
                     key={row.id} 
                     className={`${
@@ -578,7 +635,7 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
                     } transition-colors`}
                   >
                     <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
-                      {index + 1}
+                      {startIndex + index + 1}
                     </td>
                     <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
                       {row.name}
@@ -594,7 +651,7 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
                        row.category}
                     </td>
                     <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
-                      {row.unit?.unit || '-'}
+                      {row.unit?.unit || 'Nos'}
                     </td>
                     <td className={`px-6 py-4`}>
                       <button
@@ -672,6 +729,92 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
               </tbody>
             </table>
           </div>
+          {/* Pagination Bar */}
+          <div className={`flex flex-col sm:flex-row items-center justify-between gap-4 px-6 py-4 border-t ${isDark ? 'border-slate-700 bg-slate-800/20' : 'border-slate-200 bg-slate-50/50'}`}>
+            <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+              <button
+                onClick={() => setCurrentPage(1)}
+                disabled={currentPage <= 1}
+                className={`p-2 rounded transition-colors ${
+                  currentPage <= 1
+                    ? isDark ? 'text-slate-500 cursor-not-allowed' : 'text-slate-400 cursor-not-allowed'
+                    : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-200 text-slate-900'
+                }`}
+                title="First page"
+              >
+                <ChevronsLeft className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage <= 1}
+                className={`p-2 rounded transition-colors ${
+                  currentPage <= 1
+                    ? isDark ? 'text-slate-500 cursor-not-allowed' : 'text-slate-400 cursor-not-allowed'
+                    : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-200 text-slate-900'
+                }`}
+                title="Previous page"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <select
+                value={currentPage}
+                onChange={(e) => setCurrentPage(Number(e.target.value))}
+                className={`px-3 py-1.5 rounded text-sm font-bold border appearance-none cursor-pointer ${
+                  isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
+                }`}
+                title="Current page"
+              >
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+              <button
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+                className={`p-2 rounded transition-colors ${
+                  currentPage >= totalPages
+                    ? isDark ? 'text-slate-500 cursor-not-allowed' : 'text-slate-400 cursor-not-allowed'
+                    : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-200 text-slate-900'
+                }`}
+                title="Next page"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setCurrentPage(totalPages)}
+                disabled={currentPage >= totalPages}
+                className={`p-2 rounded transition-colors ${
+                  currentPage >= totalPages
+                    ? isDark ? 'text-slate-500 cursor-not-allowed' : 'text-slate-400 cursor-not-allowed'
+                    : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-200 text-slate-900'
+                }`}
+                title="Last page"
+              >
+                <ChevronsRight className="w-4 h-4" />
+              </button>
+              <div className={`h-6 w-px ${isDark ? 'bg-slate-600' : 'bg-slate-200'}`} />
+              <span className={`text-sm ${textSecondary}`}>Number of rows:</span>
+              <select
+                value={entriesPerPage}
+                onChange={(e) => {
+                  setEntriesPerPage(Number(e.target.value));
+                  setCurrentPage(1);
+                }}
+                className={`px-3 py-1.5 rounded text-sm font-bold border appearance-none cursor-pointer ${
+                  isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
+                }`}
+              >
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={500}>500</option>
+              </select>
+            </div>
+            <span className={`text-sm ${textSecondary}`}>
+              Page {currentPage} of {totalPages} ({filteredLabours.length} total)
+            </span>
+          </div>
         </div>
       ) : !isLoadingLabours && !laboursError ? (
         <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
@@ -684,21 +827,6 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
           </p>
         </div>
       ) : null}
-
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Total Records</p>
-          <p className={`text-2xl font-black ${textPrimary}`}>{filteredLabours.length}</p>
-        </div>
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
-          <p className={`text-2xl font-black text-[#C2D642]`}>{filteredLabours.filter(l => l.status === 'Active').length}</p>
-        </div>
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>
-          <p className={`text-sm font-bold ${textPrimary}`}>Today</p>
-        </div>
-      </div>
 
       {/* Create Labour Modal */}
       <CreateLabourModal
@@ -713,6 +841,14 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
         editingLabourId={editingLabourId}
         editingLabourNumericId={editingLabourNumericId}
         labours={labours}
+      />
+
+      {/* Bulk Upload Modal */}
+      <LabourBulkUploadModal
+        theme={theme}
+        isOpen={showBulkUploadModal}
+        onClose={() => setShowBulkUploadModal(false)}
+        onSuccess={() => { setShowBulkUploadModal(false); fetchLabours(); }}
       />
     </div>
   );

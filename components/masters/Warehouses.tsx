@@ -7,6 +7,7 @@ import { Warehouse, MoreVertical, Plus, Search, X, Download, Edit, Trash2, MapPi
 import CreateWarehouseModal from './Modals/CreateWarehouseModal';
 import { masterDataAPI } from '../../services/api';
 import { useUser } from '../../contexts/UserContext';
+import * as XLSX from 'xlsx';
 
 interface WarehouseData {
   id: string;
@@ -264,29 +265,28 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
   }, [warehouses, searchQuery, isSearching]);
 
   const handleDownloadExcel = () => {
-    const headers = ['Project', 'Warehouse Name', 'Location'];
-    const rows = filteredWarehouses.map(warehouse => [
+    const headers = ['SR No', 'Project', 'Warehouse Name', 'Location'];
+    const rows = filteredWarehouses.map((warehouse, idx) => [
+      idx + 1,
       warehouse.project,
       warehouse.name,
       warehouse.location
     ]);
 
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n');
-
-    const BOM = '\uFEFF';
-    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
-    
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Warehouses');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `warehouses_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `warehouses_${new Date().toISOString().split('T')[0]}.xlsx`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handleEditWarehouse = async (warehouse: WarehouseData) => {
@@ -639,21 +639,6 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
           </p>
         </div>
       ) : null}
-
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Total Records</p>
-          <p className={`text-2xl font-black ${textPrimary}`}>{filteredWarehouses.length}</p>
-        </div>
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
-          <p className={`text-2xl font-black text-[#C2D642]`}>{filteredWarehouses.filter(w => w.status === 'Active').length}</p>
-        </div>
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>
-          <p className={`text-sm font-bold ${textPrimary}`}>Today</p>
-        </div>
-      </div>
 
       {/* Create Warehouse Modal */}
       <CreateWarehouseModal

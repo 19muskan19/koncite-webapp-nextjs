@@ -24,7 +24,7 @@ interface CreateLabourModalProps {
   theme: ThemeType;
   isOpen: boolean;
   onClose: () => void;
-  onSuccess?: () => void;
+  onSuccess?: (createdLabour?: any, updatedLabour?: { labourId: string; unit_id: number; unit: { id: number; unit: string } }) => void;
   editingLabourId?: string | null; // UUID for GET /labour-edit/{uuid}
   editingLabourNumericId?: number | string | null; // Numeric ID for API calls if needed
   labours?: Labour[];
@@ -42,6 +42,7 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
   const toast = useToast();
   const [formData, setFormData] = useState({
     name: '', // Required: labour name
+    code: '', // Optional: auto-generated (LAB0001, LAB0002) if blank
     category: '', // Required: must be "skilled", "semiskilled", or "unskilled"
     unit_id: '' // Required: ID of measurement unit
   });
@@ -76,6 +77,13 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
             unit: unit.unit || unit.name || '',
           }));
           setUnits(transformedUnits);
+          // Default to "Nos" for new labour when unit not yet selected
+          if (!editingLabourId) {
+            const nosUnit = transformedUnits.find((u: any) => (u.unit || '').toString().toLowerCase() === 'nos');
+            if (nosUnit) {
+              setFormData(prev => (prev.unit_id ? prev : { ...prev, unit_id: String(nosUnit.id) }));
+            }
+          }
         } catch (error: any) {
           console.error('Failed to fetch units:', error);
           toast.showError('Failed to load units');
@@ -93,10 +101,16 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
       const loadLabourData = async () => {
         try {
           const labourData = await masterDataAPI.getLabour(editingLabourId);
+          // Extract numeric unit_id - API may return unit as object
+          let unitId = labourData.unit_id ?? labourData.unit?.id;
+          if (typeof unitId === 'object' && unitId !== null && (unitId as any).id != null) {
+            unitId = (unitId as any).id;
+          }
           setFormData({
             name: labourData.name || '',
+            code: labourData.code || '',
             category: labourData.category || '',
-            unit_id: String(labourData.unit_id || labourData.unit?.id || '')
+            unit_id: String(unitId ?? '')
           });
         } catch (error: any) {
           console.error('Failed to load labour data:', error);
@@ -108,6 +122,7 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
       // Reset form for new labour
       setFormData({
         name: '',
+        code: '',
         category: '',
         unit_id: ''
       });
@@ -119,6 +134,7 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
     if (!isOpen) {
       setFormData({
         name: '',
+        code: '',
         category: '',
         unit_id: ''
       });
@@ -165,22 +181,47 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
 
     setIsSubmitting(true);
     try {
+      // Ensure unit_id is numeric - backend expects integer
+      const unitId = formData.unit_id ? Number(formData.unit_id) : undefined;
       const payload: any = {
         name: formData.name.trim(),
         category: formData.category,
-        unit_id: Number(formData.unit_id)
+        unit_id: unitId
       };
+      if (formData.code.trim()) payload.code = formData.code.trim();
 
       if (isEditing && editingLabourId) {
         // Update existing labour - use UUID for update API
         await masterDataAPI.updateLabour(editingLabourId, payload);
         toast.showSuccess('Labour updated successfully!');
+        // Pass updated unit so table reflects the change immediately
+        if (onSuccess) {
+          if (unitId) {
+            const selectedUnit = units.find(u => u.id === unitId);
+            onSuccess(undefined, {
+              labourId: String(editingLabourNumericId ?? editingLabourId),
+              unit_id: unitId,
+              unit: selectedUnit ? { id: selectedUnit.id, unit: selectedUnit.unit } : { id: unitId, unit: 'Nos' }
+            });
+          } else {
+            onSuccess();
+          }
+          onClose();
+          return;
+        }
       } else {
         // Create new labour - set is_active to 1 (active) by default
         payload.is_active = 1;
         console.log('📦 Creating new labour with is_active = 1 (active by default)');
-        await masterDataAPI.createLabour(payload);
+        const response = await masterDataAPI.createLabour(payload);
         toast.showSuccess('Labour created successfully!');
+        // Extract created labour with code from labour-add response (returns code e.g. "L415190")
+        const createdLabour = response?.data ?? response;
+        if (onSuccess && createdLabour && (createdLabour.id != null || createdLabour.uuid)) {
+          onSuccess(createdLabour);
+          onClose();
+          return;
+        }
       }
 
       if (onSuccess) {
@@ -233,6 +274,26 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
               value={formData.name}
               onChange={handleInputChange}
               placeholder="Enter labour name (e.g., Mason, Supervisor, Helper)"
+              disabled={isSubmitting}
+              className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                isDark 
+                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
+                  : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+            />
+          </div>
+
+          {/* Code (optional - auto-generated if blank) */}
+          <div>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+              Code <span className={`text-xs ${textSecondary}`}>(optional, auto-generated if blank)</span>
+            </label>
+            <input
+              type="text"
+              name="code"
+              value={formData.code}
+              onChange={handleInputChange}
+              placeholder="e.g. LAB0001 or leave blank for auto-generation"
               disabled={isSubmitting}
               className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                 isDark 

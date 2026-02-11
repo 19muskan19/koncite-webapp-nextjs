@@ -7,6 +7,7 @@ import { Truck, MoreVertical, Download, Plus, Search, ArrowUpDown, Loader2, Edit
 import CreateVendorModal from './Modals/CreateVendorModal';
 import { masterDataAPI } from '../../services/api';
 import { useUser } from '../../contexts/UserContext';
+import * as XLSX from 'xlsx';
 
 interface Vendor {
   id: string;
@@ -226,8 +227,9 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
   }, [openDropdownId]);
 
   const handleDownloadExcel = () => {
-    const headers = ['Name', 'Gst No', 'Address', 'Type', 'Contact Person Name', 'Phone', 'Email', 'Status'];
-    const rows = filteredVendors.map(vendor => [
+    const headers = ['SR No', 'Name', 'Gst No', 'Address', 'Type', 'Contact Person Name', 'Phone', 'Email', 'Status'];
+    const rows = filteredVendors.map((vendor, idx) => [
+      idx + 1,
       vendor.name,
       vendor.gstNo || '',
       vendor.address,
@@ -238,22 +240,20 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
       vendor.status
     ]);
 
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n');
-
-    const BOM = '\uFEFF';
-    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
-    
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Vendors');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `vendors_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `vendors_${new Date().toISOString().split('T')[0]}.xlsx`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -529,21 +529,6 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
           </p>
         </div>
       ) : null}
-
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Total Records</p>
-          <p className={`text-2xl font-black ${textPrimary}`}>{filteredVendors.length}</p>
-        </div>
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
-          <p className={`text-2xl font-black text-[#C2D642]`}>{filteredVendors.filter(v => v.status === 'Active').length}</p>
-        </div>
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>
-          <p className={`text-sm font-bold ${textPrimary}`}>Today</p>
-        </div>
-      </div>
 
       {/* Create Vendor Modal */}
       <CreateVendorModal

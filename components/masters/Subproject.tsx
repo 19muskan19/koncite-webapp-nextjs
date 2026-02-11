@@ -5,6 +5,7 @@ import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
 import { masterDataAPI } from '../../services/api';
 import { useUser } from '../../contexts/UserContext';
+import * as XLSX from 'xlsx';
 import { 
   Layers,
   FolderKanban,
@@ -211,30 +212,28 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
 
   const handleEditSubproject = async (subproject: Subproject) => {
     try {
-      // Use UUID for edit API (Route::get('/sub-project-edit/{uuid}', 'edit'))
-      const subprojectUuid = subproject.uuid || subproject.id;
+      // Backend edit() likely uses where('id', $uuid) - expects numeric ID in URL, despite route param name
+      const subprojectIdForApi = subproject.numericId ?? subproject.id;
       
-      if (!subprojectUuid) {
+      if (subprojectIdForApi == null || subprojectIdForApi === '') {
         toast.showError('Invalid subproject ID. Cannot edit subproject.');
         return;
       }
       
       console.log('📝 Editing subproject:', {
-        uuid: subprojectUuid,
-        id: subproject.id,
+        idForApi: subprojectIdForApi,
+        uuid: subproject.uuid,
         numericId: subproject.numericId,
-        type: typeof subprojectUuid
+        type: typeof subprojectIdForApi
       });
-      console.log('Subproject data:', subproject);
       
-      setEditingSubprojectId(subproject.id); // Keep UUID for display
-      setEditingSubprojectNumericId(subproject.numericId || subproject.id); // Store numeric ID for update API
+      setEditingSubprojectId(subproject.id);
+      setEditingSubprojectNumericId(subproject.numericId || subproject.id);
       
-      // Fetch full details from API using UUID
-      // Route: GET /sub-project-edit/{uuid}
+      // Fetch full details - GET /sub-project-edit/{id} (backend queries by numeric id)
       let subprojectDetails: any = null;
       try {
-        subprojectDetails = await masterDataAPI.getSubproject(String(subprojectUuid));
+        subprojectDetails = await masterDataAPI.getSubproject(String(subprojectIdForApi));
         console.log('✅ Fetched subproject details from API:', subprojectDetails);
       } catch (apiError: any) {
         console.error('❌ Failed to fetch subproject details from API:', apiError);
@@ -275,23 +274,22 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
   const handleDeleteSubproject = async (subproject: Subproject) => {
     if (window.confirm('Are you sure you want to delete this subproject?')) {
       try {
-        // Use UUID for delete API (Route::delete('/sub-project-delete/{uuid}', 'delete'))
-        const subprojectUuid = subproject.uuid || subproject.id;
+        // Backend delete() likely uses where('id', $uuid) - expects numeric ID in URL
+        const subprojectIdForApi = subproject.numericId ?? subproject.id;
         
-        if (!subprojectUuid) {
+        if (subprojectIdForApi == null || subprojectIdForApi === '') {
           toast.showError('Invalid subproject ID. Cannot delete subproject.');
           return;
         }
         
         console.log('🗑️ Deleting subproject:', {
-          uuid: subprojectUuid,
-          id: subproject.id,
+          idForApi: subprojectIdForApi,
           numericId: subproject.numericId,
-          type: typeof subprojectUuid
+          type: typeof subprojectIdForApi
         });
         
-        // Route: DELETE /sub-project-delete/{uuid}
-        await masterDataAPI.deleteSubproject(String(subprojectUuid));
+        // DELETE /sub-project-delete/{id} (backend queries by numeric id)
+        await masterDataAPI.deleteSubproject(String(subprojectIdForApi));
         console.log('✅ Subproject deleted successfully');
         toast.showSuccess('Subproject deleted successfully');
         // Refresh subprojects list
@@ -318,12 +316,17 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
       return;
     }
 
+    if (new Date(formData.plannedEndDate) < new Date(formData.plannedStartDate)) {
+      toast.showWarning('Please enter appropriate end date. End date must be greater than or equal to start date.');
+      return;
+    }
+
     try {
       const subprojectData = {
         name: formData.subprojectName.trim(),
         start_date: formData.plannedStartDate,
         end_date: formData.plannedEndDate,
-        tag_project: formData.projectId, // API expects tag_project field
+        tag_project: formData.projectId,
       };
 
       console.log('📝 Creating/updating subproject:', {
@@ -441,8 +444,9 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
   }, [subprojects, searchQuery, sortFilter, selectedProjectId, isSearching]);
 
   const handleDownloadExcel = () => {
-    const headers = ['Subproject Name', 'Code', 'Project', 'Planned Start Date', 'Planned End Date', 'Status'];
-    const rows = filteredAndSortedSubprojects.map(subproject => [
+    const headers = ['SR No', 'Subproject Name', 'Code', 'Project', 'Planned Start Date', 'Planned End Date', 'Status'];
+    const rows = filteredAndSortedSubprojects.map((subproject, idx) => [
+      idx + 1,
       subproject.name,
       subproject.code,
       subproject.project,
@@ -451,22 +455,20 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
       subproject.status
     ]);
 
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n');
-
-    const BOM = '\uFEFF';
-    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
-    
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Subprojects');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `subprojects_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `subprojects_${new Date().toISOString().split('T')[0]}.xlsx`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -857,24 +859,6 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
               ? `No subprojects found matching "${searchQuery}"` 
               : `No subprojects found for ${selectedProject}`}
           </p>
-        </div>
-      )}
-
-      {/* Stats Cards - Only show when project is selected */}
-      {selectedProject && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className={`p-4 rounded-xl border ${cardClass}`}>
-            <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Total Records</p>
-            <p className={`text-2xl font-black ${textPrimary}`}>{filteredAndSortedSubprojects.length}</p>
-          </div>
-          <div className={`p-4 rounded-xl border ${cardClass}`}>
-            <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
-            <p className={`text-2xl font-black text-[#C2D642]`}>{filteredAndSortedSubprojects.filter(s => s.status === 'Active' || s.status === 'In Progress').length}</p>
-          </div>
-          <div className={`p-4 rounded-xl border ${cardClass}`}>
-            <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>
-            <p className={`text-sm font-bold ${textPrimary}`}>Today</p>
-          </div>
         </div>
       )}
 

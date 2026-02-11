@@ -148,6 +148,11 @@ const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
       return;
     }
 
+    if (new Date(formData.plannedEndDate) < new Date(formData.plannedStartDate)) {
+      toast.showWarning('Please enter appropriate end date. End date must be greater than or equal to start date.');
+      return;
+    }
+
     // Generate a code from the subproject name
     const defaultSubprojectsCount = defaultSubprojects.length;
     const userSubprojectsCount = userSubprojects.length;

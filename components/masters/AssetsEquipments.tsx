@@ -7,6 +7,7 @@ import { Wrench, MoreVertical, Download, Plus, Search, FileSpreadsheet, Upload, 
 import CreateAssetEquipmentModal from './Modals/CreateAssetEquipmentModal';
 import { masterDataAPI } from '../../services/api';
 import { useUser } from '../../contexts/UserContext';
+import * as XLSX from 'xlsx';
 
 interface AssetEquipment {
   id: string; // UUID or string for display
@@ -441,8 +442,9 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
   }, [openDropdownId]);
 
   const handleDownloadExcel = () => {
-    const headers = ['Machinery Name', 'Code', 'Unit', 'Asset Specification', 'Status'];
-    const rows = filteredAssets.map(asset => [
+    const headers = ['SR No', 'Machinery Name', 'Code', 'Unit', 'Asset Specification', 'Status'];
+    const rows = filteredAssets.map((asset, idx) => [
+      idx + 1,
       asset.name,
       asset.code,
       asset.unit,
@@ -450,27 +452,26 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
       asset.status || 'Active'
     ]);
 
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n');
-
-    const BOM = '\uFEFF';
-    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
-    
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Assets');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `assets_equipments_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `assets_equipments_${new Date().toISOString().split('T')[0]}.xlsx`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handleExportMasterData = () => {
-    const headers = ['Name', 'Code', 'Specification', 'Unit', 'Status'];
-    const rows = assets.map(asset => [
+    const headers = ['SR No', 'Name', 'Code', 'Specification', 'Unit', 'Status'];
+    const rows = assets.map((asset, idx) => [
+      idx + 1,
       asset.name,
       asset.code,
       asset.specification,
@@ -478,22 +479,20 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
       asset.status
     ]);
 
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n');
-
-    const BOM = '\uFEFF';
-    const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
-    
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Assets');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `asset_equipments_machinery_master_data_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `asset_equipments_machinery_master_data_${new Date().toISOString().split('T')[0]}.xlsx`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
     toast.showSuccess('Master data exported successfully');
   };
 
@@ -805,21 +804,6 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
           </p>
         </div>
       ) : null}
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className={`p-4 rounded-xl border ${cardClass}`}>
-              <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Total Records</p>
-              <p className={`text-2xl font-black ${textPrimary}`}>{filteredAssets.length}</p>
-            </div>
-            <div className={`p-4 rounded-xl border ${cardClass}`}>
-              <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
-              <p className={`text-2xl font-black text-[#C2D642]`}>{filteredAssets.filter(a => a.status === 'Active').length}</p>
-            </div>
-            <div className={`p-4 rounded-xl border ${cardClass}`}>
-              <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>
-              <p className={`text-sm font-bold ${textPrimary}`}>Today</p>
-            </div>
-          </div>
         </>
       )}
 

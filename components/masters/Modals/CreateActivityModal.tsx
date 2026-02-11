@@ -253,6 +253,11 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
       return;
     }
 
+    if (formData.start_date && formData.end_date && new Date(formData.end_date) < new Date(formData.start_date)) {
+      toast.showWarning('Please enter appropriate end date. End date must be greater than or equal to start date.');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const projectIdNum = projects.find(p => p.uuid === formData.project || String(p.id) === formData.project)?.id;
