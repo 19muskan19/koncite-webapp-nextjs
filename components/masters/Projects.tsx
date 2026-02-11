@@ -20,7 +20,8 @@ import {
   Download,
   Loader2,
   Edit,
-  Trash2
+  Trash2,
+  RefreshCw
 } from 'lucide-react';
 import CreateProjectModal from './Modals/CreateProjectModal';
 
@@ -305,21 +306,18 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
     });
     setViewingProjectId(null);
     
-    // Backend expects numeric ID, not UUID
-    // Backend function uses: where('id', $uuid) which queries the numeric 'id' column
-    // Use numericId if available, otherwise fall back to id (which might be numeric)
-    const projectId = project.numericId || project.id;
-    if (!projectId) {
+    // Backend edit() uses where('id', $uuid) - expects numeric ID in URL, despite route param name
+    const projectIdForApi = project.numericId ?? project.id;
+    if (projectIdForApi == null || projectIdForApi === '') {
       toast.showError('Invalid project ID. Cannot edit project.');
       return;
     }
     
-    console.log('Using project ID for API call:', projectId, 'Type:', typeof projectId);
+    console.log('Using project ID for edit API:', projectIdForApi, 'Type:', typeof projectIdForApi);
     
-    // Fetch project details using the edit API (GET /project-edit/{id})
-    // Even though route parameter is named {uuid}, backend queries numeric id column
+    // Fetch project details (GET /project-edit/{id} - backend queries by numeric id)
     try {
-      const projectData = await masterDataAPI.getProject(String(projectId));
+      const projectData = await masterDataAPI.getProject(String(projectIdForApi));
       console.log('✅ Fetched project data for editing:', projectData);
       
       // Store project data and numeric ID for the modal
@@ -341,7 +339,8 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
       // Store ALL project data from API response to preserve all fields for editing
       setEditingProjectData({
         ...projectData, // Include all fields from API response
-        numericId: project.numericId || projectId, // Store numeric ID for update
+        uuid: project.uuid || project.id,
+        numericId: project.numericId ?? projectData.id, // Store numeric ID for update
         companies_id: companiesId, // Ensure companies_id is included
         companyId: companiesId, // Also set companyId for compatibility
         // Map API field names to form-friendly names
@@ -360,7 +359,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
       
       console.log('✅ Stored editing project data with all fields:', {
         ...projectData,
-        numericId: project.numericId || projectId,
+        numericId: project.numericId ?? projectData.id,
         companies_id: companiesId
       });
       setShowCreateModal(true);
@@ -634,6 +633,21 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
             <Download className="w-4 h-4" />
           </button>
           <button 
+            onClick={async () => {
+              console.log('🔄 Manual refresh triggered');
+              setSearchQuery('');
+              await fetchProjects();
+            }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+              isDark 
+                ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' 
+                : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
+            } shadow-sm`}
+            title="Refresh Projects List"
+          >
+            <RefreshCw className="w-4 h-4" /> Refresh
+          </button>
+          <button 
             onClick={() => {
               setShowCreateModal(true);
             }}
@@ -641,6 +655,22 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
           >
             <Plus className="w-4 h-4" /> Add New
           </button>
+        </div>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className={`p-4 rounded-xl border ${cardClass}`}>
+          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Total Records</p>
+          <p className={`text-2xl font-black ${textPrimary}`}>{filteredAndSortedProjects.length}</p>
+        </div>
+        <div className={`p-4 rounded-xl border ${cardClass}`}>
+          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
+          <p className={`text-2xl font-black text-[#C2D642]`}>{filteredAndSortedProjects.filter(p => p.status === 'In Progress').length}</p>
+        </div>
+        <div className={`p-4 rounded-xl border ${cardClass}`}>
+          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>
+          <p className={`text-sm font-bold ${textPrimary}`}>Today</p>
         </div>
       </div>
 
@@ -785,22 +815,6 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
         </div>
       ) : null}
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Total Records</p>
-          <p className={`text-2xl font-black ${textPrimary}`}>{filteredAndSortedProjects.length}</p>
-        </div>
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
-          <p className={`text-2xl font-black text-[#C2D642]`}>{filteredAndSortedProjects.filter(p => p.status === 'In Progress').length}</p>
-        </div>
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>
-          <p className={`text-sm font-bold ${textPrimary}`}>Today</p>
-        </div>
-      </div>
-
       {/* Create Project Modal */}
       <CreateProjectModal
         theme={theme}
@@ -817,7 +831,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
           // Reload projects from API
           await fetchProjects();
         }}
-        projectUpdateId={editingProjectData?.numericId || null}
+        projectUpdateId={editingProjectData?.numericId ?? editingProjectData?.uuid ?? null}
         editingProject={editingProjectData ? {
           id: editingProjectId || '',
           name: editingProjectData.project_name || editingProjectData.name || '',
@@ -831,7 +845,11 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
           location: editingProjectData.address || editingProjectData.location || '',
           logo: editingProjectData.logo || '',
           isContractor: editingProjectData.own_project_or_contractor === 'yes' || editingProjectData.is_contractor || false,
-          projectManager: editingProjectData.project_manager || ''
+          projectManager: editingProjectData.project_manager || '',
+          companies_id: editingProjectData.companies_id,
+          company_id: editingProjectData.company_id,
+          companyId: editingProjectData.companyId,
+          ...editingProjectData, // Spread to pass all API fields (client_*, etc.)
         } : null}
         userProjects={projects}
         onProjectCreated={handleProjectCreated}

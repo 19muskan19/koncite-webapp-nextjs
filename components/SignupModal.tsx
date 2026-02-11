@@ -4,7 +4,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { X, UserPlus, Mail, Lock, Phone, Building, Loader2, ChevronDown } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from '../contexts/ToastContext';
-import { authAPI } from '../services/api';
+import { authAPI, commonAPI } from '../services/api';
 import TermsAndPrivacyModal from './TermsAndPrivacyModal';
 
 interface CountryCode {
@@ -26,10 +26,10 @@ interface SignupModalProps {
 }
 
 interface CountryFromAPI {
-  id: string; // ISO code (cca2) used as ID
+  id: number | string; // Backend numeric ID (required for signup validation)
   name: string;
-  code: string; // ISO code (cca2)
-  phone_code?: string; // Dial code
+  code?: string; // ISO code (e.g. IN, US)
+  phone_code?: string; // Dial code (e.g. 91, 1)
 }
 
 interface SignupData {
@@ -130,7 +130,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
     if (matchesByPhone.length > 0) {
       // If we have a preferred mapping, use it
       if (preferredCountryCode) {
-        const preferred = matchesByPhone.find(c => c.code.toLowerCase() === preferredCountryCode.toLowerCase());
+        const preferred = matchesByPhone.find(c => c.code?.toLowerCase() === preferredCountryCode.toLowerCase());
         if (preferred) return preferred;
       }
       // Otherwise, prefer countries that match the countryCodeObj name
@@ -214,76 +214,31 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
-  // Fetch countries from REST Countries API (third-party)
+  // Fetch countries from backend API (GET /get-country) - backend expects numeric country ID for signup
   const fetchCountries = async () => {
     setIsLoadingCountries(true);
     try {
-      // Using REST Countries API v3.1 to get all countries with name, ISO code, and dial codes
-      const response = await fetch('https://restcountries.com/v3.1/all?fields=name,cca2,idd,flags');
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch countries');
-      }
+      const fetchedCountries = await commonAPI.getCountries();
+      // Backend returns { id: number, name, code?, phone_code? } - id is required for signup validation
+      const transformedCountries: CountryFromAPI[] = (fetchedCountries || []).map((c: any) => ({
+        id: c.id, // Numeric ID - required by backend signup validation
+        name: c.name || c.country_name || '',
+        code: c.code || c.iso_code || c.country_code,
+        phone_code: c.phone_code || c.dial_code ? String(c.phone_code || c.dial_code).replace(/^\+/, '') : undefined
+      })).filter((c) => c.id != null && c.name);
 
-      const data = await response.json();
-      
-      // Transform API data to our format
-      const transformedCountries: CountryFromAPI[] = data
-        .map((country: any) => {
-          // Extract dial code
-          const root = country.idd?.root || '';
-          const suffixes = country.idd?.suffixes || [''];
-          const dialCode = suffixes.length > 0 && suffixes[0] 
-            ? `${root}${suffixes[0]}`.replace(/\+/g, '')
-            : root.replace(/\+/g, '');
-          
-          const countryName = country.name.common || country.name.official;
-          
-          return {
-            id: country.cca2, // Use ISO code as ID
-            name: countryName,
-            code: country.cca2, // ISO 3166-1 alpha-2 code
-            phone_code: dialCode || undefined
-          };
-        })
-        .filter((country: CountryFromAPI) => {
-          // Remove entries without ISO code
-          if (!country.code) return false;
-          
-          // Filter out territories and dependencies for common dial codes
-          const nameLower = country.name.toLowerCase();
-          const isTerritory = nameLower.includes('territory') || 
-                             nameLower.includes('dependency') ||
-                             nameLower.includes('british indian ocean territory');
-          
-          // For dial code 91, only keep India, filter out British Indian Territory
-          if (country.phone_code === '91') {
-            return country.code === 'IN'; // Only India
-          }
-          
-          // For other dial codes, prefer main countries but keep territories if no main country exists
-          return true;
-        })
-        .sort((a: CountryFromAPI, b: CountryFromAPI) => {
-          // Sort alphabetically by name, but prioritize main countries
-          // Put India first if sorting by dial code 91
-          if (a.phone_code === '91' && a.code === 'IN') return -1;
-          if (b.phone_code === '91' && b.code === 'IN') return 1;
-          
-          return a.name.localeCompare(b.name);
-        });
+      // Sort: India first if present, then alphabetically
+      transformedCountries.sort((a, b) => {
+        if (a.code === 'IN' || a.phone_code === '91') return -1;
+        if (b.code === 'IN' || b.phone_code === '91') return 1;
+        return String(a.name).localeCompare(String(b.name));
+      });
 
       setCountries(transformedCountries);
     } catch (error) {
       console.error('Failed to fetch countries:', error);
       toast.showError('Failed to load countries. Please refresh the page.');
-      // Fallback to a few common countries
-      setCountries([
-        { id: 'IN', name: 'India', code: 'IN', phone_code: '91' },
-        { id: 'US', name: 'United States', code: 'US', phone_code: '1' },
-        { id: 'GB', name: 'United Kingdom', code: 'GB', phone_code: '44' },
-        { id: 'AE', name: 'United Arab Emirates', code: 'AE', phone_code: '971' },
-      ]);
+      setCountries([]);
     } finally {
       setIsLoadingCountries(false);
     }

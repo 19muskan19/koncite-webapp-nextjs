@@ -531,9 +531,10 @@ export const userAPI = {
 // Master Data API - CRUD operations for projects, companies, materials, etc.
 export const masterDataAPI = {
   // Projects - Matching Laravel routes
+  // Route: GET /project-list -> projectlist()
   getProjects: async (): Promise<any[]> => {
     try {
-      console.log('🔵 Calling /project-list API...');
+      console.log('🔵 Calling GET /project-list API...');
       const response = await apiClient.get('/project-list');
       console.log('✅ /project-list response:', response.data);
       console.log('Response structure:', {
@@ -568,9 +569,10 @@ export const masterDataAPI = {
       } as ApiError;
     }
   },
+  // Route: POST /project-add -> projectAdd()
   createProject: async (data: FormData | Record<string, any>): Promise<any> => {
     try {
-      console.log('🔵 Creating project via /project-add API...');
+      console.log('🔵 Calling POST /project-add API...');
       let formData: FormData;
       
       // If data is already FormData, use it directly
@@ -606,7 +608,7 @@ export const masterDataAPI = {
           'Content-Type': 'multipart/form-data',
         },
       });
-      console.log('✅ Project created successfully:', response.data);
+      console.log('✅ /project-add response:', response.data);
       
       // Log Azure folder path if present - CRITICAL for blob storage operations
       // Backend API: POST /api/project-add creates folder and saves to projects.azure_folder_path
@@ -656,41 +658,51 @@ export const masterDataAPI = {
       
       return response.data;
     } catch (error: any) {
+      console.error('❌ /project-add error:', error);
       throw {
         message: error.response?.data?.message || 'Failed to create project',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
   },
+  // Route: POST /project-search -> projectSearch()
   searchProjects: async (searchQuery: string): Promise<any[]> => {
     try {
+      console.log('🔍 Calling POST /project-search with query:', searchQuery);
       const response = await apiClient.post('/project-search', { search_keyword: searchQuery });
-      return response.data.data || response.data || [];
+      console.log('✅ /project-search response:', response.data);
+      
+      // Handle response structure: { status: true, data: [...] } or direct array
+      let projects: any[] = [];
+      if (response.data?.data && Array.isArray(response.data.data)) {
+        projects = response.data.data;
+      } else if (Array.isArray(response.data)) {
+        projects = response.data;
+      }
+      
+      console.log('✅ Extracted projects from search:', projects.length);
+      return projects;
     } catch (error: any) {
+      console.error('❌ /project-search error:', error);
       throw {
         message: error.response?.data?.message || 'Failed to search projects',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
   },
+  // Route: GET /project-edit/{uuid} -> edit()
   getProject: async (uuid: string): Promise<any> => {
     try {
-      // Backend route: GET /project-edit/{uuid}
-      // NOTE: Even though route parameter is named {uuid}, backend function uses:
-      //   where('id', $uuid) - which queries the numeric 'id' column
-      // So we need to pass the numeric ID, not the UUID
-      const idParam = String(uuid).trim();
-      console.log('📖 Calling GET /project-edit/' + idParam);
-      console.log('Project ID details:', {
+      const uuidParam = String(uuid).trim();
+      console.log('📖 Calling GET /project-edit/' + uuidParam);
+      console.log('Project UUID details:', {
         original: uuid,
-        trimmed: idParam,
-        length: idParam.length,
-        type: typeof idParam,
-        isNumeric: !isNaN(Number(idParam)),
-        note: 'Backend queries numeric id column, not uuid column'
+        trimmed: uuidParam,
+        length: uuidParam.length,
+        type: typeof uuidParam
       });
       
-      const response = await apiClient.get(`/project-edit/${encodeURIComponent(idParam)}`);
+      const response = await apiClient.get(`/project-edit/${encodeURIComponent(uuidParam)}`);
       console.log('✅ /project-edit response:', response.data);
       console.log('Response status:', response.status);
       
@@ -767,13 +779,31 @@ export const masterDataAPI = {
       } as ApiError;
     }
   },
-  getProjectSubprojects: async (projectId: number | string): Promise<any> => {
+  // Route: POST /project-subproject -> projectSubproject()
+  // Backend expects: { project_id } - numeric project ID (where('id', $request->project_id))
+  // Returns: SubProjectResources collection - subprojects for the project (filtered by company_id)
+  getProjectSubprojects: async (projectId: number | string): Promise<any[]> => {
     try {
-      const response = await apiClient.post('/project-subproject', { project_id: projectId });
-      return response.data.data || response.data || [];
+      const payload = { project_id: projectId };
+      console.log('📦 Calling POST /project-subproject with payload:', payload);
+      const response = await apiClient.post('/project-subproject', payload);
+      console.log('✅ /project-subproject response:', response.data);
+
+      // Backend returns: responseJson(true, 200, $message, SubProjectResources::collection($data))
+      // Structure: { status: true, response_code: 200, message: '...', data: [...] }
+      let subprojects: any[] = [];
+      if (response.data?.data && Array.isArray(response.data.data)) {
+        subprojects = response.data.data;
+      } else if (Array.isArray(response.data)) {
+        subprojects = response.data;
+      }
+
+      console.log('✅ Extracted subprojects:', subprojects.length);
+      return subprojects;
     } catch (error: any) {
+      console.error('❌ /project-subproject error:', error);
       throw {
-        message: error.response?.data?.message || 'Failed to fetch subprojects',
+        message: error.response?.data?.message || 'Failed to fetch project subprojects',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
@@ -838,43 +868,41 @@ export const masterDataAPI = {
   },
 
   // Companies - Matching Laravel routes
+  // Route: GET /companies-list -> companiesList()
   getCompanies: async (): Promise<any[]> => {
     try {
-      console.log('=== GET COMPANIES API CALL ===');
-      console.log('Making GET request to /companies-list');
-      const token = getAuthToken();
-      console.log('Auth token present:', !!token);
-      
+      console.log('🔵 Calling GET /companies-list API...');
       const response = await apiClient.get('/companies-list');
-      console.log('getCompanies API response status:', response.status);
-      console.log('getCompanies API response data:', response.data);
-      console.log('Response headers:', response.headers);
+      console.log('✅ /companies-list response:', response.data);
+      console.log('Response structure:', {
+        status: response.data?.status,
+        response_code: response.data?.response_code,
+        message: response.data?.message,
+        dataType: Array.isArray(response.data?.data) ? 'array' : typeof response.data?.data,
+        dataLength: Array.isArray(response.data?.data) ? response.data.data.length : 'not array',
+        isDataArray: Array.isArray(response.data),
+      });
       
-      // Handle different response structures
+      // Handle response structure: { status: true, response_code: 200, message: "...", data: [...] }
       let companies: any[] = [];
-      if (Array.isArray(response.data)) {
-        companies = response.data;
-      } else if (response.data?.data && Array.isArray(response.data.data)) {
+      if (response.data?.data && Array.isArray(response.data.data)) {
         companies = response.data.data;
+        console.log('✅ Extracted companies from response.data.data:', companies.length);
+      } else if (Array.isArray(response.data)) {
+        companies = response.data;
+        console.log('✅ Using response.data as array:', companies.length);
       } else if (response.data?.companies && Array.isArray(response.data.companies)) {
         companies = response.data.companies;
+        console.log('✅ Extracted companies from response.data.companies:', companies.length);
       } else {
-        console.warn('Unexpected API response structure:', response.data);
+        console.warn('⚠️ Unexpected response structure:', response.data);
         companies = [];
       }
       
-      console.log('Extracted companies array:', companies);
-      console.log('Number of companies:', companies.length);
-      console.log('=== GET COMPANIES API CALL COMPLETE ===');
-      
+      console.log('📦 Returning companies:', companies.length);
       return companies;
     } catch (error: any) {
-      console.error('=== GET COMPANIES API ERROR ===');
-      console.error('Error status:', error.response?.status);
-      console.error('Error data:', error.response?.data);
-      console.error('Error message:', error.message);
-      console.error('Full error:', error);
-      console.error('=== END ERROR ===');
+      console.error('❌ /companies-list API error:', error);
       throw {
         message: error.response?.data?.message || 'Failed to fetch companies',
         errors: error.response?.data?.errors || {},
@@ -892,6 +920,8 @@ export const masterDataAPI = {
       } as ApiError;
     }
   },
+  // Companies - Matching Laravel routes
+  // Route: POST /companies-add -> companiesAdd()
   createCompany: async (data: FormData | Record<string, any>): Promise<any> => {
     try {
       let formData: FormData;
@@ -913,44 +943,60 @@ export const masterDataAPI = {
         });
       }
 
+      console.log('📝 Calling POST /companies-add');
       const response = await apiClient.post('/companies-add', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
       });
+      console.log('✅ /companies-add response:', response.data);
       return response.data;
     } catch (error: any) {
+      console.error('❌ /companies-add error:', error);
       throw {
         message: error.response?.data?.message || 'Failed to create company',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
   },
+  // Route: POST /companies-search -> companiesSearch()
   searchCompanies: async (searchQuery: string): Promise<any[]> => {
     try {
+      console.log('🔍 Calling POST /companies-search with query:', searchQuery);
       const response = await apiClient.post('/companies-search', { search: searchQuery });
-      return response.data.data || response.data || [];
+      console.log('✅ /companies-search response:', response.data);
+      
+      // Handle response structure: { status: true, data: [...] } or direct array
+      let companies: any[] = [];
+      if (response.data?.data && Array.isArray(response.data.data)) {
+        companies = response.data.data;
+      } else if (Array.isArray(response.data)) {
+        companies = response.data;
+      }
+      
+      console.log('✅ Extracted companies from search:', companies.length);
+      return companies;
     } catch (error: any) {
+      console.error('❌ /companies-search error:', error);
       throw {
         message: error.response?.data?.message || 'Failed to search companies',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
   },
+  // Route: GET /companies-edit/{uuid} -> edit()
   getCompany: async (uuid: string): Promise<any> => {
     try {
-      // Note: Parameter is named 'uuid' but backend expects numeric 'id' field
-      const idParam = String(uuid).trim();
-      console.log('📖 Calling GET /companies-edit/' + idParam);
-      console.log('Company ID details:', {
+      const uuidParam = String(uuid).trim();
+      console.log('📖 Calling GET /companies-edit/' + uuidParam);
+      console.log('Company UUID details:', {
         original: uuid,
-        trimmed: idParam,
-        length: idParam.length,
-        type: typeof idParam,
-        isNumeric: !isNaN(Number(idParam))
+        trimmed: uuidParam,
+        length: uuidParam.length,
+        type: typeof uuidParam
       });
       
-      const response = await apiClient.get(`/companies-edit/${encodeURIComponent(idParam)}`);
+      const response = await apiClient.get(`/companies-edit/${encodeURIComponent(uuidParam)}`);
       console.log('✅ /companies-edit response:', response.data);
       console.log('Response status:', response.status);
       
@@ -1075,27 +1121,21 @@ export const masterDataAPI = {
       } as ApiError;
     }
   },
+  // Route: DELETE /companies-delete/{uuid} -> delete()
   deleteCompany: async (uuid: string): Promise<any> => {
     try {
-      // Backend route: DELETE /companies-delete/{uuid}
-      // NOTE: Even though route parameter is named {uuid}, backend function uses:
-      //   where('id', $uuid) - which queries the numeric 'id' column
-      // So we need to pass the numeric ID, not the UUID
-      const idParam = String(uuid).trim();
-      console.log('🗑️ Calling DELETE /companies-delete/' + idParam);
-      console.log('Company ID details:', {
+      const uuidParam = String(uuid).trim();
+      console.log('🗑️ Calling DELETE /companies-delete/' + uuidParam);
+      console.log('Company UUID details:', {
         original: uuid,
-        trimmed: idParam,
-        length: idParam.length,
-        type: typeof idParam,
-        isNumeric: !isNaN(Number(idParam)),
-        note: 'Backend queries numeric id column, not uuid column'
+        trimmed: uuidParam,
+        length: uuidParam.length,
+        type: typeof uuidParam
       });
       
-      // URL encode the ID to handle any special characters
-      const deleteUrl = `/companies-delete/${encodeURIComponent(idParam)}`;
+      // URL encode the UUID to handle any special characters
+      const deleteUrl = `/companies-delete/${encodeURIComponent(uuidParam)}`;
       console.log('🗑️ Delete URL:', deleteUrl);
-      console.log('🗑️ Using numeric ID for deletion (backend queries id column):', idParam);
       const response = await apiClient.delete(deleteUrl);
       console.log('✅ /companies-delete response:', response.data);
       console.log('Response status:', response.status);
@@ -1513,9 +1553,10 @@ export const masterDataAPI = {
       } as ApiError;
     }
   },
-  searchSubprojects: async (searchKeyword?: string): Promise<any[]> => {
+  searchSubprojects: async (searchKeyword?: string, projectId?: number | string): Promise<any[]> => {
     try {
-      const payload = searchKeyword ? { search_keyword: searchKeyword } : {};
+      const payload: Record<string, any> = searchKeyword ? { search_keyword: searchKeyword } : {};
+      if (projectId) payload.project_id = projectId;
       console.log('🔍 Calling POST /sub-project-search with payload:', payload);
       const response = await apiClient.post('/sub-project-search', payload);
       console.log('✅ /sub-project-search response:', response.data);
@@ -1602,6 +1643,56 @@ export const masterDataAPI = {
       console.error('❌ /sub-project-delete error:', error);
       throw {
         message: error.response?.data?.message || 'Failed to delete subproject',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  // DPR-specific subproject APIs
+  fetchProjectSubproject: async (data?: Record<string, any>): Promise<any> => {
+    try {
+      const payload = data || {};
+      console.log('📦 Calling POST /fetch-project-subproject with payload:', payload);
+      const response = await apiClient.post('/fetch-project-subproject', payload);
+      console.log('✅ /fetch-project-subproject response:', response.data);
+      
+      // Handle response structure: { status: true, data: [...] } or direct array
+      let result: any = null;
+      if (response.data?.data !== undefined) {
+        result = response.data.data;
+      } else if (response.data) {
+        result = response.data;
+      }
+      
+      console.log('✅ Extracted fetch-project-subproject data:', result);
+      return result;
+    } catch (error: any) {
+      console.error('❌ /fetch-project-subproject error:', error);
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch project subprojects',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  projectWiseSubprojectSearch: async (data: Record<string, any>): Promise<any[]> => {
+    try {
+      console.log('🔍 Calling POST /project-wise-subproject-search with payload:', data);
+      const response = await apiClient.post('/project-wise-subproject-search', data);
+      console.log('✅ /project-wise-subproject-search response:', response.data);
+      
+      // Handle response structure: { status: true, data: [...] } or direct array
+      let subprojects: any[] = [];
+      if (response.data?.data && Array.isArray(response.data.data)) {
+        subprojects = response.data.data;
+      } else if (Array.isArray(response.data)) {
+        subprojects = response.data;
+      }
+      
+      console.log('✅ Extracted project-wise subproject search results:', subprojects.length);
+      return subprojects;
+    } catch (error: any) {
+      console.error('❌ /project-wise-subproject-search error:', error);
+      throw {
+        message: error.response?.data?.message || 'Failed to search subprojects by project',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }

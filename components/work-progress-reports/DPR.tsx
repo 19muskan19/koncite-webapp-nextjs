@@ -26,6 +26,8 @@ import CreateActivityModal from '../masters/Modals/CreateActivityModal';
 import CreateMaterialModal from '../masters/Modals/CreateMaterialModal';
 import CreateLabourModal from '../masters/Modals/CreateLabourModal';
 import CreateAssetEquipmentModal from '../masters/Modals/CreateAssetEquipmentModal';
+import { useUser } from '../../contexts/UserContext';
+import { masterDataAPI } from '../../services/api';
 
 interface Project {
   id: string;
@@ -178,6 +180,7 @@ interface DPRProps {
 }
 
 const DPR: React.FC<DPRProps> = ({ theme }) => {
+  const { isAuthenticated } = useUser();
   const [showProjectSelection, setShowProjectSelection] = useState<boolean>(false);
   const [showSubprojectSelection, setShowSubprojectSelection] = useState<boolean>(false);
   const [showActivitySelection, setShowActivitySelection] = useState<boolean>(false);
@@ -213,6 +216,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const [safetyProblems, setSafetyProblems] = useState<SafetyProblem[]>([]);
   const [hindranceProblems, setHindranceProblems] = useState<HindranceProblem[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [isLoadingProjects, setIsLoadingProjects] = useState<boolean>(false);
   
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -220,117 +224,162 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
   const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
 
-  // Load projects from localStorage
+  // Load projects from API (user-associated projects)
   useEffect(() => {
-    const loadProjects = () => {
-      const defaultProjectNames = [
-        'Lotus Rise',
-        'Lakeshire',
-        'Demo Data',
-        'Residential Complex A',
-        'Commercial Tower B'
-      ];
-
-      const savedProjects = localStorage.getItem('projects');
-      let userProjectsData: Project[] = [];
-      
-      if (savedProjects) {
-        try {
-          const parsed = JSON.parse(savedProjects);
-          userProjectsData = parsed.map((project: any) => ({
-            id: project.id || project.name,
-            name: project.name,
-            logo: project.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(project.name)}&background=C2D642&color=fff&size=128`,
-            code: project.code,
-            company: project.company,
-            location: project.location
-          }));
-        } catch (e) {
-          console.error('Error parsing projects:', e);
+    const fetchProjects = async () => {
+      // Check token directly instead of isAuthenticated to avoid dependency array issues
+      if (typeof window !== 'undefined') {
+        const { getCookie } = require('../../utils/cookies');
+        const token = getCookie('auth_token') || localStorage.getItem('auth_token');
+        const authFlag = getCookie('isAuthenticated') === 'true' || localStorage.getItem('isAuthenticated') === 'true';
+        
+        if (!token || !authFlag) {
+          console.warn('⚠️ Not authenticated, clearing projects');
+          setProjects([]);
+          setIsLoadingProjects(false);
+          return;
         }
+      } else {
+        setProjects([]);
+        setIsLoadingProjects(false);
+        return;
       }
 
-      // Add default projects with images
-      const defaultProjectsData: Project[] = defaultProjectNames.map((name, idx) => ({
-        id: `default-${idx}`,
-        name,
-        logo: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=C2D642&color=fff&size=128`
-      }));
+      setIsLoadingProjects(true);
+      try {
+        console.log('📡 Fetching user-associated projects from API...');
+        const fetchedProjects = await masterDataAPI.getProjects();
+        console.log('✅ Fetched projects from API:', fetchedProjects?.length || 0);
 
-      // Set projects for modal display
-      setProjects([...defaultProjectsData, ...userProjectsData]);
+        if (!Array.isArray(fetchedProjects)) {
+          console.error('❌ API did not return an array:', fetchedProjects);
+          setProjects([]);
+          return;
+        }
+
+        // Transform API response to match DPR Project interface
+        const transformedProjects: Project[] = fetchedProjects.map((p: any) => {
+          const numericId = p.id;
+          const uuid = p.uuid;
+          const companyName = p.companies?.registration_name || p.companies?.name || p.company || p.company_name || '';
+          
+          return {
+            id: uuid || String(numericId),
+            name: p.project_name || p.name || '',
+            logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name || p.name || '')}&background=C2D642&color=fff&size=128`,
+            code: p.code || '',
+            company: companyName,
+            location: p.address || p.location || ''
+          };
+        });
+
+        console.log('✅ Transformed projects for DPR:', transformedProjects.length);
+        setProjects(transformedProjects);
+      } catch (error: any) {
+        console.error('❌ Failed to fetch projects:', error);
+        setProjects([]);
+      } finally {
+        setIsLoadingProjects(false);
+      }
     };
 
-    loadProjects();
+    fetchProjects();
 
+    // Listen for auth changes
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'projects') {
-        loadProjects();
+      if (e.key === 'auth_token' || e.key === 'isAuthenticated') {
+        fetchProjects();
       }
+    };
+
+    const handleUserLoggedIn = () => {
+      fetchProjects();
+    };
+
+    const handleUserLoggedOut = () => {
+      setProjects([]);
+      setIsLoadingProjects(false);
     };
 
     window.addEventListener('storage', handleStorageChange);
-    window.addEventListener('projectsUpdated', loadProjects);
+    window.addEventListener('userLoggedIn', handleUserLoggedIn as EventListener);
+    window.addEventListener('userLoggedOut', handleUserLoggedOut);
 
     return () => {
       window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('projectsUpdated', loadProjects);
+      window.removeEventListener('userLoggedIn', handleUserLoggedIn as EventListener);
+      window.removeEventListener('userLoggedOut', handleUserLoggedOut);
     };
-  }, []);
+  }, []); // Empty dependency array - check auth inside the effect and listen to events
 
-  // Load subprojects from localStorage
+  // DPR subprojects - fetched via API when project is selected
+  const [isLoadingSubprojects, setIsLoadingSubprojects] = useState<boolean>(false);
+  const [subprojectsSearchResults, setSubprojectsSearchResults] = useState<Subproject[]>([]); // Results from projectWiseSubprojectSearch when searching
+
+  // Transform API subproject response to DPR Subproject interface
+  const transformSubproject = (sub: any, projectName: string): Subproject => ({
+    id: sub.uuid || String(sub.id),
+    name: sub.name || sub.subproject_name || '',
+    code: sub.code || `SUB${String(sub.id || '').padStart(3, '0')}`,
+    project: projectName,
+    manager: sub.manager || sub.project_manager || '',
+    status: sub.status || 'Pending',
+    progress: sub.progress || 0,
+    startDate: sub.start_date || sub.planned_start_date || sub.startDate || '',
+    endDate: sub.end_date || sub.planned_end_date || sub.endDate || ''
+  });
+
+  // Fetch subprojects when project is selected - POST /fetch-project-subproject
   useEffect(() => {
-    const loadSubprojects = () => {
-      const defaultSubprojects: Subproject[] = [
-        { id: '1', name: 'Foundation Work', code: 'SUB001', project: 'Residential Complex A', manager: 'John Doe', status: 'Active', progress: 85, startDate: '2024-01-20', endDate: '2024-03-15' },
-        { id: '2', name: 'Structural Framework', code: 'SUB002', project: 'Residential Complex A', manager: 'John Doe', status: 'In Progress', progress: 60, startDate: '2024-03-16', endDate: '2024-06-30' },
-        { id: '3', name: 'A wing', code: 'SUB003', project: 'Lakeshire', manager: 'Jane Smith', status: 'Active', progress: 75, startDate: '2024-01-15', endDate: '2024-05-20' },
-        { id: '4', name: 'B wing', code: 'SUB004', project: 'Lakeshire', manager: 'Jane Smith', status: 'In Progress', progress: 45, startDate: '2024-03-01', endDate: '2024-07-15' },
-        { id: '5', name: 'Electrical Installation', code: 'SUB005', project: 'Commercial Tower B', manager: 'Mike Johnson', status: 'In Progress', progress: 45, startDate: '2024-02-25', endDate: '2024-05-20' },
-        { id: '6', name: 'HVAC System', code: 'SUB006', project: 'Commercial Tower B', manager: 'Mike Johnson', status: 'Pending', progress: 0, startDate: '2024-05-21', endDate: '2024-07-10' },
-      ];
+    if (!selectedProject) {
+      setSubprojects([]);
+      return;
+    }
 
-      const savedSubprojects = localStorage.getItem('subprojects');
-      let userSubprojects: Subproject[] = [];
-      
-      if (savedSubprojects) {
-        try {
-          const parsed = JSON.parse(savedSubprojects);
-          userSubprojects = parsed.map((sub: any) => ({
-            id: sub.id,
-            name: sub.name,
-            code: sub.code || `SUB${String(sub.id).padStart(3, '0')}`,
-            project: sub.project,
-            manager: sub.manager,
-            status: sub.status || 'Pending',
-            progress: sub.progress || 0,
-            startDate: sub.startDate || '',
-            endDate: sub.endDate || ''
-          }));
-        } catch (e) {
-          console.error('Error parsing subprojects:', e);
-        }
-      }
-
-      setSubprojects([...defaultSubprojects, ...userSubprojects]);
-    };
-
-    loadSubprojects();
-
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'subprojects') {
-        loadSubprojects();
+    const fetchSubprojects = async () => {
+      setIsLoadingSubprojects(true);
+      setSubprojectSearchQuery('');
+      try {
+        const projectId = selectedProject.id; // UUID or numeric id from project
+        const result = await masterDataAPI.fetchProjectSubproject({ project_id: projectId });
+        const list = Array.isArray(result) ? result : result?.subProject || result?.data || [];
+        const transformed = list.map((sub: any) => transformSubproject(sub, selectedProject.name));
+        setSubprojects(transformed);
+      } catch (error: any) {
+        console.error('❌ Failed to fetch DPR subprojects:', error);
+        setSubprojects([]);
+      } finally {
+        setIsLoadingSubprojects(false);
       }
     };
 
-    window.addEventListener('storage', handleStorageChange);
-    window.addEventListener('subprojectsUpdated', loadSubprojects);
+    fetchSubprojects();
+  }, [selectedProject]);
 
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('subprojectsUpdated', loadSubprojects);
-    };
-  }, []);
+  // Search subprojects when user types - POST /project-wise-subproject-search
+  useEffect(() => {
+    if (!selectedProject || !subprojectSearchQuery.trim()) {
+      setSubprojectsSearchResults([]);
+      return;
+    }
+
+    const timeoutId = setTimeout(async () => {
+      try {
+        const result = await masterDataAPI.projectWiseSubprojectSearch({
+          project_id: selectedProject.id,
+          search_keyword: subprojectSearchQuery.trim()
+        });
+        const list = Array.isArray(result) ? result : [];
+        const transformed = list.map((sub: any) => transformSubproject(sub, selectedProject.name));
+        setSubprojectsSearchResults(transformed);
+      } catch (error: any) {
+        console.error('❌ Failed to search DPR subprojects:', error);
+        setSubprojectsSearchResults([]);
+      }
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [selectedProject, subprojectSearchQuery]);
 
   // Filter projects based on search query
   const filteredProjects = useMemo(() => {
@@ -343,23 +392,14 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     );
   }, [projects, projectSearchQuery]);
 
-  // Filter subprojects by selected project and search query
+  // Filter subprojects: use search API results when searching, else use fetched subprojects
   const filteredSubprojects = useMemo(() => {
     if (!selectedProject) return [];
-    
-    let filtered = subprojects.filter(sub => sub.project === selectedProject.name);
-    
     if (subprojectSearchQuery.trim()) {
-      const query = subprojectSearchQuery.toLowerCase();
-      filtered = filtered.filter(sub => 
-        sub.name.toLowerCase().includes(query) ||
-        sub.code.toLowerCase().includes(query) ||
-        sub.manager?.toLowerCase().includes(query)
-      );
+      return subprojectsSearchResults;
     }
-    
-    return filtered;
-  }, [subprojects, selectedProject, subprojectSearchQuery]);
+    return subprojects;
+  }, [subprojects, subprojectsSearchResults, selectedProject, subprojectSearchQuery]);
 
   const handleCreateNewDPR = () => {
     setShowProjectSelection(true);
@@ -375,6 +415,14 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
   const handleSelectSubproject = (subproject: Subproject) => {
     setSelectedSubproject(subproject);
+    setShowSubprojectSelection(false);
+    setShowActivitySelection(true);
+    setSubprojectSearchQuery('');
+  };
+
+  const handleSkipSubproject = () => {
+    // Set a placeholder subproject or null to allow proceeding without subproject
+    setSelectedSubproject(null);
     setShowSubprojectSelection(false);
     setShowActivitySelection(true);
     setSubprojectSearchQuery('');
@@ -605,9 +653,35 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     });
   };
 
-  const handleActivitySelectionNext = () => {
+  const handleActivitySelectionNext = (e: React.MouseEvent<HTMLButtonElement>) => {
+    // Prevent all default behavior and event propagation
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.nativeEvent) {
+        e.nativeEvent.stopImmediatePropagation();
+      }
+    }
+    
+    // Ensure we have required selections before proceeding
+    if (!selectedProject) {
+      console.error('No project selected');
+      return false;
+    }
+    
+    // Check if subproject is required for material selection
+    // The material selection modal requires selectedSubproject to be truthy
+    if (!selectedSubproject) {
+      console.warn('No subproject selected - material selection requires subproject');
+      // Still proceed - the modal condition will handle it
+    }
+    
+    // Close activity selection and open material selection
+    // React will batch these state updates automatically
     setShowActivitySelection(false);
     setShowMaterialSelection(true);
+    
+    return false;
   };
 
   // Load materials from localStorage
@@ -2095,7 +2169,12 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
             {/* Subprojects List */}
             <div className="flex-1 overflow-y-auto p-6">
-              {filteredSubprojects.length > 0 ? (
+              {isLoadingSubprojects ? (
+                <div className={`flex flex-col items-center justify-center py-16 ${textSecondary}`}>
+                  <div className="w-10 h-10 border-2 border-[#C2D642] border-t-transparent rounded-full animate-spin mb-4" />
+                  <p className="text-sm">Loading subprojects...</p>
+                </div>
+              ) : filteredSubprojects.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {filteredSubprojects.map((subproject) => (
                     <div
@@ -2144,11 +2223,19 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                 <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
                   <Layers className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
                   <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>No subprojects available</h3>
-                  <p className={`text-sm ${textSecondary}`}>
+                  <p className={`text-sm ${textSecondary} mb-6`}>
                     {subprojectSearchQuery 
                       ? 'No subprojects found matching your search' 
-                      : `There are no subprojects available for ${selectedProject.name}. Please create a subproject first.`}
+                      : `There are no subprojects available for ${selectedProject.name}. You can proceed without selecting a subproject.`}
                   </p>
+                  {!subprojectSearchQuery && (
+                    <button
+                      onClick={handleSkipSubproject}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all mx-auto ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white'} shadow-md`}
+                    >
+                      Next <ArrowRight className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -2157,15 +2244,28 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       )}
 
       {/* Activity Selection Modal */}
-      {showActivitySelection && selectedProject && selectedSubproject && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col`}>
+      {showActivitySelection && selectedProject && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+          onClick={(e) => {
+            // Prevent closing modal when clicking backdrop
+            if (e.target === e.currentTarget) {
+              e.preventDefault();
+              e.stopPropagation();
+            }
+          }}
+        >
+          <div 
+            className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col`}
+            onClick={(e) => e.stopPropagation()}
+          >
             {/* Modal Header */}
             <div className="flex items-center justify-between p-6 border-b border-inherit">
               <div>
                 <h2 className={`text-xl font-black ${textPrimary}`}>Select Activities</h2>
                 <p className={`text-sm ${textSecondary} mt-1`}>
-                  Select activities for <span className="font-bold text-[#C2D642]">{selectedProject.name}</span> - <span className="font-bold text-[#C2D642]">{selectedSubproject.name}</span>
+                  Select activities for <span className="font-bold text-[#C2D642]">{selectedProject.name}</span>
+                  {selectedSubproject && ` - ${selectedSubproject.name}`}
                 </p>
               </div>
               <div className="flex items-center gap-3">
@@ -2369,6 +2469,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             {/* Modal Footer */}
             <div className="flex items-center justify-between p-6 border-t border-inherit">
               <button
+                type="button"
                 onClick={() => {
                   setShowActivitySelection(false);
                   setShowSubprojectSelection(true);
@@ -2383,7 +2484,12 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                 Back
               </button>
               <button
+                type="button"
                 onClick={handleActivitySelectionNext}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
                 disabled={selectedActivities.size === 0}
                 className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
                   selectedActivities.size === 0
@@ -2403,8 +2509,20 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
       {/* Material Selection Modal */}
       {showMaterialSelection && selectedProject && selectedSubproject && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col`}>
+        <div 
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+          onClick={(e) => {
+            // Prevent closing modal when clicking backdrop
+            if (e.target === e.currentTarget) {
+              e.preventDefault();
+              e.stopPropagation();
+            }
+          }}
+        >
+          <div 
+            className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col`}
+            onClick={(e) => e.stopPropagation()}
+          >
             {/* Modal Header */}
             <div className="flex items-center justify-between p-6 border-b border-inherit">
               <div>

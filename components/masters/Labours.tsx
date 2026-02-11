@@ -470,11 +470,42 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
             <Download className="w-4 h-4" />
           </button>
           <button 
+            onClick={async () => {
+              console.log('🔄 Manual refresh triggered');
+              setSearchQuery('');
+              await fetchLabours();
+            }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+              isDark 
+                ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' 
+                : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
+            } shadow-sm`}
+            title="Refresh Labours List"
+          >
+            <RefreshCw className="w-4 h-4" /> Refresh
+          </button>
+          <button 
             onClick={() => setShowCreateModal(true)}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white' : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'} shadow-md`}
           >
             <Plus className="w-4 h-4" /> Add New
           </button>
+        </div>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className={`p-4 rounded-xl border ${cardClass}`}>
+          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Total Records</p>
+          <p className={`text-2xl font-black ${textPrimary}`}>{filteredLabours.length}</p>
+        </div>
+        <div className={`p-4 rounded-xl border ${cardClass}`}>
+          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
+          <p className={`text-2xl font-black text-[#C2D642]`}>{filteredLabours.filter(l => l.status === 'Active').length}</p>
+        </div>
+        <div className={`p-4 rounded-xl border ${cardClass}`}>
+          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>
+          <p className={`text-sm font-bold ${textPrimary}`}>Today</p>
         </div>
       </div>
 

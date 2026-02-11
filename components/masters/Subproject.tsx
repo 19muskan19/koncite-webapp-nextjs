@@ -17,7 +17,8 @@ import {
   ChevronUp,
   ChevronDown,
   Edit,
-  Trash2
+  Trash2,
+  RefreshCw
 } from 'lucide-react';
 
 interface Subproject {
@@ -365,8 +366,8 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
 
     setIsSearching(true);
     try {
-      console.log('🔍 Searching subprojects with query:', query);
-      const searchResults = await masterDataAPI.searchSubprojects(query);
+      console.log('🔍 Searching subprojects with query:', query, 'projectId:', selectedProjectId);
+      const searchResults = await masterDataAPI.searchSubprojects(query, selectedProjectId || undefined);
       console.log('✅ Search results:', searchResults);
       
       // Transform API response to match Subproject interface
@@ -544,6 +545,23 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                 <Download className="w-4 h-4" />
               </button>
               <button 
+                onClick={async () => {
+                  console.log('🔄 Manual refresh triggered');
+                  setSearchQuery('');
+                  if (selectedProjectId) {
+                    await fetchSubprojects(selectedProjectId);
+                  }
+                }}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+                  isDark 
+                    ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' 
+                    : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
+                } shadow-sm`}
+                title="Refresh Subprojects List"
+              >
+                <RefreshCw className="w-4 h-4" /> Refresh
+              </button>
+              <button 
                 onClick={() => {
                   setFormData({
                     ...formData,
@@ -556,6 +574,22 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
               >
                 <Plus className="w-4 h-4" /> Add New
               </button>
+            </div>
+          </div>
+
+          {/* Stats Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className={`p-4 rounded-xl border ${cardClass}`}>
+              <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Total Records</p>
+              <p className={`text-2xl font-black ${textPrimary}`}>{filteredAndSortedSubprojects.length}</p>
+            </div>
+            <div className={`p-4 rounded-xl border ${cardClass}`}>
+              <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
+              <p className={`text-2xl font-black text-[#C2D642]`}>{filteredAndSortedSubprojects.filter(s => s.status === 'Active' || s.status === 'In Progress').length}</p>
+            </div>
+            <div className={`p-4 rounded-xl border ${cardClass}`}>
+              <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>
+              <p className={`text-sm font-bold ${textPrimary}`}>Today</p>
             </div>
           </div>
 

@@ -30,7 +30,7 @@ interface CreateProjectModalProps {
   defaultProjects?: Project[];
   userProjects?: Project[];
   onProjectCreated?: (project: Project) => void;
-  projectUpdateId?: number | null; // For update mode (numeric ID)
+  projectUpdateId?: string | number | null; // For update mode (UUID or numeric ID)
   clientId?: number | null; // Existing client ID when updating
   editingProject?: Project | null; // Project data when editing
 }

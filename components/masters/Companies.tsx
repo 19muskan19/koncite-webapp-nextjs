@@ -843,6 +843,22 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
         </div>
       </div>
 
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className={`p-4 rounded-xl border ${cardClass}`}>
+          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Total Records</p>
+          <p className={`text-2xl font-black ${textPrimary}`}>{sortedCompanies.length}</p>
+        </div>
+        <div className={`p-4 rounded-xl border ${cardClass}`}>
+          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
+          <p className={`text-2xl font-black text-[#C2D642]`}>{sortedCompanies.filter(c => c.status === 'Active').length}</p>
+        </div>
+        <div className={`p-4 rounded-xl border ${cardClass}`}>
+          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>
+          <p className={`text-sm font-bold ${textPrimary}`}>Today</p>
+        </div>
+      </div>
+
       {/* Search and Filter Bar */}
       <div className={`flex items-center gap-4 p-4 rounded-xl border ${cardClass}`}>
         <div className="flex-1 relative">
@@ -976,22 +992,6 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
           <p className={`text-sm ${textSecondary}`}>Start by adding your first company</p>
         </div>
       )}
-
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Total Records</p>
-          <p className={`text-2xl font-black ${textPrimary}`}>{sortedCompanies.length}</p>
-        </div>
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
-          <p className={`text-2xl font-black text-[#C2D642]`}>{sortedCompanies.filter(c => c.status === 'Active').length}</p>
-        </div>
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>
-          <p className={`text-sm font-bold ${textPrimary}`}>Today</p>
-        </div>
-      </div>
 
       {/* Create Company Modal */}
       <CreateCompanyModal
