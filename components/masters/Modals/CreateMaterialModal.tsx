@@ -5,6 +5,7 @@ import { ThemeType } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
 import { X, Loader2 } from 'lucide-react';
 import { masterDataAPI } from '@/services/api';
+import { getExactErrorMessage } from '@/utils/errorUtils';
 
 interface Material {
   id: string;
@@ -24,6 +25,7 @@ interface CreateMaterialModalProps {
   onClose: () => void;
   onSuccess?: () => void;
   editingMaterialId?: string | null;
+  editingMaterial?: Material | null;
   materials?: Material[];
   classOptions?: Array<{ value: 'A' | 'B' | 'C'; label: string }>;
 }
@@ -34,6 +36,7 @@ const CreateMaterialModal: React.FC<CreateMaterialModalProps> = ({
   onClose,
   onSuccess,
   editingMaterialId = null,
+  editingMaterial = null,
   materials = [],
   classOptions = [
     { value: 'A', label: 'Class A' },
@@ -92,13 +95,19 @@ const CreateMaterialModal: React.FC<CreateMaterialModalProps> = ({
       const loadMaterialData = async () => {
         try {
           const materialData = await masterDataAPI.getMaterial(editingMaterialId);
-          // Handle class field - API returns formatted object with title and value
           const materialClass = materialData.class?.value || materialData.class || '';
+          const unitId =
+            materialData.unit_id ??
+            materialData.unit?.id ??
+            materialData.units?.id ??
+            materialData.units?.unit_id ??
+            materialData.data?.unit_id ??
+            (editingMaterial?.unit_id ?? '');
           setFormData({
             class: materialClass,
             name: materialData.name || '',
-            unit_id: String(materialData.unit_id || materialData.unit?.id || ''),
-            specification: materialData.specification || ''
+            unit_id: String(unitId || ''),
+            specification: materialData.specification || materialData.specification ?? ''
           });
         } catch (error: any) {
           console.error('Failed to load material data:', error);
@@ -192,7 +201,7 @@ const CreateMaterialModal: React.FC<CreateMaterialModalProps> = ({
       onClose();
     } catch (error: any) {
       console.error('Failed to save material:', error);
-      toast.showError(error.message || 'Failed to save material');
+      toast.showError(getExactErrorMessage(error) || 'Failed to save material');
     } finally {
       setIsSubmitting(false);
     }

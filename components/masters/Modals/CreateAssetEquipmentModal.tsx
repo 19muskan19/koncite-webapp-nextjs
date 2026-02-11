@@ -84,10 +84,11 @@ const CreateAssetEquipmentModal: React.FC<CreateAssetEquipmentModalProps> = ({
       const loadAssetData = async () => {
         try {
           const assetData = await masterDataAPI.getAssetEquipment(editingAssetId);
+          const unitId = typeof assetData.unit_id === 'object' ? assetData.unit_id?.id : assetData.unit_id;
           setFormData({
-            name: assetData.name || '',
+            name: assetData.assets || assetData.name || '', // API returns name in "assets" field
             specification: assetData.specification || '',
-            unit_id: String(assetData.unit_id || assetData.unit?.id || '')
+            unit_id: String(unitId || assetData.unit?.id || '')
           });
         } catch (error: any) {
           console.error('Failed to load asset data:', error);

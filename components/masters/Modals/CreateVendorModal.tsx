@@ -5,6 +5,7 @@ import { ThemeType } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
 import { X, Loader2 } from 'lucide-react';
 import { masterDataAPI } from '@/services/api';
+import { getExactErrorMessage } from '@/utils/errorUtils';
 
 interface Vendor {
   id: string;
@@ -41,14 +42,15 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
 }) => {
   const toast = useToast();
   const [formData, setFormData] = useState({
-    name: '', // Required: vendor/company name
-    address: '', // Required: vendor address
-    type: '', // Required: must be "both", "supplier", or "contractor"
-    contact_person_name: '', // Required: contact person name
-    country_code: '91', // Required: must be "91" or "971"
-    phone: '', // Required: contact phone number
-    email: '', // Required: valid email
-    gst_no: '' // Optional: GST number
+    name: '',
+    address: '',
+    type: '',
+    contact_person_name: '',
+    country_code: '91',
+    phone: '',
+    email: '',
+    gst_no: '',
+    is_active: 1 as number
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -77,6 +79,7 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
       const loadVendorData = async () => {
         try {
           const vendorData = await masterDataAPI.getVendor(editingVendorId);
+          const isActive = vendorData.is_active === 1 || vendorData.is_active === true || vendorData.is_active === '1';
           setFormData({
             name: vendorData.name || '',
             address: vendorData.address || '',
@@ -85,7 +88,8 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
             country_code: vendorData.country_code || '91',
             phone: vendorData.phone || '',
             email: vendorData.email || '',
-            gst_no: vendorData.gst_no || vendorData.gstNo || ''
+            gst_no: vendorData.gst_no || vendorData.gstNo || '',
+            is_active: isActive ? 1 : 0
           });
         } catch (error: any) {
           console.error('Failed to load vendor data:', error);
@@ -103,7 +107,8 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
         country_code: '91',
         phone: '',
         email: '',
-        gst_no: ''
+        gst_no: '',
+        is_active: 1
       });
     }
   }, [isOpen, editingVendorId]);
@@ -119,7 +124,8 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
         country_code: '91',
         phone: '',
         email: '',
-        gst_no: ''
+        gst_no: '',
+        is_active: 1
       });
       setIsSubmitting(false);
     }
@@ -196,10 +202,10 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
         email: formData.email.trim().toLowerCase()
       };
 
-      // Add optional fields if provided
       if (formData.gst_no.trim()) {
         payload.gst_no = formData.gst_no.trim();
       }
+      payload.is_active = formData.is_active;
 
       if (isEditing && editingVendorId) {
         // Update existing vendor
@@ -218,7 +224,7 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
       onClose();
     } catch (error: any) {
       console.error('Failed to save vendor:', error);
-      toast.showError(error.message || 'Failed to save vendor');
+      toast.showError(getExactErrorMessage(error) || 'Failed to save vendor');
     } finally {
       setIsSubmitting(false);
     }
@@ -423,6 +429,29 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
                   } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
                 />
               </div>
+
+              {/* Status - only show when editing */}
+              {isEditing && (
+                <div>
+                  <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                    Status
+                  </label>
+                  <select
+                    name="is_active"
+                    value={formData.is_active}
+                    onChange={(e) => setFormData({ ...formData, is_active: e.target.value === '1' ? 1 : 0 })}
+                    disabled={isSubmitting}
+                    className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+                      isDark 
+                        ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
+                        : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
+                    } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+                  >
+                    <option value={1}>Active</option>
+                    <option value={0}>Inactive</option>
+                  </select>
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -3,14 +3,16 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
-import { Truck, MoreVertical, Download, Plus, Search, ArrowUpDown, Loader2, Edit, Trash2, RefreshCw } from 'lucide-react';
+import { Truck, MoreVertical, Download, Plus, Search, ArrowUpDown, Loader2, Edit, Trash2, RefreshCw, Upload } from 'lucide-react';
 import CreateVendorModal from './Modals/CreateVendorModal';
+import VendorBulkUploadModal from './Modals/VendorBulkUploadModal';
 import { masterDataAPI } from '../../services/api';
 import { useUser } from '../../contexts/UserContext';
 import * as XLSX from 'xlsx';
 
 interface Vendor {
   id: string;
+  numericId?: number;
   uuid?: string;
   name: string;
   gstNo?: string;
@@ -38,8 +40,10 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
+  const [showBulkUploadModal, setShowBulkUploadModal] = useState<boolean>(false);
   const [editingVendorId, setEditingVendorId] = useState<string | null>(null);
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
+  const [togglingVendorId, setTogglingVendorId] = useState<string | null>(null);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [isLoadingVendors, setIsLoadingVendors] = useState<boolean>(false);
   const [vendorsError, setVendorsError] = useState<string | null>(null);
@@ -70,6 +74,7 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
       // Transform API response to match Vendor interface
       const transformedVendors: Vendor[] = fetchedVendors.map((vendor: any) => ({
         id: vendor.uuid || String(vendor.id),
+        numericId: vendor.id,
         uuid: vendor.uuid,
         name: vendor.name || '',
         gstNo: vendor.gst_no || vendor.gstNo || '',
@@ -118,6 +123,7 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
       // Transform API response to match Vendor interface
       const transformedVendors: Vendor[] = searchResults.map((vendor: any) => ({
         id: vendor.uuid || String(vendor.id),
+        numericId: vendor.id,
         uuid: vendor.uuid,
         name: vendor.name || '',
         gstNo: vendor.gst_no || vendor.gstNo || '',
@@ -178,11 +184,10 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
   }, [vendors, searchQuery, isSearching]);
 
   const handleEditVendor = async (vendor: Vendor) => {
+    const idForApi = vendor.numericId ?? vendor.id;
     try {
-      // Fetch full vendor details from API
-      const vendorDetails = await masterDataAPI.getVendor(vendor.id);
-      setEditingVendorId(vendor.id);
-      // Open modal with vendor data - CreateVendorModal will handle this
+      await masterDataAPI.getVendor(String(idForApi));
+      setEditingVendorId(String(idForApi));
       setShowCreateModal(true);
     } catch (error: any) {
       console.error('Failed to fetch vendor details:', error);
@@ -205,8 +210,33 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
   };
 
   const handleVendorCreated = async () => {
-    // Refresh vendors list after create/update
     await fetchVendors();
+  };
+
+  const handleToggleVendorStatus = async (vendor: Vendor) => {
+    const idForApi = vendor.numericId ?? vendor.id;
+    const newIsActive = vendor.status === 'Active' ? 0 : 1;
+    setTogglingVendorId(String(idForApi));
+    try {
+      const payload: Record<string, any> = {
+        name: vendor.name || '',
+        address: vendor.address || '',
+        type: vendor.type || 'both',
+        contact_person_name: vendor.contactPersonName || vendor.contact_person_name || '',
+        country_code: vendor.country_code || '91',
+        phone: vendor.phone || '',
+        email: vendor.email || '',
+        is_active: newIsActive
+      };
+      if (vendor.gstNo || vendor.gst_no) payload.gst_no = vendor.gstNo || vendor.gst_no;
+      await masterDataAPI.updateVendor(String(idForApi), payload);
+      toast.showSuccess(`Vendor ${newIsActive ? 'activated' : 'deactivated'} successfully`);
+      await fetchVendors();
+    } catch (error: any) {
+      toast.showError(error.message || 'Failed to update vendor status');
+    } finally {
+      setTogglingVendorId(null);
+    }
   };
 
   // Close dropdown when clicking outside
@@ -298,6 +328,15 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
             <RefreshCw className="w-4 h-4" /> Refresh
           </button>
           <button 
+            onClick={() => setShowBulkUploadModal(true)}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+              isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
+            } shadow-sm`}
+            title="Bulk Upload Vendors"
+          >
+            <Upload className="w-4 h-4" /> Bulk Upload
+          </button>
+          <button 
             onClick={() => setShowCreateModal(true)}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white' : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'} shadow-md`}
           >
@@ -307,7 +346,7 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className={`p-4 rounded-xl border ${cardClass}`}>
           <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Total Records</p>
           <p className={`text-2xl font-black ${textPrimary}`}>{filteredVendors.length}</p>
@@ -315,10 +354,6 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
         <div className={`p-4 rounded-xl border ${cardClass}`}>
           <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
           <p className={`text-2xl font-black text-[#C2D642]`}>{filteredVendors.filter(v => v.status === 'Active').length}</p>
-        </div>
-        <div className={`p-4 rounded-xl border ${cardClass}`}>
-          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>
-          <p className={`text-sm font-bold ${textPrimary}`}>Today</p>
         </div>
       </div>
 
@@ -434,42 +469,39 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
                 {filteredVendors.map((row, idx) => (
                   <tr 
                     key={row.id} 
-                    className={`${
-                      row.status === 'Inactive' 
-                        ? isDark 
-                          ? 'opacity-50 bg-slate-800/20' 
-                          : 'opacity-50 bg-slate-50/50'
-                        : isDark 
-                          ? 'hover:bg-slate-800/30' 
-                          : 'hover:bg-slate-50/50'
-                    } transition-colors`}
+                    className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}
                   >
-                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{idx + 1}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
-                      {row.name}
-                      {row.status === 'Inactive' && (
-                        <span className="ml-2 text-xs text-red-500">(Disabled)</span>
-                      )}
-                    </td>
-                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.gstNo || row.gst_no || '-'}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.address || '-'}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
+                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{idx + 1}</td>
+                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.name}</td>
+                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.gstNo || row.gst_no || '-'}</td>
+                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.address || '-'}</td>
+                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
                       {row.type === 'supplier' ? 'Supplier' : 
                        row.type === 'contractor' ? 'Contractor' : 
                        row.type === 'both' ? 'Both' : 
                        row.type}
                     </td>
-                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.contactPersonName || row.contact_person_name || '-'}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.phone || '-'}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.email || '-'}</td>
-                    <td className={`px-6 py-4`}>
-                      <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                        row.status === 'Active'
-                          ? 'bg-green-500/20 text-green-500'
-                          : 'bg-red-500/20 text-red-500'
-                      }`}>
-                        {row.status || 'Active'}
-                      </span>
+                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.contactPersonName || row.contact_person_name || '-'}</td>
+                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.phone || '-'}</td>
+                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.email || '-'}</td>
+                    <td className="px-6 py-4">
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleToggleVendorStatus(row); }}
+                        disabled={isLoadingVendors || togglingVendorId === String(row.numericId ?? row.id)}
+                        className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#C2D642]/50 focus:ring-offset-2 ${
+                          row.status === 'Active'
+                            ? 'bg-green-600'
+                            : isDark ? 'bg-slate-700' : 'bg-slate-300'
+                        } ${(isLoadingVendors || togglingVendorId === String(row.numericId ?? row.id)) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                        title={row.status === 'Active' ? 'Click to deactivate' : 'Click to activate'}
+                      >
+                        <span
+                          className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                            row.status === 'Active' ? 'translate-x-6' : 'translate-x-1'
+                          }`}
+                        />
+                      </button>
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="relative">
@@ -497,7 +529,7 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
                               </button>
                               <button
                                 onClick={() => {
-                                  handleDeleteVendor(row.id);
+                                  handleDeleteVendor(String(row.numericId ?? row.id));
                                   setOpenDropdownId(null);
                                 }}
                                 className={`w-full flex items-center gap-2 px-4 py-2 text-sm font-bold transition-colors text-left ${
@@ -541,6 +573,17 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
         onSuccess={handleVendorCreated}
         editingVendorId={editingVendorId}
         vendors={vendors}
+      />
+
+      {/* Bulk Upload Modal */}
+      <VendorBulkUploadModal
+        theme={theme}
+        isOpen={showBulkUploadModal}
+        onClose={() => setShowBulkUploadModal(false)}
+        onSuccess={() => {
+          setShowBulkUploadModal(false);
+          fetchVendors();
+        }}
       />
     </div>
   );

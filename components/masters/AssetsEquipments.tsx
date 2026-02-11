@@ -5,6 +5,7 @@ import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
 import { Wrench, MoreVertical, Download, Plus, Search, FileSpreadsheet, Upload, ArrowUpDown, Loader2, Edit, Trash2, RefreshCw } from 'lucide-react';
 import CreateAssetEquipmentModal from './Modals/CreateAssetEquipmentModal';
+import AssetBulkUploadModal from './Modals/AssetBulkUploadModal';
 import { masterDataAPI } from '../../services/api';
 import { useUser } from '../../contexts/UserContext';
 import * as XLSX from 'xlsx';
@@ -41,6 +42,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
   const [activeTab, setActiveTab] = useState<'list' | 'bulkUpload' | 'openingStock'>('list');
   const [openingStockSubTab, setOpeningStockSubTab] = useState<'bulkUpload' | 'available'>('bulkUpload');
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
+  const [showBulkUploadModal, setShowBulkUploadModal] = useState<boolean>(false);
   const [editingAssetId, setEditingAssetId] = useState<string | null>(null); // UUID for display
   const [editingAssetNumericId, setEditingAssetNumericId] = useState<number | string | null>(null); // Numeric ID for API calls
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
@@ -133,16 +135,17 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                         isActiveValue === undefined || // Default to active
                         isActiveValue === null; // Default to active
         
+        const unitObj = asset.unit_id && typeof asset.unit_id === 'object' ? asset.unit_id : asset.unit;
         return {
           id: uuid || String(numericId), // Use UUID for display if available, otherwise numeric ID as string
           numericId: numericId, // Store numeric ID for API calls
           uuid: uuid, // Store UUID if available
-          name: asset.name || '',
+          name: asset.assets || asset.name || '', // API returns name in "assets" field
           code: asset.code || '',
           specification: asset.specification || '',
-          unit: asset.unit?.unit || asset.unit || '',
-          unit_id: asset.unit_id || asset.unit?.id,
-          unit_data: asset.unit || undefined,
+          unit: unitObj?.unit || asset.unit?.unit || asset.unit || '',
+          unit_id: typeof asset.unit_id === 'object' ? asset.unit_id?.id : asset.unit_id,
+          unit_data: unitObj || asset.unit || undefined,
           status: (isActive ? 'Active' : 'Inactive') as 'Active' | 'Inactive',
           is_active: isActive ? 1 : 0,
           createdAt: asset.created_at || asset.createdAt,
@@ -192,16 +195,17 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                         isActiveValue === undefined || // Default to active
                         isActiveValue === null; // Default to active
         
+        const unitObj = asset.unit_id && typeof asset.unit_id === 'object' ? asset.unit_id : asset.unit;
         return {
           id: uuid || String(numericId), // Use UUID for display if available, otherwise numeric ID as string
           numericId: numericId, // Store numeric ID for API calls
           uuid: uuid, // Store UUID if available
-          name: asset.name || '',
+          name: asset.assets || asset.name || '', // API returns name in "assets" field
           code: asset.code || '',
           specification: asset.specification || '',
-          unit: asset.unit?.unit || asset.unit || '',
-          unit_id: asset.unit_id || asset.unit?.id,
-          unit_data: asset.unit || undefined,
+          unit: unitObj?.unit || asset.unit?.unit || asset.unit || '',
+          unit_id: typeof asset.unit_id === 'object' ? asset.unit_id?.id : asset.unit_id,
+          unit_data: unitObj || asset.unit || undefined,
           status: (isActive ? 'Active' : 'Inactive') as 'Active' | 'Inactive',
           is_active: isActive ? 1 : 0,
           createdAt: asset.created_at || asset.createdAt,
@@ -249,24 +253,12 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
 
   const handleEditAsset = async (asset: AssetEquipment) => {
     try {
-      // Use UUID for GET /assets-edit/{uuid} API
-      const assetUuid = asset.uuid || asset.id;
+      // Backend expects numeric id for assets-edit, update, delete
+      const idForApi = asset.numericId ?? asset.id;
+      await masterDataAPI.getAssetEquipment(String(idForApi));
       
-      console.log('📝 Editing asset:', {
-        assetId: asset.id,
-        uuid: asset.uuid,
-        numericId: asset.numericId,
-        usingUuidForGet: assetUuid
-      });
-      
-      // Fetch full asset details from API using UUID
-      const assetDetails = await masterDataAPI.getAssetEquipment(String(assetUuid));
-      console.log('✅ Asset details fetched:', assetDetails);
-      
-      setEditingAssetId(String(assetUuid)); // UUID for GET /assets-edit/{uuid}
-      setEditingAssetNumericId(asset.numericId || null); // Numeric ID for update if needed
-      
-      // Open modal with asset data - CreateAssetEquipmentModal will handle this
+      setEditingAssetId(String(idForApi));
+      setEditingAssetNumericId(asset.numericId || null);
       setShowCreateModal(true);
     } catch (error: any) {
       console.error('❌ Failed to fetch asset details:', error);
@@ -275,20 +267,13 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
   };
 
   const handleDeleteAsset = async (assetId: string) => {
-    // Find the asset to get its UUID
     const asset = assets.find(a => a.id === assetId);
-    const deleteUuid = asset?.uuid || assetId; // Use UUID for delete API
-    
-    console.log('🗑️ Deleting asset:', {
-      assetId: assetId,
-      uuid: asset?.uuid,
-      numericId: asset?.numericId,
-      usingUuid: deleteUuid
-    });
+    // Backend expects numeric id for delete (assets table uses id column, not uuid)
+    const idForApi = asset?.numericId ?? assetId;
     
     if (window.confirm('Are you sure you want to delete this asset?')) {
       try {
-        await masterDataAPI.deleteAssetEquipment(String(deleteUuid));
+        await masterDataAPI.deleteAssetEquipment(String(idForApi));
         toast.showSuccess('Asset deleted successfully');
         // Refresh assets list
         await fetchAssets();
@@ -300,25 +285,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
   };
 
   const handleToggleStatus = async (asset: AssetEquipment) => {
-    console.log('🔄 handleToggleStatus called with asset:', {
-      id: asset.id,
-      name: asset.name,
-      status: asset.status,
-      is_active: asset.is_active,
-      togglingAssetId: togglingAssetId,
-      isLoadingAssets: isLoadingAssets
-    });
-    
-    // Prevent multiple simultaneous toggles
-    if (togglingAssetId === asset.id) {
-      console.log('⏳ Toggle already in progress for this asset');
-      return;
-    }
-
-    if (isLoadingAssets) {
-      console.log('⏳ Assets are loading, cannot toggle');
-      return;
-    }
+    if (togglingAssetId === asset.id || isLoadingAssets) return;
 
     try {
       setTogglingAssetId(asset.id);
@@ -328,31 +295,13 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
       const newStatus = currentStatus === 'Active' ? 'Inactive' : 'Active';
       const isActive = newStatus === 'Active' ? 1 : 0;
       
-      console.log('🔄 Status toggle calculation:', {
-        currentStatus: currentStatus,
-        currentIsActive: asset.is_active,
-        newStatus: newStatus,
-        newIsActive: isActive
-      });
-      
-      // Use UUID for assets-edit/{uuid} API
-      const assetUuid = asset.uuid || asset.id;
-      
-      console.log('🔄 Toggling asset status:', {
-        assetId: asset.id,
-        uuid: assetUuid,
-        currentStatus: asset.status,
-        currentIsActive: asset.is_active,
-        newStatus: newStatus,
-        newIsActive: isActive
-      });
+      // Backend expects numeric id for assets-edit and update
+      const idForApi = asset.numericId ?? asset.id;
 
-      // First, fetch current asset data using assets-edit/{uuid} API to ensure we have latest data
+      // First, fetch current asset data to ensure we have latest data
       let currentAssetData;
       try {
-        console.log('📖 Fetching current asset data via assets-edit/{uuid}');
-        currentAssetData = await masterDataAPI.getAssetEquipment(String(assetUuid));
-        console.log('✅ Current asset data:', currentAssetData);
+        currentAssetData = await masterDataAPI.getAssetEquipment(String(idForApi));
       } catch (fetchError: any) {
         console.warn('⚠️ Failed to fetch asset data, using existing data:', fetchError);
         // Fallback to existing asset data if fetch fails
@@ -374,22 +323,18 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
         )
       );
 
-      // Update asset status using updateAssetEquipment API with UUID
-      // The API uses POST /assets-add with updateId parameter
+      const unitIdForPayload = typeof currentAssetData.unit_id === 'object' 
+        ? currentAssetData.unit_id?.id 
+        : currentAssetData.unit_id;
       const updatePayload = {
-        name: currentAssetData.name || asset.name,
+        name: currentAssetData.assets || currentAssetData.name || asset.name,
         code: currentAssetData.code || asset.code,
         specification: currentAssetData.specification || asset.specification,
-        unit_id: currentAssetData.unit_id || asset.unit_id,
-        is_active: isActive // Explicitly set the new status
+        unit_id: unitIdForPayload ?? asset.unit_id,
+        is_active: isActive
       };
       
-      console.log('📝 Updating asset with payload:', {
-        uuid: assetUuid,
-        updatePayload: updatePayload
-      });
-      
-      await masterDataAPI.updateAssetEquipment(String(assetUuid), updatePayload);
+      await masterDataAPI.updateAssetEquipment(String(idForApi), updatePayload);
       
       toast.showSuccess(`Asset ${newStatus.toLowerCase()} successfully`);
       
@@ -442,13 +387,13 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
   }, [openDropdownId]);
 
   const handleDownloadExcel = () => {
-    const headers = ['SR No', 'Machinery Name', 'Code', 'Unit', 'Asset Specification', 'Status'];
+    const headers = ['SR No', 'Name', 'Specification', 'Unit', 'Code', 'Status'];
     const rows = filteredAssets.map((asset, idx) => [
       idx + 1,
       asset.name,
-      asset.code,
-      asset.unit,
       asset.specification,
+      asset.unit,
+      asset.code,
       asset.status || 'Active'
     ]);
 
@@ -469,13 +414,13 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
   };
 
   const handleExportMasterData = () => {
-    const headers = ['SR No', 'Name', 'Code', 'Specification', 'Unit', 'Status'];
+    const headers = ['SR No', 'Name', 'Specification', 'Unit', 'Code', 'Status'];
     const rows = assets.map((asset, idx) => [
       idx + 1,
       asset.name,
-      asset.code,
       asset.specification,
       asset.unit,
+      asset.code,
       asset.status
     ]);
 
@@ -496,19 +441,23 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
     toast.showSuccess('Master data exported successfully');
   };
 
-  const handleImportMasterData = () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.csv,.xlsx,.xls';
-    input.onchange = (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (file) {
-        // Here you would typically parse the file and import the data
-        // For now, just show a message
-        toast.showSuccess('Import functionality will be implemented');
-      }
-    };
-    input.click();
+  const handleDownloadBulkUploadTemplate = () => {
+    const headers = ['name', 'specification', 'unit', 'code'];
+    const ws = XLSX.utils.aoa_to_sheet([headers]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Template');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `assets_upload_template_${new Date().toISOString().split('T')[0]}.xlsx`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    toast.showSuccess('Template downloaded. Fill name, specification, unit, code and upload.');
   };
 
   return (
@@ -539,10 +488,9 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
               <Download className="w-4 h-4" />
             </button>
             <button 
-              onClick={async () => {
-                console.log('🔄 Manual refresh triggered');
+              onClick={() => {
                 setSearchQuery('');
-                await fetchAssets();
+                fetchAssets();
               }}
               className={`p-2 rounded-lg transition-all ${
                 isDark 
@@ -680,16 +628,17 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
             <table className="w-full min-w-[640px]">
               <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
                 <tr>
+                  <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>SR No</th>
                   <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Name</th>
-                  <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Code</th>
-                  <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary} hidden md:table-cell`}>Specification</th>
+                  <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Specification</th>
                   <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Unit</th>
+                  <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Code</th>
                   <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Status</th>
                   <th className={`px-3 sm:px-6 py-3 sm:py-4 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-inherit">
-                {filteredAssets.map((row) => (
+                {filteredAssets.map((row, idx) => (
                   <tr 
                     key={row.id} 
                     className={`${
@@ -702,33 +651,21 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                           : 'hover:bg-slate-50/50'
                     } transition-colors`}
                   >
+                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{idx + 1}</td>
                     <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
-                      <div className="flex flex-col">
-                        <span>
-                          {row.name}
-                          {row.status === 'Inactive' && (
-                            <span className="ml-2 text-xs text-red-500">(Disabled)</span>
-                          )}
-                        </span>
-                        <span className="md:hidden text-xs opacity-70 mt-1">{row.specification}</span>
-                      </div>
+                      {row.name}
+                      {row.status === 'Inactive' && (
+                        <span className="ml-2 text-xs text-red-500">(Disabled)</span>
+                      )}
                     </td>
-                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.code || '-'}</td>
-                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary} hidden md:table-cell`}>{row.specification || '-'}</td>
+                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.specification || '-'}</td>
                     <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.unit || '-'}</td>
+                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.code || '-'}</td>
                     <td className={`px-3 sm:px-6 py-3 sm:py-4`}>
                       <button
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          console.log('🔄 Toggle button clicked for asset:', {
-                            id: row.id,
-                            name: row.name,
-                            currentStatus: row.status,
-                            currentIsActive: row.is_active,
-                            togglingAssetId: togglingAssetId,
-                            isLoadingAssets: isLoadingAssets
-                          });
                           handleToggleStatus(row);
                         }}
                         disabled={isLoadingAssets || togglingAssetId === row.id}
@@ -809,20 +746,23 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
 
       {activeTab === 'bulkUpload' && (
         <div className={`rounded-xl border p-4 sm:p-8 ${cardClass}`}>
+          <p className={`text-sm ${textSecondary} mb-4 text-center`}>
+            Use columns: <strong className={textPrimary}>name</strong>, <strong className={textPrimary}>specification</strong>, <strong className={textPrimary}>unit</strong>, <strong className={textPrimary}>code</strong> (optional)
+          </p>
           <div className="space-y-3 sm:space-y-4 max-w-md mx-auto">
             <button
-              onClick={handleExportMasterData}
+              onClick={handleDownloadBulkUploadTemplate}
               className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
                 isDark
-                  ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
-                  : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
-              } shadow-md`}
+                  ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600'
+                  : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
+              } shadow-sm`}
             >
-              <FileSpreadsheet className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
-              <span className="text-center">Export Asset/Equipments/Machinery Master Data</span>
+              <Download className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
+              <span className="text-center">Download Template (name, specification, unit, code)</span>
             </button>
             <button
-              onClick={handleImportMasterData}
+              onClick={() => setShowBulkUploadModal(true)}
               className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
                 isDark
                   ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
@@ -830,7 +770,18 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
               } shadow-md`}
             >
               <Upload className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
-              <span className="text-center">Import Asset/Equipments/Machinery Master Data</span>
+              <span className="text-center">Upload File</span>
+            </button>
+            <button
+              onClick={handleExportMasterData}
+              className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
+                isDark
+                  ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600'
+                  : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
+              } shadow-sm`}
+            >
+              <FileSpreadsheet className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
+              <span className="text-center">Export Master Data</span>
             </button>
           </div>
         </div>
@@ -1282,6 +1233,17 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
         editingAssetId={editingAssetId}
         editingAssetNumericId={editingAssetNumericId}
         assets={assets}
+      />
+
+      {/* Bulk Upload Modal */}
+      <AssetBulkUploadModal
+        theme={theme}
+        isOpen={showBulkUploadModal}
+        onClose={() => setShowBulkUploadModal(false)}
+        onSuccess={() => {
+          setShowBulkUploadModal(false);
+          fetchAssets();
+        }}
       />
     </div>
   );

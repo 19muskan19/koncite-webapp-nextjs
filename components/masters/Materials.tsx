@@ -3,9 +3,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
-import { Boxes, MoreVertical, Download, Plus, Search, ArrowUpDown, Loader2, Edit, Trash2, RefreshCw, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Upload } from 'lucide-react';
+import { Boxes, Download, Plus, Search, ArrowUpDown, Loader2, RefreshCw, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Upload, MoreVertical, Edit, Trash2 } from 'lucide-react';
 import CreateMaterialModal from './Modals/CreateMaterialModal';
 import { masterDataAPI } from '../../services/api';
+import { getExactErrorMessage } from '../../utils/errorUtils';
 import { useUser } from '../../contexts/UserContext';
 import * as XLSX from 'xlsx';
 
@@ -34,6 +35,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
   const [activeTab, setActiveTab] = useState<'list' | 'openingStock'>('list');
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [editingMaterialId, setEditingMaterialId] = useState<string | null>(null);
+  const [editingMaterial, setEditingMaterial] = useState<Material | null>(null);
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [isLoadingMaterials, setIsLoadingMaterials] = useState<boolean>(false);
@@ -65,22 +67,21 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
 
   const availableProjects = openingStockProjects;
 
-  // Fetch materials from API
+  // Fetch materials from API (GET /materials-list)
   const fetchMaterials = async () => {
     if (!isAuthenticated) {
       setMaterials([]);
       setIsLoadingMaterials(false);
       return;
     }
-    
     setIsLoadingMaterials(true);
     setMaterialsError(null);
     try {
       const fetchedMaterials = await masterDataAPI.getMaterials();
-      // Transform API response to match Material interface
-      const transformedMaterials = fetchedMaterials.map((material: any) => {
-        // Handle class field - API returns formatted object with title and value
+      const transformedMaterials = (fetchedMaterials || []).map((material: any) => {
         const materialClass = material.class?.value || material.class || '';
+        const unitObj = material.units || material.unit;
+        const unitLabel = unitObj?.unit || unitObj?.name || (typeof material.unit === 'string' ? material.unit : '') || '';
         return {
           id: material.uuid || String(material.id),
           numericId: material.id,
@@ -88,9 +89,9 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
           class: materialClass as 'A' | 'B' | 'C',
           code: material.code || '',
           name: material.name || '',
-          specification: material.specification || '',
-          unit: material.unit?.unit || material.unit || '',
-          unit_id: material.unit_id || material.unit?.id,
+          specification: material.specification ?? '',
+          unit: unitLabel,
+          unit_id: material.unit_id || unitObj?.id,
           createdAt: material.created_at || material.createdAt,
         };
       });
@@ -105,7 +106,6 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
     }
   };
 
-  // Load materials from API on mount and when auth changes
   useEffect(() => {
     fetchMaterials();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -146,55 +146,6 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
     }
   }, [activeTab, availableStockFilters.project, isAuthenticated]);
 
-  // Search materials using API
-  const handleSearch = async (query: string) => {
-    if (!query.trim()) {
-      // If search is empty, fetch all materials
-      await fetchMaterials();
-      setIsSearching(false);
-      return;
-    }
-
-    setIsSearching(true);
-    try {
-      const searchResults = await masterDataAPI.searchMaterials(query);
-      // Transform API response to match Material interface
-      const transformedMaterials = searchResults.map((material: any) => {
-        const materialClass = material.class?.value || material.class || '';
-        return {
-          id: material.uuid || String(material.id),
-          numericId: material.id,
-          uuid: material.uuid,
-          class: materialClass as 'A' | 'B' | 'C',
-          code: material.code || '',
-          name: material.name || '',
-          specification: material.specification || '',
-          unit: material.unit?.unit || material.unit || '',
-          unit_id: material.unit_id || material.unit?.id,
-          createdAt: material.created_at || material.createdAt,
-        };
-      });
-      setMaterials(transformedMaterials);
-    } catch (error: any) {
-      console.error('Search failed:', error);
-      toast.showError(error.message || 'Search failed. Please try again.');
-    } finally {
-      setIsSearching(false);
-    }
-  };
-
-  // Debounced search
-  useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      if (searchQuery.trim()) {
-        handleSearch(searchQuery);
-      } else {
-        fetchMaterials();
-      }
-    }, 500);
-
-    return () => clearTimeout(timeoutId);
-  }, [searchQuery]);
 
   // Filter materials (client-side filtering is optional since we're using API search)
   const filteredMaterials = useMemo(() => {
@@ -225,39 +176,33 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
     setListCurrentPage(1);
   }, [searchQuery, listEntriesPerPage]);
 
-  const handleEditMaterial = async (material: Material) => {
-    try {
-      // Fetch full material details from API
-      const materialDetails = await masterDataAPI.getMaterial(material.id);
-      setEditingMaterialId(material.id);
-      // Open modal with material data - CreateMaterialModal will handle this
-      setShowCreateModal(true);
-    } catch (error: any) {
-      console.error('Failed to fetch material details:', error);
-      toast.showError('Failed to load material details');
-    }
-  };
-
-  const handleDeleteMaterial = async (materialId: string) => {
-    if (window.confirm('Are you sure you want to delete this material?')) {
-      try {
-        await masterDataAPI.deleteMaterial(materialId);
-        toast.showSuccess('Material deleted successfully');
-        // Refresh materials list
-        await fetchMaterials();
-      } catch (error: any) {
-        console.error('Failed to delete material:', error);
-        toast.showError(error.message || 'Failed to delete material');
-      }
-    }
-  };
-
   const handleMaterialCreated = async () => {
-    // Refresh materials list after create/update
     await fetchMaterials();
   };
 
-  // Close dropdown when clicking outside
+  const handleEditMaterial = async (material: Material) => {
+    const idForApi = material.numericId ?? material.id;
+    try {
+      await masterDataAPI.getMaterial(String(idForApi));
+      setEditingMaterial(material);
+      setEditingMaterialId(String(idForApi));
+      setShowCreateModal(true);
+    } catch (error: any) {
+      toast.showError(error?.message || 'Failed to load material details');
+    }
+  };
+
+  const handleDeleteMaterial = async (material: Material) => {
+    if (!window.confirm('Are you sure you want to delete this material?')) return;
+    try {
+      await masterDataAPI.deleteMaterial(String(material.numericId ?? material.id));
+      toast.showSuccess('Material deleted successfully');
+      await fetchMaterials();
+    } catch (error: any) {
+      toast.showError(error?.message || 'Failed to delete material');
+    }
+  };
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
@@ -265,12 +210,9 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
         setOpenDropdownId(null);
       }
     };
-
     if (openDropdownId) {
       document.addEventListener('mousedown', handleClickOutside);
-      return () => {
-        document.removeEventListener('mousedown', handleClickOutside);
-      };
+      return () => document.removeEventListener('mousedown', handleClickOutside);
     }
   }, [openDropdownId]);
 
@@ -331,7 +273,9 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
         };
         const safeStr = (v: unknown) => (v != null && v !== '') ? String(v).trim() : '';
         const validClasses = ['a', 'b', 'c'];
+        const usedCodes = new Set((materials || []).map(m => (m.code || '').toLowerCase().trim()).filter(Boolean));
         let success = 0, failed = 0;
+        let lastError: any = null;
         for (let i = 0; i < dataRows.length; i++) {
           const row = dataRows[i] || [];
           const name = safeStr(row[nameIdx]);
@@ -340,6 +284,15 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
           const unitVal = safeStr(row[unitIdx]);
           const unitId = unitVal ? findUnitId(unitVal) : undefined;
           if (!name || !unitId) { failed++; continue; }
+          let code = codeIdx >= 0 ? safeStr(row[codeIdx]) : '';
+          if (code) {
+            let base = code;
+            let suffix = 1;
+            while (usedCodes.has(code.toLowerCase())) {
+              code = `${base}-${++suffix}`;
+            }
+            usedCodes.add(code.toLowerCase());
+          }
           try {
             if (i > 0) await new Promise(r => setTimeout(r, 200));
             await masterDataAPI.createMaterial({
@@ -347,16 +300,24 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
               name,
               unit_id: unitId,
               ...(specIdx >= 0 && { specification: safeStr(row[specIdx]) }),
-              ...(codeIdx >= 0 && { code: safeStr(row[codeIdx]) }),
+              ...(code && { code }),
             });
             success++;
-          } catch { failed++; }
+          } catch (err: any) {
+            failed++;
+            lastError = err;
+          }
         }
         if (success > 0) {
           toast.showSuccess(`${success} material(s) imported`);
           await fetchMaterials();
+          setListCurrentPage(1);
+          setSearchQuery('');
         }
-        if (failed > 0 && success === 0) toast.showError(`Import failed for all ${failed} row(s)`);
+        if (failed > 0 && success === 0) {
+          const msg = lastError ? getExactErrorMessage(lastError) : '';
+          toast.showError(msg ? `Import failed for all ${failed} row(s): ${msg}` : `Import failed for all ${failed} row(s)`);
+        }
       } catch (err: any) {
         toast.showError(err.message || 'Failed to import');
       } finally {
@@ -446,19 +407,10 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
               onClick={handleImport}
               disabled={isImporting}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'} shadow-sm disabled:opacity-70 disabled:cursor-not-allowed`}
-              title="Import materials from CSV or Excel"
-            >
-              {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-              {isImporting ? 'Importing...' : 'Import'}
-            </button>
-            <button 
-              onClick={handleImport}
-              disabled={isImporting}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'} shadow-sm disabled:opacity-70 disabled:cursor-not-allowed`}
               title="Bulk upload materials from CSV or Excel"
             >
-              <Upload className="w-4 h-4" />
-              Bulk Upload
+              {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+              {isImporting ? 'Importing...' : 'Bulk Upload'}
             </button>
           </div>
         )}
@@ -559,8 +511,8 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
         </div>
       )}
 
-      {/* Materials Table */}
-      {!isLoadingMaterials && !materialsError && filteredMaterials.length > 0 ? (
+      {/* Materials Table - always show (no list API, empty) */}
+      {!isLoadingMaterials && !materialsError ? (
         <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -604,12 +556,12 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                   <tr key={row.id} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.class}</td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.code}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.name}</td>
+                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.name || '-'}</td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.specification || '-'}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.unit}</td>
+                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.unit || '-'}</td>
                     <td className="px-6 py-4 text-right">
                       <div className="relative">
-                        <button 
+                        <button
                           onClick={() => setOpenDropdownId(openDropdownId === row.id ? null : row.id)}
                           className={`dropdown-trigger p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
                           title="Actions"
@@ -633,7 +585,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                               </button>
                               <button
                                 onClick={() => {
-                                  handleDeleteMaterial(row.id);
+                                  handleDeleteMaterial(row);
                                   setOpenDropdownId(null);
                                 }}
                                 className={`w-full flex items-center gap-2 px-4 py-2 text-sm font-bold transition-colors text-left ${
@@ -739,16 +691,6 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
               Page {listCurrentPage} of {listTotalPages} ({filteredMaterials.length} total)
             </span>
           </div>
-        </div>
-      ) : !isLoadingMaterials && !materialsError ? (
-        <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
-          <Boxes className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
-          <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>No Materials Found</h3>
-          <p className={`text-sm ${textSecondary}`}>
-            {searchQuery.trim() 
-              ? `No materials found matching "${searchQuery}"` 
-              : 'Start by adding your first material entry'}
-          </p>
         </div>
       ) : null}
         </>
@@ -971,9 +913,11 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
         onClose={() => {
           setShowCreateModal(false);
           setEditingMaterialId(null);
+          setEditingMaterial(null);
         }}
         onSuccess={handleMaterialCreated}
         editingMaterialId={editingMaterialId}
+        editingMaterial={editingMaterial}
         materials={materials}
         classOptions={classOptions}
       />

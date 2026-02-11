@@ -5,6 +5,7 @@ import { ThemeType } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
 import { X, Upload, FileSpreadsheet, Loader2, CheckCircle, AlertCircle } from 'lucide-react';
 import { masterDataAPI } from '@/services/api';
+import { getExactErrorMessage } from '@/utils/errorUtils';
 import * as XLSX from 'xlsx';
 
 interface ActivityBulkUploadModalProps {
@@ -184,7 +185,7 @@ const ActivityBulkUploadModal: React.FC<ActivityBulkUploadModalProps> = ({
 
   const resolveProjectId = (): number | null => {
     if (!selectedProjectId) return null;
-    const byUuid = projects.find(p => (p.uuid || '').toLowerCase() === selectedProjectId.toLowerCase());
+    const byUuid = projects.find(p => (p.uuid || '').toLowerCase() === String(selectedProjectId).toLowerCase());
     if (byUuid) return byUuid.id;
     const num = parseInt(selectedProjectId, 10);
     if (!isNaN(num) && projects.some(p => p.id === num)) return num;
@@ -194,13 +195,13 @@ const ActivityBulkUploadModal: React.FC<ActivityBulkUploadModalProps> = ({
   const resolveSubprojectId = (): number | null => {
     if (!selectedSubprojectId || !propSubprojects?.length) return null;
     const sel = String(selectedSubprojectId).trim();
-    const byUuid = propSubprojects.find(s =>
+    const byUuid = propSubprojects.find((s: any) =>
       (s.uuid && String(s.uuid).toLowerCase() === sel.toLowerCase()) ||
       (String(s.id) === sel)
     );
     if (byUuid) return byUuid.id;
     const num = parseInt(sel, 10);
-    if (!isNaN(num) && propSubprojects.some(s => s.id === num)) return num;
+    if (!isNaN(num) && propSubprojects.some((s: any) => s.id === num)) return num;
     return null;
   };
 
@@ -289,20 +290,6 @@ const ActivityBulkUploadModal: React.FC<ActivityBulkUploadModalProps> = ({
         return projectCache[cacheKey];
       };
 
-      const findSubprojectId = (projectId: number, val: string): number | undefined => {
-        const cache = projectCache[`${projectId}`] ?? (resolvedSubprojectId != null ? projectCache[`${projectId}:${resolvedSubprojectId}`] : null) ?? Object.entries(projectCache).find(([k]) => k.startsWith(`${projectId}`))?.[1];
-        if (!cache?.subprojects) return undefined;
-        const v = (val || '').toString().trim();
-        const vLower = v.toLowerCase();
-        const byUuid = cache.subprojects.find((s: any) => (s.uuid || '').toLowerCase() === vLower || String(s.id) === v);
-        if (byUuid) return byUuid.id;
-        const byName = cache.subprojects.find((s: any) => (s.name || s.subproject_name || '').toLowerCase() === vLower);
-        if (byName) return byName.id;
-        const num = parseInt(v, 10);
-        if (!isNaN(num) && cache.subprojects.some((s: any) => s.id === num)) return num;
-        return undefined;
-      };
-
       const findHeadingId = (projectId: number, subprojectId: number | null | undefined, val: string): number | undefined => {
         const ck = subprojectId != null ? `${projectId}:${subprojectId}` : `${projectId}`;
         const cache = projectCache[ck];
@@ -317,6 +304,7 @@ const ActivityBulkUploadModal: React.FC<ActivityBulkUploadModalProps> = ({
 
       let success = 0;
       let failed = 0;
+      let lastApiError: any = null;
       const log: string[] = [];
       const total = dataRows.length;
 
@@ -350,17 +338,11 @@ const ActivityBulkUploadModal: React.FC<ActivityBulkUploadModalProps> = ({
             activities: activityName
           };
 
-          // Always use selected subproject from UI when user has chosen one
-          let subprojectToAdd: number | null = resolvedSubprojectId;
-          if (subprojectIdx >= 0) {
-            const subVal = safeStr(row[subprojectIdx]);
-            if (subVal) {
-              const subId = findSubprojectId(projectId, subVal);
-              if (subId) subprojectToAdd = subId;
-            }
-          }
-          if (subprojectToAdd) {
-            payload.subproject = Number(subprojectToAdd);
+          // Use selected subproject from Activities page
+          if (resolvedSubprojectId != null && resolvedSubprojectId > 0) {
+            const subId = Number(resolvedSubprojectId);
+            payload.subproject = subId;
+            payload.subproject_id = subId;
           }
 
           if (type === 'activites') {
@@ -481,11 +463,13 @@ const ActivityBulkUploadModal: React.FC<ActivityBulkUploadModalProps> = ({
                 }
               } catch (retryErr: any) {
                 failed++;
+                lastApiError = retryErr;
                 log.push(`Row ${i + 2} (${activityName}): Failed - Rate limit exceeded. Please try again with fewer rows or wait a few minutes.`);
               }
             } else {
               failed++;
-              log.push(`Row ${i + 2} (${activityName}): Failed - ${err.message || 'API error'}`);
+              lastApiError = err;
+              log.push(`Row ${i + 2} (${activityName}): Failed - ${getExactErrorMessage(err)}`);
             }
           }
         }
@@ -500,9 +484,15 @@ const ActivityBulkUploadModal: React.FC<ActivityBulkUploadModalProps> = ({
         toast.showSuccess(`${success} activity(ies) added successfully`);
         if (onSuccess) onSuccess();
       }
+      if (failed > 0 && success === 0 && lastApiError) {
+        toast.showError(`Import failed for all ${failed} row(s): ${getExactErrorMessage(lastApiError)}`);
+      } else if (failed > 0 && success === 0) {
+        toast.showError(`Import failed for all ${failed} row(s)`);
+      }
     } catch (err: any) {
-      toast.showError(err.message || 'Failed to parse file');
-      setUploadLog([`Error: ${err.message || 'Unknown error'}`]);
+      const msg = getExactErrorMessage(err);
+      toast.showError(msg || 'Failed to parse file');
+      setUploadLog([`Error: ${msg || 'Unknown error'}`]);
     } finally {
       setIsUploading(false);
     }
@@ -517,14 +507,14 @@ const ActivityBulkUploadModal: React.FC<ActivityBulkUploadModalProps> = ({
           <div>
             <h2 className={`text-xl font-black ${textPrimary}`}>Bulk Upload Activities</h2>
             <p className={`text-sm ${textSecondary} mt-1`}>
-              Select project & subproject above, then upload CSV/Excel. Required: <strong>type</strong> (heading/activites), <strong>activities</strong>.
-              For type=activites: use <strong>heading</strong> (parent name) <em>or</em> <strong>SL No</strong> (e.g. 1.1 → parent 1). <strong>Units</strong> optional.
+              Select project & subproject above (Activities section), then upload CSV/Excel. All entries go to the selected project/subproject. Required: <strong>type</strong> (heading/activites), <strong>activities</strong>.
+              For type=activites: use <strong>heading</strong> (parent name) <em>or</em> <strong>SL No</strong> (e.g. 1.1 → parent 1). <strong>Units</strong> required.
             </p>
             {selectedProjectId && (
               <p className={`text-xs mt-2 ${textSecondary}`}>
-                Using: <span className={`font-bold ${textPrimary}`}>
-                  {projects.find(p => p.uuid === selectedProjectId || String(p.id) === selectedProjectId)?.project_name || 'Project'}
-                  {selectedSubprojectId && ` → ${propSubprojects.find(s => s.uuid === selectedSubprojectId || String(s.id) === selectedSubprojectId)?.name || 'Subproject'}`}
+                Target: <span className={`font-bold ${textPrimary}`}>
+                  {projects.find(p => (p.uuid || String(p.id)) === selectedProjectId)?.project_name || 'Project'}
+                  {selectedSubprojectId && ` → ${propSubprojects.find((s: any) => (s.uuid || String(s.id)) === selectedSubprojectId)?.name || 'Subproject'}`}
                 </span>
               </p>
             )}
@@ -549,9 +539,9 @@ const ActivityBulkUploadModal: React.FC<ActivityBulkUploadModalProps> = ({
 
           <button
             onClick={handleUpload}
-            disabled={!selectedFile || isUploading}
+            disabled={!selectedFile || !selectedProjectId || isUploading}
             className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-lg font-bold transition-all ${
-              selectedFile && !isUploading ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-slate-300 text-slate-500 cursor-not-allowed'
+              selectedFile && selectedProjectId && !isUploading ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-slate-300 text-slate-500 cursor-not-allowed'
             }`}
           >
             {isUploading ? (

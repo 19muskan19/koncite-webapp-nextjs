@@ -1249,25 +1249,37 @@ export const masterDataAPI = {
   updateMaterial: async (uuid: string, data: Record<string, any>): Promise<any> => {
     try {
       // POST /api/materials-add is used for both create and update
-      // Include updateId in data for updates
-      const updateData = { ...data, updateId: uuid };
+      // Include id/uuid/updateId for backend to identify update (Laravel backends vary)
+      const updateData = {
+        ...data,
+        updateId: uuid,
+        id: uuid,
+        uuid: uuid,
+      };
       const response = await apiClient.post('/materials-add', updateData);
       return response.data;
     } catch (error: any) {
+      const errData = error.response?.data || {};
+      const firstErr = errData.errors && typeof errData.errors === 'object'
+        ? Object.values(errData.errors).flat().find((v: any) => v && String(v).trim())
+        : null;
+      const msg = firstErr || errData.message || 'Failed to update material';
       throw {
-        message: error.response?.data?.message || 'Failed to update material',
-        errors: error.response?.data?.errors || {},
+        message: msg,
+        errors: errData.errors || {},
       } as ApiError;
     }
   },
-  deleteMaterial: async (uuid: string): Promise<any> => {
+  deleteMaterial: async (idOrUuid: string): Promise<any> => {
     try {
-      const response = await apiClient.delete(`/materials-delete/${uuid}`);
+      const response = await apiClient.delete(`/materials-delete/${encodeURIComponent(idOrUuid)}`);
       return response.data;
     } catch (error: any) {
+      const errData = error.response?.data || {};
+      const msg = errData.message || error.message || 'Failed to delete material';
       throw {
-        message: error.response?.data?.message || 'Failed to delete material',
-        errors: error.response?.data?.errors || {},
+        message: msg,
+        errors: errData.errors || {},
       } as ApiError;
     }
   },
