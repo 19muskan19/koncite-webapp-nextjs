@@ -150,12 +150,15 @@ const CreateCompanyModal: React.FC<CreateCompanyModalProps> = ({
   const handleCreateCompany = async () => {
     const missingFields: string[] = [];
     
-    if (!formData.registrationName) missingFields.push('Registration Name');
-    if (!formData.registeredAddress) missingFields.push('Registered Address');
-    if (!formData.companyRegistrationNo) missingFields.push('Company Registration No');
+    if (!formData.registrationName.trim()) missingFields.push('Company Name');
+    if (!formData.companyRegistrationNo.trim()) missingFields.push('Reg No.');
+    if (!formData.registeredAddress.trim()) missingFields.push('Reg Address');
     
     if (missingFields.length > 0) {
-      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
+      const msg = missingFields.length === 1
+        ? `Required field "${missingFields[0]}" is empty. Please fill it before submitting.`
+        : `The following required fields are empty: ${missingFields.join(', ')}. Please fill them before submitting.`;
+      toast.showWarning(msg);
       return;
     }
 
@@ -241,10 +244,10 @@ const CreateCompanyModal: React.FC<CreateCompanyModalProps> = ({
 
         {/* Modal Body */}
         <div className="p-6 space-y-6">
-          {/* Registration Name */}
+          {/* Company Name */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Registration Name <span className="text-red-500">*</span>
+              Company Name <span className="text-red-500">*</span>
             </label>
             <input
               type="text"
@@ -260,10 +263,10 @@ const CreateCompanyModal: React.FC<CreateCompanyModalProps> = ({
             />
           </div>
 
-          {/* Registered Address */}
+          {/* Reg Address */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Registered Address <span className="text-red-500">*</span>
+              Reg Address <span className="text-red-500">*</span>
             </label>
             <textarea
               name="registeredAddress"
@@ -279,10 +282,10 @@ const CreateCompanyModal: React.FC<CreateCompanyModalProps> = ({
             />
           </div>
 
-          {/* Company Registration No */}
+          {/* Reg No. */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Company Registration No <span className="text-red-500">*</span>
+              Reg No. <span className="text-red-500">*</span>
             </label>
             <input
               type="text"

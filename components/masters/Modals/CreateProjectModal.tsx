@@ -379,13 +379,14 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   };
 
   const handleCreateProject = async () => {
-    // 1. Validate required fields
+    // 1. Validate required fields (Project name, Address, Plan start/end date, Tag company)
     const missingFields: string[] = [];
     
     if (!formData.project_name.trim()) missingFields.push('Project Name');
     if (!formData.address.trim()) missingFields.push('Address');
     if (!formData.own_project_or_contractor) missingFields.push('Are you contractor for this project?');
     if (!formData.planned_start_date) missingFields.push('Planned Start Date');
+    if (!formData.planned_end_date) missingFields.push('Planned End Date');
     if (!formData.companies_id) missingFields.push('Tag Company');
     
     // 2. Validate client fields if own_project_or_contractor = 'yes'
@@ -399,7 +400,10 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     }
     
     if (missingFields.length > 0) {
-      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
+      const msg = missingFields.length === 1
+        ? `Required field "${missingFields[0]}" is empty. Please fill it before submitting.`
+        : `The following required fields are empty: ${missingFields.join(', ')}. Please fill them before submitting.`;
+      toast.showWarning(msg);
       return;
     }
 
@@ -420,10 +424,8 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       projectFormData.append('companies_id', formData.companies_id);
       projectFormData.append('own_project_or_contractor', formData.own_project_or_contractor);
       
-      // Optional fields
-      if (formData.planned_end_date) {
-        projectFormData.append('planned_end_date', formData.planned_end_date);
-      }
+      // Planned end date (required)
+      projectFormData.append('planned_end_date', formData.planned_end_date);
       if (formData.project_completed_date) {
         projectFormData.append('project_completed_date', formData.project_completed_date);
       }

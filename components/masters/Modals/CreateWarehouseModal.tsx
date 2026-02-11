@@ -315,18 +315,17 @@ const CreateWarehouseModal: React.FC<CreateWarehouseModalProps> = ({
   };
 
   const validateForm = (): boolean => {
-    if (!formData.name.trim()) {
-      toast.showWarning('Warehouse name is required');
-      return false;
-    }
+    const missingFields: string[] = [];
 
-    if (!formData.location.trim()) {
-      toast.showWarning('Location is required');
-      return false;
-    }
+    if (!formData.name.trim()) missingFields.push('Warehouse Name');
+    if (!formData.tag_project) missingFields.push('Tag Project');
+    if (!formData.location.trim()) missingFields.push('Location');
 
-    if (!formData.tag_project) {
-      toast.showWarning('Project selection is required');
+    if (missingFields.length > 0) {
+      const msg = missingFields.length === 1
+        ? `Required field "${missingFields[0]}" is empty. Please fill it before submitting.`
+        : `The following required fields are empty: ${missingFields.join(', ')}. Please fill them before submitting.`;
+      toast.showWarning(msg);
       return false;
     }
 

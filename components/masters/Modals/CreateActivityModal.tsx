@@ -266,29 +266,28 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
   };
 
   const validateForm = (): boolean => {
-    if (!formData.project) {
-      toast.showWarning('Project is required');
-      return false;
-    }
+    const missingFields: string[] = [];
+    if (!formData.project) missingFields.push('Project');
+    if (!formData.subproject) missingFields.push('Subproject');
+    if (!formData.type || !['heading', 'activites'].includes(formData.type)) missingFields.push('Type');
+    if (!formData.activities.trim()) missingFields.push(formData.type === 'heading' ? 'Heading Name' : 'Activity Name');
 
-    if (!formData.type || !['heading', 'activites'].includes(formData.type)) {
-      toast.showWarning('Type must be "heading" or "activites"');
-      return false;
-    }
-
-    if (!formData.activities.trim()) {
-      toast.showWarning('Activity name is required');
+    if (missingFields.length > 0) {
+      const msg = missingFields.length === 1
+        ? `Required field "${missingFields[0]}" is empty. Please fill it before submitting.`
+        : `The following required fields are empty: ${missingFields.join(', ')}. Please fill them before submitting.`;
+      toast.showWarning(msg);
       return false;
     }
 
     // If type is 'activites', heading and unit_id are required
     if (formData.type === 'activites') {
       if (!formData.heading) {
-        toast.showWarning('Heading (parent activity) is required for activities');
+        toast.showWarning('Required field "Heading (Parent Activity)" is empty. Please fill it before submitting.');
         return false;
       }
       if (!formData.unit_id) {
-        toast.showWarning('Unit is required for activities');
+        toast.showWarning('Required field "Unit" is empty. Please fill it before submitting.');
         return false;
       }
     }
@@ -413,7 +412,7 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
           {/* Subproject */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Subproject (Optional)
+              Subproject <span className="text-red-500">*</span>
             </label>
             {isLoadingSubprojects ? (
               <div className={`w-full px-4 py-3 rounded-lg text-sm ${textSecondary} flex items-center gap-2`}>
@@ -432,7 +431,7 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
                     : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
                 } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
               >
-                <option value="">-- Select Subproject (Optional) --</option>
+                <option value="">-- Select Subproject --</option>
                 {modalSubprojects.map((subproject) => (
                   <option key={subproject.uuid || subproject.id} value={subproject.uuid || String(subproject.id)}>
                     {subproject.name}

@@ -127,18 +127,15 @@ const CreateAssetEquipmentModal: React.FC<CreateAssetEquipmentModalProps> = ({
   };
 
   const validateForm = (): boolean => {
-    if (!formData.name.trim()) {
-      toast.showWarning('Asset name is required');
-      return false;
-    }
+    const missingFields: string[] = [];
+    if (!formData.name.trim()) missingFields.push('Asset/Machinery Name');
+    if (!formData.unit_id) missingFields.push('Unit');
 
-    if (!formData.specification.trim()) {
-      toast.showWarning('Specification is required');
-      return false;
-    }
-
-    if (!formData.unit_id) {
-      toast.showWarning('Unit selection is required');
+    if (missingFields.length > 0) {
+      const msg = missingFields.length === 1
+        ? `Required field "${missingFields[0]}" is empty. Please fill it before submitting.`
+        : `The following required fields are empty: ${missingFields.join(', ')}. Please fill them before submitting.`;
+      toast.showWarning(msg);
       return false;
     }
 
@@ -154,9 +151,11 @@ const CreateAssetEquipmentModal: React.FC<CreateAssetEquipmentModalProps> = ({
     try {
       const payload: any = {
         name: formData.name.trim(),
-        specification: formData.specification.trim(),
         unit_id: Number(formData.unit_id)
       };
+      if (formData.specification.trim()) {
+        payload.specification = formData.specification.trim();
+      }
 
       if (isEditing && editingAssetId) {
         // Update existing asset - use UUID for update API
@@ -209,10 +208,10 @@ const CreateAssetEquipmentModal: React.FC<CreateAssetEquipmentModalProps> = ({
 
         {/* Modal Body */}
         <div className="p-6 space-y-6">
-          {/* Asset Name */}
+          {/* Asset/Machinery Name */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Asset Name <span className="text-red-500">*</span>
+              Asset/Machinery Name <span className="text-red-500">*</span>
             </label>
             <input
               type="text"
@@ -232,7 +231,7 @@ const CreateAssetEquipmentModal: React.FC<CreateAssetEquipmentModalProps> = ({
           {/* Unit */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Measurement Unit <span className="text-red-500">*</span>
+              Unit <span className="text-red-500">*</span>
             </label>
             {isLoadingUnits ? (
               <div className="flex items-center gap-2 px-4 py-3">
@@ -269,7 +268,7 @@ const CreateAssetEquipmentModal: React.FC<CreateAssetEquipmentModalProps> = ({
           {/* Specification */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Asset Specification <span className="text-red-500">*</span>
+              Asset Specification <span className="text-xs text-slate-500">(Optional)</span>
             </label>
             <textarea
               name="specification"

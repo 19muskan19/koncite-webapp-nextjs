@@ -140,38 +140,22 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
   };
 
   const validateForm = (): boolean => {
-    if (!formData.name.trim()) {
-      toast.showWarning('Vendor name is required');
-      return false;
-    }
+    const missingFields: string[] = [];
 
-    if (!formData.address.trim()) {
-      toast.showWarning('Address is required');
-      return false;
-    }
+    if (!formData.name.trim()) missingFields.push('Vendor Name');
+    if (!formData.address.trim()) missingFields.push('Address');
+    if (!formData.type || !['both', 'supplier', 'contractor'].includes(formData.type)) missingFields.push('Type');
+    if (!formData.gst_no.trim()) missingFields.push('GST No');
+    if (!formData.contact_person_name.trim()) missingFields.push('Contact Person Name');
+    if (!formData.country_code || !['91', '971'].includes(formData.country_code)) missingFields.push('Country Code');
+    if (!formData.phone.trim()) missingFields.push('Phone');
+    if (!formData.email.trim()) missingFields.push('Email');
 
-    if (!formData.type || !['both', 'supplier', 'contractor'].includes(formData.type)) {
-      toast.showWarning('Type must be one of: both, supplier, or contractor');
-      return false;
-    }
-
-    if (!formData.contact_person_name.trim()) {
-      toast.showWarning('Contact person name is required');
-      return false;
-    }
-
-    if (!formData.country_code || !['91', '971'].includes(formData.country_code)) {
-      toast.showWarning('Country code must be 91 or 971');
-      return false;
-    }
-
-    if (!formData.phone.trim()) {
-      toast.showWarning('Phone number is required');
-      return false;
-    }
-
-    if (!formData.email.trim()) {
-      toast.showWarning('Email is required');
+    if (missingFields.length > 0) {
+      const msg = missingFields.length === 1
+        ? `Required field "${missingFields[0]}" is empty. Please fill it before submitting.`
+        : `The following required fields are empty: ${missingFields.join(', ')}. Please fill them before submitting.`;
+      toast.showWarning(msg);
       return false;
     }
 
@@ -306,7 +290,7 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
             {/* GST No */}
             <div>
               <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                GST No (If any)
+                GST No <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"

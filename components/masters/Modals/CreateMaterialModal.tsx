@@ -148,18 +148,16 @@ const CreateMaterialModal: React.FC<CreateMaterialModalProps> = ({
   };
 
   const validateForm = (): boolean => {
-    if (!formData.class || !['A', 'B', 'C'].includes(formData.class)) {
-      toast.showWarning('Material class must be A, B, or C');
-      return false;
-    }
+    const missingFields: string[] = [];
+    if (!formData.class || !['A', 'B', 'C'].includes(formData.class)) missingFields.push('Class of Material');
+    if (!formData.name.trim()) missingFields.push('Material Name');
+    if (!formData.unit_id) missingFields.push('Unit');
 
-    if (!formData.name.trim()) {
-      toast.showWarning('Material name is required');
-      return false;
-    }
-
-    if (!formData.unit_id) {
-      toast.showWarning('Unit is required');
+    if (missingFields.length > 0) {
+      const msg = missingFields.length === 1
+        ? `Required field "${missingFields[0]}" is empty. Please fill it before submitting.`
+        : `The following required fields are empty: ${missingFields.join(', ')}. Please fill them before submitting.`;
+      toast.showWarning(msg);
       return false;
     }
 
@@ -233,10 +231,10 @@ const CreateMaterialModal: React.FC<CreateMaterialModalProps> = ({
 
         {/* Modal Body */}
         <div className="p-6 space-y-6">
-          {/* Material Class */}
+          {/* Class of Material */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Material Class <span className="text-red-500">*</span>
+              Class of Material <span className="text-red-500">*</span>
             </label>
             <select
               name="class"

@@ -151,23 +151,21 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
   };
 
   const validateForm = (): boolean => {
-    if (!formData.name.trim()) {
-      toast.showWarning('Labour name is required');
-      return false;
-    }
+    const missingFields: string[] = [];
+    if (!formData.name.trim()) missingFields.push('Labour Name');
+    if (!formData.category) missingFields.push('Category');
+    if (!formData.unit_id) missingFields.push('Unit Type');
 
-    if (!formData.category) {
-      toast.showWarning('Category selection is required');
+    if (missingFields.length > 0) {
+      const msg = missingFields.length === 1
+        ? `Required field "${missingFields[0]}" is empty. Please fill it before submitting.`
+        : `The following required fields are empty: ${missingFields.join(', ')}. Please fill them before submitting.`;
+      toast.showWarning(msg);
       return false;
     }
 
     if (!['skilled', 'semiskilled', 'unskilled'].includes(formData.category)) {
-      toast.showWarning('Category must be one of: skilled, semiskilled, or unskilled');
-      return false;
-    }
-
-    if (!formData.unit_id) {
-      toast.showWarning('Unit selection is required');
+      toast.showWarning('Category must be one of: Skilled, Semi Skilled, or Unskilled');
       return false;
     }
 
@@ -328,10 +326,10 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
             </select>
           </div>
 
-          {/* Unit */}
+          {/* Unit Type */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Measurement Unit <span className="text-red-500">*</span>
+              Unit Type <span className="text-red-500">*</span>
             </label>
             {isLoadingUnits ? (
               <div className="flex items-center gap-2 px-4 py-3">

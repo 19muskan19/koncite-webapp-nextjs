@@ -306,13 +306,16 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
   const handleCreateSubproject = async () => {
     const missingFields: string[] = [];
     
-    if (!formData.projectId) missingFields.push('Select Project');
-    if (!formData.subprojectName.trim()) missingFields.push('Subproject Name');
+    if (!formData.projectId) missingFields.push('Tag Project');
+    if (!formData.subprojectName.trim()) missingFields.push('Sub-project Name');
     if (!formData.plannedStartDate) missingFields.push('Planned Start Date');
     if (!formData.plannedEndDate) missingFields.push('Planned End Date');
     
     if (missingFields.length > 0) {
-      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
+      const msg = missingFields.length === 1
+        ? `Required field "${missingFields[0]}" is empty. Please fill it before submitting.`
+        : `The following required fields are empty: ${missingFields.join(', ')}. Please fill them before submitting.`;
+      toast.showWarning(msg);
       return;
     }
 
@@ -881,10 +884,10 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
 
             {/* Modal Body */}
             <div className="p-6 space-y-6">
-              {/* Select Project */}
+              {/* Tag Project */}
               <div>
                 <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Select Project <span className="text-red-500">*</span>
+                  Tag Project <span className="text-red-500">*</span>
                 </label>
                 <select
                   name="projectId"
@@ -914,10 +917,10 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                 </select>
               </div>
 
-              {/* Subproject Name */}
+              {/* Sub-project Name */}
               <div>
                 <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Subproject Name <span className="text-red-500">*</span>
+                  Sub-project Name <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"

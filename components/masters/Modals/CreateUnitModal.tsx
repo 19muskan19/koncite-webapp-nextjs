@@ -101,13 +101,7 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
 
   const validateForm = (): boolean => {
     if (!formData.unit.trim()) {
-      toast.showWarning('Unit name is required');
-      return false;
-    }
-
-    // If unit_coversion is provided, unit_coversion_factor is required
-    if (formData.unit_coversion.trim() && !formData.unit_coversion_factor.trim()) {
-      toast.showWarning('Unit conversion factor is required when conversion unit is provided');
+      toast.showWarning('Required field "Unit Name" is empty. Please fill it before submitting.');
       return false;
     }
 
@@ -233,12 +227,10 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
             </p>
           </div>
 
-          {/* Unit Conversion Factor (Required if conversion is provided) */}
+          {/* Unit Conversion Factor (Optional) */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Unit Conversion Factor{' '}
-              {formData.unit_coversion.trim() && <span className="text-red-500">*</span>}
-              {!formData.unit_coversion.trim() && <span className="text-xs text-slate-500">(Optional)</span>}
+              Unit Conversion Factor <span className="text-xs text-slate-500">(Optional)</span>
             </label>
             <input
               type="text"
@@ -253,9 +245,6 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
                   : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
               } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
             />
-            <p className={`text-xs mt-1 ${textSecondary}`}>
-              Required when conversion unit is provided
-            </p>
           </div>
         </div>
 
