@@ -429,23 +429,23 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-4">
-          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
-            <Activity className="w-6 h-6 text-[#C2D642]" />
+    <div className="space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-2">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-center sm:justify-start gap-3">
+            <div className={`p-2.5 sm:p-3 rounded-xl flex-shrink-0 ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
+              <Activity className="w-5 h-5 sm:w-6 sm:h-6 text-[#C2D642]" />
+            </div>
+            <h1 className={`text-xl sm:text-2xl font-black tracking-tight ${textPrimary}`}>Activities</h1>
           </div>
-          <div>
-            <h1 className={`text-2xl font-black tracking-tight ${textPrimary}`}>Activities</h1>
-            <p className={`text-[11px] font-bold opacity-50 uppercase tracking-widest mt-1 ${textSecondary}`}>
-              Manage project activities and tasks
-            </p>
-          </div>
+          <p className={`text-[10px] sm:text-[11px] font-bold opacity-50 uppercase tracking-widest text-center sm:text-left ${textSecondary}`}>
+            Manage project activities and tasks
+          </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-center sm:justify-end gap-2">
           <button 
             onClick={handleDownloadExcel}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+            className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${
               isDark 
                 ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' 
                 : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
@@ -461,31 +461,31 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
                 setSearchQuery('');
                 await fetchActivities();
               }}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+              className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${
                 isDark 
                   ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' 
                   : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
               } shadow-sm`}
               title="Refresh Activities List"
             >
-              <RefreshCw className="w-4 h-4" /> Refresh
+              <RefreshCw className="w-4 h-4" /> <span className="hidden sm:inline">Refresh</span>
             </button>
           )}
           <button 
             onClick={() => setShowBulkUploadModal(true)}
             disabled={!selectedProjectId}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+            className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${
               isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
             } shadow-sm ${!selectedProjectId ? 'opacity-50 cursor-not-allowed' : ''}`}
             title={selectedProjectId ? 'Bulk Upload Activities' : 'Select a project first'}
           >
-            <Upload className="w-4 h-4" /> Bulk Upload
+            <Upload className="w-4 h-4" /> <span className="hidden sm:inline">Bulk Upload</span><span className="sm:hidden">Bulk</span>
           </button>
           <button 
             onClick={() => setShowCreateModal(true)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white' : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'} shadow-md`}
+            className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white' : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'} shadow-md`}
           >
-            <Plus className="w-4 h-4" /> Create New
+            <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Create New</span><span className="sm:hidden">Create</span>
           </button>
         </div>
       </div>

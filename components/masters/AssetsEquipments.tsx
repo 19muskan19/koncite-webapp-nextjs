@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
-import { Wrench, MoreVertical, Download, Plus, Search, FileSpreadsheet, Upload, ArrowUpDown, Loader2, Edit, Trash2, RefreshCw } from 'lucide-react';
+import { Wrench, MoreVertical, Download, Plus, Search, FileSpreadsheet, Upload, ArrowUpDown, Loader2, Edit, Trash2, RefreshCw, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import CreateAssetEquipmentModal from './Modals/CreateAssetEquipmentModal';
 import AssetBulkUploadModal from './Modals/AssetBulkUploadModal';
 import { masterDataAPI } from '../../services/api';
@@ -63,7 +63,9 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
   const [availableStockSearch, setAvailableStockSearch] = useState<string>('');
   const [entriesPerPage, setEntriesPerPage] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
-  
+  const [listEntriesPerPage, setListEntriesPerPage] = useState<number>(25);
+  const [listCurrentPage, setListCurrentPage] = useState<number>(1);
+
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
@@ -250,6 +252,16 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
     
     return filtered;
   }, [assets, searchQuery, isSearching]);
+
+  // Pagination for assets list
+  const listTotalPages = Math.max(1, Math.ceil(filteredAssets.length / listEntriesPerPage));
+  const listStartIndex = (listCurrentPage - 1) * listEntriesPerPage;
+  const listEndIndex = Math.min(listStartIndex + listEntriesPerPage, filteredAssets.length);
+  const paginatedAssets = filteredAssets.slice(listStartIndex, listEndIndex);
+
+  useEffect(() => {
+    setListCurrentPage(1);
+  }, [searchQuery, listEntriesPerPage]);
 
   const handleEditAsset = async (asset: AssetEquipment) => {
     try {
@@ -462,20 +474,20 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
 
   return (
     <div className="space-y-4 sm:space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-2">
-        <div className="flex items-center gap-3 sm:gap-4">
-          <div className={`p-2 sm:p-3 rounded-xl ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
-            <Wrench className="w-5 h-5 sm:w-6 sm:h-6 text-[#C2D642]" />
-          </div>
-          <div>
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-2">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-center sm:justify-start gap-3">
+            <div className={`p-2.5 sm:p-3 rounded-xl flex-shrink-0 ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
+              <Wrench className="w-5 h-5 sm:w-6 sm:h-6 text-[#C2D642]" />
+            </div>
             <h1 className={`text-xl sm:text-2xl font-black tracking-tight ${textPrimary}`}>Assets Equipments</h1>
-            <p className={`text-[10px] sm:text-[11px] font-bold opacity-50 uppercase tracking-widest mt-1 ${textSecondary}`}>
-              Manage construction equipment and assets
-            </p>
           </div>
+          <p className={`text-[10px] sm:text-[11px] font-bold opacity-50 uppercase tracking-widest text-center sm:text-left ${textSecondary}`}>
+            Manage construction equipment and assets
+          </p>
         </div>
         {activeTab === 'list' && (
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex flex-wrap items-center justify-center sm:justify-end gap-2">
             <button 
               onClick={handleDownloadExcel}
               className={`p-2 rounded-lg transition-all ${
@@ -578,8 +590,8 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
           </div>
 
           {/* Search Bar */}
-          <div className={`flex items-center gap-2 sm:gap-4 p-3 sm:p-4 rounded-xl border ${cardClass}`}>
-            <div className="flex-1 relative">
+          <div className={`flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4 p-3 sm:p-4 rounded-xl border ${cardClass}`}>
+            <div className="flex-1 min-w-0 relative">
               <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
               <input 
                 type="text" 
@@ -638,7 +650,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-inherit">
-                {filteredAssets.map((row, idx) => (
+                {paginatedAssets.map((row, idx) => (
                   <tr 
                     key={row.id} 
                     className={`${
@@ -651,7 +663,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                           : 'hover:bg-slate-50/50'
                     } transition-colors`}
                   >
-                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{idx + 1}</td>
+                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{listStartIndex + idx + 1}</td>
                     <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
                       {row.name}
                       {row.status === 'Inactive' && (
@@ -728,6 +740,92 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                 ))}
               </tbody>
             </table>
+          </div>
+          {/* Pagination Bar */}
+          <div className={`flex flex-col sm:flex-row items-center justify-between gap-4 px-4 sm:px-6 py-4 border-t ${isDark ? 'border-slate-700 bg-slate-800/20' : 'border-slate-200 bg-slate-50/50'}`}>
+            <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+              <button
+                onClick={() => setListCurrentPage(1)}
+                disabled={listCurrentPage <= 1}
+                className={`p-2 rounded transition-colors ${
+                  listCurrentPage <= 1
+                    ? isDark ? 'text-slate-500 cursor-not-allowed' : 'text-slate-400 cursor-not-allowed'
+                    : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-200 text-slate-900'
+                }`}
+                title="First page"
+              >
+                <ChevronsLeft className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setListCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={listCurrentPage <= 1}
+                className={`p-2 rounded transition-colors ${
+                  listCurrentPage <= 1
+                    ? isDark ? 'text-slate-500 cursor-not-allowed' : 'text-slate-400 cursor-not-allowed'
+                    : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-200 text-slate-900'
+                }`}
+                title="Previous page"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <select
+                value={listCurrentPage}
+                onChange={(e) => setListCurrentPage(Number(e.target.value))}
+                className={`px-3 py-1.5 rounded text-sm font-bold border appearance-none cursor-pointer ${
+                  isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
+                }`}
+                title="Current page"
+              >
+                {Array.from({ length: listTotalPages }, (_, i) => i + 1).map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+              <button
+                onClick={() => setListCurrentPage((p) => Math.min(listTotalPages, p + 1))}
+                disabled={listCurrentPage >= listTotalPages}
+                className={`p-2 rounded transition-colors ${
+                  listCurrentPage >= listTotalPages
+                    ? isDark ? 'text-slate-500 cursor-not-allowed' : 'text-slate-400 cursor-not-allowed'
+                    : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-200 text-slate-900'
+                }`}
+                title="Next page"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => setListCurrentPage(listTotalPages)}
+                disabled={listCurrentPage >= listTotalPages}
+                className={`p-2 rounded transition-colors ${
+                  listCurrentPage >= listTotalPages
+                    ? isDark ? 'text-slate-500 cursor-not-allowed' : 'text-slate-400 cursor-not-allowed'
+                    : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-200 text-slate-900'
+                }`}
+                title="Last page"
+              >
+                <ChevronsRight className="w-4 h-4" />
+              </button>
+              <div className={`h-6 w-px ${isDark ? 'bg-slate-600' : 'bg-slate-200'}`} />
+              <span className={`text-sm ${textSecondary}`}>Rows per page:</span>
+              <select
+                value={listEntriesPerPage}
+                onChange={(e) => {
+                  setListEntriesPerPage(Number(e.target.value));
+                  setListCurrentPage(1);
+                }}
+                className={`px-3 py-1.5 rounded text-sm font-bold border appearance-none cursor-pointer ${
+                  isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
+                }`}
+              >
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+                <option value={500}>500</option>
+              </select>
+            </div>
+            <span className={`text-sm ${textSecondary}`}>
+              Page {listCurrentPage} of {listTotalPages} ({filteredAssets.length} total)
+            </span>
           </div>
         </div>
       ) : !isLoadingAssets && !assetsError ? (

@@ -88,16 +88,16 @@ const Masters: React.FC<MastersProps> = ({ theme, currentView }) => {
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-4">
-          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
-            <Database className="w-6 h-6 text-[#C2D642]" />
+      <div className="flex items-center justify-between mb-2 px-1 sm:px-0">
+        <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+          <div className={`p-2 sm:p-3 rounded-lg sm:rounded-xl flex-shrink-0 ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
+            <Database className="w-5 h-5 sm:w-6 sm:h-6 text-[#C2D642]" />
           </div>
-          <div>
-            <h1 className={`text-2xl font-black tracking-tight ${textPrimary}`}>Master Data</h1>
-            <p className={`text-[11px] font-bold opacity-50 uppercase tracking-widest mt-1 ${textSecondary}`}>
+          <div className="min-w-0">
+            <h1 className={`text-xl sm:text-2xl font-black tracking-tight truncate ${textPrimary}`}>Master Data</h1>
+            <p className={`text-[10px] sm:text-[11px] font-bold opacity-50 uppercase tracking-widest mt-1 ${textSecondary}`}>
               Select a master data category to manage
             </p>
           </div>
@@ -105,25 +105,25 @@ const Masters: React.FC<MastersProps> = ({ theme, currentView }) => {
       </div>
 
       {/* Master Data List View */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
         {masterDataTypes.map((item) => {
           const ItemIcon = item.icon;
           return (
             <div
               key={item.viewType}
               onClick={() => router.push(item.path)}
-              className={`rounded-xl border ${cardClass} p-6 hover:shadow-lg transition-all duration-300 cursor-pointer group ${
+              className={`rounded-xl border ${cardClass} p-4 sm:p-6 hover:shadow-lg transition-all duration-300 cursor-pointer group active:scale-[0.98] ${
                 isDark ? 'hover:border-[#C2D642]/50' : 'hover:border-[#C2D642]/30'
               }`}
             >
-              <div className="flex items-center gap-4 mb-4">
-                <div className={`p-3 rounded-xl ${isDark ? 'bg-[#C2D642]/10 group-hover:bg-[#C2D642]/20' : 'bg-[#C2D642]/5 group-hover:bg-[#C2D642]/10'} transition-colors`}>
-                  <ItemIcon className="w-6 h-6 text-[#C2D642]" />
+              <div className="flex items-center gap-3 sm:gap-4 mb-3 sm:mb-4">
+                <div className={`p-2.5 sm:p-3 rounded-lg sm:rounded-xl flex-shrink-0 ${isDark ? 'bg-[#C2D642]/10 group-hover:bg-[#C2D642]/20' : 'bg-[#C2D642]/5 group-hover:bg-[#C2D642]/10'} transition-colors`}>
+                  <ItemIcon className="w-5 h-5 sm:w-6 sm:h-6 text-[#C2D642]" />
                 </div>
-                <h3 className={`text-lg font-black ${textPrimary} flex-1`}>{item.name}</h3>
-                <ArrowRight className={`w-5 h-5 ${textSecondary} group-hover:text-[#C2D642] group-hover:translate-x-1 transition-all`} />
+                <h3 className={`text-base sm:text-lg font-black ${textPrimary} flex-1 min-w-0 truncate`}>{item.name}</h3>
+                <ArrowRight className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 ${textSecondary} group-hover:text-[#C2D642] group-hover:translate-x-1 transition-all`} />
               </div>
-              <p className={`text-sm ${textSecondary}`}>
+              <p className={`text-xs sm:text-sm ${textSecondary} line-clamp-2`}>
                 Manage {item.name.toLowerCase()} information and details
               </p>
             </div>

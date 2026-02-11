@@ -356,24 +356,24 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-4">
-          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
-            <Boxes className="w-6 h-6 text-[#C2D642]" />
+    <div className="space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-2">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-center sm:justify-start gap-3">
+            <div className={`p-2.5 sm:p-3 rounded-xl flex-shrink-0 ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
+              <Boxes className="w-5 h-5 sm:w-6 sm:h-6 text-[#C2D642]" />
+            </div>
+            <h1 className={`text-xl sm:text-2xl font-black tracking-tight ${textPrimary}`}>Materials</h1>
           </div>
-          <div>
-            <h1 className={`text-2xl font-black tracking-tight ${textPrimary}`}>Materials</h1>
-            <p className={`text-[11px] font-bold opacity-50 uppercase tracking-widest mt-1 ${textSecondary}`}>
-              Manage construction materials inventory
-            </p>
-          </div>
+          <p className={`text-[10px] sm:text-[11px] font-bold opacity-50 uppercase tracking-widest text-center sm:text-left ${textSecondary}`}>
+            Manage construction materials inventory
+          </p>
         </div>
         {activeTab === 'list' && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-center sm:justify-end gap-2">
             <button 
               onClick={handleDownloadExcel}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+              className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${
                 isDark 
                   ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' 
                   : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
@@ -388,59 +388,61 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                 setSearchQuery('');
                 await fetchMaterials();
               }}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+              className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${
                 isDark 
                   ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' 
                   : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
               } shadow-sm`}
               title="Refresh Materials List"
             >
-              <RefreshCw className="w-4 h-4" /> Refresh
+              <RefreshCw className="w-4 h-4" /> <span className="hidden sm:inline">Refresh</span>
             </button>
             <button 
               onClick={() => setShowCreateModal(true)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white' : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'} shadow-md`}
+              className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white' : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'} shadow-md`}
             >
-              <Plus className="w-4 h-4" /> Add New
+              <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Add New</span><span className="sm:hidden">Add</span>
             </button>
             <button 
               onClick={handleImport}
               disabled={isImporting}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'} shadow-sm disabled:opacity-70 disabled:cursor-not-allowed`}
+              className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'} shadow-sm disabled:opacity-70 disabled:cursor-not-allowed`}
               title="Bulk upload materials from CSV or Excel"
             >
               {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-              {isImporting ? 'Importing...' : 'Bulk Upload'}
+              {isImporting ? 'Importing...' : <><span className="hidden sm:inline">Bulk Upload</span><span className="sm:hidden">Bulk</span></>}
             </button>
           </div>
         )}
       </div>
 
       {/* Tabs */}
-      <div className={`border-b ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
-        <div className="flex gap-1">
+      <div className={`border-b ${isDark ? 'border-slate-700' : 'border-slate-200'} overflow-x-auto`}>
+        <div className="flex gap-1 min-w-max sm:min-w-0">
           <button
             onClick={() => setActiveTab('list')}
-            className={`px-6 py-3 text-sm font-bold transition-colors relative ${
+            className={`px-4 sm:px-6 py-2 sm:py-3 text-xs sm:text-sm font-bold transition-colors relative whitespace-nowrap ${
               activeTab === 'list'
                 ? `${textPrimary}`
                 : `${textSecondary} hover:${textPrimary}`
             }`}
           >
-            Materials List
+            <span className="hidden sm:inline">Materials List</span>
+            <span className="sm:hidden">List</span>
             {activeTab === 'list' && (
               <span className={`absolute bottom-0 left-0 right-0 h-0.5 bg-red-500`} />
             )}
           </button>
           <button
             onClick={() => setActiveTab('openingStock')}
-            className={`px-6 py-3 text-sm font-bold transition-colors relative ${
+            className={`px-4 sm:px-6 py-2 sm:py-3 text-xs sm:text-sm font-bold transition-colors relative whitespace-nowrap ${
               activeTab === 'openingStock'
                 ? `${textPrimary}`
                 : `${textSecondary} hover:${textPrimary}`
             }`}
           >
-            Opening Stock
+            <span className="hidden sm:inline">Opening Stock</span>
+            <span className="sm:hidden">Opening</span>
             {activeTab === 'openingStock' && (
               <span className={`absolute bottom-0 left-0 right-0 h-0.5 bg-red-500`} />
             )}
@@ -468,8 +470,8 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
           </div>
 
           {/* Search Bar */}
-          <div className={`flex items-center gap-4 p-4 rounded-xl border ${cardClass}`}>
-            <div className="flex-1 relative">
+          <div className={`flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4 p-3 sm:p-4 rounded-xl border ${cardClass}`}>
+            <div className="flex-1 min-w-0 relative">
               <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
               <input 
                 type="text" 

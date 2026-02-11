@@ -107,7 +107,7 @@ const CreateMaterialModal: React.FC<CreateMaterialModalProps> = ({
             class: materialClass,
             name: materialData.name || '',
             unit_id: String(unitId || ''),
-            specification: materialData.specification || materialData.specification ?? ''
+            specification: materialData.specification ?? ''
           });
         } catch (error: any) {
           console.error('Failed to load material data:', error);

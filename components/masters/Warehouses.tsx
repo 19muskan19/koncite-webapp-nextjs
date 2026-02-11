@@ -381,23 +381,23 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-4">
-          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
-            <Warehouse className="w-6 h-6 text-[#C2D642]" />
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-2">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-center sm:justify-start gap-3">
+            <div className={`p-2.5 sm:p-3 rounded-xl flex-shrink-0 ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
+              <Warehouse className="w-5 h-5 sm:w-6 sm:h-6 text-[#C2D642]" />
+            </div>
+            <h1 className={`text-xl sm:text-2xl font-black tracking-tight ${textPrimary}`}>Warehouses</h1>
           </div>
-          <div>
-            <h1 className={`text-2xl font-black tracking-tight ${textPrimary}`}>Warehouses</h1>
-            <p className={`text-[11px] font-bold opacity-50 uppercase tracking-widest mt-1 ${textSecondary}`}>
-              Manage warehouse locations and inventory
-            </p>
-          </div>
+          <p className={`text-[10px] sm:text-[11px] font-bold opacity-50 uppercase tracking-widest text-center sm:text-left ${textSecondary}`}>
+            Manage warehouse locations and inventory
+          </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-center sm:justify-end gap-2">
           <button 
             onClick={handleDownloadExcel}
             disabled={!selectedProjectId}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+            className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${
               isDark 
                 ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' 
                 : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
@@ -413,22 +413,22 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
                 setSearchQuery('');
                 await fetchWarehouses(selectedProjectId);
               }}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+              className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${
                 isDark 
                   ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' 
                   : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
               } shadow-sm`}
               title="Refresh Warehouses List"
             >
-              <RefreshCw className="w-4 h-4" /> Refresh
+              <RefreshCw className="w-4 h-4" /> <span className="hidden sm:inline">Refresh</span>
             </button>
           )}
           <button 
             onClick={() => setShowCreateModal(true)}
             disabled={!selectedProjectId}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white' : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'} shadow-md disabled:opacity-50 disabled:cursor-not-allowed`}
+            className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white' : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'} shadow-md disabled:opacity-50 disabled:cursor-not-allowed`}
           >
-            <Plus className="w-4 h-4" /> Add New
+            <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Add New</span><span className="sm:hidden">Add</span>
           </button>
         </div>
       </div>
@@ -494,8 +494,8 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
 
       {/* Search Bar - Only show when project is selected */}
       {selectedProjectId && (
-        <div className={`flex items-center gap-4 p-4 rounded-xl border ${cardClass}`}>
-          <div className="flex-1 relative">
+        <div className={`flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4 p-3 sm:p-4 rounded-xl border ${cardClass}`}>
+          <div className="flex-1 min-w-0 relative">
             <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
             <input 
               type="text" 
