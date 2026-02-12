@@ -223,7 +223,6 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
     if (searchQuery.trim() && !isSearching) {
       filtered = filtered.filter(labour =>
         labour.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (labour.code && labour.code.toLowerCase().includes(searchQuery.toLowerCase())) ||
         labour.category.toLowerCase().includes(searchQuery.toLowerCase())
       );
     }
@@ -465,11 +464,10 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
   }, [openDropdownId]);
 
   const handleDownloadExcel = () => {
-    const headers = ['SR No', 'Name', 'Code', 'Category', 'Units', 'Status'];
+    const headers = ['SR No', 'Name', 'Category', 'Units', 'Status'];
     const rows = filteredLabours.map((labour, idx) => [
       idx + 1,
       labour.name,
-      labour.code || labour.id,
       labour.category,
       labour.unit?.unit || 'Nos',
       labour.status
@@ -572,7 +570,7 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
           <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
           <input 
             type="text" 
-            placeholder="Search by name, code, or category..."
+            placeholder="Search by name or category..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
@@ -613,7 +611,6 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
                 <tr>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>SR No</th>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Name</th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Code</th>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Category</th>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Units</th>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Status</th>
@@ -643,7 +640,6 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
                         <span className="ml-2 text-xs text-red-500">(Disabled)</span>
                       )}
                     </td>
-                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.code || '-'}</td>
                     <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
                       {row.category === 'skilled' ? 'Skilled' : 
                        row.category === 'semiskilled' ? 'Semi Skilled' : 

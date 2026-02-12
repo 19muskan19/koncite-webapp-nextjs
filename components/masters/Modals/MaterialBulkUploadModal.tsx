@@ -4,14 +4,14 @@ import React from 'react';
 import { ThemeType } from '@/types';
 import { X, FileSpreadsheet } from 'lucide-react';
 
-interface VendorBulkUploadModalProps {
+interface MaterialBulkUploadModalProps {
   theme: ThemeType;
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
 }
 
-const VendorBulkUploadModal: React.FC<VendorBulkUploadModalProps> = ({
+const MaterialBulkUploadModal: React.FC<MaterialBulkUploadModalProps> = ({
   theme,
   isOpen,
   onClose
@@ -29,9 +29,9 @@ const VendorBulkUploadModal: React.FC<VendorBulkUploadModalProps> = ({
       <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl`}>
         <div className="flex items-center justify-between p-6 border-b border-inherit">
           <div>
-            <h2 className={`text-xl font-black ${textPrimary}`}>Bulk Upload Vendors</h2>
+            <h2 className={`text-xl font-black ${textPrimary}`}>Bulk Upload of Materials</h2>
             <p className={`text-sm ${textSecondary} mt-1`}>
-              Bulk upload vendors from CSV or Excel file
+              Bulk upload materials from CSV or Excel file
             </p>
           </div>
           <button
@@ -53,7 +53,7 @@ const VendorBulkUploadModal: React.FC<VendorBulkUploadModalProps> = ({
               Bulk Upload
             </p>
             <p className={`text-xs mt-1 ${textSecondary}`}>
-              Select a file to upload vendors in bulk
+              Select a file to upload materials in bulk
             </p>
           </div>
         </div>
@@ -62,4 +62,4 @@ const VendorBulkUploadModal: React.FC<VendorBulkUploadModalProps> = ({
   );
 };
 
-export default VendorBulkUploadModal;
+export default MaterialBulkUploadModal;

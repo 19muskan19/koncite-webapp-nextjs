@@ -195,6 +195,12 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
     }
   }, [selectedProjectId, isAuthenticated]);
 
+  const handleStatusChange = (subprojectId: string, newStatus: string) => {
+    setSubprojects(prev =>
+      prev.map(s => s.id === subprojectId ? { ...s, status: newStatus } : s)
+    );
+  };
+
   const handleToggleCard = (subprojectId: string) => {
     setExpandedCards(prev => {
       const newSet = new Set<string>();
@@ -738,16 +744,24 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                       <Layers className={`w-6 h-6 ${isExpanded ? 'text-[#C2D642]' : 'text-white'}`} />
                     </div>
                     <h3 className={`text-lg font-bold text-white truncate`}>{subproject.name}</h3>
-                    {subproject.status && !isExpanded && (
-                      <span className={`ml-auto px-3 py-1 rounded-full text-xs font-bold flex-shrink-0 ${
-                        subproject.status === 'Active' || subproject.status === 'In Progress'
-                          ? 'bg-[#C2D642]/30 text-[#C2D642]'
-                          : subproject.status === 'Completed'
-                          ? 'bg-blue-500/30 text-blue-300'
-                          : 'bg-slate-500/30 text-slate-300'
-                      }`}>
-                        {subproject.status}
-                      </span>
+                    {!isExpanded && (
+                      <select
+                        value={(subproject.status || 'pending').toLowerCase()}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          handleStatusChange(subproject.id, e.target.value);
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className={`ml-auto px-3 py-1 rounded-full text-xs font-bold flex-shrink-0 cursor-pointer border-0 focus:ring-2 focus:ring-[#C2D642]/50 outline-none ${
+                          isDark ? 'bg-slate-700/80 text-slate-100' : 'bg-slate-200/80 text-slate-900'
+                        }`}
+                      >
+                        <option value="closed">Closed</option>
+                        <option value="pending">Pending</option>
+                        <option value="completed">Completed</option>
+                        <option value="ongoing">Ongoing</option>
+                      </select>
                     )}
                   </div>
                   <div className="ml-3 flex-shrink-0">
@@ -797,22 +811,27 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                           <p className={`text-sm font-bold ${textPrimary}`}>{subproject.code}</p>
                         </div>
                       )}
-                      {subproject.status && (
-                        <div>
-                          <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>
-                            Status
-                          </p>
-                          <span className={`inline-block px-3 py-1.5 rounded-full text-xs font-bold ${
-                            subproject.status === 'Active' || subproject.status === 'In Progress'
-                              ? 'bg-[#C2D642]/20 text-[#C2D642]'
-                              : subproject.status === 'Completed'
-                              ? 'bg-blue-500/20 text-blue-400'
-                              : 'bg-slate-500/20 text-slate-400'
-                          }`}>
-                            {subproject.status}
-                          </span>
-                        </div>
-                      )}
+                      <div>
+                        <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>
+                          Status
+                        </p>
+                        <select
+                          value={(subproject.status || 'pending').toLowerCase()}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            handleStatusChange(subproject.id, e.target.value);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer border ${
+                            isDark ? 'bg-slate-700 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
+                          } focus:ring-2 focus:ring-[#C2D642]/50 outline-none`}
+                        >
+                          <option value="closed">Closed</option>
+                          <option value="pending">Pending</option>
+                          <option value="completed">Completed</option>
+                          <option value="ongoing">Ongoing</option>
+                        </select>
+                      </div>
                     </div>
                     
                     {/* Action Buttons */}

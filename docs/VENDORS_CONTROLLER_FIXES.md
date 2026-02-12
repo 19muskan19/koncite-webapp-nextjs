@@ -4,6 +4,31 @@ Your routes pass **UUID** (`506b5bc0-78c8-4a7f-b85a-2f9d7fa18171`) but the contr
 
 ---
 
+## 0. Fix `vendorAdd()` – Create: status (is_active) default to 1
+
+**Problem:** New vendors are created with status off (is_active: 0). The frontend sends `is_active: 1` but the backend create may ignore it.
+
+**Fix:** In your vendor create/insert logic, include `is_active` from the request with default 1:
+
+```php
+// When creating a new vendor (in vendorAdd or similar)
+Vendor::create([
+    'name' => $request->name,
+    'address' => $request->address,
+    'type' => $request->type,
+    'contact_person_name' => $request->contact_person_name,
+    'country_code' => $request->country_code,
+    'phone' => $request->phone,
+    'email' => $request->email,
+    'is_active' => $request->input('is_active', 1),  // Default to 1 (active) when creating
+    // ... other fields
+]);
+```
+
+Ensure `is_active` is in the model's `$fillable` array.
+
+---
+
 ## 1. Fix `edit()` – Line ~127
 
 **Current (wrong):**

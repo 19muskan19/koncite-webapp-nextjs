@@ -30,12 +30,16 @@ interface CreateActivityModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
+  onActivityCreated?: (activity: ActivityItem) => void;
   editingActivityId?: string | null;
   activities?: ActivityItem[];
   projects?: Array<{ id: number; uuid: string; project_name: string }>;
   subprojects?: Array<{ id: number; uuid: string; name: string; project_id?: number }>;
   defaultProjectId?: string;
   defaultSubprojectId?: string;
+  defaultHeadingId?: string;
+  projectName?: string;
+  subprojectName?: string;
 }
 
 const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
@@ -43,12 +47,16 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
   isOpen,
   onClose,
   onSuccess,
+  onActivityCreated,
   editingActivityId = null,
   activities = [],
   projects = [],
   subprojects = [],
   defaultProjectId = '',
-  defaultSubprojectId = ''
+  projectName = '',
+  subprojectName = '',
+  defaultSubprojectId = '',
+  defaultHeadingId = ''
 }) => {
   const toast = useToast();
   const [formData, setFormData] = useState({
@@ -64,7 +72,7 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
     start_date: '', // Optional: start date
     end_date: '' // Optional: end date
   });
-  const [availableHeadings, setAvailableHeadings] = useState<Array<{ id: number; uuid: string; activities: string }>>([]);
+  const [activityHierarchy, setActivityHierarchy] = useState<Array<{ id: number; uuid: string; name: string; depth: number; type: string }>>([]);
   const [modalSubprojects, setModalSubprojects] = useState<Array<{ id: number; uuid: string; name: string; project_id?: number }>>([]);
   const [units, setUnits] = useState<Array<{ id: number; unit: string; uuid?: string }>>([]);
   const [isLoadingUnits, setIsLoadingUnits] = useState<boolean>(false);
@@ -109,7 +117,7 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
   useEffect(() => {
     const fetchSubprojects = async () => {
       if (!isOpen || !formData.project) {
-        setModalSubprojects([]);
+        setModalSubprojects((prev) => (prev.length > 0 ? [] : prev));
         return;
       }
       const projectIdNum = projects.find(p => p.uuid === formData.project || String(p.id) === formData.project)?.id;
@@ -135,45 +143,66 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
     fetchSubprojects();
   }, [isOpen, formData.project, projects]);
 
-  // Fetch all headings (type='heading') when project and type are selected
+  // Fetch full activities hierarchy (headings + activities) when project and type are selected
   useEffect(() => {
-    const fetchHeadings = async () => {
+    const fetchHierarchy = async () => {
       if (!isOpen || !formData.project || formData.type !== 'activites') {
-        setAvailableHeadings([]);
+        setActivityHierarchy((prev) => (prev.length > 0 ? [] : prev));
         return;
       }
-      
+
       setIsLoadingHeadings(true);
       try {
         const projectIdNum = projects.find(p => p.uuid === formData.project || String(p.id) === formData.project)?.id;
         const subprojectIdNum = formData.subproject
           ? modalSubprojects.find(s => s.uuid === formData.subproject || String(s.id) === formData.subproject)?.id
           : undefined;
-        // Fetch activities - with subproject when selected, else project-wide to get all headings
         const result = await masterDataAPI.getActivities(projectIdNum || formData.project, subprojectIdNum);
         const raw = Array.isArray(result) ? result : (result?.data ?? []);
-        // DB uses type column: list all items where type='heading' in Heading dropdown
         const isHeading = (a: any) => {
           const t = a.type ?? a.activity_type ?? '';
           return t && String(t).toLowerCase() === 'heading';
         };
-        const headings = raw
-          .filter(isHeading)
-          .map((a: any) => ({
-            id: a.id,
-            uuid: a.uuid || String(a.id),
-            activities: a.activities || a.name || ''
-          }));
-        setAvailableHeadings(headings);
+        const headings = raw.filter(isHeading);
+        const activities = raw.filter((a: any) => !isHeading(a));
+        const getNodeId = (a: any) => a.id ?? (typeof a.uuid === 'string' && !isNaN(Number(a.uuid)) ? Number(a.uuid) : null);
+        const getParentId = (a: any) => a.parent_id ?? a.heading;
+
+        const hierarchy: Array<{ id: number; uuid: string; name: string; depth: number; type: string }> = [];
+        for (const h of headings) {
+          const hid = getNodeId(h);
+          hierarchy.push({
+            id: h.id,
+            uuid: h.uuid || String(h.id),
+            name: (h.activities || h.name || '').trim() || '—',
+            depth: 0,
+            type: 'heading'
+          });
+          const kids = activities.filter((c: any) => {
+            const pid = getParentId(c);
+            if (pid == null) return false;
+            return pid === hid || String(pid) === String(h.id);
+          });
+          kids.forEach((k: any) => {
+            hierarchy.push({
+              id: k.id,
+              uuid: k.uuid || String(k.id),
+              name: (k.activities || k.name || '').trim() || '—',
+              depth: 1,
+              type: 'activity'
+            });
+          });
+        }
+        setActivityHierarchy(hierarchy);
       } catch (error: any) {
-        console.error('Failed to fetch headings:', error);
-        toast.showError('Failed to load headings');
+        console.error('Failed to fetch activities hierarchy:', error);
+        toast.showError('Failed to load activities hierarchy');
       } finally {
         setIsLoadingHeadings(false);
       }
     };
 
-    fetchHeadings();
+    fetchHierarchy();
   }, [isOpen, formData.project, formData.subproject, formData.type, projects, modalSubprojects]);
 
   // Load activity data when editing
@@ -202,13 +231,13 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
       };
       loadActivityData();
     } else if (isOpen && !editingActivityId) {
-      // Reset form for new activity
+      // Reset form for new activity (pre-fill heading when adding under a specific heading)
       setFormData({
         project: defaultProjectId || '',
         subproject: defaultSubprojectId || '',
-        type: '',
+        type: defaultHeadingId ? 'activites' : '',
         activities: '',
-        heading: '',
+        heading: defaultHeadingId || '',
         unit_id: '',
         quantity: '',
         rate: '',
@@ -217,7 +246,7 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
         end_date: ''
       });
     }
-  }, [isOpen, editingActivityId, defaultProjectId, defaultSubprojectId]);
+  }, [isOpen, editingActivityId, defaultProjectId, defaultSubprojectId, defaultHeadingId]);
 
   // Reset form when modal closes
   useEffect(() => {
@@ -256,6 +285,41 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
         ...formData,
         project: value,
         subproject: ''
+      });
+    } else if (name === 'quantity' || name === 'rate' || name === 'amount') {
+      // Rate & Amount auto-calculation (non-mandatory): Amount = Est Qty * Rate, or Rate = Amount / Qty
+      const qtyVal = name === 'quantity' ? value : formData.quantity;
+      const rateVal = name === 'rate' ? value : formData.rate;
+      const amountVal = name === 'amount' ? value : formData.amount;
+      const qty = parseFloat(qtyVal as string);
+      const rate = parseFloat(rateVal as string);
+      const amount = parseFloat(amountVal as string);
+
+      let newQuantity = formData.quantity;
+      let newRate = formData.rate;
+      let newAmount = formData.amount;
+
+      if (name === 'quantity') {
+        newQuantity = value as string;
+        if (!isNaN(qty) && qty > 0) {
+          if (!isNaN(rate) && rate >= 0) newAmount = String(Math.round(qty * rate * 100) / 100);
+          else if (!isNaN(amount) && amount >= 0) newRate = String(Math.round((amount / qty) * 100) / 100);
+        }
+      } else if (name === 'rate') {
+        newRate = value as string;
+        if (!isNaN(qty) && qty > 0 && rateVal !== '' && !isNaN(rate))
+          newAmount = String(Math.round(qty * rate * 100) / 100);
+      } else if (name === 'amount') {
+        newAmount = value as string;
+        if (!isNaN(qty) && qty > 0 && amountVal !== '' && !isNaN(amount))
+          newRate = String(Math.round((amount / qty) * 100) / 100);
+      }
+
+      setFormData({
+        ...formData,
+        quantity: newQuantity,
+        rate: newRate,
+        amount: newAmount
       });
     } else {
       setFormData({
@@ -312,7 +376,8 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
       const payload: any = {
         project: projectIdNum || formData.project,
         type: formData.type,
-        activities: formData.activities.trim()
+        activities: formData.activities.trim(),
+        is_active: 1 // Active by default when creating
       };
 
       // Add optional subproject if provided
@@ -323,8 +388,10 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
 
       // Add conditional fields if type is 'activites'
       if (formData.type === 'activites') {
-        const headingIdNum = availableHeadings.find(h => h.uuid === formData.heading || String(h.id) === formData.heading)?.id;
-        payload.heading = headingIdNum || formData.heading;
+        const parentItem = activityHierarchy.find(h => h.uuid === formData.heading || String(h.id) === formData.heading);
+        const parentId = parentItem?.id ?? formData.heading;
+        payload.heading = parentId;
+        payload.parent_id = parentId;
         payload.unit_id = Number(formData.unit_id);
       }
 
@@ -341,8 +408,26 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
         toast.showSuccess('Activity updated successfully!');
       } else {
         // Create new activity
-        await masterDataAPI.createActivity(payload);
+        const result = await masterDataAPI.createActivity(payload);
         toast.showSuccess('Activity created successfully!');
+        const created = result?.data ?? result;
+        if (onActivityCreated && created) {
+          const newActivity: ActivityItem = {
+            id: created.uuid || String(created.id),
+            name: created.activities || created.name || formData.activities.trim(),
+            project: projectName || projects.find(p => p.uuid === formData.project || String(p.id) === formData.project)?.project_name || '',
+            subproject: subprojectName || modalSubprojects.find(s => s.uuid === formData.subproject || String(s.id) === formData.subproject)?.name || '',
+            type: (formData.type === 'heading' ? 'heading' : 'activity') as 'heading' | 'activity',
+            unit: created.unit?.unit || created.unit?.name || formData.unit_id ? units.find(u => String(u.id) === formData.unit_id)?.unit : undefined,
+            qty: created.quantity ?? created.qty,
+            rate: created.rate,
+            amount: created.amount,
+            startDate: created.start_date || formData.start_date,
+            endDate: created.end_date || formData.end_date,
+            createdAt: created.created_at
+          };
+          onActivityCreated(newActivity);
+        }
       }
 
       if (onSuccess) {
@@ -486,15 +571,15 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
           {/* Conditional Fields for Activities */}
           {formData.type === 'activites' && (
             <>
-              {/* Heading (Parent Activity) */}
+              {/* Heading/Subheading - full activities hierarchy */}
               <div>
                 <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Heading (Parent Activity) <span className="text-red-500">*</span>
+                  Heading/Subheading <span className="text-red-500">*</span>
                 </label>
                 {isLoadingHeadings ? (
                   <div className={`w-full px-4 py-3 rounded-lg text-sm ${textSecondary} flex items-center gap-2`}>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    Loading headings...
+                    Loading activities hierarchy...
                   </div>
                 ) : (
                   <select
@@ -508,10 +593,10 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
                         : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
                     } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
                   >
-                    <option value="">-- Select Heading --</option>
-                    {availableHeadings.map((heading) => (
-                      <option key={heading.uuid || heading.id} value={heading.uuid || String(heading.id)}>
-                        {heading.activities}
+                    <option value="">-- Select Heading/Subheading --</option>
+                    {activityHierarchy.map((item) => (
+                      <option key={`${item.id}-${item.uuid}`} value={item.uuid || String(item.id)}>
+                        {item.depth === 0 ? item.name : `\u00A0\u00A0\u00A0\u00A0└ ${item.name}`}
                       </option>
                     ))}
                   </select>
@@ -550,11 +635,11 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
                 )}
               </div>
 
-              {/* Quantity, Rate, Amount */}
+              {/* Est Qty, Rate, Amount */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                    Quantity (Optional)
+                    Est Qty (Optional)
                   </label>
                   <input
                     type="number"

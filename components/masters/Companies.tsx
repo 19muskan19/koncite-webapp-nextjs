@@ -434,7 +434,6 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
     const missingFields: string[] = [];
     
     if (!formData.registrationName.trim()) missingFields.push('Company Name');
-    if (!formData.companyRegistrationNo.trim()) missingFields.push('Reg No.');
     if (!formData.registeredAddress.trim()) missingFields.push('Reg Address');
     
     if (missingFields.length > 0) {
@@ -1182,7 +1181,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
 
                 <div>
                   <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                    Reg No. <span className="text-red-500">*</span>
+                    Reg No. (Optional)
                   </label>
                   <input
                     type="text"

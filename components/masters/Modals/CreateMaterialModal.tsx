@@ -187,7 +187,8 @@ const CreateMaterialModal: React.FC<CreateMaterialModalProps> = ({
         await masterDataAPI.updateMaterial(editingMaterialId, payload);
         toast.showSuccess('Material updated successfully!');
       } else {
-        // Create new material
+        // Create new material - set is_active to 1 (active) by default
+        payload.is_active = 1;
         await masterDataAPI.createMaterial(payload);
         toast.showSuccess('Material created successfully!');
       }

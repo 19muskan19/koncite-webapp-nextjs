@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { ThemeType } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
+import { useUser } from '@/contexts/UserContext';
 import { X, Loader2 } from 'lucide-react';
 import { masterDataAPI } from '@/services/api';
 
@@ -40,9 +41,9 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
   labours = []
 }) => {
   const toast = useToast();
+  const { user } = useUser();
   const [formData, setFormData] = useState({
     name: '', // Required: labour name
-    code: '', // Optional: auto-generated (LAB0001, LAB0002) if blank
     category: '', // Required: must be "skilled", "semiskilled", or "unskilled"
     unit_id: '' // Required: ID of measurement unit
   });
@@ -64,14 +65,26 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
     { value: 'unskilled', label: 'Unskilled' },
   ];
 
-  // Fetch units from API
+  // Fetch units from unit-list API (returns units associated with logged-in user)
   useEffect(() => {
     if (isOpen) {
       const fetchUnits = async () => {
         setIsLoadingUnits(true);
         try {
           const fetchedUnits = await masterDataAPI.getUnits();
-          const transformedUnits = fetchedUnits.map((unit: any) => ({
+          // Filter to units associated with the logged-in user (company or created-by)
+          const userCompanyId = user?.company_id != null ? Number(user.company_id) : null;
+          const userId = user?.id != null ? Number(user.id) : null;
+          const filtered = !user ? fetchedUnits : fetchedUnits.filter((unit: any) => {
+            const uCompanyId = unit.company_id != null ? Number(unit.company_id) : null;
+            const uUserId = unit.user_id ?? unit.created_by;
+            if (userCompanyId != null && uCompanyId != null && uCompanyId === userCompanyId) return true;
+            if (userId != null && uUserId != null && Number(uUserId) === userId) return true;
+            if (userCompanyId == null && userId == null) return true; // no filter possible, show all
+            if (uCompanyId == null && uUserId == null) return true; // unit has no association, allow (global/seed)
+            return false;
+          });
+          const transformedUnits = filtered.map((unit: any) => ({
             id: unit.id,
             uuid: unit.uuid,
             unit: unit.unit || unit.name || '',
@@ -93,7 +106,7 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
       };
       fetchUnits();
     }
-  }, [isOpen]);
+  }, [isOpen, user?.id, user?.company_id]);
 
   // Load labour data when editing
   useEffect(() => {
@@ -108,7 +121,6 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
           }
           setFormData({
             name: labourData.name || '',
-            code: labourData.code || '',
             category: labourData.category || '',
             unit_id: String(unitId ?? '')
           });
@@ -122,7 +134,6 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
       // Reset form for new labour
       setFormData({
         name: '',
-        code: '',
         category: '',
         unit_id: ''
       });
@@ -134,7 +145,6 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
     if (!isOpen) {
       setFormData({
         name: '',
-        code: '',
         category: '',
         unit_id: ''
       });
@@ -186,7 +196,6 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
         category: formData.category,
         unit_id: unitId
       };
-      if (formData.code.trim()) payload.code = formData.code.trim();
 
       if (isEditing && editingLabourId) {
         // Update existing labour - use UUID for update API
@@ -209,9 +218,8 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
         }
       } else {
         // Create new labour - set is_active to 1 (active) by default
-        payload.is_active = 1;
-        console.log('📦 Creating new labour with is_active = 1 (active by default)');
-        const response = await masterDataAPI.createLabour(payload);
+        const createPayload = { ...payload, is_active: 1 };
+        const response = await masterDataAPI.createLabour(createPayload);
         toast.showSuccess('Labour created successfully!');
         // Extract created labour with code from labour-add response (returns code e.g. "L415190")
         const createdLabour = response?.data ?? response;
@@ -272,26 +280,6 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
               value={formData.name}
               onChange={handleInputChange}
               placeholder="Enter labour name (e.g., Mason, Supervisor, Helper)"
-              disabled={isSubmitting}
-              className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                isDark 
-                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
-                  : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
-            />
-          </div>
-
-          {/* Code (optional - auto-generated if blank) */}
-          <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Code <span className={`text-xs ${textSecondary}`}>(optional, auto-generated if blank)</span>
-            </label>
-            <input
-              type="text"
-              name="code"
-              value={formData.code}
-              onChange={handleInputChange}
-              placeholder="e.g. LAB0001 or leave blank for auto-generation"
               disabled={isSubmitting}
               className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                 isDark 

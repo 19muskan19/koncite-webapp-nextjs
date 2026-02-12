@@ -26,6 +26,7 @@ interface CreateUnitModalProps {
   onSuccess?: () => void;
   editingUnitId?: string | null; // UUID for GET /unit-edit/{uuid}
   editingUnitNumericId?: string | number | null; // Numeric ID for POST /unit-add with updateId
+  existingUnits?: Array<{ id?: string; numericId?: number | string; uuid?: string; unit?: string; name?: string; unit_coversion?: string; conversion?: string; unit_coversion_factor?: string; factor?: string }>;
 }
 
 const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
@@ -34,7 +35,8 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
   onClose,
   onSuccess,
   editingUnitId = null,
-  editingUnitNumericId = null
+  editingUnitNumericId = null,
+  existingUnits = []
 }) => {
   const toast = useToast();
   const [formData, setFormData] = useState({
@@ -102,6 +104,22 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
   const validateForm = (): boolean => {
     if (!formData.unit.trim()) {
       toast.showWarning('Required field "Unit Name" is empty. Please fill it before submitting.');
+      return false;
+    }
+
+    const unitTrim = formData.unit.trim().toLowerCase();
+    const convTrim = (formData.unit_coversion || '').trim().toLowerCase();
+    const factorTrim = (formData.unit_coversion_factor || '').trim();
+
+    const isDuplicate = existingUnits.some((u) => {
+      if (isEditing && (u.id === editingUnitId || u.uuid === editingUnitId || String(u.numericId ?? u.id) === String(editingUnitNumericId))) return false;
+      const uUnit = (u.unit || u.name || '').trim().toLowerCase();
+      const uConv = (u.unit_coversion || u.conversion || '').trim().toLowerCase();
+      const uFactor = (u.unit_coversion_factor || u.factor || '').trim();
+      return uUnit === unitTrim && uConv === convTrim && uFactor === factorTrim;
+    });
+    if (isDuplicate) {
+      toast.showWarning('A unit with the same name, conversion, and factor already exists. Change unit conversion or conversion factor to add.');
       return false;
     }
 

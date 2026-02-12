@@ -3,10 +3,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
-import { Boxes, Download, Plus, Search, ArrowUpDown, Loader2, RefreshCw, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Upload, MoreVertical, Edit, Trash2 } from 'lucide-react';
+import { Boxes, Download, Plus, Search, ArrowUpDown, Loader2, RefreshCw, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Upload, MoreVertical, Edit, Trash2, FileSpreadsheet } from 'lucide-react';
 import CreateMaterialModal from './Modals/CreateMaterialModal';
+import MaterialBulkUploadModal from './Modals/MaterialBulkUploadModal';
 import { masterDataAPI } from '../../services/api';
-import { getExactErrorMessage } from '../../utils/errorUtils';
 import { useUser } from '../../contexts/UserContext';
 import * as XLSX from 'xlsx';
 
@@ -32,8 +32,16 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
   const { isAuthenticated } = useUser();
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isSearching, setIsSearching] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'list' | 'openingStock'>('list');
+  const [activeTab, setActiveTab] = useState<'list' | 'bulkUpload' | 'openingStock'>('list');
+  const [openingStockSubTab, setOpeningStockSubTab] = useState<'bulkUpload' | 'available'>('bulkUpload');
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
+  const [showBulkUploadModal, setShowBulkUploadModal] = useState<boolean>(false);
+  const [openingStockForm, setOpeningStockForm] = useState({
+    project: '',
+    storeWarehouse: '',
+    openingDate: new Date().toISOString().split('T')[0],
+    file: null as File | null
+  });
   const [editingMaterialId, setEditingMaterialId] = useState<string | null>(null);
   const [editingMaterial, setEditingMaterial] = useState<Material | null>(null);
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
@@ -48,7 +56,6 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
   const [entriesPerPage, setEntriesPerPage] = useState<number>(10);
   const [listEntriesPerPage, setListEntriesPerPage] = useState<number>(25);
   const [listCurrentPage, setListCurrentPage] = useState<number>(1);
-  const [isImporting, setIsImporting] = useState<boolean>(false);
   
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -63,7 +70,9 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
 
   const [openingStockProjects, setOpeningStockProjects] = useState<Array<{ id: number; uuid: string; project_name: string }>>([]);
   const [availableStockStores, setAvailableStockStores] = useState<Array<{ id: number; uuid: string; name: string }>>([]);
+  const [openingStockFormStores, setOpeningStockFormStores] = useState<Array<{ id: number; uuid: string; name: string }>>([]);
   const [isLoadingOpeningStockData, setIsLoadingOpeningStockData] = useState(false);
+  const [isLoadingOpeningStockStores, setIsLoadingOpeningStockStores] = useState(false);
 
   const availableProjects = openingStockProjects;
 
@@ -146,6 +155,23 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
     }
   }, [activeTab, availableStockFilters.project, isAuthenticated]);
 
+  // Fetch stores for Bulk Upload Opening Stock form when project selected
+  useEffect(() => {
+    if (activeTab === 'openingStock' && openingStockSubTab === 'bulkUpload' && openingStockForm.project && isAuthenticated) {
+      setIsLoadingOpeningStockStores(true);
+      masterDataAPI.getProjectWiseWarehouses(openingStockForm.project)
+        .then((stores: any) => {
+          setOpeningStockFormStores(Array.isArray(stores) ? stores.map((s: any) => ({
+            id: s.id, uuid: s.uuid || String(s.id), name: s.name || s.store_name || ''
+          })) : []);
+        })
+        .catch(() => setOpeningStockFormStores([]))
+        .finally(() => setIsLoadingOpeningStockStores(false));
+    } else {
+      setOpeningStockFormStores([]);
+    }
+  }, [activeTab, openingStockSubTab, openingStockForm.project, isAuthenticated]);
+
 
   // Filter materials (client-side filtering is optional since we're using API search)
   const filteredMaterials = useMemo(() => {
@@ -216,116 +242,48 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
     }
   }, [openDropdownId]);
 
-  const parseImportFile = (file: File): Promise<string[][]> =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const data = e.target?.result;
-          if (!data) { reject(new Error('Failed to read file')); return; }
-          const ext = (file.name || '').toLowerCase();
-          if (!ext.endsWith('.csv') && !ext.endsWith('.xlsx') && !ext.endsWith('.xls')) {
-            reject(new Error('Use CSV or Excel (.xlsx, .xls)'));
-            return;
-          }
-          const wb = XLSX.read(data, { type: typeof data === 'string' ? 'string' : 'array' });
-          const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1 }) as string[][];
-          resolve(rows);
-        } catch (err) { reject(err); }
-      };
-      reader.onerror = () => reject(new Error('Failed to read file'));
-      file.name?.toLowerCase().endsWith('.csv') ? reader.readAsText(file) : reader.readAsArrayBuffer(file);
-    });
+  const handleExportMasterData = () => {
+    const headers = ['SR No', 'Class', 'Code', 'Name', 'Specification', 'Unit'];
+    const rows = materials.map((m, idx) => [
+      idx + 1,
+      m.class,
+      m.code,
+      m.name,
+      m.specification || '',
+      m.unit || ''
+    ]);
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Materials');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `materials_export_${new Date().toISOString().split('T')[0]}.xlsx`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
 
-  const handleImport = async () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.csv,.xlsx,.xls';
-    input.onchange = async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (!file) return;
-      setIsImporting(true);
-      try {
-        const rows = await parseImportFile(file);
-        if (rows.length < 2) {
-          toast.showWarning('File must have a header row and at least one data row');
-          return;
-        }
-        const header = (rows[0] || []).map((h: unknown) => String(h || '').trim().toLowerCase());
-        const dataRows = rows.slice(1);
-        const classIdx = header.findIndex((h: string) => h === 'class' || h === 'material class');
-        const codeIdx = header.findIndex((h: string) => h === 'code');
-        const nameIdx = header.findIndex((h: string) => h === 'name' || h === 'material name');
-        const specIdx = header.findIndex((h: string) => h === 'specification' || h === 'spec');
-        const unitIdx = header.findIndex((h: string) => h === 'unit' || h === 'units');
-        if (nameIdx < 0 || classIdx < 0 || unitIdx < 0) {
-          toast.showError('File must contain: class, name, unit columns');
-          return;
-        }
-        const units = await masterDataAPI.getUnits();
-        const unitsList = Array.isArray(units) ? units : (units as any)?.data ?? [];
-        const findUnitId = (val: string): number | undefined => {
-          const u = (val || '').toString().trim().toLowerCase();
-          const m = unitsList.find((x: any) => (x.unit || x.name || '').toString().toLowerCase() === u);
-          if (m) return m.id;
-          const n = parseInt(val, 10);
-          return !isNaN(n) && unitsList.some((x: any) => x.id === n) ? n : undefined;
-        };
-        const safeStr = (v: unknown) => (v != null && v !== '') ? String(v).trim() : '';
-        const validClasses = ['a', 'b', 'c'];
-        const usedCodes = new Set((materials || []).map(m => (m.code || '').toLowerCase().trim()).filter(Boolean));
-        let success = 0, failed = 0;
-        let lastError: any = null;
-        for (let i = 0; i < dataRows.length; i++) {
-          const row = dataRows[i] || [];
-          const name = safeStr(row[nameIdx]);
-          let cls = safeStr(row[classIdx]).toUpperCase();
-          if (!validClasses.includes(cls.toLowerCase())) cls = 'A';
-          const unitVal = safeStr(row[unitIdx]);
-          const unitId = unitVal ? findUnitId(unitVal) : undefined;
-          if (!name || !unitId) { failed++; continue; }
-          let code = codeIdx >= 0 ? safeStr(row[codeIdx]) : '';
-          if (code) {
-            let base = code;
-            let suffix = 1;
-            while (usedCodes.has(code.toLowerCase())) {
-              code = `${base}-${++suffix}`;
-            }
-            usedCodes.add(code.toLowerCase());
-          }
-          try {
-            if (i > 0) await new Promise(r => setTimeout(r, 200));
-            await masterDataAPI.createMaterial({
-              class: cls,
-              name,
-              unit_id: unitId,
-              ...(specIdx >= 0 && { specification: safeStr(row[specIdx]) }),
-              ...(code && { code }),
-            });
-            success++;
-          } catch (err: any) {
-            failed++;
-            lastError = err;
-          }
-        }
-        if (success > 0) {
-          toast.showSuccess(`${success} material(s) imported`);
-          await fetchMaterials();
-          setListCurrentPage(1);
-          setSearchQuery('');
-        }
-        if (failed > 0 && success === 0) {
-          const msg = lastError ? getExactErrorMessage(lastError) : '';
-          toast.showError(msg ? `Import failed for all ${failed} row(s): ${msg}` : `Import failed for all ${failed} row(s)`);
-        }
-      } catch (err: any) {
-        toast.showError(err.message || 'Failed to import');
-      } finally {
-        setIsImporting(false);
-        input.value = '';
-      }
-    };
-    input.click();
+  const handleDownloadBulkUploadTemplate = () => {
+    const headers = ['class', 'code', 'name', 'specification', 'unit'];
+    const ws = XLSX.utils.aoa_to_sheet([headers]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Template');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `materials_upload_template_${new Date().toISOString().split('T')[0]}.xlsx`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handleDownloadExcel = () => {
@@ -403,15 +361,6 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
             >
               <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Add New</span><span className="sm:hidden">Add</span>
             </button>
-            <button 
-              onClick={handleImport}
-              disabled={isImporting}
-              className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'} shadow-sm disabled:opacity-70 disabled:cursor-not-allowed`}
-              title="Bulk upload materials from CSV or Excel"
-            >
-              {isImporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-              {isImporting ? 'Importing...' : <><span className="hidden sm:inline">Bulk Upload</span><span className="sm:hidden">Bulk</span></>}
-            </button>
           </div>
         )}
       </div>
@@ -434,15 +383,28 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
             )}
           </button>
           <button
+            onClick={() => setActiveTab('bulkUpload')}
+            className={`px-3 sm:px-6 py-2 sm:py-3 text-xs sm:text-sm font-bold transition-colors relative whitespace-nowrap ${
+              activeTab === 'bulkUpload'
+                ? `${textPrimary}`
+                : `${textSecondary} hover:${textPrimary}`
+            }`}
+          >
+            <span className="hidden sm:inline">Bulk Upload of Materials</span>
+            <span className="sm:hidden">Bulk Upload</span>
+            {activeTab === 'bulkUpload' && (
+              <span className={`absolute bottom-0 left-0 right-0 h-0.5 bg-red-500`} />
+            )}
+          </button>
+          <button
             onClick={() => setActiveTab('openingStock')}
-            className={`px-4 sm:px-6 py-2 sm:py-3 text-xs sm:text-sm font-bold transition-colors relative whitespace-nowrap ${
+            className={`px-3 sm:px-6 py-2 sm:py-3 text-xs sm:text-sm font-bold transition-colors relative whitespace-nowrap ${
               activeTab === 'openingStock'
                 ? `${textPrimary}`
                 : `${textSecondary} hover:${textPrimary}`
             }`}
           >
-            <span className="hidden sm:inline">Opening Stock</span>
-            <span className="sm:hidden">Opening</span>
+            Opening Stock
             {activeTab === 'openingStock' && (
               <span className={`absolute bottom-0 left-0 right-0 h-0.5 bg-red-500`} />
             )}
@@ -698,8 +660,205 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
         </>
       )}
 
+      {activeTab === 'bulkUpload' && (
+        <div className={`rounded-xl border p-4 sm:p-8 ${cardClass}`}>
+          <p className={`text-sm ${textSecondary} mb-4 text-center`}>
+            Use columns: <strong className={textPrimary}>class</strong>, <strong className={textPrimary}>code</strong>, <strong className={textPrimary}>name</strong>, <strong className={textPrimary}>specification</strong>, <strong className={textPrimary}>unit</strong>
+          </p>
+          <div className="space-y-3 sm:space-y-4 max-w-md mx-auto">
+            <button
+              onClick={handleDownloadBulkUploadTemplate}
+              className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
+                isDark
+                  ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600'
+                  : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
+              } shadow-sm`}
+            >
+              <Download className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
+              <span className="text-center">Download Template (class, code, name, specification, unit)</span>
+            </button>
+            <button
+              onClick={() => setShowBulkUploadModal(true)}
+              className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
+                isDark
+                  ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
+                  : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
+              } shadow-md`}
+            >
+              <Upload className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
+              <span className="text-center">Upload File</span>
+            </button>
+            <button
+              onClick={handleExportMasterData}
+              className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
+                isDark
+                  ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600'
+                  : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
+              } shadow-sm`}
+            >
+              <FileSpreadsheet className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
+              <span className="text-center">Export Master Data</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {activeTab === 'openingStock' && (
         <>
+          {/* Sub-tabs */}
+          <div className={`flex gap-1 sm:gap-2 border-b ${isDark ? 'border-slate-700' : 'border-slate-200'} overflow-x-auto`}>
+            <button
+              onClick={() => setOpeningStockSubTab('bulkUpload')}
+              className={`px-3 sm:px-6 py-2 sm:py-3 text-xs sm:text-sm font-bold transition-colors whitespace-nowrap ${
+                openingStockSubTab === 'bulkUpload'
+                  ? isDark
+                    ? 'bg-slate-800 border-t border-l border-r border-slate-700 text-slate-100'
+                    : 'bg-white border-t border-l border-r border-slate-200 text-slate-900'
+                  : `${textSecondary} hover:${textPrimary}`
+              } rounded-t-lg`}
+            >
+              <span className="hidden sm:inline">Bulk Upload Opening Stock</span>
+              <span className="sm:hidden">Bulk Upload</span>
+            </button>
+            <button
+              onClick={() => setOpeningStockSubTab('available')}
+              className={`px-3 sm:px-6 py-2 sm:py-3 text-xs sm:text-sm font-bold transition-colors whitespace-nowrap ${
+                openingStockSubTab === 'available'
+                  ? isDark
+                    ? 'bg-slate-800 border-t border-l border-r border-slate-700 text-slate-100'
+                    : 'bg-white border-t border-l border-r border-slate-200 text-slate-900'
+                  : `${textSecondary} hover:${textPrimary}`
+              } rounded-t-lg`}
+            >
+              <span className="hidden sm:inline">Available Opening Stock</span>
+              <span className="sm:hidden">Available</span>
+            </button>
+          </div>
+
+          {openingStockSubTab === 'bulkUpload' && (
+            <div className="space-y-4 sm:space-y-6">
+              {/* Export Button */}
+              <div className={`rounded-xl border p-4 sm:p-8 ${cardClass}`}>
+                <button
+                  onClick={handleExportMasterData}
+                  className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
+                    isDark
+                      ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
+                      : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
+                  } shadow-md`}
+                >
+                  <FileSpreadsheet className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
+                  <span className="text-center">Export Materials Data</span>
+                </button>
+              </div>
+
+              {/* Bulk Upload Opening Stock Form */}
+              <div className={`rounded-xl border ${cardClass}`}>
+                <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
+                  <h3 className={`text-base sm:text-lg font-black ${textPrimary} mb-3 sm:mb-4`}>Bulk Upload Opening Stock</h3>
+
+                  {/* Project */}
+                  <div>
+                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                      Project
+                    </label>
+                    <select
+                      value={openingStockForm.project}
+                      onChange={(e) => setOpeningStockForm({ ...openingStockForm, project: e.target.value, storeWarehouse: '' })}
+                      className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+                        isDark
+                          ? 'bg-slate-800/50 border-slate-700 text-slate-100'
+                          : 'bg-white border-slate-200 text-slate-900'
+                      } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                    >
+                      <option value="">----Select Project----</option>
+                      {openingStockProjects.map((p: any) => (
+                        <option key={p.id} value={String(p.id)}>{p.project_name || p.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Store/Warehouses - loads list associated with selected project */}
+                  <div>
+                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                      Store/Warehouses
+                    </label>
+                    {isLoadingOpeningStockStores ? (
+                      <div className={`w-full px-4 py-3 rounded-lg text-sm ${textSecondary} flex items-center gap-2`}>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Loading stores...
+                      </div>
+                    ) : (
+                      <select
+                        value={openingStockForm.storeWarehouse}
+                        onChange={(e) => setOpeningStockForm({ ...openingStockForm, storeWarehouse: e.target.value })}
+                        disabled={!openingStockForm.project}
+                        className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+                          isDark
+                            ? 'bg-slate-800/50 border-slate-700 text-slate-100'
+                            : 'bg-white border-slate-200 text-slate-900'
+                        } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+                      >
+                        <option value="">----Select Store/Warehouses----</option>
+                        {openingStockFormStores.map((s: any) => (
+                          <option key={s.id} value={String(s.id)}>{s.name || s.store_name || '-'}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+
+                  {/* Opening Date - calendar picker */}
+                  <div>
+                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                      Opening Date
+                    </label>
+                    <input
+                      type="date"
+                      value={openingStockForm.openingDate}
+                      onChange={(e) => setOpeningStockForm({ ...openingStockForm, openingDate: e.target.value })}
+                      min="1900-01-01"
+                      max="2100-12-31"
+                      className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-80 ${
+                        isDark
+                          ? 'bg-slate-800/50 border-slate-700 text-slate-100'
+                          : 'bg-white border-slate-200 text-slate-900'
+                      } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                    />
+                  </div>
+
+                  {/* File Upload */}
+                  <div>
+                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                      Upload File
+                    </label>
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-4">
+                      <label className={`flex-1 px-4 py-3 rounded-lg text-sm font-bold transition-all cursor-pointer ${
+                        isDark
+                          ? 'bg-slate-800/50 border-slate-700 text-slate-100 border'
+                          : 'bg-white border-slate-200 text-slate-900 border'
+                      } focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}>
+                        <input
+                          type="file"
+                          accept=".xlsx,.xls,.csv"
+                          className="hidden"
+                          onChange={(e) => setOpeningStockForm({ ...openingStockForm, file: e.target.files?.[0] ?? null })}
+                        />
+                        {openingStockForm.file ? openingStockForm.file.name : 'Choose file...'}
+                      </label>
+                      <button
+                        type="button"
+                        className={`px-4 py-3 rounded-lg text-sm font-bold ${isDark ? 'bg-[#C2D642] text-white' : 'bg-[#C2D642] text-white'} shadow-md`}
+                      >
+                        Upload
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {openingStockSubTab === 'available' && (
           <div className="space-y-6">
               {/* Filters */}
               <div className={`rounded-xl border p-6 ${cardClass}`}>
@@ -905,8 +1064,20 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                 </div>
               </div>
             </div>
+          )}
         </>
       )}
+
+      {/* Bulk Upload Modal */}
+      <MaterialBulkUploadModal
+        theme={theme}
+        isOpen={showBulkUploadModal}
+        onClose={() => setShowBulkUploadModal(false)}
+        onSuccess={() => {
+          setShowBulkUploadModal(false);
+          fetchMaterials();
+        }}
+      />
 
       {/* Create Material Modal */}
       <CreateMaterialModal
