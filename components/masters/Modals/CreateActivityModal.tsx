@@ -8,21 +8,27 @@ import { masterDataAPI } from '@/services/api';
 
 interface ActivityItem {
   id: string;
-  uuid?: string;
-  name?: string;
-  activities?: string;
+  name: string;
+  project?: string;
   project_id?: number;
+  subproject?: string;
   subproject_id?: number;
   type: 'heading' | 'activity' | 'activites';
+  unit?: string;
   unit_id?: number;
   qty?: number;
   quantity?: number;
   rate?: number;
   amount?: number;
+  startDate?: string;
   start_date?: string;
+  endDate?: string;
   end_date?: string;
+  uuid?: string;
+  activities?: string;
   heading?: number;
   parent_id?: number;
+  createdAt?: string;
 }
 
 interface CreateActivityModalProps {
