@@ -48,9 +48,16 @@ interface SidebarProps {
   setSidebarOpen: (open: boolean) => void;
 }
 
+const getCompanyInitials = (name: string): string => {
+  if (!name || !name.trim()) return 'Co';
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase().slice(0, 2);
+  return name.slice(0, 2).toUpperCase();
+};
+
 const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen }) => {
   const pathname = usePathname();
-  const { user } = useUser();
+  const { user, company } = useUser();
   const router = useRouter();
   const [openDropdowns, setOpenDropdowns] = useState<Set<string>>(new Set());
   const isDark = theme === 'dark';
@@ -79,13 +86,13 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
   const navItems: NavItem[] = [
     { 
       id: ViewType.DASHBOARD, 
-      label: 'DASHBOARD', 
+      label: 'Dashboard', 
       icon: LayoutDashboard,
       path: '/dashboard'
     },
     { 
       id: 'OPERATIONS', 
-      label: 'OPERATIONS', 
+      label: 'Operations', 
       icon: ClipboardList,
       children: [
         { label: 'Daily work progress', id: ViewType.DPR, path: '/work-progress-reports/dpr' },
@@ -95,13 +102,13 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
     },
     { 
       id: ViewType.DOCUMENT_MANAGEMENT, 
-      label: 'DOCUMENT', 
+      label: 'Document', 
       icon: FileText, 
       path: '/document-management' 
     },
     { 
       id: 'SHIFT_INVENTORY', 
-      label: 'INVENTORY', 
+      label: 'Inventory', 
       icon: Warehouse,
       children: [
         { label: 'Purchase Requests (PR)', id: ViewType.INVENTORY_PR, path: '/inventory-reports/pr' },
@@ -116,13 +123,13 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
     },
     { 
       id: ViewType.AI_AGENTS, 
-      label: 'AI HUB', 
+      label: 'AI Hub', 
       icon: Bot, 
       path: '/ai-agents' 
     },
     { 
       id: 'REPORTS', 
-      label: 'REPORTS', 
+      label: 'Reports', 
       icon: BarChart3,
       children: [
         { 
@@ -154,7 +161,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
     },
     { 
       id: 'ADMIN', 
-      label: 'ADMIN', 
+      label: 'Admin', 
       icon: ShieldCheck,
       children: [
         { 
@@ -194,7 +201,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
     },
     { 
       id: 'SETTINGS', 
-      label: 'SETTINGS', 
+      label: 'Settings', 
       icon: Settings, 
       children: [
         { label: 'Subscriptions and Billing', id: ViewType.SUBSCRIPTION, path: '/subscription' },
@@ -345,19 +352,34 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
       {/* Sidebar - full width on mobile when open, 64 on tablet+ */}
       <aside className={`${sidebarOpen ? 'w-[min(280px,85vw)] sm:w-64' : 'w-0 lg:w-20'} flex flex-col transition-all duration-300 ${getThemeClass('sidebar')} ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'} ${!sidebarOpen ? 'lg:border-r border-inherit' : ''} ${!sidebarOpen ? 'hidden lg:flex' : 'flex'} fixed lg:static z-50 h-full max-h-screen`}>
         <div className="p-4 flex flex-col gap-4 border-b border-inherit">
-          <div className="flex items-center gap-3 px-1">
-            <div className="relative">
-              <img src="https://picsum.photos/seed/doc/100/100" alt="Avatar" className="w-10 h-10 rounded-xl border border-inherit object-cover" />
-              <div className="absolute -bottom-1 -right-1 w-3.5 h-3.5 bg-[#C2D642] border-2 border-inherit rounded-full"></div>
-            </div>
+          <div className={`flex items-center gap-3 px-1 ${!sidebarOpen ? 'justify-center' : ''}`}>
             {sidebarOpen && (
-              <div className="flex-1 overflow-hidden">
-                <p className="font-bold text-sm truncate">{user?.name || 'User'}</p>
-                <p className="text-[10px] opacity-40 uppercase font-black tracking-widest">Chief Admin</p>
-              </div>
+              <>
+                <div className="relative w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 bg-[#C2D642]/20 border-2 border-[#C2D642]/30 overflow-hidden">
+                  {(company?.logo || user?.company_logo) ? (
+                    <img 
+                      src={company?.logo || user?.company_logo || ''} 
+                      alt="Company" 
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        const el = e.target as HTMLImageElement;
+                        el.style.display = 'none';
+                        const fallback = el.parentElement?.querySelector('.company-initials');
+                        if (fallback) fallback.classList.remove('hidden');
+                      }}
+                    />
+                  ) : null}
+                  <span className={`company-initials text-sm font-black text-[#C2D642] ${(company?.logo || user?.company_logo) ? 'hidden absolute inset-0 flex items-center justify-center' : 'flex items-center justify-center'}`}>
+                    {getCompanyInitials(company?.name || user?.company_name || '')}
+                  </span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-bold text-sm truncate">{company?.name || user?.company_name || 'Company'}</p>
+                </div>
+              </>
             )}
-            <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-1 hover:bg-black/5 dark:hover:bg-white/5 rounded transition-colors">
-              <Menu className="w-4 h-4 opacity-60" />
+            <button onClick={() => setSidebarOpen(!sidebarOpen)} className={`hover:bg-black/5 dark:hover:bg-white/5 rounded transition-colors ${sidebarOpen ? 'p-1' : 'p-1.5 flex-1 flex justify-center lg:flex-initial'}`} aria-label="Toggle sidebar">
+              <Menu className={sidebarOpen ? 'w-4 h-4 opacity-60' : 'w-5 h-5 opacity-60 lg:w-6 lg:h-6'} />
             </button>
           </div>
         </div>
@@ -374,14 +396,14 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
                 {hasChildren ? (
                   <>
                     <div 
-                      className={`flex items-center justify-between p-3 sm:p-2.5 rounded-lg transition-all cursor-pointer touch-manipulation ${active ? (isDark ? 'text-slate-300 bg-slate-700/50 font-bold' : 'text-slate-700 bg-slate-100 font-bold') : 'opacity-60 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}`}
+                      className={`flex items-center justify-between p-3 sm:p-2.5 rounded-lg transition-all cursor-pointer touch-manipulation ${active ? (isDark ? 'text-slate-300 bg-slate-700/50 font-bold' : 'text-slate-700 bg-slate-100 font-bold') : 'opacity-60 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10'}`}
                       onClick={(e) => toggleDropdown(item.id.toString(), e)}
                     >
                       <div className="flex items-center gap-3 min-w-0">
-                        <item.icon className={`w-4 h-4 flex-shrink-0 ${active ? (isDark ? 'text-slate-300' : 'text-slate-700') : ''}`} />
-                        {sidebarOpen && <span className="text-[11px] font-extrabold tracking-tight uppercase truncate">{item.label}</span>}
+                        <item.icon className={`flex-shrink-0 ${sidebarOpen ? 'w-4 h-4' : 'w-5 h-5 lg:w-6 lg:h-6'} ${active ? (isDark ? 'text-slate-300' : 'text-slate-700') : ''}`} />
+                        {sidebarOpen && <span className="text-sm font-extrabold tracking-tight truncate">{item.label}</span>}
                       </div>
-                      {sidebarOpen && <ChevronDown className={`w-3 h-3 flex-shrink-0 opacity-30 transition-transform duration-200 ${isDropdownOpen ? 'rotate-180' : ''}`} />}
+                      {sidebarOpen && <ChevronDown className={`w-3.5 h-3.5 flex-shrink-0 opacity-80 transition-transform duration-200 ${isDropdownOpen ? 'rotate-180' : ''} ${active ? (isDark ? 'text-slate-300' : 'text-slate-700') : isDark ? 'text-slate-400' : 'text-slate-500'}`} />}
                     </div>
                 {sidebarOpen && isDropdownOpen && item.children && (
                   <div className="ml-4 sm:ml-7 mt-1 border-l border-inherit pl-3 space-y-1 sm:space-y-1.5 py-1">
@@ -399,7 +421,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
                               }
                               handleLogout();
                             }}
-                            className={`w-full text-left text-[11px] font-bold py-1 px-2 rounded-md cursor-pointer transition-colors block opacity-40 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}
+                            className={`w-full text-left text-sm font-bold py-1 px-2 rounded-md cursor-pointer transition-colors block opacity-40 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}
                           >
                             {child.label}
                           </button>
@@ -413,14 +435,14 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
                         return (
                           <div key={child.id} className="space-y-1">
                             <div
-                              className={`flex items-center justify-between text-[11px] font-bold py-2 px-2 sm:py-1 rounded-md cursor-pointer transition-colors touch-manipulation ${isNestedDropdownOpen ? (isDark ? 'text-slate-300 bg-slate-700/30' : 'text-slate-700 bg-slate-100') : 'opacity-40 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}`}
+                              className={`flex items-center justify-between text-sm font-bold py-2 px-2 sm:py-1 rounded-md cursor-pointer transition-colors touch-manipulation ${isNestedDropdownOpen ? (isDark ? 'text-slate-300 bg-slate-700/30' : 'text-slate-700 bg-slate-100') : 'opacity-40 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10'}`}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 toggleDropdown(child.id.toString(), e);
                               }}
                             >
                               <span className={isDark ? 'text-slate-300' : 'text-slate-700'}>{child.label}</span>
-                              <ChevronDown className={`w-3 h-3 opacity-30 transition-transform duration-200 ${isNestedDropdownOpen ? 'rotate-180' : ''}`} />
+                              <ChevronDown className={`w-3.5 h-3.5 flex-shrink-0 opacity-80 transition-transform duration-200 ${isNestedDropdownOpen ? 'rotate-180' : ''} ${isNestedDropdownOpen ? (isDark ? 'text-slate-300' : 'text-slate-700') : isDark ? 'text-slate-400' : 'text-slate-500'}`} />
                             </div>
                             {isNestedDropdownOpen && child.children && (
                               <div className="ml-4 mt-1 border-l border-inherit pl-3 space-y-1">
@@ -433,14 +455,14 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
                                     return (
                                       <div key={nestedChild.id} className="space-y-1">
                                         <div
-                                          className={`flex items-center justify-between text-[11px] font-bold py-2 px-2 sm:py-1 rounded-md cursor-pointer transition-colors touch-manipulation ${isThirdLevelOpen ? (isDark ? 'text-slate-300 bg-slate-700/30' : 'text-slate-700 bg-slate-100') : 'opacity-40 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}`}
+                                          className={`flex items-center justify-between text-sm font-bold py-2 px-2 sm:py-1 rounded-md cursor-pointer transition-colors touch-manipulation ${isThirdLevelOpen ? (isDark ? 'text-slate-300 bg-slate-700/30' : 'text-slate-700 bg-slate-100') : 'opacity-40 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10'}`}
                                           onClick={(e) => {
                                             e.stopPropagation();
                                             toggleDropdown(nestedChild.id.toString(), e);
                                           }}
                                         >
                                           <span className={isDark ? 'text-slate-300' : 'text-slate-700'}>{nestedChild.label}</span>
-                                          <ChevronDown className={`w-3 h-3 opacity-30 transition-transform duration-200 ${isThirdLevelOpen ? 'rotate-180' : ''}`} />
+                                          <ChevronDown className={`w-3.5 h-3.5 flex-shrink-0 opacity-80 transition-transform duration-200 ${isThirdLevelOpen ? 'rotate-180' : ''} ${isThirdLevelOpen ? (isDark ? 'text-slate-300' : 'text-slate-700') : isDark ? 'text-slate-400' : 'text-slate-500'}`} />
                                         </div>
                                         {isThirdLevelOpen && nestedChild.children && (
                                           <div className="ml-4 mt-1 border-l border-inherit pl-3 space-y-1">
@@ -454,7 +476,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
                                                     e.stopPropagation();
                                                     handleChildClick(e, item.id.toString(), thirdLevelChild.path);
                                                   }}
-                                                  className={`text-[11px] font-bold py-2 px-2 sm:py-1 rounded-md transition-colors block touch-manipulation truncate ${isActive(thirdLevelChild.path) ? (isDark ? 'text-slate-300 bg-slate-700/30' : 'text-slate-700 bg-slate-100') : 'opacity-40 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}`}
+                                                  className={`text-sm font-bold py-2 px-2 sm:py-1 rounded-md transition-colors block touch-manipulation truncate ${isActive(thirdLevelChild.path) ? (isDark ? 'text-slate-300 bg-slate-700/30' : 'text-slate-700 bg-slate-100') : 'opacity-40 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10'}`}
                                                 >
                                                   {thirdLevelChild.label}
                                                 </Link>
@@ -480,7 +502,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
                                             setSidebarOpen(false);
                                           }
                                         }}
-                                        className={`text-[11px] font-bold py-2 px-2 sm:py-1 rounded-md transition-colors block touch-manipulation truncate ${isActive(nestedChild.path) ? (isDark ? 'text-slate-300 bg-slate-700/30' : 'text-slate-700 bg-slate-100') : 'opacity-40 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}`}
+                                        className={`text-sm font-bold py-2 px-2 sm:py-1 rounded-md transition-colors block touch-manipulation truncate ${isActive(nestedChild.path) ? (isDark ? 'text-slate-300 bg-slate-700/30' : 'text-slate-700 bg-slate-100') : 'opacity-40 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10'}`}
                                       >
                                         {nestedChild.label}
                                       </Link>
@@ -499,7 +521,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
                           key={child.id}
                           href={child.path}
                           onClick={(e) => handleChildClick(e, item.id.toString(), child.path)}
-                          className={`text-[11px] font-bold py-2 px-2 sm:py-1 rounded-md transition-colors block touch-manipulation truncate ${isActive(child.path) ? (isDark ? 'text-slate-300 bg-slate-700/30' : 'text-slate-700 bg-slate-100') : 'opacity-40 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}`}
+                          className={`text-sm font-bold py-2 px-2 sm:py-1 rounded-md transition-colors block touch-manipulation truncate ${isActive(child.path) ? (isDark ? 'text-slate-300 bg-slate-700/30' : 'text-slate-700 bg-slate-100') : 'opacity-40 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10'}`}
                         >
                           {child.label}
                         </Link>
@@ -517,11 +539,11 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
                         setSidebarOpen(false);
                       }
                     }}
-                    className={`flex items-center justify-between p-2.5 rounded-lg transition-all ${active ? (isDark ? 'text-slate-300 bg-slate-700/50 font-bold' : 'text-slate-700 bg-slate-100 font-bold') : 'opacity-60 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}`}
+                    className={`flex items-center justify-between p-2.5 rounded-lg transition-all ${active ? (isDark ? 'text-slate-300 bg-slate-700/50 font-bold' : 'text-slate-700 bg-slate-100 font-bold') : 'opacity-60 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10'}`}
                   >
                     <div className="flex items-center gap-3">
-                      <item.icon className={`w-4 h-4 ${active ? (isDark ? 'text-slate-300' : 'text-slate-700') : ''}`} />
-                      {sidebarOpen && <span className="text-[11px] font-extrabold tracking-tight uppercase">{item.label}</span>}
+                      <item.icon className={`${sidebarOpen ? 'w-4 h-4' : 'w-5 h-5 lg:w-6 lg:h-6'} ${active ? (isDark ? 'text-slate-300' : 'text-slate-700') : ''}`} />
+                      {sidebarOpen && <span className="text-sm font-extrabold tracking-tight">{item.label}</span>}
                     </div>
                   </Link>
                 )}

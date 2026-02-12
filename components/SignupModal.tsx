@@ -484,6 +484,10 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
       // Required company fields
       formDataToSend.append('company_name', formData.companyName.trim());
       
+      // Signup user gets Super Admin role by default (id: 1 = Super Admin per UserRolesPermissions)
+      formDataToSend.append('company_user_role', '1');
+      formDataToSend.append('designation', 'Super Admin');
+      
       // Optional fields
       if (formData.profileImage) {
         formDataToSend.append('profile_images', formData.profileImage);

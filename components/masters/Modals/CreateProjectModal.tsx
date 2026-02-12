@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { ThemeType } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
 import { X, Upload, Loader2 } from 'lucide-react';
-import { masterDataAPI } from '@/services/api';
+import { masterDataAPI, teamsAPI } from '@/services/api';
 
 interface Project {
   id: string;
@@ -51,8 +51,8 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [companies, setCompanies] = useState<any[]>([]);
   const [isLoadingCompanies, setIsLoadingCompanies] = useState(false);
-  const [users, setUsers] = useState<any[]>([]);
-  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+  const [staff, setStaff] = useState<Array<{ id: string; name: string; email?: string; roleType?: string }>>([]);
+  const [isLoadingStaff, setIsLoadingStaff] = useState(false);
   const [formData, setFormData] = useState({
     project_name: '',
     address: '',
@@ -60,7 +60,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     planned_start_date: '',
     planned_end_date: '',
     companies_id: '',
-    tag_member: [] as number[],
+    project_incharge: '' as string,
     logo: null as File | null,
     logoPreview: '' as string | null,
     // Client fields (required if own_project_or_contractor = 'yes')
@@ -103,7 +103,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         planned_start_date: '',
         planned_end_date: '',
         companies_id: '',
-        tag_member: [],
+        project_incharge: '',
         logo: null,
         logoPreview: null,
         client_name: '',
@@ -166,6 +166,44 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     fetchCompanies();
   }, [isOpen]);
 
+  // Load staff from Operations > Staff (teams-list API; fallback to localStorage)
+  useEffect(() => {
+    if (!isOpen) return;
+    setIsLoadingStaff(true);
+    const ROLE_ID_TO_NAME: Record<string, string> = {
+      '1': 'Super Admin', '2': 'Project Manager', '3': 'Site Engineer',
+      '4': 'Store Keepers', '5': 'Supervisor',
+    };
+    const getRoleType = (u: any) =>
+      u.company_role?.name ?? u.designation ?? u.role_type ?? ROLE_ID_TO_NAME[String(u.company_role_id ?? u.company_role?.id ?? '')] ?? '';
+    teamsAPI.getTeamsList()
+      .then((apiData) => {
+        const list = Array.isArray(apiData) ? apiData : [];
+        setStaff(list.map((u: any) => ({
+          id: String(u.id ?? u.uuid),
+          name: u.name || '',
+          email: u.email,
+          roleType: getRoleType(u),
+        })));
+      })
+      .catch(() => {
+        try {
+          const saved = localStorage.getItem('manageTeamsUsers');
+          const parsed = saved ? JSON.parse(saved) : [];
+          const list = Array.isArray(parsed) ? parsed : [];
+          setStaff(list.map((u: any) => ({
+            id: String(u.id ?? u.uuid),
+            name: u.name || '',
+            email: u.email,
+            roleType: u.roleType || '',
+          })));
+        } catch {
+          setStaff([]);
+        }
+      })
+      .finally(() => setIsLoadingStaff(false));
+  }, [isOpen]);
+
   // Populate form when editingProject is provided
   useEffect(() => {
     if (isOpen && editingProject && companies.length > 0) {
@@ -222,7 +260,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         planned_start_date: editingProject.startDate || '',
         planned_end_date: editingProject.endDate || '',
         companies_id: companyId, // Use matched company ID
-        tag_member: (editingProject as any).tag_member || [], // Populate tag_member if available
+        project_incharge: String((editingProject as any).tag_project_incharge ?? (editingProject as any).project_incharge ?? '') || '',
         logo: null, // Reset file input (user can upload new logo if needed)
         logoPreview: editingProject.logo || null, // Show existing logo as preview
         // Client fields - populate ALL fields from editingProject
@@ -248,7 +286,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         planned_start_date: editingProject.startDate,
         planned_end_date: editingProject.endDate,
         client_name: (editingProject as any).client_name,
-        tag_member: (editingProject as any).tag_member,
+        project_incharge: (editingProject as any).tag_project_incharge ?? (editingProject as any).project_incharge,
         allFields: Object.keys(editingProject)
       });
     } else if (isOpen && editingProject && companies.length === 0) {
@@ -369,12 +407,10 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     }
   };
 
-  const handleMemberToggle = (memberId: number) => {
+  const handleInchargeChange = (staffId: string) => {
     setFormData({
       ...formData,
-      tag_member: formData.tag_member.includes(memberId)
-        ? formData.tag_member.filter(id => id !== memberId)
-        : [...formData.tag_member, memberId]
+      project_incharge: staffId
     });
   };
 
@@ -439,11 +475,9 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         projectFormData.append('logo', formData.logo);
       }
       
-      // Team members (tag_member) - send as array
-      if (formData.tag_member.length > 0) {
-        formData.tag_member.forEach((memberId, index) => {
-          projectFormData.append(`tag_member[${index}]`, String(memberId));
-        });
+      // Project incharge - single staff member from Operations > Staff
+      if (formData.project_incharge) {
+        projectFormData.append('tag_project_incharge', formData.project_incharge);
       }
       
       // Client data (required if own_project_or_contractor = 'yes')
@@ -569,7 +603,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
           planned_start_date: '',
           planned_end_date: '',
           companies_id: '',
-          tag_member: [],
+          project_incharge: '',
           logo: null,
           logoPreview: null,
           client_name: '',
@@ -962,36 +996,35 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
             </select>
           </div>
 
-          {/* Tag Team Members */}
+          {/* Tag Project Incharge */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Tag Team Members
+              Tag Project Incharge
             </label>
-            {isLoadingUsers ? (
+            {isLoadingStaff ? (
               <div className={`p-4 rounded-lg text-center ${isDark ? 'bg-slate-800/30' : 'bg-slate-50'}`}>
-                <p className={`text-sm ${textSecondary}`}>Loading users...</p>
+                <p className={`text-sm ${textSecondary}`}>Loading staff...</p>
               </div>
-            ) : users.length > 0 ? (
-              <div className={`p-4 rounded-lg border max-h-48 overflow-y-auto ${isDark ? 'bg-slate-800/30 border-slate-700' : 'bg-slate-50 border-slate-200'}`}>
-                <div className="space-y-2">
-                  {users.map((user: any) => (
-                    <label key={user.id} className={`flex items-center gap-2 cursor-pointer p-2 rounded hover:bg-slate-200/50 dark:hover:bg-slate-700/50`}>
-                      <input
-                        type="checkbox"
-                        checked={formData.tag_member.includes(user.id)}
-                        onChange={() => handleMemberToggle(user.id)}
-                        className={`w-4 h-4 text-[#C2D642] rounded focus:ring-[#C2D642]`}
-                      />
-                      <span className={`text-sm font-bold ${textPrimary}`}>
-                        {user.name || user.email}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
+            ) : staff.length > 0 ? (
+              <select
+                value={formData.project_incharge}
+                onChange={(e) => handleInchargeChange(e.target.value)}
+                className={`w-full px-4 py-2.5 rounded-lg border font-medium ${
+                  isDark
+                    ? 'bg-slate-800/50 border-slate-600 text-slate-100'
+                    : 'bg-white border-slate-300 text-slate-900'
+                } focus:ring-2 focus:ring-[#C2D642]/50 focus:border-[#C2D642]`}
+              >
+                <option value="">Select Project Incharge</option>
+                {staff.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name || s.email || s.id}{s.roleType ? ` (${s.roleType})` : ''}
+                  </option>
+                ))}
+              </select>
             ) : (
               <div className={`p-4 rounded-lg text-center ${isDark ? 'bg-slate-800/30' : 'bg-slate-50'}`}>
-                <p className={`text-sm ${textSecondary}`}>No users available. Team members can be added later.</p>
+                <p className={`text-sm ${textSecondary}`}>No staff available. Add staff in Operations → Staff first.</p>
               </div>
             )}
           </div>
@@ -1003,11 +1036,11 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
             </label>
             <div className="space-y-4">
               {formData.logoPreview ? (
-                <div className="relative">
+                <div className="flex items-start gap-2">
                   <img
                     src={formData.logoPreview}
                     alt="Logo preview"
-                    className="w-32 h-32 rounded-xl object-cover border-2 border-[#C2D642]/20"
+                    className="w-32 h-32 rounded-xl object-cover border-2 border-[#C2D642]/20 shrink-0"
                   />
                   <button
                     onClick={() => {
@@ -1016,7 +1049,8 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                       }
                       setFormData({ ...formData, logo: null, logoPreview: null });
                     }}
-                    className="absolute -top-2 -right-2 p-1 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors"
+                    className="p-1.5 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors shrink-0 mt-1"
+                    title="Remove logo"
                   >
                     <X className="w-4 h-4" />
                   </button>
@@ -1064,7 +1098,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
             onClick={handleCreateProject}
             className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642]/90 text-white transition-all shadow-md"
           >
-            Create
+            {projectUpdateId ? 'Update' : 'Create'}
           </button>
         </div>
       </div>

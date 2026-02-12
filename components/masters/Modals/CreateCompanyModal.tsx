@@ -151,7 +151,6 @@ const CreateCompanyModal: React.FC<CreateCompanyModalProps> = ({
     const missingFields: string[] = [];
     
     if (!formData.registrationName.trim()) missingFields.push('Company Name');
-    if (!formData.companyRegistrationNo.trim()) missingFields.push('Reg No.');
     if (!formData.registeredAddress.trim()) missingFields.push('Reg Address');
     
     if (missingFields.length > 0) {
@@ -189,6 +188,7 @@ const CreateCompanyModal: React.FC<CreateCompanyModalProps> = ({
       companyData.append('registration_name', formData.registrationName);
       companyData.append('registered_address', formData.registeredAddress);
       companyData.append('company_registration_no', formData.companyRegistrationNo);
+      companyData.append('is_active', '1'); // Active by default when creating
       
       if (formData.logo) {
         companyData.append('logo', formData.logo);
@@ -285,7 +285,7 @@ const CreateCompanyModal: React.FC<CreateCompanyModalProps> = ({
           {/* Reg No. */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Reg No. <span className="text-red-500">*</span>
+              Reg No. (Optional)
             </label>
             <input
               type="text"

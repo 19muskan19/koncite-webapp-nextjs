@@ -3,15 +3,16 @@
 import React, { useState, useEffect } from 'react';
 import { ThemeType } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
-import { X } from 'lucide-react';
+import { X, Loader2 } from 'lucide-react';
+import { masterDataAPI } from '@/services/api';
 
 interface Project {
-  id: string;
+  id: number | string;
+  uuid?: string;
   name: string;
-  logo: string;
+  project_name?: string;
+  logo?: string;
   code?: string;
-  company?: string;
-  location?: string;
 }
 
 interface Subproject {
@@ -34,7 +35,10 @@ interface CreateSubprojectModalProps {
   defaultSubprojects?: Subproject[];
   userSubprojects?: Subproject[];
   onSubprojectCreated?: (subproject: Subproject) => void;
-  defaultProject?: string;
+  /** Project ID (uuid or numeric) to preselect when opened from DPR */
+  defaultProjectId?: string;
+  /** Project name for display when preselecting */
+  defaultProjectName?: string;
 }
 
 const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
@@ -45,16 +49,21 @@ const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
   defaultSubprojects = [],
   userSubprojects = [],
   onSubprojectCreated,
-  defaultProject = ''
+  defaultProjectId = '',
+  defaultProjectName = ''
 }) => {
   const toast = useToast();
   const [formData, setFormData] = useState({
+    projectId: '',
     subprojectName: '',
     plannedStartDate: '',
     plannedEndDate: '',
-    project: defaultProject
+    status: 'pending' as string
   });
+
   const [projects, setProjects] = useState<Project[]>([]);
+  const [isLoadingProjects, setIsLoadingProjects] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -62,71 +71,59 @@ const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
   const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
 
-  // Load projects from localStorage
+  // Fetch projects from API when modal opens - uses auth token (Bearer) from login
   useEffect(() => {
-    const loadProjects = () => {
-      const defaultProjectNames = [
-        'Lotus Rise',
-        'Lakeshire',
-        'Demo Data',
-        'Residential Complex A',
-        'Commercial Tower B'
-      ];
+    if (!isOpen) return;
 
-      const savedProjects = localStorage.getItem('projects');
-      let userProjectsData: Project[] = [];
-      
-      if (savedProjects) {
-        try {
-          const parsed = JSON.parse(savedProjects);
-          userProjectsData = parsed.map((project: any) => ({
-            id: project.id || project.name,
-            name: project.name,
-            logo: project.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(project.name)}&background=C2D642&color=fff&size=128`,
-            code: project.code,
-            company: project.company,
-            location: project.location
-          }));
-        } catch (e) {
-          console.error('Error parsing projects:', e);
+    const fetchProjects = async () => {
+      setIsLoadingProjects(true);
+      try {
+        const fetchedProjects = await masterDataAPI.getProjects();
+        const list = Array.isArray(fetchedProjects) ? fetchedProjects : [];
+        setProjects(list);
+        // Preselect project when opened from DPR with a selected project
+        if (defaultProjectId && list.length > 0) {
+          const match = list.find(
+            (p: any) =>
+              String(p.id) === defaultProjectId ||
+              p.uuid === defaultProjectId ||
+              String(p.uuid) === defaultProjectId
+          );
+          if (match) {
+            setFormData((prev) => ({
+              ...prev,
+              projectId: String(match.uuid || match.id)
+            }));
+          }
         }
+      } catch {
+        toast.showError('Failed to load projects');
+        setProjects([]);
+      } finally {
+        setIsLoadingProjects(false);
       }
-
-      // Add default projects with images
-      const defaultProjectsData: Project[] = defaultProjectNames.map((name, idx) => ({
-        id: `default-${idx}`,
-        name,
-        logo: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=C2D642&color=fff&size=128`
-      }));
-
-      setProjects([...defaultProjectsData, ...userProjectsData]);
     };
 
-    loadProjects();
+    fetchProjects();
+  }, [isOpen, defaultProjectId]);
 
-    window.addEventListener('projectsUpdated', loadProjects);
-
-    return () => {
-      window.removeEventListener('projectsUpdated', loadProjects);
-    };
-  }, []);
-
-  // Reset form when modal closes or defaultProject changes
+  // Reset form when modal closes
   useEffect(() => {
     if (!isOpen) {
       setFormData({
+        projectId: '',
         subprojectName: '',
         plannedStartDate: '',
         plannedEndDate: '',
-        project: ''
+        status: 'pending'
       });
-    } else if (defaultProject) {
-      setFormData(prev => ({
+    } else if (defaultProjectId) {
+      setFormData((prev) => ({
         ...prev,
-        project: defaultProject
+        projectId: defaultProjectId
       }));
     }
-  }, [isOpen, defaultProject]);
+  }, [isOpen, defaultProjectId]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     setFormData({
@@ -135,72 +132,66 @@ const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
     });
   };
 
-  const handleCreateSubproject = () => {
+  const handleCreateSubproject = async () => {
     const missingFields: string[] = [];
-    
-    if (!formData.project) missingFields.push('Tag Project');
-    if (!formData.subprojectName) missingFields.push('Subproject Name');
+    if (!formData.projectId) missingFields.push('Tag Project');
+    if (!formData.subprojectName?.trim()) missingFields.push('Subproject Name');
     if (!formData.plannedStartDate) missingFields.push('Plan Start Date');
     if (!formData.plannedEndDate) missingFields.push('Plan End Date');
-    
+
     if (missingFields.length > 0) {
-      toast.showWarning(`Please fill in the following required fields: ${missingFields.join(', ')}`);
+      toast.showWarning(`Please fill in: ${missingFields.join(', ')}`);
       return;
     }
 
     if (new Date(formData.plannedEndDate) < new Date(formData.plannedStartDate)) {
-      toast.showWarning('Please enter appropriate end date. End date must be greater than or equal to start date.');
+      toast.showWarning('End date must be greater than or equal to start date.');
       return;
     }
 
-    // Generate a code from the subproject name
-    const defaultSubprojectsCount = defaultSubprojects.length;
-    const userSubprojectsCount = userSubprojects.length;
-    const code = formData.subprojectName
-      .split(' ')
-      .map(word => word.charAt(0).toUpperCase())
-      .join('')
-      .substring(0, 6) + String(defaultSubprojectsCount + userSubprojectsCount + 1).padStart(3, '0');
+    setIsSubmitting(true);
+    try {
+      const project = projects.find(
+        (p: any) => String(p.uuid || p.id) === formData.projectId
+      );
+      const tagProjectId = project?.id ?? formData.projectId;
 
-    const newSubproject: Subproject = {
-      id: Date.now().toString(),
-      name: formData.subprojectName,
-      code: code,
-      project: formData.project,
-      status: 'Pending',
-      progress: 0,
-      startDate: formData.plannedStartDate,
-      endDate: formData.plannedEndDate
-    };
+      const payload = {
+        name: formData.subprojectName.trim(),
+        start_date: formData.plannedStartDate,
+        end_date: formData.plannedEndDate,
+        tag_project: tagProjectId,
+        status: formData.status
+      };
 
-    // Save to localStorage
-    const savedSubprojects = localStorage.getItem('subprojects');
-    let existingSubprojects: any[] = [];
-    if (savedSubprojects) {
-      try {
-        existingSubprojects = JSON.parse(savedSubprojects);
-      } catch (e) {
-        console.error('Error parsing subprojects:', e);
+      const result = await masterDataAPI.createSubproject(payload);
+      const created = result?.data ?? result;
+
+      const newSubproject: Subproject = {
+        id: created?.uuid || String(created?.id || Date.now()),
+        name: created?.name || formData.subprojectName,
+        code: created?.code || `SUB${String(created?.id || '').padStart(3, '0')}`,
+        project: project?.project_name || project?.name || defaultProjectName || '',
+        status: created?.status || formData.status,
+        progress: created?.progress ?? 0,
+        startDate: created?.start_date || formData.plannedStartDate,
+        endDate: created?.end_date || formData.plannedEndDate
+      };
+
+      toast.showSuccess('Subproject created successfully!');
+
+      if (onSubprojectCreated) {
+        onSubprojectCreated(newSubproject);
       }
+      if (onSuccess) {
+        onSuccess();
+      }
+      onClose();
+    } catch (error: any) {
+      toast.showError(error?.message || 'Failed to create subproject');
+    } finally {
+      setIsSubmitting(false);
     }
-
-    existingSubprojects.push(newSubproject);
-    localStorage.setItem('subprojects', JSON.stringify(existingSubprojects));
-    
-    // Trigger event to update other components
-    window.dispatchEvent(new Event('subprojectsUpdated'));
-
-    toast.showSuccess('Subproject created successfully!');
-    
-    if (onSubprojectCreated) {
-      onSubprojectCreated(newSubproject);
-    }
-    
-    if (onSuccess) {
-      onSuccess();
-    }
-    
-    onClose();
   };
 
   if (!isOpen) return null;
@@ -208,47 +199,49 @@ const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
       <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-2xl max-h-[90vh] overflow-y-auto`}>
-        {/* Modal Header */}
         <div className="flex items-center justify-between p-6 border-b border-inherit">
           <div>
             <h2 className={`text-xl font-black ${textPrimary}`}>Create New Subproject</h2>
-            <p className={`text-sm ${textSecondary} mt-1`}>Enter subproject details below</p>
+            <p className={`text-sm ${textSecondary} mt-1`}>
+              Enter subproject details below. Projects shown are associated with your account.
+            </p>
           </div>
           <button
             onClick={onClose}
-            className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+            disabled={isSubmitting}
+            className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors disabled:opacity-50`}
           >
             <X className={`w-5 h-5 ${textSecondary}`} />
           </button>
         </div>
 
-        {/* Modal Body */}
         <div className="p-6 space-y-6">
-          {/* Tag Project */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
               Tag Project <span className="text-red-500">*</span>
             </label>
             <select
-              name="project"
-              value={formData.project}
+              name="projectId"
+              value={formData.projectId}
               onChange={handleInputChange}
+              disabled={isLoadingProjects || isSubmitting}
               className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
-                isDark 
-                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
+                isDark
+                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800'
                   : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
             >
-              <option value="">-- Select Project --</option>
-              {projects.map((project) => (
-                <option key={project.id} value={project.name}>
-                  {project.name} {project.code ? `(${project.code})` : ''}
+              <option value="">
+                {isLoadingProjects ? 'Loading projects...' : '-- Select Project --'}
+              </option>
+              {projects.map((project: any) => (
+                <option key={project.uuid || project.id} value={project.uuid || String(project.id)}>
+                  {project.project_name || project.name} {project.code ? `(${project.code})` : ''}
                 </option>
               ))}
             </select>
           </div>
 
-          {/* Subproject Name */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
               Subproject Name <span className="text-red-500">*</span>
@@ -259,15 +252,15 @@ const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
               value={formData.subprojectName}
               onChange={handleInputChange}
               placeholder="Enter subproject name"
+              disabled={isSubmitting}
               className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                isDark 
-                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
+                isDark
+                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]'
                   : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
             />
           </div>
 
-          {/* Plan Start Date */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
               Plan Start Date <span className="text-red-500">*</span>
@@ -277,15 +270,15 @@ const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
               name="plannedStartDate"
               value={formData.plannedStartDate}
               onChange={handleInputChange}
+              disabled={isSubmitting}
               className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                isDark 
-                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
+                isDark
+                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]'
                   : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
             />
           </div>
 
-          {/* Plan End Date */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
               Plan End Date <span className="text-red-500">*</span>
@@ -296,31 +289,56 @@ const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
               value={formData.plannedEndDate}
               onChange={handleInputChange}
               min={formData.plannedStartDate}
+              disabled={isSubmitting}
               className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                isDark 
-                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
+                isDark
+                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]'
                   : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
             />
+          </div>
+
+          <div>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+              Status
+            </label>
+            <select
+              name="status"
+              value={formData.status}
+              onChange={handleInputChange}
+              disabled={isSubmitting}
+              className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all cursor-pointer ${
+                isDark
+                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800'
+                  : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
+              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+            >
+              <option value="closed">Closed</option>
+              <option value="pending">Pending</option>
+              <option value="completed">Completed</option>
+              <option value="ongoing">Ongoing</option>
+            </select>
           </div>
         </div>
 
-        {/* Modal Footer */}
         <div className={`flex items-center justify-end gap-3 p-6 border-t border-inherit`}>
           <button
             onClick={onClose}
+            disabled={isSubmitting}
             className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
               isDark
                 ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
                 : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-            }`}
+            } disabled:opacity-50`}
           >
             Cancel
           </button>
           <button
             onClick={handleCreateSubproject}
-            className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642]/90 text-white transition-all shadow-md"
+            disabled={isSubmitting || isLoadingProjects || projects.length === 0}
+            className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642]/90 text-white transition-all shadow-md disabled:opacity-50 flex items-center gap-2"
           >
+            {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
             Create
           </button>
         </div>

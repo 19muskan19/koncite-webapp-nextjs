@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode } from 'react';
-import { userAPI } from '../services/api';
+import { userAPI, masterDataAPI } from '../services/api';
 
 interface User {
   id: number;
@@ -9,12 +9,19 @@ interface User {
   email: string;
   phone?: string;
   company_name?: string;
+  company_id?: number;
   country?: string;
   [key: string]: any;
 }
 
+export interface CompanyInfo {
+  name: string;
+  logo?: string | null;
+}
+
 interface UserContextType {
   user: User | null;
+  company: CompanyInfo | null;
   isLoading: boolean;
   error: string | null;
   isAuthenticated: boolean;
@@ -26,6 +33,7 @@ const UserContext = createContext<UserContextType | undefined>(undefined);
 
 export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
+  const [company, setCompany] = useState<CompanyInfo | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   
@@ -53,6 +61,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     if (!token || !isAuthenticated) {
       setUser(null);
+      setCompany(null);
       setIsLoading(false);
       return;
     }
@@ -73,9 +82,18 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         
         if (userData && userData.name) {
           console.log('UserContext: Setting user from profile:', userData.name);
-          console.log('UserContext: User ID:', userData.id);
           console.log('UserContext: User company_id:', userData.company_id);
           setUser(userData);
+          // Company from profile: nested company or company_name (entered at signup)
+          const profileCompany = userData.company || userData.company_data || userData.companies;
+          if (profileCompany && (profileCompany.registration_name || profileCompany.name)) {
+            setCompany({
+              name: profileCompany.registration_name || profileCompany.name || '',
+              logo: profileCompany.logo || profileCompany.logo_url || null
+            });
+          } else if (userData.company_name) {
+            setCompany({ name: userData.company_name, logo: userData.company_logo || null });
+          }
         } else {
           console.warn('UserContext: Profile fetched but no user data or name found:', response);
           console.warn('UserContext: Response structure:', JSON.stringify(response, null, 2));
@@ -124,6 +142,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
       
       setUser(null);
+      setCompany(null);
       
       // If 401, clear auth (cookies and localStorage)
       if (err.status === 401 || err.response?.status === 401) {
@@ -144,6 +163,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const clearUser = () => {
     setUser(null);
+    setCompany(null);
     setError(null);
     // Clear cookies and localStorage
     const { removeCookie } = require('../utils/cookies');
@@ -171,6 +191,10 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (userData && userData.name) {
         console.log('UserContext: Setting user with name:', userData.name);
         setUser(userData);
+        // Company name from login (entered at signup)
+        if (userData.company_name) {
+          setCompany({ name: userData.company_name, logo: userData.company_logo || null });
+        }
         setIsLoading(false);
         setError(null);
       } else {
@@ -213,8 +237,38 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
   }, []);
 
+  // Fetch company by company_id when user has it but company not yet loaded from profile
+  useEffect(() => {
+    if (!user || company) return;
+    if (!user.company_id && !user.company_name) return;
+
+    const fetchCompany = async () => {
+      try {
+        const companies = await masterDataAPI.getCompanies();
+        const matched = companies.find((c: any) =>
+          String(c.id) === String(user.company_id) ||
+          String(c.numericId || c.id) === String(user.company_id)
+        );
+        if (matched) {
+          setCompany({
+            name: matched.registration_name || matched.name || '',
+            logo: matched.logo || matched.logo_url || null
+          });
+        } else if (user.company_name) {
+          setCompany({ name: user.company_name, logo: user.company_logo || null });
+        }
+      } catch {
+        if (user.company_name) {
+          setCompany({ name: user.company_name, logo: user.company_logo || null });
+        }
+      }
+    };
+
+    fetchCompany();
+  }, [user?.id, user?.company_id, user?.company_name]);
+
   return (
-    <UserContext.Provider value={{ user, isLoading, error, isAuthenticated, refreshUser, clearUser }}>
+    <UserContext.Provider value={{ user, company, isLoading, error, isAuthenticated, refreshUser, clearUser }}>
       {children}
     </UserContext.Provider>
   );

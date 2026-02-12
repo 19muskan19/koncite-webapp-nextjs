@@ -5,7 +5,6 @@ import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
 import { Activity, Download, Plus, Trash2, Loader2, Edit, Search, RefreshCw, Upload, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import CreateActivityModal from './Modals/CreateActivityModal';
-import ActivityBulkUploadModal from './Modals/ActivityBulkUploadModal';
 import { masterDataAPI } from '../../services/api';
 import { useUser } from '../../contexts/UserContext';
 import * as XLSX from 'xlsx';
@@ -81,11 +80,12 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
-  const [showBulkUploadModal, setShowBulkUploadModal] = useState<boolean>(false);
   const [editingActivityId, setEditingActivityId] = useState<string | null>(null);
+  const [addUnderHeadingId, setAddUnderHeadingId] = useState<string | null>(null);
   const [entriesPerPage, setEntriesPerPage] = useState<number>(25);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
+  const [units, setUnits] = useState<Array<{ id: number; unit: string }>>([]);
   const [projects, setProjects] = useState<Array<{ id: number; uuid: string; project_name: string }>>([]);
   const [subprojects, setSubprojects] = useState<Array<{ id: number; uuid: string; name: string; project_id?: number }>>([]);
   const [isLoadingActivities, setIsLoadingActivities] = useState<boolean>(false);
@@ -99,6 +99,20 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
   const cardClass = isDark ? 'card-dark' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
+
+  // Fetch units for unit_id -> unit name lookup when API returns only unit_id
+  useEffect(() => {
+    const fetchUnits = async () => {
+      if (!isAuthenticated) return;
+      try {
+        const fetched = await masterDataAPI.getUnits();
+        setUnits((fetched || []).map((u: any) => ({ id: u.id, unit: (u.unit || u.name || '').toString().trim() })));
+      } catch {
+        setUnits([]);
+      }
+    };
+    fetchUnits();
+  }, [isAuthenticated]);
 
   // Fetch projects from API
   useEffect(() => {
@@ -175,13 +189,28 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
       const subprojectIdNum = selectedSubprojectId 
         ? subprojects.find(s => s.uuid === selectedSubprojectId || String(s.id) === selectedSubprojectId)?.id
         : undefined;
-      
-      const result = await masterDataAPI.getActivities(
-        projectIdNum || selectedProjectId,
-        subprojectIdNum
-      );
+
+      // Fetch activities and units in parallel (units needed to resolve unit_id -> unit name)
+      const [result, fetchedUnits] = await Promise.all([
+        masterDataAPI.getActivities(projectIdNum || selectedProjectId, subprojectIdNum),
+        units.length > 0 ? Promise.resolve(units) : masterDataAPI.getUnits().then((u: any[]) => u || []).catch(() => [])
+      ]);
+      const unitsList = units.length > 0 ? units : (fetchedUnits || []).map((u: any) => ({ id: u.id, unit: (u.unit || u.name || '').toString().trim() }));
+      if (unitsList.length > 0 && units.length === 0) setUnits(unitsList);
+
       const fetchedActivities = Array.isArray(result) ? result : (result?.data ?? []);
       setActivitiesEmptyMessage(fetchedActivities.length === 0 && (result as any)?.message ? (result as any).message : null);
+
+      const getUnitName = (activity: any) => {
+        const fromApi = activity.units?.unit || activity.units?.name || activity.unit?.unit || activity.unit?.name || (typeof activity.unit === 'string' ? activity.unit : '');
+        if (fromApi) return fromApi;
+        const uid = activity.unit_id || activity.unit?.id || activity.units?.id;
+        if (uid != null) {
+          const u = unitsList.find((x: { id: number }) => x.id === Number(uid) || String(x.id) === String(uid));
+          return u?.unit || '';
+        }
+        return '';
+      };
 
       // Transform API response to match ActivityItem interface
       const transformedActivities = fetchedActivities.map((activity: any) => ({
@@ -195,8 +224,8 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
         subproject: activity.subproject?.name || activity.subproject_name || '',
         subproject_id: activity.subproject_id || activity.subproject?.id,
         type: activity.type || '',
-        unit: activity.unit?.unit || activity.unit || '',
-        unit_id: activity.unit_id || activity.unit?.id,
+        unit: getUnitName(activity),
+        unit_id: activity.unit_id || activity.unit?.id || activity.units?.id,
         qty: activity.qty || activity.quantity || 0,
         quantity: activity.quantity || activity.qty || 0,
         rate: activity.rate || 0,
@@ -242,8 +271,24 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
     setIsSearching(true);
     try {
       const projectIdNum = projects.find(p => p.uuid === selectedProjectId || String(p.id) === selectedProjectId)?.id;
-      const searchResults = await masterDataAPI.searchActivities(query, projectIdNum || selectedProjectId);
-      
+      const [searchResults, unitsForSearch] = await Promise.all([
+        masterDataAPI.searchActivities(query, projectIdNum || selectedProjectId),
+        units.length > 0 ? Promise.resolve(units) : masterDataAPI.getUnits().then((u: any[]) => (u || []).map((x: any) => ({ id: x.id, unit: (x.unit || x.name || '').toString().trim() }))).catch(() => [])
+      ]);
+      const unitsList = units.length > 0 ? units : unitsForSearch || [];
+      if (unitsList.length > 0 && units.length === 0) setUnits(unitsList);
+
+      const getUnitName = (activity: any) => {
+        const fromApi = activity.units?.unit || activity.units?.name || activity.unit?.unit || activity.unit?.name || (typeof activity.unit === 'string' ? activity.unit : '');
+        if (fromApi) return fromApi;
+        const uid = activity.unit_id || activity.unit?.id || activity.units?.id;
+        if (uid != null) {
+          const u = unitsList.find((x: { id: number }) => x.id === Number(uid) || String(x.id) === String(uid));
+          return u?.unit || '';
+        }
+        return '';
+      };
+
       // Transform API response
       const transformedActivities = searchResults.map((activity: any) => ({
         id: activity.uuid || String(activity.id),
@@ -256,8 +301,8 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
         subproject: activity.subproject?.name || activity.subproject_name || '',
         subproject_id: activity.subproject_id || activity.subproject?.id,
         type: activity.type || '',
-        unit: activity.unit?.unit || activity.unit || '',
-        unit_id: activity.unit_id || activity.unit?.id,
+        unit: getUnitName(activity),
+        unit_id: activity.unit_id || activity.unit?.id || activity.units?.id,
         qty: activity.qty || activity.quantity || 0,
         quantity: activity.quantity || activity.qty || 0,
         rate: activity.rate || 0,
@@ -292,45 +337,63 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
     return () => clearTimeout(timeoutId);
   }, [searchQuery]);
 
-  // Build tree/hierarchy: headings first, then their child activities under each heading
+  // Build tree/hierarchy: recursive - headings first, then their descendants (activities under headings, activities under activities)
+  type TreeNode =
+    | { type: 'row'; item: ActivityItem; depth: number; srNo: string; groupIndex: number; isNewGroup: boolean; childIds?: string[] }
+    | { type: 'add'; parentHeading: ActivityItem; groupIndex: number };
   const treeNodes = useMemo(() => {
     const isHeading = (a: ActivityItem) => (a.type || '').toLowerCase() === 'heading';
     const headings = activities.filter(isHeading);
-    const children = activities.filter((a) => !isHeading(a));
+    const allActivities = activities.filter((a) => !isHeading(a));
     const getParentId = (a: ActivityItem) => a.parent_id ?? a.heading;
     const getNodeId = (a: ActivityItem) => a.numericId ?? (typeof a.id === 'string' && !isNaN(Number(a.id)) ? Number(a.id) : null);
+    const matchesParent = (child: ActivityItem, parent: ActivityItem) => {
+      const pid = getParentId(child);
+      if (pid == null) return false;
+      const parentNodeId = getNodeId(parent);
+      return pid === parentNodeId || String(pid) === String(parent.id) || String(pid) === String(parent.uuid);
+    };
 
-    type TreeNode = { item: ActivityItem; depth: number; srNo: string; groupIndex: number; isNewGroup: boolean; childIds?: string[] };
     const result: TreeNode[] = [];
     let headingNo = 0;
     let groupIdx = 0;
-    for (const h of headings) {
-      const hid = getNodeId(h);
-      headingNo++;
-      const kids = children.filter((c) => {
-        const pid = getParentId(c);
-        if (pid == null) return false;
-        return pid === hid || String(pid) === String(h.id);
-      });
-      const childIds = kids.map((k) => k.id);
-      result.push({ item: h, depth: 0, srNo: String(headingNo), groupIndex: groupIdx, isNewGroup: true, childIds });
+    const allPlacedIds = new Set<string>();
+
+    const addChildrenRecursive = (parent: ActivityItem, parentSrNo: string, depth: number, groupIdxVal: number): { ids: string[]; nodes: Extract<TreeNode, { type: 'row' }>[] } => {
+      const kids = allActivities.filter((c) => matchesParent(c, parent));
+      const allDescendantIds: string[] = [];
+      const nodes: Extract<TreeNode, { type: 'row' }>[] = [];
       kids.forEach((k, idx) => {
-        result.push({ item: k, depth: 1, srNo: `${headingNo}.${idx + 1}`, groupIndex: groupIdx, isNewGroup: false });
+        allPlacedIds.add(k.id);
+        allDescendantIds.push(k.id);
+        const srNo = `${parentSrNo}.${idx + 1}`;
+        const nested = addChildrenRecursive(k, srNo, depth + 1, groupIdxVal);
+        allDescendantIds.push(...nested.ids);
+        nodes.push({ type: 'row', item: k, depth, srNo, groupIndex: groupIdxVal, isNewGroup: false, childIds: nested.ids.length ? nested.ids : undefined });
+        nodes.push(...nested.nodes);
       });
+      return { ids: allDescendantIds, nodes };
+    };
+
+    for (const h of headings) {
+      headingNo++;
+      const { ids: allChildIds, nodes: childRows } = addChildrenRecursive(h, String(headingNo), 1, groupIdx);
+      result.push({ type: 'row', item: h, depth: 0, srNo: String(headingNo), groupIndex: groupIdx, isNewGroup: true, childIds: allChildIds.length ? allChildIds : undefined });
+      result.push({ type: 'add', parentHeading: h, groupIndex: groupIdx });
+      result.push(...childRows);
       groupIdx++;
     }
-    // Orphan activities (no matching parent) - list at end with own SR (e.g. 4, 5)
-    const matchedIds = new Set(result.filter((r) => r.depth === 1).map((r) => r.item.id));
-    const orphans = children.filter((c) => !matchedIds.has(c.id));
+    // Orphan activities (no matching parent in our set) - list at end with own SR
+    const orphans = allActivities.filter((c) => !allPlacedIds.has(c.id));
     orphans.forEach((o) => {
       headingNo++;
-      result.push({ item: o, depth: 1, srNo: String(headingNo), groupIndex: groupIdx, isNewGroup: true });
+      result.push({ type: 'row', item: o, depth: 1, srNo: String(headingNo), groupIndex: groupIdx, isNewGroup: true });
       groupIdx++;
     });
     return result;
   }, [activities]);
 
-  const filteredActivities = treeNodes;
+  const filteredActivities: TreeNode[] = treeNodes;
   const totalPages = Math.max(1, Math.ceil(filteredActivities.length / entriesPerPage));
   const startIndex = (currentPage - 1) * entriesPerPage;
   const paginatedActivities = filteredActivities.slice(startIndex, startIndex + entriesPerPage);
@@ -397,20 +460,23 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
   };
 
   const handleDownloadExcel = () => {
-    const headers = ['SR No', 'Activities', 'Unit', 'Qty', 'Rate', 'Amount', 'Start Date', 'End Date'];
-    const rows = treeNodes.map(({ item, srNo }) => {
-      const prefix = (item.type || '').toLowerCase() === 'heading' ? '' : '  ';
-      return [
-        srNo,
-        prefix + (item.name || item.activities || ''),
-        item.unit || '',
-        item.qty ?? '',
-        item.rate ?? '',
-        item.amount ?? '',
-        item.startDate || '',
-        item.endDate || ''
-      ];
-    });
+    const headers = ['Type', 'SL No', 'Activities', 'Units', 'Qty', 'Rate', 'Amount', 'Start Date (dd-mm-yyyy)', 'End Date (dd-mm-yyyy)'];
+    const rows = treeNodes
+      .filter((n): n is Extract<typeof n, { type: 'row' }> => n.type === 'row')
+      .map(({ item, srNo }) => {
+        const type = (item.type || '').toLowerCase() === 'heading' ? 'heading' : 'activity';
+        return [
+          type,
+          srNo,
+          item.name || item.activities || '',
+          item.unit || '',
+          item.qty ?? '',
+          item.rate ?? '',
+          item.amount ?? '',
+          item.startDate || item.start_date || '',
+          item.endDate || item.end_date || ''
+        ];
+      });
 
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
     const wb = XLSX.utils.book_new();
@@ -472,12 +538,11 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
             </button>
           )}
           <button 
-            onClick={() => setShowBulkUploadModal(true)}
-            disabled={!selectedProjectId}
-            className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${
-              isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-            } shadow-sm ${!selectedProjectId ? 'opacity-50 cursor-not-allowed' : ''}`}
-            title={selectedProjectId ? 'Bulk Upload Activities' : 'Select a project first'}
+            disabled
+            className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all opacity-50 cursor-not-allowed ${
+              isDark ? 'bg-slate-700 text-slate-100 border border-slate-600' : 'bg-white text-slate-900 border border-slate-200'
+            } shadow-sm`}
+            title="Bulk Upload"
           >
             <Upload className="w-4 h-4" /> <span className="hidden sm:inline">Bulk Upload</span><span className="sm:hidden">Bulk</span>
           </button>
@@ -568,7 +633,7 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
             </div>
             <div className={`p-4 rounded-xl border ${cardClass}`}>
               <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
-              <p className={`text-2xl font-black text-[#C2D642]`}>{filteredActivities.filter(a => (a.item as any)?.status === 'Active').length}</p>
+              <p className={`text-2xl font-black text-[#C2D642]`}>{filteredActivities.filter(a => a.type === 'row' && (a.item as any)?.status === 'Active').length}</p>
             </div>
             <div className={`p-4 rounded-xl border ${cardClass}`}>
               <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>
@@ -635,10 +700,10 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
             <table className="w-full">
               <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
                 <tr>
-                  <th className={`w-12 px-4 py-4 text-left ${textSecondary}`}></th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>SR No</th>
+                  <th className={`pl-6 py-4 text-left min-w-[80px] ${textSecondary}`}></th>
+                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>SL No</th>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Activities</th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Unit</th>
+                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Units</th>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Qty</th>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Rate</th>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Amount</th>
@@ -648,7 +713,44 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-inherit">
-                {paginatedActivities.map(({ item: row, depth, srNo, groupIndex, isNewGroup, childIds }) => (
+                {paginatedActivities.map((node, idx) => {
+                  if (node.type === 'add') {
+                    const parentId = String(node.parentHeading.numericId ?? node.parentHeading.id);
+                    const addIndentPx = 24 + 24; // depth 1 level - under heading
+                    return (
+                      <tr
+                        key={`add-${node.parentHeading.id}-${idx}`}
+                        className={`${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'} transition-colors`}
+                      >
+                        <td className="py-2 align-middle" style={{ paddingLeft: addIndentPx, minWidth: 56 }} />
+                        <td className="px-4 py-2 align-middle" />
+                        <td className="py-2 align-middle" style={{ paddingLeft: addIndentPx }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAddUnderHeadingId(parentId);
+                              setEditingActivityId(null);
+                              setShowCreateModal(true);
+                            }}
+                            className={`flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm font-bold transition-all ${
+                              isDark
+                                ? 'text-[#C2D642] hover:bg-[#C2D642]/20'
+                                : 'text-[#C2D642] hover:bg-[#C2D642]/10'
+                            }`}
+                            title="Add activity under this heading"
+                          >
+                            <Plus className="w-4 h-4" />
+                            <span>Add activity</span>
+                          </button>
+                        </td>
+                        <td colSpan={7} className="px-4 py-2 align-middle" />
+                      </tr>
+                    );
+                  }
+                  const { item: row, depth, srNo, groupIndex, isNewGroup, childIds } = node;
+                  const isHeading = (row.type || '').toLowerCase() === 'heading';
+                  const indentPx = 24 + depth * 24;
+                  return (
                   <tr
                     key={row.id}
                     className={`transition-colors ${
@@ -658,43 +760,48 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
                           : 'border-t-2 border-slate-200'
                         : ''
                     } ${
-                      depth === 0
+                      isHeading
                         ? isDark
-                          ? 'bg-[#C2D642]/15'
-                          : 'bg-[#C2D642]/10'
+                          ? 'bg-[#4a5d23]'
+                          : 'bg-[#C2D642]/20'
                         : isDark
-                          ? 'bg-slate-800/25'
+                          ? 'bg-slate-800/50'
                           : 'bg-slate-50'
-                    } ${isDark ? 'hover:bg-slate-800/40' : 'hover:bg-slate-100'}`}
+                    } ${isDark ? (isHeading ? 'hover:bg-[#4a5d23]/90' : 'hover:bg-slate-800/70') : 'hover:bg-slate-100'}`}
                   >
-                    <td className={`w-12 px-4 py-4 ${depth > 0 ? 'pl-8' : ''}`}>
-                      <CheckboxCell
-                        row={row}
-                        childIds={childIds}
-                        selectedIds={selectedIds}
-                        isDark={isDark}
-                        onToggle={() => toggleSelection(row, childIds)}
-                      />
+                    <td className="py-4 align-middle" style={{ paddingLeft: indentPx, minWidth: 56 }}>
+                      <div className="flex items-center justify-start">
+                        <CheckboxCell
+                          row={row}
+                          childIds={childIds}
+                          selectedIds={selectedIds}
+                          isDark={isDark}
+                          onToggle={() => toggleSelection(row, childIds)}
+                        />
+                      </div>
                     </td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{srNo}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
+                    <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary}`}>{srNo}</td>
+                    <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary}`}>
                       <div
-                        className={`flex items-center gap-2 ${depth > 0 ? `border-l-2 pl-3 ${isDark ? 'border-slate-600/50' : 'border-slate-300'}` : ''}`}
-                        style={{ paddingLeft: depth > 0 ? undefined : depth * 24 }}
+                        className={`flex items-center gap-2 ${depth > 0 ? `border-l-2 pl-2 ${isDark ? 'border-slate-600/50' : 'border-slate-300'}` : ''}`}
+                        style={{ paddingLeft: indentPx }}
                       >
+                        {depth > 0 && (
+                          <span className={`text-xs flex-shrink-0 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>└</span>
+                        )}
                         <span>{row.name || row.activities || '-'}</span>
-                        {(row.type || '').toLowerCase() === 'heading' && (
-                          <span className="ml-2 text-xs font-bold text-[#C2D642]">(Heading)</span>
+                        {isHeading && (
+                          <span className="ml-2 text-xs font-medium italic text-emerald-400">(Heading)</span>
                         )}
                       </div>
                     </td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{(row.type || '').toLowerCase() === 'heading' ? '' : (row.unit || '-')}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{(row.type || '').toLowerCase() === 'heading' ? '' : (row.qty ?? '-')}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{(row.type || '').toLowerCase() === 'heading' ? '' : (row.rate ?? '-')}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{(row.type || '').toLowerCase() === 'heading' ? '' : (row.amount ?? '-')}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{(row.type || '').toLowerCase() === 'heading' ? '' : (row.startDate || '-')}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{(row.type || '').toLowerCase() === 'heading' ? '' : (row.endDate || '-')}</td>
-                    <td className="px-6 py-4 text-right">
+                    <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary} ${!isHeading ? 'text-xs' : ''}`}>{(row.type || '').toLowerCase() === 'heading' ? '' : (row.unit || '-')}</td>
+                    <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary} ${!isHeading ? 'text-xs' : ''}`}>{(row.type || '').toLowerCase() === 'heading' ? '' : (row.qty ?? '-')}</td>
+                    <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary} ${!isHeading ? 'text-xs' : ''}`}>{(row.type || '').toLowerCase() === 'heading' ? '' : (row.rate ?? '-')}</td>
+                    <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary} ${!isHeading ? 'text-xs' : ''}`}>{(row.type || '').toLowerCase() === 'heading' ? '' : (row.amount ?? '-')}</td>
+                    <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary} ${!isHeading ? 'text-xs' : ''}`}>{(row.type || '').toLowerCase() === 'heading' ? '' : (row.startDate || '-')}</td>
+                    <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary} ${!isHeading ? 'text-xs' : ''}`}>{(row.type || '').toLowerCase() === 'heading' ? '' : (row.endDate || '-')}</td>
+                    <td className="px-4 py-4 text-right align-middle">
                       <div className="flex items-center justify-end gap-2">
                         <button 
                           onClick={() => handleEditActivity(row)}
@@ -713,7 +820,8 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -803,15 +911,16 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
             <p className={`text-sm ${textSecondary} mb-3`}>{activitiesEmptyMessage}</p>
           )}
           <p className={`text-sm ${textSecondary} mb-6`}>
-            {selectedProjectId && !searchQuery.trim() && 'Add activities using Bulk Upload or Create New'}
+            {selectedProjectId && !searchQuery.trim() && 'Add activities using Create New'}
           </p>
           {selectedProjectId && !searchQuery.trim() && (
             <div className="flex flex-wrap justify-center gap-3">
               <button
-                onClick={() => setShowBulkUploadModal(true)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
-                  isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100' : 'bg-slate-200 hover:bg-slate-300 text-slate-900'
+                disabled
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all opacity-50 cursor-not-allowed ${
+                  isDark ? 'bg-slate-700 text-slate-100' : 'bg-slate-200 text-slate-900'
                 }`}
+                title="Bulk Upload"
               >
                 <Upload className="w-4 h-4" /> Bulk Upload
               </button>
@@ -833,6 +942,7 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
         onClose={() => {
           setShowCreateModal(false);
           setEditingActivityId(null);
+          setAddUnderHeadingId(null);
         }}
         onSuccess={handleActivityCreated}
         editingActivityId={editingActivityId}
@@ -841,22 +951,9 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
         subprojects={subprojects}
         defaultProjectId={selectedProjectId}
         defaultSubprojectId={selectedSubprojectId}
+        defaultHeadingId={addUnderHeadingId ?? undefined}
       />
 
-      {/* Bulk Upload Modal */}
-      <ActivityBulkUploadModal
-        theme={theme}
-        isOpen={showBulkUploadModal}
-        onClose={() => setShowBulkUploadModal(false)}
-        onSuccess={() => {
-          setShowBulkUploadModal(false);
-          if (selectedProjectId) fetchActivities();
-        }}
-        projects={projects}
-        subprojects={subprojects}
-        selectedProjectId={selectedProjectId}
-        selectedSubprojectId={selectedSubprojectId}
-      />
     </div>
   );
 };

@@ -8,6 +8,10 @@ import {
   Edit,
   Search,
   X,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   Building2,
   Layers,
   Activity,
@@ -31,6 +35,7 @@ import { masterDataAPI } from '../../services/api';
 
 interface Project {
   id: string;
+  numericId?: number; // Backend APIs often expect numeric project ID
   name: string;
   logo: string;
   code?: string;
@@ -40,6 +45,7 @@ interface Project {
 
 interface Subproject {
   id: string;
+  numericId?: number;
   name: string;
   code: string;
   project: string;
@@ -179,6 +185,8 @@ interface DPRProps {
   theme: ThemeType;
 }
 
+const PAGE_SIZE = 10;
+
 const DPR: React.FC<DPRProps> = ({ theme }) => {
   const { isAuthenticated } = useUser();
   const [showProjectSelection, setShowProjectSelection] = useState<boolean>(false);
@@ -206,6 +214,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const [contractors, setContractors] = useState<Contractor[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [selectedSubproject, setSelectedSubproject] = useState<Subproject | null>(null);
+  // DPR report values (quantity, contractor, remarks, images) - local only, never sync to masters
   const [selectedActivities, setSelectedActivities] = useState<Map<string, SelectedActivity>>(new Map());
   const [selectedMaterials, setSelectedMaterials] = useState<Map<string, SelectedMaterial>>(new Map());
   const [selectedLabours, setSelectedLabours] = useState<Map<string, SelectedLabour>>(new Map());
@@ -217,12 +226,70 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const [hindranceProblems, setHindranceProblems] = useState<HindranceProblem[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [isLoadingProjects, setIsLoadingProjects] = useState<boolean>(false);
+
+  // Pagination state per sector (reset when modal/search changes)
+  const [projectPage, setProjectPage] = useState(1);
+  const [subprojectPage, setSubprojectPage] = useState(1);
+  const [activityPage, setActivityPage] = useState(1);
+  const [materialsPage, setMaterialsPage] = useState(1);
+  const [laboursPage, setLaboursPage] = useState(1);
+  const [assetPage, setAssetPage] = useState(1);
+  const [safetyPage, setSafetyPage] = useState(1);
+  const [hindrancePage, setHindrancePage] = useState(1);
   
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
   const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
+
+  // Reusable pagination controls
+  const PaginationBar = ({ currentPage, totalItems, onPageChange }: { currentPage: number; totalItems: number; onPageChange: (page: number) => void }) => {
+    if (totalItems <= PAGE_SIZE) return null;
+    const totalPages = Math.ceil(totalItems / PAGE_SIZE);
+    const start = (currentPage - 1) * PAGE_SIZE + 1;
+    const end = Math.min(currentPage * PAGE_SIZE, totalItems);
+    return (
+      <div className={`flex items-center justify-between px-4 py-3 border-t border-inherit ${isDark ? 'bg-slate-800/30' : 'bg-slate-50/50'}`}>
+        <span className={`text-sm ${textSecondary}`}>
+          Showing {start}–{end} of {totalItems}
+        </span>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => onPageChange(1)}
+            disabled={currentPage <= 1}
+            className={`p-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}
+          >
+            <ChevronsLeft className={`w-4 h-4 ${textSecondary}`} />
+          </button>
+          <button
+            onClick={() => onPageChange(currentPage - 1)}
+            disabled={currentPage <= 1}
+            className={`p-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}
+          >
+            <ChevronLeft className={`w-4 h-4 ${textSecondary}`} />
+          </button>
+          <span className={`px-3 py-1 text-sm font-bold ${textPrimary}`}>
+            Page {currentPage} of {totalPages}
+          </span>
+          <button
+            onClick={() => onPageChange(currentPage + 1)}
+            disabled={currentPage >= totalPages}
+            className={`p-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}
+          >
+            <ChevronRight className={`w-4 h-4 ${textSecondary}`} />
+          </button>
+          <button
+            onClick={() => onPageChange(totalPages)}
+            disabled={currentPage >= totalPages}
+            className={`p-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}
+          >
+            <ChevronsRight className={`w-4 h-4 ${textSecondary}`} />
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   // Load projects from API (user-associated projects)
   useEffect(() => {
@@ -265,6 +332,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           
           return {
             id: uuid || String(numericId),
+            numericId: Number.isFinite(Number(numericId)) ? Number(numericId) : undefined,
             name: p.project_name || p.name || '',
             logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name || p.name || '')}&background=C2D642&color=fff&size=128`,
             code: p.code || '',
@@ -315,10 +383,12 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   // DPR subprojects - fetched via API when project is selected
   const [isLoadingSubprojects, setIsLoadingSubprojects] = useState<boolean>(false);
   const [subprojectsSearchResults, setSubprojectsSearchResults] = useState<Subproject[]>([]); // Results from projectWiseSubprojectSearch when searching
+  const [subprojectRefreshKey, setSubprojectRefreshKey] = useState(0); // Increment to trigger subproject refetch
 
   // Transform API subproject response to DPR Subproject interface
   const transformSubproject = (sub: any, projectName: string): Subproject => ({
     id: sub.uuid || String(sub.id),
+    numericId: Number.isFinite(Number(sub.id)) ? Number(sub.id) : undefined,
     name: sub.name || sub.subproject_name || '',
     code: sub.code || `SUB${String(sub.id || '').padStart(3, '0')}`,
     project: projectName,
@@ -329,7 +399,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     endDate: sub.end_date || sub.planned_end_date || sub.endDate || ''
   });
 
-  // Fetch subprojects when project is selected - POST /fetch-project-subproject
+  // Fetch subprojects when project is selected - try numeric ID first, then UUID
   useEffect(() => {
     if (!selectedProject) {
       setSubprojects([]);
@@ -340,13 +410,13 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       setIsLoadingSubprojects(true);
       setSubprojectSearchQuery('');
       try {
-        const projectId = selectedProject.id; // UUID or numeric id from project
-        const result = await masterDataAPI.fetchProjectSubproject({ project_id: projectId });
+        // Prefer numeric ID - backend /project-subproject and /sub-project-list expect project_id
+        const projectId = selectedProject.numericId ?? selectedProject.id;
+        const result = await masterDataAPI.getSubprojects(projectId);
         const list = Array.isArray(result) ? result : result?.subProject || result?.data || [];
         const transformed = list.map((sub: any) => transformSubproject(sub, selectedProject.name));
         setSubprojects(transformed);
-      } catch (error: any) {
-        console.error('❌ Failed to fetch DPR subprojects:', error);
+      } catch {
         setSubprojects([]);
       } finally {
         setIsLoadingSubprojects(false);
@@ -354,7 +424,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     };
 
     fetchSubprojects();
-  }, [selectedProject]);
+  }, [selectedProject, subprojectRefreshKey]);
 
   // Search subprojects when user types - POST /project-wise-subproject-search
   useEffect(() => {
@@ -365,15 +435,15 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
     const timeoutId = setTimeout(async () => {
       try {
+        const projectId = selectedProject.numericId ?? selectedProject.id;
         const result = await masterDataAPI.projectWiseSubprojectSearch({
-          project_id: selectedProject.id,
+          project_id: projectId,
           search_keyword: subprojectSearchQuery.trim()
         });
         const list = Array.isArray(result) ? result : [];
         const transformed = list.map((sub: any) => transformSubproject(sub, selectedProject.name));
         setSubprojectsSearchResults(transformed);
-      } catch (error: any) {
-        console.error('❌ Failed to search DPR subprojects:', error);
+      } catch {
         setSubprojectsSearchResults([]);
       }
     }, 300);
@@ -392,6 +462,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     );
   }, [projects, projectSearchQuery]);
 
+  const paginatedProjects = useMemo(() => {
+    const start = (projectPage - 1) * PAGE_SIZE;
+    return filteredProjects.slice(start, start + PAGE_SIZE);
+  }, [filteredProjects, projectPage]);
+
   // Filter subprojects: use search API results when searching, else use fetched subprojects
   const filteredSubprojects = useMemo(() => {
     if (!selectedProject) return [];
@@ -400,6 +475,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     }
     return subprojects;
   }, [subprojects, subprojectsSearchResults, selectedProject, subprojectSearchQuery]);
+
+  const paginatedSubprojects = useMemo(() => {
+    const start = (subprojectPage - 1) * PAGE_SIZE;
+    return filteredSubprojects.slice(start, start + PAGE_SIZE);
+  }, [filteredSubprojects, subprojectPage]);
 
   const handleCreateNewDPR = () => {
     setShowProjectSelection(true);
@@ -411,6 +491,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setShowSubprojectSelection(true);
     setProjectSearchQuery('');
     setSubprojectSearchQuery('');
+  };
+
+  const handleSubprojectStatusChange = (subprojectId: string, newStatus: string) => {
+    setSubprojects(prev => prev.map(s => s.id === subprojectId ? { ...s, status: newStatus } : s));
+    setSubprojectsSearchResults(prev => prev.map(s => s.id === subprojectId ? { ...s, status: newStatus } : s));
   };
 
   const handleSelectSubproject = (subproject: Subproject) => {
@@ -428,131 +513,133 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setSubprojectSearchQuery('');
   };
 
-  // Load contractors from vendors
+  const resetDPRForm = () => {
+    setShowProjectSelection(false);
+    setShowSubprojectSelection(false);
+    setShowActivitySelection(false);
+    setShowMaterialSelection(false);
+    setShowLabourSelection(false);
+    setShowAssetSelection(false);
+    setShowSafetySelection(false);
+    setShowHindranceSelection(false);
+    setShowDPRComplete(false);
+    setSelectedProject(null);
+    setSelectedSubproject(null);
+    setSelectedActivities(new Map());
+    setSelectedMaterials(new Map());
+    setSelectedLabours(new Map());
+    setSelectedAssets(new Map());
+    setSelectedSafetyProblems(new Map());
+    setSelectedHindranceProblems(new Map());
+    setProjectSearchQuery('');
+    setSubprojectSearchQuery('');
+    setAssetSearchQuery('');
+    setProjectPage(1);
+    setSubprojectPage(1);
+    setActivityPage(1);
+    setMaterialsPage(1);
+    setLaboursPage(1);
+    setAssetPage(1);
+    setSafetyPage(1);
+    setHindrancePage(1);
+    setActivities([]);
+    setMaterials([]);
+    setLabours([]);
+    setAssets([]);
+    setSafetyProblems([]);
+    setHindranceProblems([]);
+  };
+
+  // Load contractors from vendors API (supplierContractorList with type 'contractor')
+  // Backend returns vendors where type is 'contractor' OR 'both' - associated with user's company
   useEffect(() => {
-    const loadContractors = () => {
-      const savedVendors = localStorage.getItem('vendors');
-      let contractorList: Contractor[] = [];
-      
-      if (savedVendors) {
-        try {
-          const parsed = JSON.parse(savedVendors);
-          contractorList = parsed
-            .filter((vendor: any) => vendor.type === 'contractor' || vendor.type === 'both')
-            .map((vendor: any) => ({
-              id: vendor.id,
-              name: vendor.name,
-              type: vendor.type
-            }));
-        } catch (e) {
-          console.error('Error parsing vendors:', e);
-        }
-      }
+    if (!showActivitySelection || !isAuthenticated) {
+      return;
+    }
 
-      // Add default contractors if none exist
-      if (contractorList.length === 0) {
-        contractorList = [
-          { id: '1', name: 'One Test Contractor', type: 'contractor' },
-          { id: '2', name: 'Ramji', type: 'contractor' },
-        ];
-      }
-
-      setContractors(contractorList);
-    };
-
-    loadContractors();
-
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'vendors') {
-        loadContractors();
+    const fetchContractors = async () => {
+      try {
+        const data = await masterDataAPI.getSupplierContractorList('contractor');
+        const list = Array.isArray(data) ? data : [];
+        const contractorList: Contractor[] = list.map((v: any) => ({
+          id: v.uuid || String(v.id),
+          name: v.name || '',
+          type: v.type || 'contractor'
+        }));
+        setContractors(contractorList);
+      } catch (err) {
+        console.error('Failed to fetch contractors:', err);
+        setContractors([]);
       }
     };
 
-    window.addEventListener('storage', handleStorageChange);
-    window.addEventListener('vendorsUpdated', loadContractors);
+    fetchContractors();
+  }, [showActivitySelection, isAuthenticated]);
 
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('vendorsUpdated', loadContractors);
-    };
-  }, []);
+  // Load activities from API (same as /masters/activities) when Select Activities modal opens
+  const [isLoadingActivities, setIsLoadingActivities] = useState(false);
+  const [activitiesRefreshKey, setActivitiesRefreshKey] = useState(0);
 
-  // Load activities from localStorage
   useEffect(() => {
-    const loadActivities = () => {
-      const defaultActivities: ActivityItem[] = [
-        { id: '1', name: 'Excavation & Misc', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', unit: 'Cum', createdAt: '2024-01-15T00:00:00.000Z' },
-        { id: '2', name: 'PCC', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', unit: 'Cum', createdAt: '2024-01-16T00:00:00.000Z' },
-        { id: '3', name: 'Steel Reinforcement', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', unit: 'Kgs', createdAt: '2024-01-17T00:00:00.000Z' },
-        { id: '4', name: 'Concrete Work', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', unit: 'Cum', createdAt: '2024-01-18T00:00:00.000Z' },
-        { id: '5', name: 'Masonry', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Cum', createdAt: '2024-01-19T00:00:00.000Z' },
-        { id: '6', name: 'Plastering, Gypsum, POP', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Sqm', createdAt: '2024-01-20T00:00:00.000Z' },
-        { id: '7', name: 'Water Proofing', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Sqm', createdAt: '2024-01-21T00:00:00.000Z' },
-        { id: '8', name: 'Doors & Windows', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Nos', createdAt: '2024-01-22T00:00:00.000Z' },
-        { id: '9', name: 'Tiling & Paver Work', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Sqm', createdAt: '2024-01-23T00:00:00.000Z' },
-        { id: '10', name: 'Railing & Fabrication work', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Rmt', createdAt: '2024-01-24T00:00:00.000Z' },
-        { id: '11', name: 'Electrical', project: 'Residential Complex A', subproject: 'Plumbing Installation', type: 'activity', unit: 'Nos', createdAt: '2024-01-25T00:00:00.000Z' },
-        { id: '12', name: 'Plumbing', project: 'Residential Complex A', subproject: 'Plumbing Installation', type: 'activity', unit: 'Rmt', createdAt: '2024-01-26T00:00:00.000Z' },
-        { id: '13', name: 'Painting', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Sqm', createdAt: '2024-01-27T00:00:00.000Z' },
-        { id: '14', name: 'Bituminous Works', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', unit: 'Sqm', createdAt: '2024-01-28T00:00:00.000Z' },
-        { id: '15', name: 'Sub Activites 1.1', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'heading', createdAt: '2024-01-29T00:00:00.000Z' },
-      ];
+    if (!showActivitySelection || !selectedProject) {
+      setActivities([]);
+      return;
+    }
 
-      const savedActivities = localStorage.getItem('activities');
-      let userActivities: ActivityItem[] = [];
-      
-      if (savedActivities) {
-        try {
-          const parsed = JSON.parse(savedActivities);
-          userActivities = parsed.map((act: any) => ({
-            id: act.id,
-            name: act.name,
-            project: act.project,
-            subproject: act.subproject,
-            type: act.type,
-            unit: act.unit,
-            qty: act.qty,
-            rate: act.rate,
-            amount: act.amount,
-            startDate: act.startDate,
-            endDate: act.endDate,
-            createdAt: act.createdAt
-          }));
-        } catch (e) {
-          console.error('Error parsing activities:', e);
-        }
-      }
-
-      setActivities([...defaultActivities, ...userActivities]);
-    };
-
-    loadActivities();
-
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'activities') {
-        loadActivities();
+    const fetchActivities = async () => {
+      setIsLoadingActivities(true);
+      try {
+        const projectId = selectedProject.numericId ?? selectedProject.id;
+        const subprojectId = selectedSubproject?.numericId ?? selectedSubproject?.id;
+        const { data } = await masterDataAPI.getActivities(projectId, subprojectId);
+        const raw = Array.isArray(data) ? data : [];
+        const transformed: ActivityItem[] = raw.map((a: any) => {
+          const actType = (a.type ?? a.activity_type ?? '').toString().toLowerCase();
+          const type: 'heading' | 'activity' = actType === 'heading' ? 'heading' : 'activity';
+          return {
+            id: a.uuid || String(a.id),
+            name: a.activities || a.name || '',
+            project: selectedProject.name,
+            subproject: selectedSubproject?.name || '',
+            type,
+            unit: a.unit?.unit || a.unit?.name || (typeof a.unit === 'string' ? a.unit : a.unit),
+            qty: a.qty ?? a.quantity,
+            rate: a.rate,
+            amount: a.amount,
+            startDate: a.start_date || a.startDate,
+            endDate: a.end_date || a.endDate,
+            createdAt: a.created_at || a.createdAt
+          };
+        });
+        setActivities(prev => {
+          const serverIds = new Set(transformed.map(x => x.id));
+          const fromPrev = prev.filter(x => !serverIds.has(x.id));
+          return [...transformed, ...fromPrev];
+        });
+      } catch {
+        setActivities([]);
+      } finally {
+        setIsLoadingActivities(false);
       }
     };
 
-    window.addEventListener('storage', handleStorageChange);
-    window.addEventListener('activitiesUpdated', loadActivities);
+    fetchActivities();
+  }, [showActivitySelection, selectedProject, selectedSubproject, activitiesRefreshKey]);
 
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('activitiesUpdated', loadActivities);
-    };
-  }, []);
-
-  // Filter activities - show all activities (only activities, not headings)
+  // Filter activities - show both activities and headings
   const filteredActivities = useMemo(() => {
-    // Show all activities regardless of project/subproject
-    // Only show activities, not headings
     return activities.filter(activity => 
-      activity.type === 'activity' // Only show activities, not headings
+      activity.type === 'activity' || activity.type === 'heading'
     );
   }, [activities]);
 
+  const paginatedActivities = useMemo(() => {
+    const start = (activityPage - 1) * PAGE_SIZE;
+    return filteredActivities.slice(start, start + PAGE_SIZE);
+  }, [filteredActivities, activityPage]);
+
   const handleToggleActivity = (activity: ActivityItem) => {
+    if (activity.type === 'heading') return; // Headings are not selectable
     setSelectedActivities(prev => {
       const newMap = new Map(prev);
       if (newMap.has(activity.id)) {
@@ -569,6 +656,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     });
   };
 
+  // DPR-only values (quantity, contractor, remarks, images) - stored in selectedActivities only.
+  // These must NEVER be sent to master activities API - they are for the DPR report/PDF only.
   const handleQuantityChange = (activityId: string, quantity: number) => {
     setSelectedActivities(prev => {
       const newMap = new Map(prev);
@@ -936,6 +1025,31 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       asset.unit.toLowerCase().includes(query)
     );
   }, [assets, assetSearchQuery]);
+
+  const paginatedAssets = useMemo(() => {
+    const start = (assetPage - 1) * PAGE_SIZE;
+    return filteredAssets.slice(start, start + PAGE_SIZE);
+  }, [filteredAssets, assetPage]);
+
+  const paginatedMaterials = useMemo(() => {
+    const start = (materialsPage - 1) * PAGE_SIZE;
+    return materials.slice(start, start + PAGE_SIZE);
+  }, [materials, materialsPage]);
+
+  const paginatedLabours = useMemo(() => {
+    const start = (laboursPage - 1) * PAGE_SIZE;
+    return labours.slice(start, start + PAGE_SIZE);
+  }, [labours, laboursPage]);
+
+  const paginatedSafetyProblems = useMemo(() => {
+    const start = (safetyPage - 1) * PAGE_SIZE;
+    return safetyProblems.slice(start, start + PAGE_SIZE);
+  }, [safetyProblems, safetyPage]);
+
+  const paginatedHindranceProblems = useMemo(() => {
+    const start = (hindrancePage - 1) * PAGE_SIZE;
+    return hindranceProblems.slice(start, start + PAGE_SIZE);
+  }, [hindranceProblems, hindrancePage]);
 
   const handleToggleLabour = (labour: Labour) => {
     setSelectedLabours(prev => {
@@ -1939,56 +2053,17 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   };
 
   const handleSubprojectCreated = (newSubproject: Subproject) => {
-    // Update local state
     setSubprojects(prev => [...prev, newSubproject]);
-    // Refresh the subproject list
     setSubprojectSearchQuery('');
+    setSubprojectRefreshKey(k => k + 1); // Trigger refetch to sync with server
   };
 
   const handleActivityCreated = (newActivity: ActivityItem) => {
-    // Update local state
-    setActivities(prev => [...prev, newActivity]);
-    // Reload activities from localStorage to ensure consistency
-    const savedActivities = localStorage.getItem('activities');
-    if (savedActivities) {
-      try {
-        const parsed = JSON.parse(savedActivities);
-        const defaultActivities: ActivityItem[] = [
-          { id: '1', name: 'Excavation & Misc', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', unit: 'Cum', createdAt: '2024-01-15T00:00:00.000Z' },
-          { id: '2', name: 'PCC', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', unit: 'Cum', createdAt: '2024-01-16T00:00:00.000Z' },
-          { id: '3', name: 'Steel Reinforcement', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', unit: 'Kgs', createdAt: '2024-01-17T00:00:00.000Z' },
-          { id: '4', name: 'Concrete Work', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', unit: 'Cum', createdAt: '2024-01-18T00:00:00.000Z' },
-          { id: '5', name: 'Masonry', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Cum', createdAt: '2024-01-19T00:00:00.000Z' },
-          { id: '6', name: 'Plastering, Gypsum, POP', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Sqm', createdAt: '2024-01-20T00:00:00.000Z' },
-          { id: '7', name: 'Water Proofing', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Sqm', createdAt: '2024-01-21T00:00:00.000Z' },
-          { id: '8', name: 'Doors & Windows', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Nos', createdAt: '2024-01-22T00:00:00.000Z' },
-          { id: '9', name: 'Tiling & Paver Work', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Sqm', createdAt: '2024-01-23T00:00:00.000Z' },
-          { id: '10', name: 'Railing & Fabrication work', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Rmt', createdAt: '2024-01-24T00:00:00.000Z' },
-          { id: '11', name: 'Electrical', project: 'Residential Complex A', subproject: 'Plumbing Installation', type: 'activity', unit: 'Nos', createdAt: '2024-01-25T00:00:00.000Z' },
-          { id: '12', name: 'Plumbing', project: 'Residential Complex A', subproject: 'Plumbing Installation', type: 'activity', unit: 'Rmt', createdAt: '2024-01-26T00:00:00.000Z' },
-          { id: '13', name: 'Painting', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Sqm', createdAt: '2024-01-27T00:00:00.000Z' },
-          { id: '14', name: 'Bituminous Works', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', unit: 'Sqm', createdAt: '2024-01-28T00:00:00.000Z' },
-          { id: '15', name: 'Sub Activites 1.1', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'heading', createdAt: '2024-01-29T00:00:00.000Z' },
-        ];
-        const userActivities = parsed.map((act: any) => ({
-          id: act.id,
-          name: act.name,
-          project: act.project,
-          subproject: act.subproject,
-          type: act.type,
-          unit: act.unit,
-          qty: act.qty,
-          rate: act.rate,
-          amount: act.amount,
-          startDate: act.startDate,
-          endDate: act.endDate,
-          createdAt: act.createdAt
-        }));
-        setActivities([...defaultActivities, ...userActivities]);
-      } catch (e) {
-        console.error('Error parsing activities:', e);
-      }
-    }
+    setActivities(prev => {
+      if (prev.some(a => a.id === newActivity.id)) return prev;
+      return [...prev, newActivity];
+    });
+    setActivitiesRefreshKey(k => k + 1); // Refetch to sync with server
   };
 
   const handleEditPrevious = () => {
@@ -2069,10 +2144,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             </div>
 
             {/* Projects Grid */}
-            <div className="flex-1 overflow-y-auto p-6">
+            <div className="flex-1 overflow-y-auto p-6 flex flex-col">
               {filteredProjects.length > 0 ? (
+                <>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredProjects.map((project) => (
+                  {paginatedProjects.map((project) => (
                     <div
                       key={project.id}
                       onClick={() => handleSelectProject(project)}
@@ -2103,6 +2179,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                     </div>
                   ))}
                 </div>
+                <PaginationBar currentPage={projectPage} totalItems={filteredProjects.length} onPageChange={setProjectPage} />
+                </>
               ) : (
                 <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
                   <Building2 className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
@@ -2175,8 +2253,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                   <p className="text-sm">Loading subprojects...</p>
                 </div>
               ) : filteredSubprojects.length > 0 ? (
+                <>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {filteredSubprojects.map((subproject) => (
+                  {paginatedSubprojects.map((subproject) => (
                     <div
                       key={subproject.id}
                       onClick={() => handleSelectSubproject(subproject)}
@@ -2199,15 +2278,23 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                             <p className={`text-xs ${textSecondary} mb-1`}>Manager: {subproject.manager}</p>
                           )}
                           <div className="flex items-center gap-2 mt-2">
-                            <span className={`inline-block px-2 py-1 rounded-full text-xs font-bold ${
-                              subproject.status === 'Active' || subproject.status === 'In Progress'
-                                ? 'bg-[#C2D642]/20 text-[#C2D642]'
-                                : subproject.status === 'Completed'
-                                ? 'bg-green-500/20 text-green-500'
-                                : 'bg-slate-500/20 text-slate-500'
-                            }`}>
-                              {subproject.status}
-                            </span>
+                            <select
+                              value={(subproject.status || 'pending').toLowerCase()}
+                              onClick={(e) => e.stopPropagation()}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onChange={(e) => {
+                                e.stopPropagation();
+                                handleSubprojectStatusChange(subproject.id, e.target.value);
+                              }}
+                              className={`px-2 py-1 rounded-full text-xs font-bold cursor-pointer border-0 focus:ring-1 focus:ring-[#C2D642]/50 outline-none ${
+                                isDark ? 'bg-slate-700/80 text-slate-100' : 'bg-slate-200/80 text-slate-900'
+                              }`}
+                            >
+                              <option value="closed">Closed</option>
+                              <option value="pending">Pending</option>
+                              <option value="completed">Completed</option>
+                              <option value="ongoing">Ongoing</option>
+                            </select>
                             {subproject.progress !== undefined && (
                               <span className={`text-xs font-bold ${textSecondary}`}>
                                 {subproject.progress}% Complete
@@ -2219,6 +2306,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                     </div>
                   ))}
                 </div>
+                <PaginationBar currentPage={subprojectPage} totalItems={filteredSubprojects.length} onPageChange={setSubprojectPage} />
+                </>
               ) : (
                 <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
                   <Layers className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
@@ -2238,6 +2327,21 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                   )}
                 </div>
               )}
+            </div>
+
+            {/* Footer with Back button */}
+            <div className={`flex items-center justify-start p-6 border-t border-inherit`}>
+              <button
+                onClick={() => {
+                  setShowSubprojectSelection(false);
+                  setShowProjectSelection(true);
+                  setSubprojectSearchQuery('');
+                  setSelectedProject(null);
+                }}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold transition-colors ${isDark ? 'hover:bg-slate-800/50 text-slate-300' : 'hover:bg-slate-100 text-slate-700'}`}
+              >
+                <ChevronLeft className="w-4 h-4" /> Back
+              </button>
             </div>
           </div>
         </div>
@@ -2289,66 +2393,100 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
             {/* Activities Table */}
             <div className="flex-1 overflow-y-auto p-6">
-              {filteredActivities.length > 0 ? (
+              {isLoadingActivities ? (
+                <div className={`flex flex-col items-center justify-center py-16 ${textSecondary}`}>
+                  <div className="w-10 h-10 border-2 border-[#C2D642] border-t-transparent rounded-full animate-spin mb-4" />
+                  <p className="text-sm">Loading activities...</p>
+                </div>
+              ) : filteredActivities.length > 0 ? (
                 <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
                   <div className="overflow-x-auto">
                     <table className="w-full">
                       <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
                         <tr>
-                          <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
-                            <input
-                              type="checkbox"
-                              className={`w-4 h-4 rounded ${isDark ? 'border-slate-600 bg-slate-700' : 'border-slate-300 bg-white'} cursor-pointer`}
-                              checked={filteredActivities.length > 0 && filteredActivities.every(act => selectedActivities.has(act.id))}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  const newMap = new Map<string, SelectedActivity>();
-                                  filteredActivities.forEach(act => {
-                                    newMap.set(act.id, {
-                                      id: act.id,
-                                      name: act.name,
-                                      unit: act.unit,
-                                      quantity: 0
-                                    });
-                                  });
-                                  setSelectedActivities(newMap);
-                                } else {
-                                  setSelectedActivities(new Map());
-                                }
-                              }}
-                            />
+                          <th className={`w-14 pl-6 py-4 text-left ${textSecondary}`}>
+                            {(() => {
+                              const activitiesOnly = paginatedActivities.filter(a => a.type === 'activity');
+                              const allActivitiesSelected = activitiesOnly.length > 0 && activitiesOnly.every(act => selectedActivities.has(act.id));
+                              return (
+                                <input
+                                  type="checkbox"
+                                  className={`w-4 h-4 rounded ${isDark ? 'border-slate-600 bg-slate-700 accent-[#C2D642]' : 'border-slate-300 bg-white accent-[#C2D642]'} cursor-pointer`}
+                                  checked={allActivitiesSelected}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      const newMap = new Map(selectedActivities);
+                                      activitiesOnly.forEach(act => {
+                                        newMap.set(act.id, { id: act.id, name: act.name, unit: act.unit, quantity: 0 });
+                                      });
+                                      setSelectedActivities(newMap);
+                                    } else {
+                                      const newMap = new Map(selectedActivities);
+                                      activitiesOnly.forEach(act => newMap.delete(act.id));
+                                      setSelectedActivities(newMap);
+                                    }
+                                  }}
+                                />
+                              );
+                            })()}
                           </th>
-                          <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>SR No</th>
-                          <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Activities</th>
-                          <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Unit</th>
-                          <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Quantity</th>
-                          <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Tag Contractor</th>
-                          <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Upload Image</th>
-                          <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Remarks</th>
+                          <th className={`px-4 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>SR No</th>
+                          <th className={`px-4 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Activities</th>
+                          <th className={`px-4 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Unit</th>
+                          <th className={`px-4 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Quantity</th>
+                          <th className={`px-4 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Tag Contractor</th>
+                          <th className={`px-4 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Upload Image</th>
+                          <th className={`px-4 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Remarks</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-inherit">
-                        {filteredActivities.map((activity, idx) => {
-                          const isSelected = selectedActivities.has(activity.id);
+                        {paginatedActivities.map((activity, idx) => {
+                          const isHeading = activity.type === 'heading';
+                          const isSelected = !isHeading && selectedActivities.has(activity.id);
                           const selectedActivity = selectedActivities.get(activity.id);
                           return (
                             <tr 
                               key={activity.id} 
-                              className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors ${isSelected ? (isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5') : ''}`}
+                              className={`transition-colors ${
+                                isHeading
+                                  ? isDark
+                                    ? 'bg-[#4a5d23]'
+                                    : 'bg-[#C2D642]/20'
+                                  : isSelected
+                                    ? isDark
+                                      ? 'bg-[#C2D642]/10 hover:bg-[#C2D642]/15'
+                                      : 'bg-[#C2D642]/5 hover:bg-[#C2D642]/10'
+                                    : isDark
+                                      ? 'bg-slate-800/50 hover:bg-slate-800/70'
+                                      : 'bg-white hover:bg-slate-50'
+                              }`}
                             >
-                              <td className="px-6 py-4">
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  onChange={() => handleToggleActivity(activity)}
-                                  className={`w-4 h-4 rounded ${isDark ? 'border-slate-600 bg-slate-700' : 'border-slate-300 bg-white'} cursor-pointer`}
-                                />
+                              <td className="w-14 pl-6 py-4 align-middle">
+                                <div className="flex items-center justify-start">
+                                  {isHeading ? (
+                                    <span className="w-4 h-4 block" />
+                                  ) : (
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      onChange={() => handleToggleActivity(activity)}
+                                      className={`w-4 h-4 rounded ${isDark ? 'border-slate-600 bg-slate-700 accent-[#C2D642]' : 'border-slate-300 bg-white accent-[#C2D642]'} cursor-pointer`}
+                                    />
+                                  )}
+                                </div>
                               </td>
-                              <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{idx + 1}</td>
-                              <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{activity.name}</td>
-                              <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{activity.unit || '-'}</td>
-                              <td className="px-6 py-4">
-                                {isSelected ? (
+                              <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary}`}>{(activityPage - 1) * PAGE_SIZE + idx + 1}</td>
+                              <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary} ${isHeading ? 'font-extrabold' : ''}`}>
+                                <span>{activity.name}</span>
+                                {isHeading && (
+                                  <span className="ml-2 text-xs font-medium italic text-emerald-400">(Heading)</span>
+                                )}
+                              </td>
+                              <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary}`}>{isHeading ? '-' : (activity.unit || '-')}</td>
+                              <td className="px-4 py-4 align-middle">
+                                {isHeading ? (
+                                  <span className={`text-sm ${textSecondary}`}>-</span>
+                                ) : isSelected ? (
                                   <input
                                     type="number"
                                     min="0"
@@ -2366,8 +2504,10 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   <span className={`text-sm ${textSecondary}`}>-</span>
                                 )}
                               </td>
-                              <td className="px-6 py-4">
-                                {isSelected ? (
+                              <td className="px-4 py-4 align-middle">
+                                {isHeading ? (
+                                  <span className={`text-sm ${textSecondary}`}>-</span>
+                                ) : isSelected ? (
                                   <select
                                     value={selectedActivity?.contractor || ''}
                                     onChange={(e) => handleContractorChange(activity.id, e.target.value)}
@@ -2388,27 +2528,13 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   <span className={`text-sm ${textSecondary}`}>-</span>
                                 )}
                               </td>
-                              <td className="px-6 py-4">
-                                {isSelected ? (
-                                  <div className="space-y-2">
-                                    <label htmlFor={`image-upload-${activity.id}`} className={`flex items-center gap-2 cursor-pointer px-3 py-2 rounded-lg text-sm font-bold border-2 border-dashed transition-all ${
-                                      isDark 
-                                        ? 'border-slate-600 hover:border-[#C2D642] text-slate-300 hover:text-[#C2D642]' 
-                                        : 'border-slate-300 hover:border-[#C2D642] text-slate-600 hover:text-[#C2D642]'
-                                    }`}>
-                                      <Upload className="w-4 h-4" />
-                                      <span>Upload</span>
-                                      <input
-                                        id={`image-upload-${activity.id}`}
-                                        type="file"
-                                        accept="image/*"
-                                        multiple
-                                        onChange={(e) => handleImageUpload(activity.id, e.target.files)}
-                                        className="hidden"
-                                      />
-                                    </label>
+                              <td className="px-4 py-4 align-middle">
+                                {isHeading ? (
+                                  <span className={`text-sm ${textSecondary}`}>-</span>
+                                ) : isSelected ? (
+                                  <div className="flex flex-wrap items-center gap-2">
                                     {selectedActivity?.images && selectedActivity.images.length > 0 && (
-                                      <div className="flex flex-wrap gap-2 mt-2">
+                                      <>
                                         {selectedActivity.images.map((image, imgIdx) => (
                                           <div key={imgIdx} className="relative group">
                                             <img 
@@ -2424,15 +2550,51 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                             </button>
                                           </div>
                                         ))}
-                                      </div>
+                                        <label htmlFor={`image-upload-${activity.id}`} className={`flex items-center justify-center gap-1.5 cursor-pointer w-16 h-16 rounded-lg text-xs font-bold border-2 border-dashed shrink-0 transition-all ${
+                                          isDark 
+                                            ? 'border-slate-600 hover:border-[#C2D642] text-slate-400 hover:text-[#C2D642] bg-slate-800/30' 
+                                            : 'border-slate-300 hover:border-[#C2D642] text-slate-500 hover:text-[#C2D642] bg-slate-50'
+                                        }`}>
+                                          <Upload className="w-4 h-4" />
+                                          <span>Add</span>
+                                          <input
+                                            id={`image-upload-${activity.id}`}
+                                            type="file"
+                                            accept="image/*"
+                                            multiple
+                                            onChange={(e) => handleImageUpload(activity.id, e.target.files)}
+                                            className="hidden"
+                                          />
+                                        </label>
+                                      </>
+                                    )}
+                                    {(!selectedActivity?.images || selectedActivity.images.length === 0) && (
+                                      <label htmlFor={`image-upload-${activity.id}`} className={`flex items-center gap-2 cursor-pointer px-3 py-2 rounded-lg text-sm font-bold border-2 border-dashed transition-all shrink-0 ${
+                                        isDark 
+                                          ? 'border-slate-600 hover:border-[#C2D642] text-slate-300 hover:text-[#C2D642]' 
+                                          : 'border-slate-300 hover:border-[#C2D642] text-slate-600 hover:text-[#C2D642]'
+                                      }`}>
+                                        <Upload className="w-4 h-4" />
+                                        <span>Upload</span>
+                                        <input
+                                          id={`image-upload-${activity.id}`}
+                                          type="file"
+                                          accept="image/*"
+                                          multiple
+                                          onChange={(e) => handleImageUpload(activity.id, e.target.files)}
+                                          className="hidden"
+                                        />
+                                      </label>
                                     )}
                                   </div>
                                 ) : (
                                   <span className={`text-sm ${textSecondary}`}>-</span>
                                 )}
                               </td>
-                              <td className="px-6 py-4">
-                                {isSelected ? (
+                              <td className="px-4 py-4 align-middle">
+                                {isHeading ? (
+                                  <span className={`text-sm ${textSecondary}`}>-</span>
+                                ) : isSelected ? (
                                   <textarea
                                     value={selectedActivity?.remarks || ''}
                                     onChange={(e) => handleRemarksChange(activity.id, e.target.value)}
@@ -2454,6 +2616,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                       </tbody>
                     </table>
                   </div>
+                  <PaginationBar currentPage={activityPage} totalItems={filteredActivities.length} onPageChange={setActivityPage} />
                 </div>
               ) : (
                 <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
@@ -2562,11 +2725,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                             <input
                               type="checkbox"
                               className={`w-4 h-4 rounded ${isDark ? 'border-slate-600 bg-slate-700' : 'border-slate-300 bg-white'} cursor-pointer`}
-                              checked={materials.length > 0 && materials.every(mat => selectedMaterials.has(mat.id))}
+                              checked={paginatedMaterials.length > 0 && paginatedMaterials.every(mat => selectedMaterials.has(mat.id))}
                               onChange={(e) => {
                                 if (e.target.checked) {
-                                  const newMap = new Map<string, SelectedMaterial>();
-                                  materials.forEach(mat => {
+                                  const newMap = new Map(selectedMaterials);
+                                  paginatedMaterials.forEach(mat => {
                                     newMap.set(mat.id, {
                                       id: mat.id,
                                       class: mat.class,
@@ -2579,7 +2742,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   });
                                   setSelectedMaterials(newMap);
                                 } else {
-                                  setSelectedMaterials(new Map());
+                                  const newMap = new Map(selectedMaterials);
+                                  paginatedMaterials.forEach(mat => newMap.delete(mat.id));
+                                  setSelectedMaterials(newMap);
                                 }
                               }}
                             />
@@ -2595,7 +2760,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-inherit">
-                        {materials.map((material, idx) => {
+                        {paginatedMaterials.map((material, idx) => {
                           const isSelected = selectedMaterials.has(material.id);
                           const selectedMaterial = selectedMaterials.get(material.id);
                           return (
@@ -2680,6 +2845,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                       </tbody>
                     </table>
                   </div>
+                  <PaginationBar currentPage={materialsPage} totalItems={materials.length} onPageChange={setMaterialsPage} />
                 </div>
               ) : (
                 <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
@@ -2770,11 +2936,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                             <input
                               type="checkbox"
                               className={`w-4 h-4 rounded ${isDark ? 'border-slate-600 bg-slate-700' : 'border-slate-300 bg-white'} cursor-pointer`}
-                              checked={labours.length > 0 && labours.every(lab => selectedLabours.has(lab.id))}
+                              checked={paginatedLabours.length > 0 && paginatedLabours.every(lab => selectedLabours.has(lab.id))}
                               onChange={(e) => {
                                 if (e.target.checked) {
-                                  const newMap = new Map<string, SelectedLabour>();
-                                  labours.forEach(lab => {
+                                  const newMap = new Map(selectedLabours);
+                                  paginatedLabours.forEach(lab => {
                                     newMap.set(lab.id, {
                                       id: lab.id,
                                       type: lab.type,
@@ -2786,7 +2952,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   });
                                   setSelectedLabours(newMap);
                                 } else {
-                                  setSelectedLabours(new Map());
+                                  const newMap = new Map(selectedLabours);
+                                  paginatedLabours.forEach(lab => newMap.delete(lab.id));
+                                  setSelectedLabours(newMap);
                                 }
                               }}
                             />
@@ -2802,7 +2970,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-inherit">
-                        {labours.map((labour, idx) => {
+                        {paginatedLabours.map((labour, idx) => {
                           const isSelected = selectedLabours.has(labour.id);
                           const selectedLabour = selectedLabours.get(labour.id);
                           return (
@@ -2944,6 +3112,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                       </tbody>
                     </table>
                   </div>
+                  <PaginationBar currentPage={laboursPage} totalItems={labours.length} onPageChange={setLaboursPage} />
                 </div>
               ) : (
                 <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
@@ -3053,11 +3222,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                             <input
                               type="checkbox"
                               className={`w-4 h-4 rounded ${isDark ? 'border-slate-600 bg-slate-700' : 'border-slate-300 bg-white'} cursor-pointer`}
-                              checked={filteredAssets.length > 0 && filteredAssets.every(asset => selectedAssets.has(asset.id))}
+                              checked={paginatedAssets.length > 0 && paginatedAssets.every(asset => selectedAssets.has(asset.id))}
                               onChange={(e) => {
                                 if (e.target.checked) {
-                                  const newMap = new Map<string, SelectedAsset>();
-                                  filteredAssets.forEach(asset => {
+                                  const newMap = new Map(selectedAssets);
+                                  paginatedAssets.forEach(asset => {
                                     newMap.set(asset.id, {
                                       id: asset.id,
                                       code: asset.code,
@@ -3068,7 +3237,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   });
                                   setSelectedAssets(newMap);
                                 } else {
-                                  setSelectedAssets(new Map());
+                                  const newMap = new Map(selectedAssets);
+                                  paginatedAssets.forEach(asset => newMap.delete(asset.id));
+                                  setSelectedAssets(newMap);
                                 }
                               }}
                             />
@@ -3085,7 +3256,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-inherit">
-                        {filteredAssets.map((asset) => {
+                        {paginatedAssets.map((asset) => {
                           const isSelected = selectedAssets.has(asset.id);
                           const selectedAsset = selectedAssets.get(asset.id);
                           return (
@@ -3210,6 +3381,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                       </tbody>
                     </table>
                   </div>
+                  <PaginationBar currentPage={assetPage} totalItems={filteredAssets.length} onPageChange={setAssetPage} />
                 </div>
               ) : (
                 <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
@@ -3280,18 +3452,19 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             {/* Modal Body */}
             <div className="flex-1 overflow-y-auto p-6">
               {safetyProblems.length > 0 ? (
-                <div className="overflow-x-auto">
+                <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
+                  <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>
                       <tr className={`border-b ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
                         <th className="px-6 py-3 text-left text-xs font-black uppercase tracking-wider">
                           <input
                             type="checkbox"
-                            checked={selectedSafetyProblems.size === safetyProblems.length && safetyProblems.length > 0}
+                            checked={paginatedSafetyProblems.length > 0 && paginatedSafetyProblems.every(p => selectedSafetyProblems.has(p.id))}
                             onChange={(e) => {
                               if (e.target.checked) {
-                                const newMap = new Map<string, SelectedSafetyProblem>();
-                                safetyProblems.forEach(problem => {
+                                const newMap = new Map(selectedSafetyProblems);
+                                paginatedSafetyProblems.forEach(problem => {
                                   newMap.set(problem.id, {
                                     id: problem.id,
                                     details: problem.details,
@@ -3302,7 +3475,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                 });
                                 setSelectedSafetyProblems(newMap);
                               } else {
-                                setSelectedSafetyProblems(new Map());
+                                const newMap = new Map(selectedSafetyProblems);
+                                paginatedSafetyProblems.forEach(p => newMap.delete(p.id));
+                                setSelectedSafetyProblems(newMap);
                               }
                             }}
                             className={`w-4 h-4 rounded border-2 ${
@@ -3330,7 +3505,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                       </tr>
                     </thead>
                     <tbody className={`divide-y ${isDark ? 'divide-slate-700' : 'divide-slate-200'}`}>
-                      {safetyProblems.map((problem, index) => {
+                      {paginatedSafetyProblems.map((problem, index) => {
                         const isSelected = selectedSafetyProblems.has(problem.id);
                         const selectedProblem = selectedSafetyProblems.get(problem.id);
                         return (
@@ -3355,7 +3530,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                               />
                             </td>
                             <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
-                              {index + 1}
+                              {(safetyPage - 1) * PAGE_SIZE + index + 1}
                             </td>
                             <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
                               {problem.details}
@@ -3452,6 +3627,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                       })}
                     </tbody>
                   </table>
+                  </div>
+                  <PaginationBar currentPage={safetyPage} totalItems={safetyProblems.length} onPageChange={setSafetyPage} />
                 </div>
               ) : (
                 <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
@@ -3523,18 +3700,19 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             {/* Modal Body */}
             <div className="flex-1 overflow-y-auto p-6">
               {hindranceProblems.length > 0 ? (
-                <div className="overflow-x-auto">
+                <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
+                  <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>
                       <tr className={`border-b ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
                         <th className="px-6 py-3 text-left text-xs font-black uppercase tracking-wider">
                           <input
                             type="checkbox"
-                            checked={selectedHindranceProblems.size === hindranceProblems.length && hindranceProblems.length > 0}
+                            checked={paginatedHindranceProblems.length > 0 && paginatedHindranceProblems.every(p => selectedHindranceProblems.has(p.id))}
                             onChange={(e) => {
                               if (e.target.checked) {
-                                const newMap = new Map<string, SelectedHindranceProblem>();
-                                hindranceProblems.forEach(problem => {
+                                const newMap = new Map(selectedHindranceProblems);
+                                paginatedHindranceProblems.forEach(problem => {
                                   newMap.set(problem.id, {
                                     id: problem.id,
                                     details: problem.details,
@@ -3545,7 +3723,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                 });
                                 setSelectedHindranceProblems(newMap);
                               } else {
-                                setSelectedHindranceProblems(new Map());
+                                const newMap = new Map(selectedHindranceProblems);
+                                paginatedHindranceProblems.forEach(p => newMap.delete(p.id));
+                                setSelectedHindranceProblems(newMap);
                               }
                             }}
                             className={`w-4 h-4 rounded border-2 ${
@@ -3573,7 +3753,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                       </tr>
                     </thead>
                     <tbody className={`divide-y ${isDark ? 'divide-slate-700' : 'divide-slate-200'}`}>
-                      {hindranceProblems.map((problem, index) => {
+                      {paginatedHindranceProblems.map((problem, index) => {
                         const isSelected = selectedHindranceProblems.has(problem.id);
                         const selectedProblem = selectedHindranceProblems.get(problem.id);
                         return (
@@ -3598,7 +3778,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                               />
                             </td>
                             <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
-                              {index + 1}
+                              {(hindrancePage - 1) * PAGE_SIZE + index + 1}
                             </td>
                             <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
                               {problem.details}
@@ -3696,6 +3876,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                     </tbody>
                   </table>
                 </div>
+                <PaginationBar currentPage={hindrancePage} totalItems={hindranceProblems.length} onPageChange={setHindrancePage} />
+              </div>
               ) : (
                 <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
                   <Users className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
@@ -3754,7 +3936,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             <div className="flex items-center justify-between p-6 border-b border-inherit">
               <h2 className={`text-xl font-black ${textPrimary}`}>DPR Complete</h2>
               <button
-                onClick={() => setShowDPRComplete(false)}
+                onClick={resetDPRForm}
                 className={`p-2 rounded-lg transition-all ${
                   isDark ? 'hover:bg-slate-800 text-slate-400' : 'hover:bg-slate-100 text-slate-600'
                 }`}
@@ -3788,7 +3970,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             {/* Modal Footer */}
             <div className="flex items-center justify-end p-6 border-t border-inherit">
               <button
-                onClick={() => setShowDPRComplete(false)}
+                onClick={resetDPRForm}
                 className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
                   isDark
                     ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
@@ -3802,56 +3984,23 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         </div>
       )}
 
-      {/* Create Activity Modal */}
+      {/* Create Activity Modal - uses projects/subprojects for user-associated data */}
       <CreateActivityModal
         theme={theme}
         isOpen={showCreateActivityModal}
         onClose={() => setShowCreateActivityModal(false)}
         onSuccess={() => {
           setShowCreateActivityModal(false);
-          // Reload activities from localStorage
-          const savedActivities = localStorage.getItem('activities');
-          if (savedActivities) {
-            try {
-              const parsed = JSON.parse(savedActivities);
-              const defaultActivities: ActivityItem[] = [
-                { id: '1', name: 'Excavation & Misc', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', unit: 'Cum', createdAt: '2024-01-15T00:00:00.000Z' },
-                { id: '2', name: 'PCC', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', unit: 'Cum', createdAt: '2024-01-16T00:00:00.000Z' },
-                { id: '3', name: 'Steel Reinforcement', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', unit: 'Kgs', createdAt: '2024-01-17T00:00:00.000Z' },
-                { id: '4', name: 'Concrete Work', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', unit: 'Cum', createdAt: '2024-01-18T00:00:00.000Z' },
-                { id: '5', name: 'Masonry', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Cum', createdAt: '2024-01-19T00:00:00.000Z' },
-                { id: '6', name: 'Plastering, Gypsum, POP', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Sqm', createdAt: '2024-01-20T00:00:00.000Z' },
-                { id: '7', name: 'Water Proofing', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Sqm', createdAt: '2024-01-21T00:00:00.000Z' },
-                { id: '8', name: 'Doors & Windows', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Nos', createdAt: '2024-01-22T00:00:00.000Z' },
-                { id: '9', name: 'Tiling & Paver Work', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Sqm', createdAt: '2024-01-23T00:00:00.000Z' },
-                { id: '10', name: 'Railing & Fabrication work', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Rmt', createdAt: '2024-01-24T00:00:00.000Z' },
-                { id: '11', name: 'Electrical', project: 'Residential Complex A', subproject: 'Plumbing Installation', type: 'activity', unit: 'Nos', createdAt: '2024-01-25T00:00:00.000Z' },
-                { id: '12', name: 'Plumbing', project: 'Residential Complex A', subproject: 'Plumbing Installation', type: 'activity', unit: 'Rmt', createdAt: '2024-01-26T00:00:00.000Z' },
-                { id: '13', name: 'Painting', project: 'Residential Complex A', subproject: 'Structural Framework', type: 'activity', unit: 'Sqm', createdAt: '2024-01-27T00:00:00.000Z' },
-                { id: '14', name: 'Bituminous Works', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'activity', unit: 'Sqm', createdAt: '2024-01-28T00:00:00.000Z' },
-                { id: '15', name: 'Sub Activites 1.1', project: 'Residential Complex A', subproject: 'Foundation Work', type: 'heading', createdAt: '2024-01-29T00:00:00.000Z' },
-              ];
-              const userActivities = parsed.map((act: any) => ({
-                id: act.id,
-                name: act.name,
-                project: act.project,
-                subproject: act.subproject,
-                type: act.type,
-                unit: act.unit,
-                qty: act.qty,
-                rate: act.rate,
-                amount: act.amount,
-                startDate: act.startDate,
-                endDate: act.endDate,
-                createdAt: act.createdAt
-              }));
-              setActivities([...defaultActivities, ...userActivities]);
-            } catch (e) {
-              console.error('Error parsing activities:', e);
-            }
-          }
+          setActivitiesRefreshKey(k => k + 1); // Refetch activities from API
         }}
+        onActivityCreated={handleActivityCreated}
         activities={activities}
+        projects={projects.map(p => ({ id: p.numericId ?? Number(p.id) || 0, uuid: p.id, project_name: p.name }))}
+        subprojects={subprojects.map(s => ({ id: s.numericId ?? Number(s.id) || 0, uuid: s.id, name: s.name, project_id: selectedProject?.numericId }))}
+        defaultProjectId={selectedProject?.id || ''}
+        defaultSubprojectId={selectedSubproject?.id || ''}
+        projectName={selectedProject?.name || ''}
+        subprojectName={selectedSubproject?.name || ''}
       />
 
       {/* Create Material Modal */}
@@ -3976,54 +4125,15 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         }}
       />
 
-      {/* Create Subproject Modal */}
+      {/* Create Subproject Modal - fetches user projects via API (uses auth token) */}
       <CreateSubprojectModal
         theme={theme}
         isOpen={showCreateSubprojectModal}
         onClose={() => setShowCreateSubprojectModal(false)}
-        onSuccess={() => {
-          setShowCreateSubprojectModal(false);
-          // Reload subprojects from localStorage
-          const savedSubprojects = localStorage.getItem('subprojects');
-          if (savedSubprojects) {
-            try {
-              const parsed = JSON.parse(savedSubprojects);
-              const userSubprojects = parsed.map((sub: any) => ({
-                id: sub.id,
-                name: sub.name,
-                code: sub.code || `SUB${String(sub.id).padStart(3, '0')}`,
-                project: sub.project,
-                manager: sub.manager,
-                status: sub.status || 'Pending',
-                progress: sub.progress || 0,
-                startDate: sub.startDate || '',
-                endDate: sub.endDate || ''
-              }));
-              const defaultSubprojects: Subproject[] = [
-                { id: '1', name: 'Foundation Work', code: 'SUB001', project: 'Residential Complex A', manager: 'John Doe', status: 'Active', progress: 85, startDate: '2024-01-20', endDate: '2024-03-15' },
-                { id: '2', name: 'Structural Framework', code: 'SUB002', project: 'Residential Complex A', manager: 'John Doe', status: 'In Progress', progress: 60, startDate: '2024-03-16', endDate: '2024-06-30' },
-                { id: '3', name: 'A wing', code: 'SUB003', project: 'Lakeshire', manager: 'Jane Smith', status: 'Active', progress: 75, startDate: '2024-01-15', endDate: '2024-05-20' },
-                { id: '4', name: 'B wing', code: 'SUB004', project: 'Lakeshire', manager: 'Jane Smith', status: 'In Progress', progress: 45, startDate: '2024-03-01', endDate: '2024-07-15' },
-                { id: '5', name: 'Electrical Installation', code: 'SUB005', project: 'Commercial Tower B', manager: 'Mike Johnson', status: 'In Progress', progress: 45, startDate: '2024-02-25', endDate: '2024-05-20' },
-                { id: '6', name: 'HVAC System', code: 'SUB006', project: 'Commercial Tower B', manager: 'Mike Johnson', status: 'Pending', progress: 0, startDate: '2024-05-21', endDate: '2024-07-10' },
-              ];
-              setSubprojects([...defaultSubprojects, ...userSubprojects]);
-            } catch (e) {
-              console.error('Error parsing subprojects:', e);
-            }
-          }
-        }}
-        defaultSubprojects={[
-          { id: '1', name: 'Foundation Work', code: 'SUB001', project: 'Residential Complex A', manager: 'John Doe', status: 'Active', progress: 85, startDate: '2024-01-20', endDate: '2024-03-15' },
-          { id: '2', name: 'Structural Framework', code: 'SUB002', project: 'Residential Complex A', manager: 'John Doe', status: 'In Progress', progress: 60, startDate: '2024-03-16', endDate: '2024-06-30' },
-          { id: '3', name: 'A wing', code: 'SUB003', project: 'Lakeshire', manager: 'Jane Smith', status: 'Active', progress: 75, startDate: '2024-01-15', endDate: '2024-05-20' },
-          { id: '4', name: 'B wing', code: 'SUB004', project: 'Lakeshire', manager: 'Jane Smith', status: 'In Progress', progress: 45, startDate: '2024-03-01', endDate: '2024-07-15' },
-          { id: '5', name: 'Electrical Installation', code: 'SUB005', project: 'Commercial Tower B', manager: 'Mike Johnson', status: 'In Progress', progress: 45, startDate: '2024-02-25', endDate: '2024-05-20' },
-          { id: '6', name: 'HVAC System', code: 'SUB006', project: 'Commercial Tower B', manager: 'Mike Johnson', status: 'Pending', progress: 0, startDate: '2024-05-21', endDate: '2024-07-10' },
-        ]}
-        userSubprojects={subprojects.filter(s => !['1', '2', '3', '4', '5', '6'].includes(s.id))}
+        onSuccess={() => setShowCreateSubprojectModal(false)}
         onSubprojectCreated={handleSubprojectCreated}
-        defaultProject={selectedProject?.name || ''}
+        defaultProjectId={selectedProject?.id || ''}
+        defaultProjectName={selectedProject?.name || ''}
       />
     </div>
   );

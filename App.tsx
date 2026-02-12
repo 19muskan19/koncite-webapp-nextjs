@@ -349,18 +349,17 @@ const AppContent: React.FC = () => {
 
           <div className="flex items-center gap-4">
             <button onClick={toggleTheme} className="p-2 hover:bg-white/10 rounded-lg transition-colors flex items-center gap-2 border border-white/5">
-              {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+              {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
             </button>
 
             <button className="p-2 hover:bg-white/10 rounded-lg transition-colors relative border border-white/5">
-              <Bell className="w-4 h-4" />
+              <Bell className="w-5 h-5" />
               <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border border-[#1e293b]"></span>
             </button>
 
             <div className="flex items-center gap-3 pl-4 border-l border-white/10">
               <div className="text-right hidden md:block">
-                <p className="text-[12px] font-black leading-none">{user?.name || 'User'}</p>
-                <p className="text-[9px] font-bold opacity-50 uppercase tracking-tighter">System Administrator</p>
+                <p className="text-sm font-black leading-none">{user?.name || 'User'}</p>
               </div>
               <button
                 onClick={handleLogout}
@@ -368,7 +367,7 @@ const AppContent: React.FC = () => {
                 title="Logout"
               >
                 <LogOut className="w-4 h-4" />
-                <span className="hidden sm:inline text-[11px] font-bold">Logout</span>
+                <span className="hidden sm:inline text-sm font-bold">Logout</span>
               </button>
             </div>
           </div>

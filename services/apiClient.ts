@@ -137,9 +137,10 @@ apiClient.interceptors.response.use(
           console.error('Forbidden: You do not have permission');
           break;
         case 404:
-          // Only log 404 errors for non-profile endpoints to avoid console spam
+          // Suppress 404 logs for known endpoints that may not exist or return 404 during normal use
           const url = error.config?.url || '';
-          if (!url.includes('/profile-list')) {
+          const suppress404 = ['/profile-list', '/sub-project-list', '/project-subproject', '/project-wise-subproject-search', '/fetch-project-subproject'].some(p => url.includes(p));
+          if (!suppress404) {
             console.error('Not Found: The requested resource does not exist', url);
           }
           break;

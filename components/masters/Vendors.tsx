@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
 import { Truck, MoreVertical, Download, Plus, Search, ArrowUpDown, Loader2, Edit, Trash2, RefreshCw, Upload } from 'lucide-react';
@@ -43,11 +43,11 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
   const [showBulkUploadModal, setShowBulkUploadModal] = useState<boolean>(false);
   const [editingVendorId, setEditingVendorId] = useState<string | null>(null);
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
-  const [togglingVendorId, setTogglingVendorId] = useState<string | null>(null);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [isLoadingVendors, setIsLoadingVendors] = useState<boolean>(false);
   const [vendorsError, setVendorsError] = useState<string | null>(null);
-  
+  const lastCreatedVendorRef = useRef<{ name: string; email: string } | null>(null);
+
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
@@ -86,12 +86,27 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
         phone: vendor.phone || '',
         email: vendor.email || '',
         country_code: vendor.country_code || '',
-        status: (vendor.is_active === 1 || vendor.is_active === true ? 'Active' : 'Inactive') as 'Active' | 'Inactive',
-        is_active: vendor.is_active,
+        status: (vendor.is_active === 0 || vendor.is_active === false ? 'Inactive' : 'Active') as 'Active' | 'Inactive',
+        is_active: vendor.is_active === 0 || vendor.is_active === false ? 0 : 1,
         additional_fields: vendor.additional_fields || null,
         createdAt: vendor.created_at || vendor.createdAt,
       }));
-      setVendors(transformedVendors);
+      // If we just created a vendor, ensure it shows as Active (backend may return is_active: 0)
+      const lastCreated = lastCreatedVendorRef.current;
+      if (lastCreated?.name && lastCreated?.email) {
+        lastCreatedVendorRef.current = null;
+        const nameMatch = lastCreated.name.trim().toLowerCase();
+        const emailMatch = lastCreated.email.trim().toLowerCase();
+        const withOverride = transformedVendors.map(v =>
+          (v.name || '').trim().toLowerCase() === nameMatch &&
+          (v.email || '').trim().toLowerCase() === emailMatch
+            ? { ...v, status: 'Active' as const, is_active: 1 }
+            : v
+        );
+        setVendors(withOverride);
+      } else {
+        setVendors(transformedVendors);
+      }
     } catch (err: any) {
       console.error('Failed to fetch vendors:', err);
       setVendorsError(err.message || 'Failed to load vendors');
@@ -135,12 +150,26 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
         phone: vendor.phone || '',
         email: vendor.email || '',
         country_code: vendor.country_code || '',
-        status: (vendor.is_active === 1 || vendor.is_active === true ? 'Active' : 'Inactive') as 'Active' | 'Inactive',
-        is_active: vendor.is_active,
+        status: (vendor.is_active === 0 || vendor.is_active === false ? 'Inactive' : 'Active') as 'Active' | 'Inactive',
+        is_active: vendor.is_active === 0 || vendor.is_active === false ? 0 : 1,
         additional_fields: vendor.additional_fields || null,
         createdAt: vendor.created_at || vendor.createdAt,
       }));
-      setVendors(transformedVendors);
+      // Apply same override for just-created vendor (backend may return is_active: 0)
+      const lastCreated = lastCreatedVendorRef.current;
+      if (lastCreated?.name && lastCreated?.email) {
+        lastCreatedVendorRef.current = null;
+        const nameMatch = lastCreated.name.trim().toLowerCase();
+        const emailMatch = lastCreated.email.trim().toLowerCase();
+        setVendors(transformedVendors.map(v =>
+          (v.name || '').trim().toLowerCase() === nameMatch &&
+          (v.email || '').trim().toLowerCase() === emailMatch
+            ? { ...v, status: 'Active' as const, is_active: 1 }
+            : v
+        ));
+      } else {
+        setVendors(transformedVendors);
+      }
     } catch (error: any) {
       console.error('Search failed:', error);
       toast.showError(error.message || 'Search failed. Please try again.');
@@ -171,7 +200,6 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
     if (searchQuery.trim() && !isSearching) {
       filtered = filtered.filter(vendor =>
         vendor.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (vendor.gstNo && vendor.gstNo.toLowerCase().includes(searchQuery.toLowerCase())) ||
         vendor.address.toLowerCase().includes(searchQuery.toLowerCase()) ||
         vendor.type.toLowerCase().includes(searchQuery.toLowerCase()) ||
         (vendor.contactPersonName && vendor.contactPersonName.toLowerCase().includes(searchQuery.toLowerCase())) ||
@@ -209,34 +237,38 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
     }
   };
 
-  const handleVendorCreated = async () => {
-    await fetchVendors();
-  };
-
-  const handleToggleVendorStatus = async (vendor: Vendor) => {
-    const idForApi = vendor.numericId ?? vendor.id;
-    const newIsActive = vendor.status === 'Active' ? 0 : 1;
-    setTogglingVendorId(String(idForApi));
-    try {
-      const payload: Record<string, any> = {
-        name: vendor.name || '',
-        address: vendor.address || '',
-        type: vendor.type || 'both',
-        contact_person_name: vendor.contactPersonName || vendor.contact_person_name || '',
-        country_code: vendor.country_code || '91',
-        phone: vendor.phone || '',
-        email: vendor.email || '',
-        is_active: newIsActive
+  const handleVendorCreated = async (createdVendor?: any, formData?: any) => {
+    // Track for fetchVendors override - backend may return is_active: 0, and debounced search can overwrite our list
+    if (formData?.name?.trim() && formData?.email?.trim()) {
+      lastCreatedVendorRef.current = {
+        name: formData.name.trim(),
+        email: formData.email.trim().toLowerCase(),
       };
-      if (vendor.gstNo || vendor.gst_no) payload.gst_no = vendor.gstNo || vendor.gst_no;
-      await masterDataAPI.updateVendor(String(idForApi), payload);
-      toast.showSuccess(`Vendor ${newIsActive ? 'activated' : 'deactivated'} successfully`);
-      await fetchVendors();
-    } catch (error: any) {
-      toast.showError(error.message || 'Failed to update vendor status');
-    } finally {
-      setTogglingVendorId(null);
     }
+    const vendorId = createdVendor?.id ?? createdVendor?.uuid;
+    if (createdVendor && vendorId != null) {
+      // Always show as active - don't depend on backend for status (same as labours)
+      const newVendor: Vendor = {
+        id: createdVendor.uuid || String(createdVendor.id),
+        numericId: createdVendor.id ?? vendorId,
+        uuid: createdVendor.uuid,
+        name: createdVendor?.name || formData?.name || '',
+        gstNo: createdVendor?.gst_no || formData?.gst_no || '',
+        gst_no: createdVendor?.gst_no || formData?.gst_no || '',
+        address: createdVendor?.address || formData?.address || '',
+        type: createdVendor?.type || formData?.type || 'both',
+        contactPersonName: createdVendor?.contact_person_name || formData?.contact_person_name || '',
+        contact_person_name: createdVendor?.contact_person_name || formData?.contact_person_name || '',
+        phone: createdVendor?.phone || formData?.phone || '',
+        email: createdVendor?.email || formData?.email || '',
+        country_code: createdVendor?.country_code || formData?.country_code || '',
+        status: 'Active',
+        is_active: 1,
+      };
+      setVendors(prev => [newVendor, ...prev]);
+      return;
+    }
+    await fetchVendors();
   };
 
   // Close dropdown when clicking outside
@@ -257,17 +289,15 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
   }, [openDropdownId]);
 
   const handleDownloadExcel = () => {
-    const headers = ['SR No', 'Name', 'Gst No', 'Address', 'Type', 'Contact Person Name', 'Phone', 'Email', 'Status'];
+    const headers = ['SR No', 'Name', 'Address', 'Type', 'Contact Person Name', 'Phone', 'Email'];
     const rows = filteredVendors.map((vendor, idx) => [
       idx + 1,
       vendor.name,
-      vendor.gstNo || '',
       vendor.address,
       vendor.type,
       vendor.contactPersonName,
       vendor.phone,
       vendor.email,
-      vendor.status
     ]);
 
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
@@ -422,12 +452,6 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
                     <div className="flex items-center gap-2">
                       <ArrowUpDown className="w-3 h-3" />
-                      Gst No
-                    </div>
-                  </th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
-                    <div className="flex items-center gap-2">
-                      <ArrowUpDown className="w-3 h-3" />
                       Address
                     </div>
                   </th>
@@ -472,7 +496,6 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
                   >
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{idx + 1}</td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.name}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.gstNo || row.gst_no || '-'}</td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.address || '-'}</td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
                       {row.type === 'supplier' ? 'Supplier' : 
@@ -486,14 +509,12 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
                     <td className="px-6 py-4">
                       <button
                         type="button"
-                        onClick={(e) => { e.stopPropagation(); handleToggleVendorStatus(row); }}
-                        disabled={isLoadingVendors || togglingVendorId === String(row.numericId ?? row.id)}
-                        className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#C2D642]/50 focus:ring-offset-2 ${
+                        className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors ${
                           row.status === 'Active'
                             ? 'bg-green-600'
                             : isDark ? 'bg-slate-700' : 'bg-slate-300'
-                        } ${(isLoadingVendors || togglingVendorId === String(row.numericId ?? row.id)) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-                        title={row.status === 'Active' ? 'Click to deactivate' : 'Click to activate'}
+                        }`}
+                        title={row.status === 'Active' ? 'Active' : 'Inactive'}
                       >
                         <span
                           className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${

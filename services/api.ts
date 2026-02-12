@@ -1506,8 +1506,14 @@ export const masterDataAPI = {
   getActivities: async (projectId?: number | string, subprojectId?: number | string): Promise<{ data: any[]; message?: string }> => {
     try {
       const payload: any = {};
-      if (projectId) payload.project = projectId;
-      if (subprojectId) payload.subproject = subprojectId;
+      if (projectId) {
+        payload.project = projectId;
+        payload.project_id = projectId; // Some backends expect project_id
+      }
+      if (subprojectId) {
+        payload.subproject = subprojectId;
+        payload.subproject_id = subprojectId; // Some backends expect subproject_id
+      }
       
       // Use POST if payload has data, otherwise GET
       const response = Object.keys(payload).length > 0
@@ -1731,26 +1737,26 @@ export const masterDataAPI = {
       } as ApiError;
     }
   },
-  // DPR-specific subproject APIs
+  // DPR-specific subproject APIs - uses POST /project-subproject (same as getProjectSubprojects)
   fetchProjectSubproject: async (data?: Record<string, any>): Promise<any> => {
     try {
       const payload = data || {};
-      console.log('📦 Calling POST /fetch-project-subproject with payload:', payload);
-      const response = await apiClient.post('/fetch-project-subproject', payload);
-      console.log('✅ /fetch-project-subproject response:', response.data);
-      
-      // Handle response structure: { status: true, data: [...] } or direct array
+      const projectId = payload.project_id ?? payload.projectId;
+      if (!projectId) {
+        console.warn('fetchProjectSubproject: No project_id in payload, returning empty array');
+        return [];
+      }
+      // Use existing /project-subproject endpoint (fetch-project-subproject does not exist on backend)
+      const response = await apiClient.post('/project-subproject', { project_id: projectId });
       let result: any = null;
       if (response.data?.data !== undefined) {
         result = response.data.data;
       } else if (response.data) {
         result = response.data;
       }
-      
-      console.log('✅ Extracted fetch-project-subproject data:', result);
-      return result;
+      return result ?? [];
     } catch (error: any) {
-      console.error('❌ /fetch-project-subproject error:', error);
+      console.error('❌ /project-subproject (fetchProjectSubproject) error:', error);
       throw {
         message: error.response?.data?.message || 'Failed to fetch project subprojects',
         errors: error.response?.data?.errors || {},
@@ -1782,19 +1788,19 @@ export const masterDataAPI = {
     }
   },
 
-  // Units - Matching Laravel routes
+  // Units - Matching Laravel routes (loads all units from unit-list)
   getUnits: async (): Promise<any[]> => {
     try {
       const token = getAuthToken();
       console.log('📦 Fetching units - Token present:', !!token);
       console.log('📦 Token (first 20 chars):', token ? token.substring(0, 20) + '...' : 'null');
-      
-      const response = await apiClient.get('/unit-list');
+      // Request all units from unit-list (per_page=9999 in case API paginates)
+      const response = await apiClient.get('/unit-list', { params: { per_page: 9999 } });
       console.log('✅ Units API response:', response.data);
       console.log('✅ Response status:', response.status);
-      console.log('✅ Number of units received:', Array.isArray(response.data?.data) ? response.data.data.length : Array.isArray(response.data) ? response.data.length : 0);
-      
-      const units = response.data.data || response.data || [];
+      // Extract units: { data: [...] } or { data: { data: [...] } } or paginated { data: [...], current_page }
+      const rawUnits = response.data?.data ?? response.data ?? [];
+      const units = Array.isArray(rawUnits) ? rawUnits : (rawUnits?.data ?? rawUnits?.units ?? []);
       console.log('✅ Extracted units array:', units);
       console.log('✅ Units count:', units.length);
       
@@ -2457,6 +2463,93 @@ export const commonAPI = {
   },
 };
 
+// Teams / Staff API - Operations > Staff (TeamsController)
+// Backend: teamsList, teamsAdd, edit, details, delete, search
+export const teamsAPI = {
+  /**
+   * Get staff/teams list
+   * GET /teams-list -> teamsList()
+   */
+  getTeamsList: async (): Promise<any[]> => {
+    try {
+      const response = await apiClient.get('/teams-list');
+      const data = response.data?.data ?? response.data;
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch staff list',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Create or update staff
+   * POST /teams-add -> teamsAdd()
+   */
+  createOrUpdateStaff: async (formData: FormData | Record<string, any>): Promise<any> => {
+    try {
+      const response = await apiClient.post('/teams-add', formData);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to save staff',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Get staff by uuid
+   * GET /teams-edit/{uuid} -> edit()
+   */
+  getStaff: async (uuid: string): Promise<any> => {
+    try {
+      const response = await apiClient.get(`/teams-edit/${encodeURIComponent(uuid)}`);
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch staff',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Delete staff
+   * DELETE /teams-delete/{uuid} -> delete()
+   */
+  deleteStaff: async (uuid: string): Promise<any> => {
+    try {
+      const response = await apiClient.delete(`/teams-delete/${encodeURIComponent(uuid)}`);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to delete staff',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Search staff
+   * POST /teams-search -> search()
+   */
+  searchStaff: async (searchKeyword?: string): Promise<any[]> => {
+    try {
+      const payload = searchKeyword ? { search_keyword: searchKeyword } : {};
+      const response = await apiClient.post('/teams-search', payload);
+      const data = response.data?.data ?? response.data;
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to search staff',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
 // Export default for convenience
 export default {
   auth: authAPI,
@@ -2464,4 +2557,5 @@ export default {
   masterData: masterDataAPI,
   document: documentAPI,
   common: commonAPI,
+  teams: teamsAPI,
 };

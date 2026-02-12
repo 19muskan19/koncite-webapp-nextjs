@@ -2,6 +2,9 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
+import { teamsAPI } from '../../services/api';
+import { useToast } from '@/contexts/ToastContext';
+import { useUser } from '@/contexts/UserContext';
 import { 
   Users,
   Plus,
@@ -11,8 +14,7 @@ import {
   Settings,
   User,
   ChevronUp,
-  ChevronDown,
-  Calendar
+  ChevronDown
 } from 'lucide-react';
 
 interface UserData {
@@ -22,6 +24,8 @@ interface UserData {
   email: string;
   contactNumber: string;
   roleType: string;
+  address?: string;
+  reporting_person_id?: number | string;
   reportingPerson: {
     name: string;
     role: string;
@@ -33,33 +37,72 @@ interface ManageTeamsProps {
   theme: ThemeType;
 }
 
+const ROLE_ID_TO_NAME: Record<string, string> = {
+  '1': 'Super Admin',
+  '2': 'Project Manager',
+  '3': 'Site Engineer',
+  '4': 'Store Keepers',
+  '5': 'Supervisor',
+};
+
+function mapApiStaffToUserData(apiUser: any): UserData {
+  const id = String(apiUser.id ?? apiUser.uuid ?? '');
+  const profilePhoto = apiUser.profile_images
+    ? (String(apiUser.profile_images).startsWith('http') ? apiUser.profile_images : apiUser.profile_images)
+    : `https://ui-avatars.com/api/?name=${encodeURIComponent(apiUser.name || '')}&background=6B8E23&color=fff&size=128`;
+  const rp = apiUser.reporting_person ?? apiUser.reportingPerson;
+  const rpId = typeof rp === 'object' && rp ? (rp.id ?? null) : (rp || null);
+  const rpIsObject = typeof rp === 'object' && rp;
+  const roleId = String(apiUser.company_role_id ?? apiUser.company_role?.id ?? '');
+  const designation = apiUser.designation || ROLE_ID_TO_NAME[roleId] || '';
+  const roleType =
+    apiUser.company_role?.name ??
+    designation ??
+    apiUser.role_type ??
+    ROLE_ID_TO_NAME[roleId] ??
+    'N/A';
+  return {
+    id,
+    profilePhoto,
+    name: apiUser.name || '',
+    email: apiUser.email || '',
+    contactNumber: apiUser.phone || apiUser.contact_number || '',
+    roleType,
+    address: apiUser.address,
+    reporting_person_id: rpIsObject ? (rp.id ?? null) : (rp ?? null),
+    reportingPerson: rpIsObject
+      ? { name: rp.name || '—', role: rp.role ?? rp.designation ?? '—' }
+      : { name: rpId ? '' : '—', role: rpId ? '' : '—' },
+    status: apiUser.is_active !== false,
+  };
+}
+
 const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
   const [showUserModal, setShowUserModal] = useState<boolean>(false);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [users, setUsers] = useState<UserData[]>([]);
+  const [isLoadingUsers, setIsLoadingUsers] = useState<boolean>(true);
+  const [useApiData, setUseApiData] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
-  const [availableRoles, setAvailableRoles] = useState<string[]>([]);
+  const [availableRoles, setAvailableRoles] = useState<Array<{ id: string; name: string }>>([]);
   const [formData, setFormData] = useState({
     name: '',
-    designation: '',
-    aadharNo: '',
-    panNo: '',
     email: '',
-    mobileNo: '',
+    country_code: '91' as string,
+    phone: '',
+    address: '',
+    company_user_role: '' as string,
+    designation: '' as string,
+    reporting_person: '' as string,
     password: '',
     confirmPassword: '',
-    address: '',
-    country: '',
-    state: '',
-    city: '',
-    dateOfBirth: '',
-    assignRole: '',
-    reportingTo: '',
-    profilePhoto: null as File | null,
-    profilePhotoPreview: '' as string | null
+    profile_images: null as File | null
   });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const toast = useToast();
+  const { user: currentUser } = useUser();
   
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -85,73 +128,122 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
     },
   ], []);
 
-  // Load users from localStorage on mount
-  useEffect(() => {
-    const savedUsers = localStorage.getItem('manageTeamsUsers');
-    if (savedUsers) {
-      try {
-        const parsed = JSON.parse(savedUsers);
-        setUsers(parsed);
-      } catch (e) {
-        setUsers([]);
+  const resolveReportingPersonNames = (list: UserData[]): UserData[] => {
+    const byId = new Map(list.map((u) => [u.id, u]));
+    return list.map((u) => {
+      const rpId = u.reporting_person_id;
+      if (rpId) {
+        const rpUser = byId.get(String(rpId));
+        if (rpUser) {
+          return {
+            ...u,
+            reportingPerson: { name: rpUser.name, role: rpUser.roleType },
+          };
+        }
       }
-    } else {
-      setUsers([]);
-    }
+      return {
+        ...u,
+        reportingPerson: {
+          name: u.reportingPerson.name || '—',
+          role: u.reportingPerson.role || '—',
+        },
+      };
+    });
+  };
+
+  const fetchStaffList = () => {
+    setIsLoadingUsers(true);
+    teamsAPI.getTeamsList()
+      .then((apiData) => {
+        const mapped = (Array.isArray(apiData) ? apiData : []).map(mapApiStaffToUserData);
+        const resolved = resolveReportingPersonNames(mapped);
+        setUsers(resolved);
+        setUseApiData(true);
+      })
+      .catch(() => {
+        const savedUsers = localStorage.getItem('manageTeamsUsers');
+        if (savedUsers) {
+          try {
+            setUsers(JSON.parse(savedUsers));
+          } catch {
+            setUsers([]);
+          }
+        } else {
+          setUsers([]);
+        }
+        setUseApiData(false);
+      })
+      .finally(() => setIsLoadingUsers(false));
+  };
+
+  // Load staff from API on mount
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoadingUsers(true);
+    teamsAPI.getTeamsList()
+      .then((apiData) => {
+        if (cancelled) return;
+        const mapped = (Array.isArray(apiData) ? apiData : []).map(mapApiStaffToUserData);
+        const resolved = resolveReportingPersonNames(mapped);
+        setUsers(resolved);
+        setUseApiData(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        const savedUsers = localStorage.getItem('manageTeamsUsers');
+        if (savedUsers) {
+          try {
+            setUsers(JSON.parse(savedUsers));
+          } catch {
+            setUsers([]);
+          }
+        } else {
+          setUsers([]);
+        }
+        setUseApiData(false);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingUsers(false);
+      });
+    return () => { cancelled = true; };
   }, []);
 
-  // Load roles from UserRolesPermissions (localStorage)
+  // Load roles (id + name) from UserRolesPermissions localStorage
   useEffect(() => {
     const loadRoles = () => {
-      // Default roles from UserRolesPermissions (matching the defaultRoles in UserRolesPermissions)
-      const defaultRoles = [
-        'Super Admin',
-        'Project Manager',
-        'Site Engineer',
-        'Store Keepers',
-        'Supervisor'
+      const defaultRoles: Array<{ id: string; name: string }> = [
+        { id: '1', name: 'Super Admin' },
+        { id: '2', name: 'Project Manager' },
+        { id: '3', name: 'Site Engineer' },
+        { id: '4', name: 'Store Keepers' },
+        { id: '5', name: 'Supervisor' },
       ];
-
-      // Load user-added roles from localStorage
       const savedRoles = localStorage.getItem('userRoles');
-      let userRoles: string[] = [];
-      
+      let userRoles: Array<{ id: string; name: string }> = [];
       if (savedRoles) {
         try {
           const parsed = JSON.parse(savedRoles);
-          userRoles = parsed.map((role: { name: string }) => role.name);
-        } catch (e) {
-          console.error('Error parsing roles:', e);
+          userRoles = parsed.map((r: { id?: string; name: string }) => ({ id: String(r.id ?? r.name), name: r.name }));
+        } catch {
+          userRoles = [];
         }
       }
-
-      // Combine default and user-added roles, remove duplicates
-      const allRoles = [...new Set([...defaultRoles, ...userRoles])];
-      setAvailableRoles(allRoles);
+      const seen = new Set<string>();
+      const combined: Array<{ id: string; name: string }> = [];
+      [...defaultRoles, ...userRoles].forEach((r) => {
+        if (!seen.has(r.name)) {
+          seen.add(r.name);
+          combined.push(r);
+        }
+      });
+      setAvailableRoles(combined);
     };
-
     loadRoles();
-
-    // Listen for storage changes to update roles when they're added/removed in UserRolesPermissions
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'userRoles') {
-        loadRoles();
-      }
-    };
-
-    // Listen for custom event when roles are updated in same tab
-    const handleRolesUpdate = () => {
-      loadRoles();
-    };
-
+    const handleStorageChange = (e: StorageEvent) => { if (e.key === 'userRoles') loadRoles(); };
+    const handleRolesUpdate = () => loadRoles();
     window.addEventListener('storage', handleStorageChange);
     window.addEventListener('rolesUpdated', handleRolesUpdate);
-    
-    // Check periodically for changes (for same-tab updates when localStorage is modified directly)
-    const interval = setInterval(() => {
-      loadRoles();
-    }, 500);
-
+    const interval = setInterval(loadRoles, 500);
     return () => {
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('rolesUpdated', handleRolesUpdate);
@@ -159,8 +251,9 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
     };
   }, []);
 
-  // Save users to localStorage whenever users state changes
+  // Save users to localStorage only when using local data (not API)
   useEffect(() => {
+    if (useApiData) return;
     const defaultIds = ['1'];
     const userUsers = users.filter(u => !defaultIds.includes(u.id));
     if (userUsers.length > 0) {
@@ -172,21 +265,21 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
     } else {
       localStorage.removeItem('manageTeamsUsers');
     }
-  }, [users]);
+  }, [users, useApiData]);
 
-  // Combine default and user-added users
+  // Combine default and user-added users (only when using localStorage fallback)
   const allUsers = useMemo(() => {
-    return [...defaultUsers, ...users];
-  }, [defaultUsers, users]);
+    return useApiData ? users : [...defaultUsers, ...users];
+  }, [defaultUsers, users, useApiData]);
 
   // Filter and sort users
   const filteredAndSortedUsers = useMemo(() => {
     let filtered = allUsers.filter(user =>
-      user.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      user.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      user.contactNumber.includes(searchQuery) ||
-      user.roleType.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      user.reportingPerson.name.toLowerCase().includes(searchQuery.toLowerCase())
+      (user.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (user.email || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (user.contactNumber || '').includes(searchQuery) ||
+      (user.roleType || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (user.reportingPerson?.name || '').toLowerCase().includes(searchQuery.toLowerCase())
     );
 
     if (sortConfig) {
@@ -233,140 +326,160 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setFormData({
-          ...formData,
-          profilePhoto: file,
-          profilePhotoPreview: reader.result as string
-        });
-      };
-      reader.readAsDataURL(file);
-    }
+    if (file) setFormData({ ...formData, profile_images: file });
   };
 
   const handleCloseModal = () => {
     setShowUserModal(false);
     setEditingUserId(null);
+    setIsSubmitting(false);
+    const defaultReporting = currentUser?.id ? String(currentUser.id) : (users[0]?.id || '');
     setFormData({
       name: '',
-      designation: '',
-      aadharNo: '',
-      panNo: '',
       email: '',
-      mobileNo: '',
+      country_code: '91',
+      phone: '',
+      address: '',
+      company_user_role: '',
+      designation: '',
+      reporting_person: defaultReporting,
       password: '',
       confirmPassword: '',
-      address: '',
-      country: '',
-      state: '',
-      city: '',
-      dateOfBirth: '',
-      assignRole: '',
-      reportingTo: '',
-      profilePhoto: null,
-      profilePhotoPreview: null
+      profile_images: null
     });
   };
 
-  const handleCreateUser = () => {
-    if (!formData.name || !formData.email || !formData.mobileNo || !formData.assignRole) {
-      alert('Please fill in all required fields');
+  const handleCreateUser = async () => {
+    const missing: string[] = [];
+    if (!formData.name?.trim()) missing.push('Name');
+    if (!formData.email?.trim()) missing.push('Email');
+    if (!formData.country_code) missing.push('Country code');
+    if (!formData.phone?.trim()) missing.push('Phone');
+    if (!formData.address?.trim()) missing.push('Address');
+    if (!formData.company_user_role) missing.push('Role');
+    if (!formData.password?.trim()) missing.push('Password');
+    if (missing.length > 0) {
+      toast.showWarning(`Required: ${missing.join(', ')}`);
       return;
     }
-
-    if (formData.password && formData.password !== formData.confirmPassword) {
-      alert('Passwords do not match');
+    if (formData.password !== formData.confirmPassword) {
+      toast.showWarning('Passwords do not match');
       return;
     }
+    if (formData.password.length < 8) {
+      toast.showWarning('Password must be at least 8 characters');
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const roleName = availableRoles.find((r) => r.id === formData.company_user_role)?.name || 'Staff';
+      const reportingPersonId = formData.reporting_person || (currentUser?.id ? String(currentUser.id) : '') || (users[0]?.id || '');
+      const fd = new FormData();
+      fd.append('company_user_role', formData.company_user_role);
+      fd.append('designation', roleName);
+      fd.append('name', formData.name.trim());
+      fd.append('email', formData.email.trim().toLowerCase());
+      fd.append('country_code', formData.country_code);
+      fd.append('phone', formData.phone.trim());
+      fd.append('address', formData.address.trim());
+      fd.append('password', formData.password);
+      if (reportingPersonId) fd.append('reporting_person', reportingPersonId);
+      if (formData.profile_images) fd.append('profile_images', formData.profile_images);
 
-    const newUser: UserData = {
-      id: Date.now().toString(),
-      profilePhoto: formData.profilePhotoPreview || `https://ui-avatars.com/api/?name=${encodeURIComponent(formData.name)}&background=6B8E23&color=fff&size=128`,
-      name: formData.name,
-      email: formData.email,
-      contactNumber: formData.mobileNo,
-      roleType: formData.assignRole,
-      reportingPerson: {
-        name: formData.reportingTo || 'N/A',
-        role: formData.designation || 'N/A'
-      },
-      status: true
-    };
-
-    setUsers(prev => [...prev, newUser]);
-    handleCloseModal();
+      await teamsAPI.createOrUpdateStaff(fd);
+      toast.showSuccess('User created successfully');
+      handleCloseModal();
+      fetchStaffList();
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to create user');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleEditUser = (userId: string) => {
     const user = allUsers.find(u => u.id === userId);
     if (user) {
+      const roleMatch = availableRoles.find(r => r.name === user.roleType);
       setEditingUserId(userId);
       setFormData({
         name: user.name,
-        designation: user.reportingPerson.role,
-        aadharNo: '',
-        panNo: '',
         email: user.email,
-        mobileNo: user.contactNumber,
+        country_code: '91',
+        phone: user.contactNumber,
+        address: user.address ?? '',
+        company_user_role: roleMatch?.id ?? '',
+        designation: user.roleType || '',
+        reporting_person: user.reporting_person_id ? String(user.reporting_person_id) : (currentUser?.id ? String(currentUser.id) : ''),
         password: '',
         confirmPassword: '',
-        address: '',
-        country: '',
-        state: '',
-        city: '',
-        dateOfBirth: '',
-        assignRole: user.roleType,
-        reportingTo: user.reportingPerson.name,
-        profilePhoto: null,
-        profilePhotoPreview: user.profilePhoto
+        profile_images: null
       });
       setShowUserModal(true);
     }
   };
 
-  const handleUpdateUser = () => {
-    if (!formData.name || !formData.email || !formData.mobileNo || !formData.assignRole) {
-      alert('Please fill in all required fields');
-      return;
-    }
-
+  const handleUpdateUser = async () => {
     if (editingUserId && defaultUsers.find(u => u.id === editingUserId)) {
-      alert('Cannot edit default user');
+      toast.showWarning('Cannot edit default user');
       return;
     }
-
+    const missing: string[] = [];
+    if (!formData.name?.trim()) missing.push('Name');
+    if (!formData.email?.trim()) missing.push('Email');
+    if (!formData.country_code) missing.push('Country code');
+    if (!formData.phone?.trim()) missing.push('Phone');
+    if (!formData.address?.trim()) missing.push('Address');
+    if (!formData.company_user_role) missing.push('Role');
+    if (missing.length > 0) {
+      toast.showWarning(`Required: ${missing.join(', ')}`);
+      return;
+    }
     if (formData.password && formData.password !== formData.confirmPassword) {
-      alert('Passwords do not match');
+      toast.showWarning('Passwords do not match');
       return;
     }
+    if (!editingUserId) return;
+    setIsSubmitting(true);
+    try {
+      const roleName = availableRoles.find((r) => r.id === formData.company_user_role)?.name || 'Staff';
+      const reportingPersonId = formData.reporting_person || (currentUser?.id ? String(currentUser.id) : '');
+      const fd = new FormData();
+      fd.append('updateId', editingUserId);
+      fd.append('company_user_role', formData.company_user_role);
+      fd.append('designation', roleName);
+      fd.append('name', formData.name.trim());
+      fd.append('email', formData.email.trim().toLowerCase());
+      fd.append('country_code', formData.country_code);
+      fd.append('phone', formData.phone.trim());
+      fd.append('address', formData.address.trim());
+      if (reportingPersonId) fd.append('reporting_person', reportingPersonId);
+      if (formData.password) fd.append('password', formData.password);
+      if (formData.profile_images) fd.append('profile_images', formData.profile_images);
 
-    setUsers(prev => prev.map(user => 
-      user.id === editingUserId 
-        ? {
-            ...user,
-            name: formData.name,
-            email: formData.email,
-            contactNumber: formData.mobileNo,
-            roleType: formData.assignRole,
-            reportingPerson: {
-              name: formData.reportingTo || 'N/A',
-              role: formData.designation || 'N/A'
-            },
-            profilePhoto: formData.profilePhotoPreview || user.profilePhoto
-          }
-        : user
-    ));
-    handleCloseModal();
+      await teamsAPI.createOrUpdateStaff(fd);
+      toast.showSuccess('User updated successfully');
+      handleCloseModal();
+      fetchStaffList();
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to update user');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleDeleteUser = (userId: string) => {
+  const handleDeleteUser = async (userId: string) => {
     if (defaultUsers.find(u => u.id === userId)) {
-      alert('Cannot delete default user');
+      toast.showWarning('Cannot delete default user');
       return;
     }
-    setUsers(prev => prev.filter(user => user.id !== userId));
+    try {
+      await teamsAPI.deleteStaff(userId);
+      toast.showSuccess('User deleted successfully');
+      setUsers(prev => prev.filter(u => u.id !== userId));
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to delete user');
+    }
     setDeleteConfirmId(null);
   };
 
@@ -430,7 +543,11 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
       </div>
 
       {/* Users Table */}
-      {filteredAndSortedUsers.length > 0 ? (
+      {isLoadingUsers ? (
+        <div className={`rounded-xl border p-12 text-center ${cardClass}`}>
+          <p className={`text-sm font-medium ${textSecondary}`}>Loading staff list...</p>
+        </div>
+      ) : filteredAndSortedUsers.length > 0 ? (
         <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
           <div className="overflow-x-auto">
             <table className="w-full">
@@ -591,287 +708,115 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
       {/* Add/Edit User Modal */}
       {showUserModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-4xl max-h-[90vh] overflow-y-auto`}>
+          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-2xl max-h-[90vh] overflow-y-auto`}>
             <div className="p-6 border-b border-inherit">
-              <div className="flex items-center gap-3 mb-2">
-                <Users className={`w-5 h-5 ${textSecondary}`} />
-                <h2 className={`text-lg font-bold ${textSecondary}`}>Add New User</h2>
-              </div>
-              <h2 className={`text-2xl font-black ${textPrimary}`}>
-                ADD YOUR TEAMS DETAILS
+              <h2 className={`text-xl font-black ${textPrimary}`}>
+                {editingUserId ? 'Edit User' : 'Add New User'}
               </h2>
+              <p className={`text-sm mt-1 ${textSecondary}`}>All fields are required</p>
             </div>
-            <div className="p-6 space-y-6">
-              {/* Upload Photo Section */}
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Upload Photo
-                </label>
-                <div className="flex items-center gap-4">
-                  <div className="w-20 h-20 rounded-full overflow-hidden bg-slate-200 dark:bg-slate-700 flex items-center justify-center">
-                    {formData.profilePhotoPreview ? (
-                      <img src={formData.profilePhotoPreview} alt="Preview" className="w-full h-full object-cover" />
-                    ) : (
-                      <User className={`w-10 h-10 ${textSecondary}`} />
-                    )}
-                  </div>
-                  <div className="flex-1">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleFileChange}
-                      className={`w-full text-sm ${isDark ? 'text-slate-100' : 'text-slate-900'}`}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* ADD YOUR TEAMS DETAILS Section */}
-              <div>
-                <h3 className={`text-lg font-black mb-4 ${textPrimary}`}>ADD YOUR TEAMS DETAILS</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                      Name
-                    </label>
-                    <input
-                      type="text"
-                      name="name"
-                      value={formData.name}
-                      onChange={handleInputChange}
-                      className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                      placeholder="Enter Name"
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                      Designation
-                    </label>
-                    <input
-                      type="text"
-                      name="designation"
-                      value={formData.designation}
-                      onChange={handleInputChange}
-                      className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                      placeholder="Enter Designation"
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                      Aadhar No
-                    </label>
-                    <input
-                      type="text"
-                      name="aadharNo"
-                      value={formData.aadharNo}
-                      onChange={handleInputChange}
-                      className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                      placeholder="Enter Aadhar No"
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                      PAN No
-                    </label>
-                    <input
-                      type="text"
-                      name="panNo"
-                      value={formData.panNo}
-                      onChange={handleInputChange}
-                      className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                      placeholder="Enter PAN No"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* CONTACT DETAILS Section */}
-              <div>
-                <h3 className={`text-lg font-black mb-4 ${textPrimary}`}>CONTACT DETAILS</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                      Email
-                    </label>
-                    <input
-                      type="email"
-                      name="email"
-                      value={formData.email}
-                      onChange={handleInputChange}
-                      className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                      placeholder="Enter Email"
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                      Mobile No
-                    </label>
-                    <input
-                      type="tel"
-                      name="mobileNo"
-                      value={formData.mobileNo}
-                      onChange={handleInputChange}
-                      className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                      placeholder="Enter Mobile No"
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                      Password
-                    </label>
-                    <input
-                      type="password"
-                      name="password"
-                      value={formData.password}
-                      onChange={handleInputChange}
-                      className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                      placeholder="Enter Password"
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                      Confirm Password
-                    </label>
-                    <input
-                      type="password"
-                      name="confirmPassword"
-                      value={formData.confirmPassword}
-                      onChange={handleInputChange}
-                      className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                      placeholder="Enter Confirm Password"
-                    />
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                      Address
-                    </label>
-                    <textarea
-                      name="address"
-                      value={formData.address}
-                      onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                      rows={3}
-                      className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                      placeholder="Enter Address"
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                      Country
-                    </label>
-                    <select
-                      name="country"
-                      value={formData.country}
-                      onChange={handleInputChange}
-                      className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                    >
-                      <option value="">Select Country</option>
-                      <option value="India">India</option>
-                      <option value="USA">USA</option>
-                      <option value="UK">UK</option>
-                      <option value="Canada">Canada</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                      States
-                    </label>
-                    <select
-                      name="state"
-                      value={formData.state}
-                      onChange={handleInputChange}
-                      className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                    >
-                      <option value="">Select State</option>
-                      <option value="Maharashtra">Maharashtra</option>
-                      <option value="Karnataka">Karnataka</option>
-                      <option value="Tamil Nadu">Tamil Nadu</option>
-                      <option value="Delhi">Delhi</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                      City
-                    </label>
-                    <select
-                      name="city"
-                      value={formData.city}
-                      onChange={handleInputChange}
-                      className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                    >
-                      <option value="">Select City</option>
-                      <option value="Mumbai">Mumbai</option>
-                      <option value="Pune">Pune</option>
-                      <option value="Bangalore">Bangalore</option>
-                      <option value="Chennai">Chennai</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                      Date of Birth
-                    </label>
-                    <div className="relative">
-                      <input
-                        type="date"
-                        name="dateOfBirth"
-                        value={formData.dateOfBirth}
-                        onChange={handleInputChange}
-                        className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                        placeholder="dd-mm-yyyy"
-                      />
-                      <Calendar className={`absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} pointer-events-none`} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Additional Fields */}
+            <div className="p-6 space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                    Assign Role
-                  </label>
-                  <select
-                    name="assignRole"
-                    value={formData.assignRole}
-                    onChange={handleInputChange}
+                  <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Name <span className="text-red-500">*</span></label>
+                  <input type="text" name="name" value={formData.name} onChange={handleInputChange}
                     className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                  >
-                    <option value="">---Select Assign Role---</option>
-                    {availableRoles.map(role => (
-                      <option key={role} value={role}>{role}</option>
+                    placeholder="Enter Name" />
+                </div>
+                <div>
+                  <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Email <span className="text-red-500">*</span></label>
+                  <input type="email" name="email" value={formData.email} onChange={handleInputChange}
+                    className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                    placeholder="Enter Email" disabled={!!editingUserId} />
+                </div>
+                <div>
+                  <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Country Code <span className="text-red-500">*</span></label>
+                  <select name="country_code" value={formData.country_code} onChange={handleInputChange}
+                    className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}>
+                    <option value="91">India (+91)</option>
+                    <option value="971">UAE (+971)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Phone <span className="text-red-500">*</span></label>
+                  <input type="tel" name="phone" value={formData.phone} onChange={handleInputChange}
+                    className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                    placeholder="Enter Phone" />
+                </div>
+                <div>
+                  <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Role <span className="text-red-500">*</span></label>
+                  <select name="company_user_role" value={formData.company_user_role} onChange={handleInputChange}
+                    className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}>
+                    <option value="">Select Role</option>
+                    {availableRoles.map((r, idx) => (
+                      <option key={`${r.id}-${r.name}-${idx}`} value={r.id}>{r.name}</option>
                     ))}
                   </select>
                 </div>
                 <div>
-                  <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                    Reporting to
-                  </label>
-                  <select
-                    name="reportingTo"
-                    value={formData.reportingTo}
-                    onChange={handleInputChange}
-                    className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                  >
-                    <option value="">---Select Reporting Person---</option>
-                    {allUsers.map(user => (
-                      <option key={user.id} value={user.name}>{user.name}</option>
+                  <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Reporting Person <span className="text-red-500">*</span></label>
+                  <select name="reporting_person" value={formData.reporting_person} onChange={handleInputChange}
+                    className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}>
+                    <option value="">Select Reporting Person</option>
+                    {allUsers.filter((u) => u.id !== editingUserId).map((u) => (
+                      <option key={u.id} value={u.id}>{u.name} ({u.roleType})</option>
                     ))}
                   </select>
                 </div>
+                {!editingUserId && (
+                  <>
+                    <div>
+                      <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Password <span className="text-red-500">*</span></label>
+                      <input type="password" name="password" value={formData.password} onChange={handleInputChange}
+                        className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                        placeholder="Min 8 characters" />
+                    </div>
+                    <div>
+                      <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Confirm Password <span className="text-red-500">*</span></label>
+                      <input type="password" name="confirmPassword" value={formData.confirmPassword} onChange={handleInputChange}
+                        className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                        placeholder="Confirm Password" />
+                    </div>
+                  </>
+                )}
+                {editingUserId && (
+                  <>
+                    <div>
+                      <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>New Password (optional)</label>
+                      <input type="password" name="password" value={formData.password} onChange={handleInputChange}
+                        className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                        placeholder="Leave blank to keep current" />
+                    </div>
+                    <div>
+                      <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Confirm New Password</label>
+                      <input type="password" name="confirmPassword" value={formData.confirmPassword} onChange={handleInputChange}
+                        className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                        placeholder="Required if changing password" />
+                    </div>
+                  </>
+                )}
+              </div>
+              <div>
+                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Address <span className="text-red-500">*</span></label>
+                <textarea name="address" value={formData.address} onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                  rows={2}
+                  className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                  placeholder="Enter Address" />
+              </div>
+              <div>
+                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Profile Photo (optional)</label>
+                <input type="file" accept="image/jpeg,image/jpg,image/png" onChange={handleFileChange}
+                  className={`w-full text-sm ${isDark ? 'text-slate-100' : 'text-slate-900'}`} />
               </div>
             </div>
             <div className="p-6 border-t border-inherit flex items-center justify-end gap-3">
-              <button
-                onClick={handleCloseModal}
-                className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100' : 'bg-slate-200 hover:bg-slate-300 text-slate-900'}`}
-              >
+              <button onClick={handleCloseModal} disabled={isSubmitting}
+                className={`px-4 py-2 rounded-lg text-sm font-bold ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100' : 'bg-slate-200 hover:bg-slate-300 text-slate-900'}`}>
                 Cancel
               </button>
-              <button
-                onClick={editingUserId ? handleUpdateUser : handleCreateUser}
-                className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md`}
-              >
-                {editingUserId ? 'Update' : 'Create'}
+              <button onClick={editingUserId ? handleUpdateUser : handleCreateUser} disabled={isSubmitting}
+                className={`px-4 py-2 rounded-lg text-sm font-bold bg-[#6B8E23] hover:bg-[#5a7a1e] text-white shadow-md disabled:opacity-50`}>
+                {isSubmitting ? 'Saving...' : (editingUserId ? 'Update' : 'Create')}
               </button>
             </div>
           </div>

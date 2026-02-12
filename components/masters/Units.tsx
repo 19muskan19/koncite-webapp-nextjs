@@ -845,6 +845,7 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
         onSuccess={handleUnitCreated}
         editingUnitId={editingUnitId}
         editingUnitNumericId={editingUnitNumericId}
+        existingUnits={units}
       />
     </div>
   );
