@@ -8,21 +8,34 @@ import { masterDataAPI } from '@/services/api';
 
 interface ActivityItem {
   id: string;
-  uuid?: string;
   name?: string;
-  activities?: string;
+  project?: string;
   project_id?: number;
+  subproject?: string;
   subproject_id?: number;
   type: 'heading' | 'activity' | 'activites';
+  unit?: string;
   unit_id?: number;
   qty?: number;
   quantity?: number;
   rate?: number;
   amount?: number;
+  startDate?: string;
   start_date?: string;
+  endDate?: string;
   end_date?: string;
+  uuid?: string;
+  activities?: string;
   heading?: number;
   parent_id?: number;
+  createdAt?: string;
+}
+
+/** Shape passed to onActivityCreated - has required display fields */
+export interface CreatedActivityItem extends ActivityItem {
+  name: string;
+  project: string;
+  subproject: string;
 }
 
 interface CreateActivityModalProps {
@@ -30,7 +43,7 @@ interface CreateActivityModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
-  onActivityCreated?: (activity: ActivityItem) => void;
+  onActivityCreated?: (activity: CreatedActivityItem) => void;
   editingActivityId?: string | null;
   activities?: ActivityItem[];
   projects?: Array<{ id: number; uuid: string; project_name: string }>;
@@ -412,9 +425,9 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
         toast.showSuccess('Activity created successfully!');
         const created = result?.data ?? result;
         if (onActivityCreated && created) {
-          const newActivity: ActivityItem = {
+          const newActivity: CreatedActivityItem = {
             id: created.uuid || String(created.id),
-            name: created.activities || created.name || formData.activities.trim(),
+            name: created.activities || created.name || formData.activities.trim() || '',
             project: projectName || projects.find(p => p.uuid === formData.project || String(p.id) === formData.project)?.project_name || '',
             subproject: subprojectName || modalSubprojects.find(s => s.uuid === formData.subproject || String(s.id) === formData.subproject)?.name || '',
             type: (formData.type === 'heading' ? 'heading' : 'activity') as 'heading' | 'activity',

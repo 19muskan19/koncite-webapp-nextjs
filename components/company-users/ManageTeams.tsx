@@ -112,7 +112,7 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
   const bgSecondary = isDark ? 'bg-slate-800' : 'bg-slate-50';
 
   // Default users
-  const defaultUsers = useMemo(() => [
+  const defaultUsers = useMemo((): UserData[] => [
     { 
       id: '1',
       profilePhoto: 'https://ui-avatars.com/api/?name=test&background=6B8E23&color=fff&size=128',
@@ -120,6 +120,8 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
       email: 'testsouma@koncit.com',
       contactNumber: '2365480111',
       roleType: 'Project Manager',
+      address: '',
+      reporting_person_id: undefined,
       reportingPerson: {
         name: 'Rahul Rao S',
         role: 'Manager'
@@ -284,8 +286,8 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
 
     if (sortConfig) {
       filtered = [...filtered].sort((a, b) => {
-        let aValue: any = a[sortConfig.key as keyof UserData];
-        let bValue: any = b[sortConfig.key as keyof UserData];
+        let aValue: any = (a as unknown as Record<string, unknown>)[sortConfig.key];
+        let bValue: any = (b as unknown as Record<string, unknown>)[sortConfig.key];
 
         if (sortConfig.key === 'reportingPerson') {
           aValue = a.reportingPerson.name;

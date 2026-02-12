@@ -61,7 +61,7 @@ interface ActivityItem {
   name: string;
   project: string;
   subproject: string;
-  type: 'heading' | 'activity';
+  type: 'heading' | 'activity' | 'activites';
   unit?: string;
   qty?: number;
   rate?: number;
@@ -413,7 +413,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         // Prefer numeric ID - backend /project-subproject and /sub-project-list expect project_id
         const projectId = selectedProject.numericId ?? selectedProject.id;
         const result = await masterDataAPI.getSubprojects(projectId);
-        const list = Array.isArray(result) ? result : result?.subProject || result?.data || [];
+        const res = result as any;
+        const list = Array.isArray(result) ? result : res?.subProject ?? res?.data ?? [];
         const transformed = list.map((sub: any) => transformSubproject(sub, selectedProject.name));
         setSubprojects(transformed);
       } catch {
@@ -3995,8 +3996,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         }}
         onActivityCreated={handleActivityCreated}
         activities={activities}
-        projects={projects.map(p => ({ id: p.numericId ?? Number(p.id) || 0, uuid: p.id, project_name: p.name }))}
-        subprojects={subprojects.map(s => ({ id: s.numericId ?? Number(s.id) || 0, uuid: s.id, name: s.name, project_id: selectedProject?.numericId }))}
+        projects={projects.map(p => ({ id: (p.numericId ?? Number(p.id)) || 0, uuid: p.id, project_name: p.name }))}
+        subprojects={subprojects.map(s => ({ id: (s.numericId ?? Number(s.id)) || 0, uuid: s.id, name: s.name, project_id: selectedProject?.numericId }))}
         defaultProjectId={selectedProject?.id || ''}
         defaultSubprojectId={selectedSubproject?.id || ''}
         projectName={selectedProject?.name || ''}
