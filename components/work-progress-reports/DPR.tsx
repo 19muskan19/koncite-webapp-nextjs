@@ -61,7 +61,7 @@ interface ActivityItem {
   name: string;
   project: string;
   subproject: string;
-  type: 'heading' | 'activity';
+  type: 'heading' | 'activity' | 'activites';
   unit?: string;
   qty?: number;
   rate?: number;

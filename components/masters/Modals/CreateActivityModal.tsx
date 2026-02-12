@@ -8,7 +8,7 @@ import { masterDataAPI } from '@/services/api';
 
 interface ActivityItem {
   id: string;
-  name: string;
+  name?: string;
   project?: string;
   project_id?: number;
   subproject?: string;
@@ -31,12 +31,19 @@ interface ActivityItem {
   createdAt?: string;
 }
 
+/** Shape passed to onActivityCreated - has required display fields */
+export interface CreatedActivityItem extends ActivityItem {
+  name: string;
+  project: string;
+  subproject: string;
+}
+
 interface CreateActivityModalProps {
   theme: ThemeType;
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
-  onActivityCreated?: (activity: ActivityItem) => void;
+  onActivityCreated?: (activity: CreatedActivityItem) => void;
   editingActivityId?: string | null;
   activities?: ActivityItem[];
   projects?: Array<{ id: number; uuid: string; project_name: string }>;
@@ -418,9 +425,9 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
         toast.showSuccess('Activity created successfully!');
         const created = result?.data ?? result;
         if (onActivityCreated && created) {
-          const newActivity: ActivityItem = {
+          const newActivity: CreatedActivityItem = {
             id: created.uuid || String(created.id),
-            name: created.activities || created.name || formData.activities.trim(),
+            name: created.activities || created.name || formData.activities.trim() || '',
             project: projectName || projects.find(p => p.uuid === formData.project || String(p.id) === formData.project)?.project_name || '',
             subproject: subprojectName || modalSubprojects.find(s => s.uuid === formData.subproject || String(s.id) === formData.subproject)?.name || '',
             type: (formData.type === 'heading' ? 'heading' : 'activity') as 'heading' | 'activity',
