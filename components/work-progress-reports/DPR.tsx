@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { ThemeType } from '../../types';
 import { 
   ClipboardCheck,
@@ -8,6 +8,7 @@ import {
   Edit,
   Search,
   X,
+  Loader2,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
@@ -30,8 +31,10 @@ import CreateActivityModal from '../masters/Modals/CreateActivityModal';
 import CreateMaterialModal from '../masters/Modals/CreateMaterialModal';
 import CreateLabourModal from '../masters/Modals/CreateLabourModal';
 import CreateAssetEquipmentModal from '../masters/Modals/CreateAssetEquipmentModal';
+import TeamMembersDropdown from './TeamMembersDropdown';
 import { useUser } from '../../contexts/UserContext';
-import { masterDataAPI } from '../../services/api';
+import { useToast } from '../../contexts/ToastContext';
+import { masterDataAPI, teamsAPI, safetyAPI } from '../../services/api';
 
 interface Project {
   id: string;
@@ -58,6 +61,7 @@ interface Subproject {
 
 interface ActivityItem {
   id: string;
+  numericId?: number;
   name: string;
   project: string;
   subproject: string;
@@ -69,6 +73,8 @@ interface ActivityItem {
   startDate?: string;
   endDate?: string;
   createdAt?: string;
+  heading?: number;
+  parent_id?: number;
 }
 
 interface SelectedActivity {
@@ -137,14 +143,10 @@ interface SelectedAsset {
   remarks?: string;
 }
 
-interface SafetyProblem {
+interface SafetyEntry {
   id: string;
-  details: string;
-}
-
-interface SelectedSafetyProblem {
-  id: string;
-  details: string;
+  serverId?: string | number; // Backend id for delete API
+  details?: string;
   image?: string;
   teamMembers?: string[];
   remarks?: string;
@@ -156,14 +158,9 @@ interface TeamMember {
   email: string;
 }
 
-interface HindranceProblem {
+interface HindranceEntry {
   id: string;
-  details: string;
-}
-
-interface SelectedHindranceProblem {
-  id: string;
-  details: string;
+  details?: string;
   image?: string;
   teamMembers?: string[];
   remarks?: string;
@@ -189,6 +186,7 @@ const PAGE_SIZE = 10;
 
 const DPR: React.FC<DPRProps> = ({ theme }) => {
   const { isAuthenticated } = useUser();
+  const toast = useToast();
   const [showProjectSelection, setShowProjectSelection] = useState<boolean>(false);
   const [showSubprojectSelection, setShowSubprojectSelection] = useState<boolean>(false);
   const [showActivitySelection, setShowActivitySelection] = useState<boolean>(false);
@@ -203,6 +201,22 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const [showCreateMaterialModal, setShowCreateMaterialModal] = useState<boolean>(false);
   const [showCreateLabourModal, setShowCreateLabourModal] = useState<boolean>(false);
   const [showCreateAssetModal, setShowCreateAssetModal] = useState<boolean>(false);
+  const projectModalScrollRef = useRef<HTMLDivElement>(null);
+  const projectModalHeaderRef = useRef<HTMLDivElement>(null);
+  const subprojectModalScrollRef = useRef<HTMLDivElement>(null);
+  const subprojectModalHeaderRef = useRef<HTMLDivElement>(null);
+  const activityModalScrollRef = useRef<HTMLDivElement>(null);
+  const activityModalHeaderRef = useRef<HTMLDivElement>(null);
+  const materialModalScrollRef = useRef<HTMLDivElement>(null);
+  const materialModalHeaderRef = useRef<HTMLDivElement>(null);
+  const labourModalScrollRef = useRef<HTMLDivElement>(null);
+  const labourModalHeaderRef = useRef<HTMLDivElement>(null);
+  const assetModalScrollRef = useRef<HTMLDivElement>(null);
+  const assetModalHeaderRef = useRef<HTMLDivElement>(null);
+  const safetyModalScrollRef = useRef<HTMLDivElement>(null);
+  const safetyModalHeaderRef = useRef<HTMLDivElement>(null);
+  const hindranceModalScrollRef = useRef<HTMLDivElement>(null);
+  const hindranceModalHeaderRef = useRef<HTMLDivElement>(null);
   const [projectSearchQuery, setProjectSearchQuery] = useState<string>('');
   const [subprojectSearchQuery, setSubprojectSearchQuery] = useState<string>('');
   const [projects, setProjects] = useState<Project[]>([]);
@@ -219,13 +233,15 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const [selectedMaterials, setSelectedMaterials] = useState<Map<string, SelectedMaterial>>(new Map());
   const [selectedLabours, setSelectedLabours] = useState<Map<string, SelectedLabour>>(new Map());
   const [selectedAssets, setSelectedAssets] = useState<Map<string, SelectedAsset>>(new Map());
-  const [selectedSafetyProblems, setSelectedSafetyProblems] = useState<Map<string, SelectedSafetyProblem>>(new Map());
-  const [selectedHindranceProblems, setSelectedHindranceProblems] = useState<Map<string, SelectedHindranceProblem>>(new Map());
+  const [hindranceEntries, setHindranceEntries] = useState<HindranceEntry[]>([]);
   const [assetSearchQuery, setAssetSearchQuery] = useState<string>('');
-  const [safetyProblems, setSafetyProblems] = useState<SafetyProblem[]>([]);
-  const [hindranceProblems, setHindranceProblems] = useState<HindranceProblem[]>([]);
+  const [activitySearchQuery, setActivitySearchQuery] = useState<string>('');
+  const [materialSearchQuery, setMaterialSearchQuery] = useState<string>('');
+  const [labourSearchQuery, setLabourSearchQuery] = useState<string>('');
+  const [safetyEntries, setSafetyEntries] = useState<SafetyEntry[]>([]);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [isLoadingProjects, setIsLoadingProjects] = useState<boolean>(false);
+  const [isLoadingSafety, setIsLoadingSafety] = useState<boolean>(false);
 
   // Pagination state per sector (reset when modal/search changes)
   const [projectPage, setProjectPage] = useState(1);
@@ -236,7 +252,10 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const [assetPage, setAssetPage] = useState(1);
   const [safetyPage, setSafetyPage] = useState(1);
   const [hindrancePage, setHindrancePage] = useState(1);
-  
+
+  // When focused and value is 0, show empty so user can type without deleting
+  const [focusedQuantityField, setFocusedQuantityField] = useState<string | null>(null);
+
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
@@ -245,16 +264,16 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
   // Reusable pagination controls
   const PaginationBar = ({ currentPage, totalItems, onPageChange }: { currentPage: number; totalItems: number; onPageChange: (page: number) => void }) => {
-    if (totalItems <= PAGE_SIZE) return null;
-    const totalPages = Math.ceil(totalItems / PAGE_SIZE);
+    if (totalItems === 0) return null;
+    const totalPages = Math.max(1, Math.ceil(totalItems / PAGE_SIZE));
     const start = (currentPage - 1) * PAGE_SIZE + 1;
     const end = Math.min(currentPage * PAGE_SIZE, totalItems);
     return (
-      <div className={`flex items-center justify-between px-4 py-3 border-t border-inherit ${isDark ? 'bg-slate-800/30' : 'bg-slate-50/50'}`}>
-        <span className={`text-sm ${textSecondary}`}>
+      <div className={`flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 sm:gap-0 px-3 sm:px-4 py-3 border-t border-inherit ${isDark ? 'bg-slate-800/30' : 'bg-slate-50/50'}`}>
+        <span className={`text-xs sm:text-sm ${textSecondary}`}>
           Showing {start}–{end} of {totalItems}
         </span>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center justify-center sm:justify-end gap-1">
           <button
             onClick={() => onPageChange(1)}
             disabled={currentPage <= 1}
@@ -290,6 +309,48 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       </div>
     );
   };
+
+  // When project modal opens, scroll so list starts at top (header above scrolls out of view)
+  useLayoutEffect(() => {
+    if (!showProjectSelection || !projectModalScrollRef.current) return;
+    projectModalScrollRef.current.scrollTop = 0;
+  }, [showProjectSelection]);
+
+  // When modals open (via Back/Next), show content from top (header first)
+  useLayoutEffect(() => {
+    if (!showSubprojectSelection || !subprojectModalScrollRef.current) return;
+    subprojectModalScrollRef.current.scrollTop = 0;
+  }, [showSubprojectSelection]);
+
+  useLayoutEffect(() => {
+    if (!showActivitySelection || !activityModalScrollRef.current) return;
+    activityModalScrollRef.current.scrollTop = 0;
+  }, [showActivitySelection]);
+
+  useLayoutEffect(() => {
+    if (!showMaterialSelection || !materialModalScrollRef.current) return;
+    materialModalScrollRef.current.scrollTop = 0;
+  }, [showMaterialSelection]);
+
+  useLayoutEffect(() => {
+    if (!showLabourSelection || !labourModalScrollRef.current) return;
+    labourModalScrollRef.current.scrollTop = 0;
+  }, [showLabourSelection]);
+
+  useLayoutEffect(() => {
+    if (!showAssetSelection || !assetModalScrollRef.current) return;
+    assetModalScrollRef.current.scrollTop = 0;
+  }, [showAssetSelection]);
+
+  useLayoutEffect(() => {
+    if (!showSafetySelection || !safetyModalScrollRef.current) return;
+    safetyModalScrollRef.current.scrollTop = 0;
+  }, [showSafetySelection]);
+
+  useLayoutEffect(() => {
+    if (!showHindranceSelection || !hindranceModalScrollRef.current) return;
+    hindranceModalScrollRef.current.scrollTop = 0;
+  }, [showHindranceSelection]);
 
   // Load projects from API (user-associated projects)
   useEffect(() => {
@@ -382,8 +443,14 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
   // DPR subprojects - fetched via API when project is selected
   const [isLoadingSubprojects, setIsLoadingSubprojects] = useState<boolean>(false);
+  const [isLoadingMaterials, setIsLoadingMaterials] = useState<boolean>(false);
+  const [isLoadingLabours, setIsLoadingLabours] = useState<boolean>(false);
+  const [laboursRefreshKey, setLaboursRefreshKey] = useState(0);
+  const [isLoadingAssets, setIsLoadingAssets] = useState<boolean>(false);
+  const [assetsRefreshKey, setAssetsRefreshKey] = useState(0);
   const [subprojectsSearchResults, setSubprojectsSearchResults] = useState<Subproject[]>([]); // Results from projectWiseSubprojectSearch when searching
   const [subprojectRefreshKey, setSubprojectRefreshKey] = useState(0); // Increment to trigger subproject refetch
+  const [materialsRefreshKey, setMaterialsRefreshKey] = useState(0); // Increment to trigger materials refetch
 
   // Transform API subproject response to DPR Subproject interface
   const transformSubproject = (sub: any, projectName: string): Subproject => ({
@@ -530,11 +597,14 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setSelectedMaterials(new Map());
     setSelectedLabours(new Map());
     setSelectedAssets(new Map());
-    setSelectedSafetyProblems(new Map());
-    setSelectedHindranceProblems(new Map());
+    setSafetyEntries([]);
+    setHindranceEntries([]);
     setProjectSearchQuery('');
     setSubprojectSearchQuery('');
     setAssetSearchQuery('');
+    setActivitySearchQuery('');
+    setMaterialSearchQuery('');
+    setLabourSearchQuery('');
     setProjectPage(1);
     setSubprojectPage(1);
     setActivityPage(1);
@@ -547,8 +617,6 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setMaterials([]);
     setLabours([]);
     setAssets([]);
-    setSafetyProblems([]);
-    setHindranceProblems([]);
   };
 
   // Load contractors from vendors API (supplierContractorList with type 'contractor')
@@ -594,29 +662,33 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         const subprojectId = selectedSubproject?.numericId ?? selectedSubproject?.id;
         const { data } = await masterDataAPI.getActivities(projectId, subprojectId);
         const raw = Array.isArray(data) ? data : [];
+        const getUnitName = (a: any) => {
+          const fromApi = a.units?.unit || a.units?.name || a.unit?.unit || a.unit?.name || (typeof a.unit === 'string' ? a.unit : '');
+          if (fromApi) return fromApi;
+          return '';
+        };
         const transformed: ActivityItem[] = raw.map((a: any) => {
           const actType = (a.type ?? a.activity_type ?? '').toString().toLowerCase();
           const type: 'heading' | 'activity' = actType === 'heading' ? 'heading' : 'activity';
           return {
             id: a.uuid || String(a.id),
+            numericId: a.id,
             name: a.activities || a.name || '',
             project: selectedProject.name,
             subproject: selectedSubproject?.name || '',
             type,
-            unit: a.unit?.unit || a.unit?.name || (typeof a.unit === 'string' ? a.unit : a.unit),
+            unit: getUnitName(a),
             qty: a.qty ?? a.quantity,
             rate: a.rate,
             amount: a.amount,
             startDate: a.start_date || a.startDate,
             endDate: a.end_date || a.endDate,
-            createdAt: a.created_at || a.createdAt
+            createdAt: a.created_at || a.createdAt,
+            heading: a.heading ?? a.parent_id,
+            parent_id: a.parent_id ?? a.heading
           };
         });
-        setActivities(prev => {
-          const serverIds = new Set(transformed.map(x => x.id));
-          const fromPrev = prev.filter(x => !serverIds.has(x.id));
-          return [...transformed, ...fromPrev];
-        });
+        setActivities(transformed);
       } catch {
         setActivities([]);
       } finally {
@@ -627,17 +699,66 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     fetchActivities();
   }, [showActivitySelection, selectedProject, selectedSubproject, activitiesRefreshKey]);
 
-  // Filter activities - show both activities and headings
-  const filteredActivities = useMemo(() => {
-    return activities.filter(activity => 
-      activity.type === 'activity' || activity.type === 'heading'
-    );
+  // Build hierarchical tree like Masters > Activities (headings first, then children, srNo: 1, 1.1, 1.2, 1.3, 1.3.1)
+  type ActivityTreeNode = { item: ActivityItem; srNo: string };
+  const activityTreeNodes = useMemo(() => {
+    const isHeading = (a: ActivityItem) => (a.type || '').toLowerCase() === 'heading';
+    const headings = activities.filter(isHeading);
+    const allActivities = activities.filter((a) => !isHeading(a));
+    const getParentId = (a: ActivityItem) => a.parent_id ?? a.heading;
+    const getNodeId = (a: ActivityItem) => a.numericId ?? (typeof a.id === 'string' && !isNaN(Number(a.id)) ? Number(a.id) : null);
+    const matchesParent = (child: ActivityItem, parent: ActivityItem) => {
+      const pid = getParentId(child);
+      if (pid == null) return false;
+      const parentNodeId = getNodeId(parent);
+      return pid === parentNodeId || String(pid) === String(parent.id) || String(pid) === String((parent as any).uuid);
+    };
+
+    const result: ActivityTreeNode[] = [];
+    let headingNo = 0;
+    const allPlacedIds = new Set<string>();
+
+    const addChildrenRecursive = (parent: ActivityItem, parentSrNo: string): void => {
+      const kids = allActivities.filter((c) => matchesParent(c, parent));
+      kids.forEach((k, idx) => {
+        allPlacedIds.add(k.id);
+        const srNo = `${parentSrNo}.${idx + 1}`;
+        result.push({ item: k, srNo });
+        addChildrenRecursive(k, srNo);
+      });
+    };
+
+    for (const h of headings) {
+      headingNo++;
+      result.push({ item: h, srNo: String(headingNo) });
+      addChildrenRecursive(h, String(headingNo));
+    }
+    const orphans = allActivities.filter((c) => !allPlacedIds.has(c.id));
+    orphans.forEach((o) => {
+      headingNo++;
+      result.push({ item: o, srNo: String(headingNo) });
+    });
+    return result;
   }, [activities]);
+
+  const filteredActivities = useMemo(() => {
+    if (!activitySearchQuery.trim()) return activityTreeNodes;
+    const q = activitySearchQuery.toLowerCase();
+    return activityTreeNodes.filter(
+      (n) =>
+        n.item.name.toLowerCase().includes(q) ||
+        (n.item.unit && String(n.item.unit).toLowerCase().includes(q))
+    );
+  }, [activityTreeNodes, activitySearchQuery]);
 
   const paginatedActivities = useMemo(() => {
     const start = (activityPage - 1) * PAGE_SIZE;
     return filteredActivities.slice(start, start + PAGE_SIZE);
   }, [filteredActivities, activityPage]);
+
+  useEffect(() => {
+    setActivityPage(1);
+  }, [selectedProject?.id, selectedSubproject?.id]);
 
   const handleToggleActivity = (activity: ActivityItem) => {
     if (activity.type === 'heading') return; // Headings are not selectable
@@ -752,20 +873,32 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         e.nativeEvent.stopImmediatePropagation();
       }
     }
-    
+
     // Ensure we have required selections before proceeding
     if (!selectedProject) {
       console.error('No project selected');
       return false;
     }
-    
+
+    // Quantity is mandatory for all selected activities
+    const withoutQuantity = Array.from(selectedActivities.values()).filter(
+      (a) => a.quantity == null || a.quantity <= 0
+    );
+    if (withoutQuantity.length > 0) {
+      const names = withoutQuantity.map((a) => a.name).join(', ');
+      toast.showWarning(
+        `Quantity is required for all selected activities. Please enter quantity for: ${names}`
+      );
+      return false;
+    }
+
     // Check if subproject is required for material selection
     // The material selection modal requires selectedSubproject to be truthy
     if (!selectedSubproject) {
       console.warn('No subproject selected - material selection requires subproject');
       // Still proceed - the modal condition will handle it
     }
-    
+
     // Close activity selection and open material selection
     // React will batch these state updates automatically
     setShowActivitySelection(false);
@@ -774,65 +907,43 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     return false;
   };
 
-  // Load materials from localStorage
+  // Load materials from Masters > Materials (GET /materials-list) - associated with logged-in user
   useEffect(() => {
-    const loadMaterials = () => {
-      const defaultMaterials: Material[] = [
-        { id: '1', class: 'A', code: 'M685270', name: 'Cement', specification: 'OPC testy', unit: 'Packet', createdAt: '2024-01-15T00:00:00.000Z' },
-        { id: '2', class: 'A', code: 'M984236', name: 'RMC', specification: 'M40', unit: 'Cft', createdAt: '2024-01-16T00:00:00.000Z' },
-        { id: '3', class: 'B', code: 'M211203', name: 'Measuring Tape', specification: '1/2 Inches', unit: 'Nos', createdAt: '2024-01-17T00:00:00.000Z' },
-        { id: '4', class: 'B', code: 'M257929', name: 'Hose Pipe', specification: '1 Inches', unit: 'Nos', createdAt: '2024-01-18T00:00:00.000Z' },
-        { id: '5', class: 'B', code: 'M205837', name: 'Hose Pipe', specification: '', unit: 'Rft', createdAt: '2024-01-19T00:00:00.000Z' },
-        { id: '6', class: 'B', code: 'M987837', name: 'Nylon Rope', specification: '', unit: 'Rft', createdAt: '2024-01-20T00:00:00.000Z' },
-        { id: '7', class: 'C', code: 'M183654', name: 'Oil', specification: '', unit: 'Ltr', createdAt: '2024-01-21T00:00:00.000Z' },
-        { id: '8', class: 'C', code: 'M976735', name: 'Cover Blocks', specification: '20mm', unit: 'Nos', createdAt: '2024-01-22T00:00:00.000Z' },
-        { id: '9', class: 'C', code: 'M421512', name: 'Cover Blocks', specification: '25mm', unit: 'Nos', createdAt: '2024-01-23T00:00:00.000Z' },
-        { id: '10', class: 'C', code: 'M625759', name: 'Petrol', specification: '', unit: 'Ltr', createdAt: '2024-01-24T00:00:00.000Z' },
-        { id: '11', class: 'C', code: 'M232620', name: 'Diesel', specification: '', unit: 'Ltr', createdAt: '2024-01-25T00:00:00.000Z' },
-        { id: '12', class: 'B', code: 'M932823', name: 'UPVC', specification: '12 inch', unit: 'Rmt', createdAt: '2024-01-26T00:00:00.000Z' },
-        { id: '13', class: 'A', code: 'M880841', name: 'Tmt Concrete', specification: '', unit: 'Cft', createdAt: '2024-01-27T00:00:00.000Z' },
-        { id: '14', class: 'A', code: 'M100439', name: 'Cement', specification: 'OPC 53 grade', unit: 'Bags', createdAt: '2024-01-28T00:00:00.000Z' },
-      ];
+    if (!showMaterialSelection || !isAuthenticated) {
+      return;
+    }
 
-      const savedMaterials = localStorage.getItem('materials');
-      let userMaterials: Material[] = [];
-      
-      if (savedMaterials) {
-        try {
-          const parsed = JSON.parse(savedMaterials);
-          userMaterials = parsed.map((mat: any) => ({
-            id: mat.id,
-            class: mat.class,
-            code: mat.code,
-            name: mat.name,
-            specification: mat.specification || '',
-            unit: mat.unit,
-            createdAt: mat.createdAt
-          }));
-        } catch (e) {
-          console.error('Error parsing materials:', e);
-        }
-      }
-
-      setMaterials([...defaultMaterials, ...userMaterials]);
-    };
-
-    loadMaterials();
-
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'materials') {
-        loadMaterials();
+    const fetchMaterials = async () => {
+      setIsLoadingMaterials(true);
+      try {
+        const fetchedMaterials = await masterDataAPI.getMaterials();
+        const raw = Array.isArray(fetchedMaterials) ? fetchedMaterials : [];
+        const transformed: Material[] = raw.map((m: any) => {
+          const materialClass = m.class?.value || m.class || '';
+          const unitObj = m.units || m.unit;
+          const unitLabel = unitObj?.unit || unitObj?.name || (typeof m.unit === 'string' ? m.unit : '') || '';
+          return {
+            id: m.uuid || String(m.id),
+            class: (materialClass || 'B') as 'A' | 'B' | 'C',
+            code: m.code || '',
+            name: m.name || '',
+            specification: m.specification ?? '',
+            unit: unitLabel,
+            createdAt: m.created_at || m.createdAt
+          };
+        });
+        setMaterials(transformed);
+      } catch (err: any) {
+        console.error('Failed to fetch materials from Masters:', err);
+        toast.showError(err.message || 'Failed to load materials');
+        setMaterials([]);
+      } finally {
+        setIsLoadingMaterials(false);
       }
     };
 
-    window.addEventListener('storage', handleStorageChange);
-    window.addEventListener('materialsUpdated', loadMaterials);
-
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('materialsUpdated', loadMaterials);
-    };
-  }, []);
+    fetchMaterials();
+  }, [showMaterialSelection, isAuthenticated, materialsRefreshKey]);
 
   const handleToggleMaterial = (material: Material) => {
     setSelectedMaterials(prev => {
@@ -897,6 +1008,17 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   };
 
   const handleMaterialSelectionNext = () => {
+    // Quantity is mandatory for all selected materials
+    const withoutQuantity = Array.from(selectedMaterials.values()).filter(
+      (m) => m.quantity == null || m.quantity <= 0
+    );
+    if (withoutQuantity.length > 0) {
+      const names = withoutQuantity.map((m) => m.name).join(', ');
+      toast.showWarning(
+        `Quantity is required for all selected materials. Please enter quantity for: ${names}`
+      );
+      return;
+    }
     setShowMaterialSelection(false);
     setShowLabourSelection(true);
   };
@@ -906,112 +1028,81 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     return Array.from(selectedActivities.values()).map(act => act.name);
   }, [selectedActivities]);
 
-  // Load labours from localStorage
+  // Load labours from Masters > Labours (GET /labour-list) - associated with logged-in user
   useEffect(() => {
-    const loadLabours = () => {
-      const defaultLabours: Labour[] = [
-        { id: 'LAB001', name: 'Supervisor', type: 'Supervisor', category: 'Skilled', createdAt: '2024-01-15T00:00:00.000Z' },
-        { id: 'LAB002', name: 'Foremen', type: 'Foremen', category: 'Skilled', createdAt: '2024-01-16T00:00:00.000Z' },
-        { id: 'LAB003', name: 'Helpers', type: 'Helpers', category: 'Semi Skilled', createdAt: '2024-01-17T00:00:00.000Z' },
-        { id: 'LAB004', name: 'Male Coolie', type: 'Male Coolie', category: 'Unskilled', createdAt: '2024-01-18T00:00:00.000Z' },
-        { id: 'LAB005', name: 'Female Coolie', type: 'Female Coolie', category: 'Unskilled', createdAt: '2024-01-19T00:00:00.000Z' },
-        { id: 'LAB006', name: 'General Laborers', type: 'General Laborers', category: 'Unskilled', createdAt: '2024-01-20T00:00:00.000Z' },
-        { id: 'LAB007', name: 'Beldar', type: 'Beldar', category: 'Unskilled', createdAt: '2024-01-21T00:00:00.000Z' },
-        { id: 'LAB008', name: 'Masons', type: 'Masons', category: 'Skilled', createdAt: '2024-01-22T00:00:00.000Z' },
-        { id: 'LAB009', name: 'Carpenters', type: 'Carpenters', category: 'Skilled', createdAt: '2024-01-23T00:00:00.000Z' },
-        { id: 'LAB010', name: 'Electricians', type: 'Electricians', category: 'Skilled', createdAt: '2024-01-24T00:00:00.000Z' },
-      ];
+    if (!showLabourSelection || !isAuthenticated) {
+      return;
+    }
 
-      const savedLabours = localStorage.getItem('labours');
-      let userLabours: Labour[] = [];
-      
-      if (savedLabours) {
-        try {
-          const parsed = JSON.parse(savedLabours);
-          userLabours = parsed.map((lab: any) => ({
-            id: lab.id,
-            name: lab.name || lab.type,
-            type: lab.type,
-            category: lab.category,
-            createdAt: lab.createdAt
-          }));
-        } catch (e) {
-          console.error('Error parsing labours:', e);
-        }
-      }
-
-      setLabours([...defaultLabours, ...userLabours]);
-    };
-
-    loadLabours();
-
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'labours') {
-        loadLabours();
+    const fetchLabours = async () => {
+      setIsLoadingLabours(true);
+      try {
+        const fetchedLabours = await masterDataAPI.getLabours();
+        const raw = Array.isArray(fetchedLabours) ? fetchedLabours : [];
+        const categoryMap: Record<string, string> = {
+          skilled: 'Skilled',
+          semiskilled: 'Semi Skilled',
+          unskilled: 'Unskilled'
+        };
+        const transformed: Labour[] = raw.map((lab: any) => {
+          const cat = (lab.category || '').toLowerCase();
+          const category = categoryMap[cat] || (lab.category || '');
+          return {
+            id: lab.uuid || String(lab.id),
+            name: lab.name || '',
+            type: lab.name || '',
+            category: category || 'Skilled',
+            createdAt: lab.created_at || lab.createdAt
+          };
+        });
+        setLabours(transformed);
+      } catch (err: any) {
+        console.error('Failed to fetch labours from Masters:', err);
+        toast.showError(err.message || 'Failed to load labours');
+        setLabours([]);
+      } finally {
+        setIsLoadingLabours(false);
       }
     };
 
-    window.addEventListener('storage', handleStorageChange);
-    window.addEventListener('laboursUpdated', loadLabours);
+    fetchLabours();
+  }, [showLabourSelection, isAuthenticated, laboursRefreshKey]);
 
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('laboursUpdated', loadLabours);
-    };
-  }, []);
-
-  // Load assets from localStorage
+  // Load assets from Masters > Assets/Equipments (GET /assets-list) - associated with logged-in user
   useEffect(() => {
-    const loadAssets = () => {
-      const defaultAssets: AssetEquipment[] = [
-        { id: '1', code: 'AE001', name: 'Machinery Hire', specification: 'Heavy Duty', unit: 'Hrs', createdAt: '2024-01-15T00:00:00.000Z' },
-        { id: '2', code: 'AE002', name: 'Breaker Hire', specification: 'Industrial Grade', unit: 'Hrs', createdAt: '2024-01-16T00:00:00.000Z' },
-        { id: '3', code: 'AE003', name: 'MS Props', specification: 'Standard Size', unit: 'Nos', createdAt: '2024-01-17T00:00:00.000Z' },
-        { id: '4', code: 'AE004', name: 'MS Shikanja', specification: 'Reinforced', unit: 'Nos', createdAt: '2024-01-18T00:00:00.000Z' },
-        { id: '5', code: 'AE005', name: 'MS Shuttering Plates', specification: 'Steel Grade', unit: 'Sqm', createdAt: '2024-01-19T00:00:00.000Z' },
-        { id: '6', code: 'AE006', name: 'Concrete Breaker Machine', specification: 'Portable', unit: 'Hrs', createdAt: '2024-01-20T00:00:00.000Z' },
-        { id: '7', code: 'AE007', name: 'Measuring Tape', specification: '50m', unit: 'Nos', createdAt: '2024-01-21T00:00:00.000Z' },
-        { id: '8', code: 'AE008', name: 'Helmets', specification: 'Safety Certified', unit: 'Nos', createdAt: '2024-01-22T00:00:00.000Z' },
-      ];
+    if (!showAssetSelection || !isAuthenticated) {
+      return;
+    }
 
-      const savedAssets = localStorage.getItem('assetsEquipments');
-      let userAssets: AssetEquipment[] = [];
-      
-      if (savedAssets) {
-        try {
-          const parsed = JSON.parse(savedAssets);
-          userAssets = parsed.map((asset: any) => ({
-            id: asset.id,
-            code: asset.code,
-            name: asset.name,
-            specification: asset.specification || '',
-            unit: asset.unit,
-            createdAt: asset.createdAt
-          }));
-        } catch (e) {
-          console.error('Error parsing assets:', e);
-        }
-      }
-
-      setAssets([...defaultAssets, ...userAssets]);
-    };
-
-    loadAssets();
-
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'assetsEquipments') {
-        loadAssets();
+    const fetchAssets = async () => {
+      setIsLoadingAssets(true);
+      try {
+        const fetchedAssets = await masterDataAPI.getAssetsEquipments();
+        const raw = Array.isArray(fetchedAssets) ? fetchedAssets : [];
+        const transformed: AssetEquipment[] = raw.map((asset: any) => {
+          const unitObj = asset.unit_id && typeof asset.unit_id === 'object' ? asset.unit_id : asset.unit;
+          const unitLabel = unitObj?.unit || asset.unit?.unit || asset.unit || '';
+          return {
+            id: asset.uuid || String(asset.id),
+            code: asset.code || '',
+            name: asset.assets || asset.name || '',
+            specification: asset.specification ?? '',
+            unit: unitLabel,
+            createdAt: asset.created_at || asset.createdAt
+          };
+        });
+        setAssets(transformed);
+      } catch (err: any) {
+        console.error('Failed to fetch assets from Masters:', err);
+        toast.showError(err.message || 'Failed to load assets');
+        setAssets([]);
+      } finally {
+        setIsLoadingAssets(false);
       }
     };
 
-    window.addEventListener('storage', handleStorageChange);
-    window.addEventListener('assetsEquipmentsUpdated', loadAssets);
-
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('assetsEquipmentsUpdated', loadAssets);
-    };
-  }, []);
+    fetchAssets();
+  }, [showAssetSelection, isAuthenticated, assetsRefreshKey]);
 
   // Filter assets based on search query
   const filteredAssets = useMemo(() => {
@@ -1020,37 +1111,72 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     }
     const query = assetSearchQuery.toLowerCase();
     return assets.filter(asset =>
-      asset.code.toLowerCase().includes(query) ||
-      asset.name.toLowerCase().includes(query) ||
-      asset.specification.toLowerCase().includes(query) ||
-      asset.unit.toLowerCase().includes(query)
+      (asset.code || '').toLowerCase().includes(query) ||
+      (asset.name || '').toLowerCase().includes(query) ||
+      (asset.specification || '').toLowerCase().includes(query) ||
+      (asset.unit || '').toLowerCase().includes(query)
     );
   }, [assets, assetSearchQuery]);
+
+  useEffect(() => {
+    setAssetPage(1);
+  }, [assetSearchQuery]);
 
   const paginatedAssets = useMemo(() => {
     const start = (assetPage - 1) * PAGE_SIZE;
     return filteredAssets.slice(start, start + PAGE_SIZE);
   }, [filteredAssets, assetPage]);
 
+  const filteredMaterials = useMemo(() => {
+    if (!materialSearchQuery.trim()) return materials;
+    const q = materialSearchQuery.toLowerCase();
+    return materials.filter(m =>
+      m.class.toLowerCase().includes(q) ||
+      m.code.toLowerCase().includes(q) ||
+      m.name.toLowerCase().includes(q) ||
+      (m.specification && m.specification.toLowerCase().includes(q)) ||
+      m.unit.toLowerCase().includes(q)
+    );
+  }, [materials, materialSearchQuery]);
+
   const paginatedMaterials = useMemo(() => {
     const start = (materialsPage - 1) * PAGE_SIZE;
-    return materials.slice(start, start + PAGE_SIZE);
-  }, [materials, materialsPage]);
+    return filteredMaterials.slice(start, start + PAGE_SIZE);
+  }, [filteredMaterials, materialsPage]);
+
+  const filteredLabours = useMemo(() => {
+    if (!labourSearchQuery.trim()) return labours;
+    const q = labourSearchQuery.toLowerCase();
+    return labours.filter(l =>
+      (l.name || '').toLowerCase().includes(q) ||
+      (l.type || '').toLowerCase().includes(q) ||
+      (l.category || '').toLowerCase().includes(q)
+    );
+  }, [labours, labourSearchQuery]);
 
   const paginatedLabours = useMemo(() => {
     const start = (laboursPage - 1) * PAGE_SIZE;
-    return labours.slice(start, start + PAGE_SIZE);
-  }, [labours, laboursPage]);
+    return filteredLabours.slice(start, start + PAGE_SIZE);
+  }, [filteredLabours, laboursPage]);
 
-  const paginatedSafetyProblems = useMemo(() => {
+  const paginatedSafetyEntries = useMemo(() => {
     const start = (safetyPage - 1) * PAGE_SIZE;
-    return safetyProblems.slice(start, start + PAGE_SIZE);
-  }, [safetyProblems, safetyPage]);
+    return safetyEntries.slice(start, start + PAGE_SIZE);
+  }, [safetyEntries, safetyPage]);
 
-  const paginatedHindranceProblems = useMemo(() => {
+  useEffect(() => {
+    setMaterialsPage(1);
+  }, [materialSearchQuery]);
+
+  useEffect(() => {
+    setLaboursPage(1);
+  }, [labourSearchQuery]);
+
+
+  const paginatedHindranceEntries = useMemo(() => {
     const start = (hindrancePage - 1) * PAGE_SIZE;
-    return hindranceProblems.slice(start, start + PAGE_SIZE);
-  }, [hindranceProblems, hindrancePage]);
+    return hindranceEntries.slice(start, start + PAGE_SIZE);
+  }, [hindranceEntries, hindrancePage]);
 
   const handleToggleLabour = (labour: Labour) => {
     setSelectedLabours(prev => {
@@ -1156,6 +1282,17 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   };
 
   const handleLabourSelectionNext = () => {
+    // Quantity is mandatory for all selected labours
+    const withoutQuantity = Array.from(selectedLabours.values()).filter(
+      (l) => l.quantity == null || l.quantity <= 0
+    );
+    if (withoutQuantity.length > 0) {
+      const names = withoutQuantity.map((l) => l.type || l.category).join(', ');
+      toast.showWarning(
+        `Quantity is required for all selected labours. Please enter quantity for: ${names}`
+      );
+      return;
+    }
     setShowLabourSelection(false);
     setShowAssetSelection(true);
   };
@@ -1249,128 +1386,149 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   };
 
   const handleAssetSelectionNext = () => {
+    // Quantity is mandatory for all selected assets
+    const withoutQuantity = Array.from(selectedAssets.values()).filter(
+      (a) => !a.quantity || a.quantity <= 0
+    );
+    if (withoutQuantity.length > 0) {
+      const names = withoutQuantity.map((a) => a.name || a.code).join(', ');
+      toast.showWarning(
+        `Quantity is required for all selected assets. Please enter quantity for: ${names}`
+      );
+      return;
+    }
     setShowAssetSelection(false);
     setShowSafetySelection(true);
   };
 
-  // Load team members from localStorage
+  // Load team members (staff list) from Masters > Operations > Staff (GET /teams-list)
+  // Fetches when user is authenticated so data is ready for Safety/Hindrance modals
+  // Falls back to localStorage (users or manageTeamsUsers) if API fails
   useEffect(() => {
-    const loadTeamMembers = () => {
-      const savedUsers = localStorage.getItem('users');
-      if (savedUsers) {
+    if (!isAuthenticated) return;
+    const fetchTeamMembers = async () => {
+      try {
+        const staffList = await teamsAPI.getTeamsList();
+        const raw = Array.isArray(staffList) ? staffList : [];
+        const members: TeamMember[] = raw.map((u: any) => ({
+          id: u.uuid || String(u.id),
+          name: u.name || '',
+          email: u.email || ''
+        })).filter((m: TeamMember) => m.name);
+        setTeamMembers(members);
+      } catch (err: any) {
+        console.warn('Staff list API failed, using fallback:', err?.message);
+        // Fallback: try localStorage (manageTeamsUsers from Operations > Staff, or users)
         try {
-          const parsed = JSON.parse(savedUsers);
-          if (Array.isArray(parsed)) {
-            const members: TeamMember[] = parsed.map((u: any) => ({
-              id: u.id || Date.now().toString(),
-              name: u.name || '',
-              email: u.email || ''
-            })).filter((m: TeamMember) => m.name && m.email);
-            setTeamMembers(members);
-          }
-        } catch (e) {
-          console.error('Error parsing users:', e);
+          const saved = localStorage.getItem('manageTeamsUsers') || localStorage.getItem('users');
+          const parsed = saved ? JSON.parse(saved) : [];
+          const list = Array.isArray(parsed) ? parsed : [];
+          const fallback: TeamMember[] = list.map((u: any) => ({
+            id: u.uuid || u.id || String(Date.now()),
+            name: u.name || '',
+            email: u.email || ''
+          })).filter((m: TeamMember) => m.name);
+          setTeamMembers(fallback);
+        } catch {
+          setTeamMembers([]);
         }
       }
     };
-    loadTeamMembers();
-    
-    // Listen for storage events
-    const handleStorageChange = () => {
-      loadTeamMembers();
-    };
-    window.addEventListener('storage', handleStorageChange);
-    window.addEventListener('usersUpdated', handleStorageChange);
-    
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('usersUpdated', handleStorageChange);
-    };
-  }, []);
+    fetchTeamMembers();
+  }, [isAuthenticated]);
 
-  // Initialize default safety problems
+  // Load safety entries from API when Safety modal opens
   useEffect(() => {
-    const defaultSafetyProblems: SafetyProblem[] = [
-      { id: '1', details: 'Unsafe scaffolding' },
-      { id: '2', details: 'Missing safety barriers' },
-      { id: '3', details: 'Improper use of PPE' },
-      { id: '4', details: 'Exposed electrical wires' },
-      { id: '5', details: 'Slippery surfaces' },
-      { id: '6', details: 'Unsafe material storage' },
-      { id: '7', details: 'Inadequate lighting' },
-      { id: '8', details: 'Blocked emergency exits' },
-    ];
-    setSafetyProblems(defaultSafetyProblems);
-  }, []);
-
-  const handleToggleSafetyProblem = (problem: SafetyProblem) => {
-    setSelectedSafetyProblems(prev => {
-      const newMap = new Map(prev);
-      if (newMap.has(problem.id)) {
-        newMap.delete(problem.id);
-      } else {
-        newMap.set(problem.id, {
-          id: problem.id,
-          details: problem.details,
-          image: '',
-          teamMembers: [],
-          remarks: ''
-        });
+    if (!showSafetySelection || !isAuthenticated) return;
+    const fetchSafetyList = async () => {
+      setIsLoadingSafety(true);
+      try {
+        const params: { project_id?: string | number; subproject_id?: string | number } = {};
+        if (selectedProject) params.project_id = selectedProject.numericId ?? selectedProject.id;
+        if (selectedSubproject) params.subproject_id = selectedSubproject.numericId ?? selectedSubproject.id;
+        const list = await safetyAPI.getSafetyList(params);
+        const mapped: SafetyEntry[] = (list || []).map((item: any) => ({
+          id: item.uuid || String(item.id),
+          serverId: item.id,
+          details: item.details || item.description || '',
+          image: item.image || item.image_url || '',
+          teamMembers: Array.isArray(item.team_members) ? item.team_members.map((m: any) => String(m?.id ?? m)) : Array.isArray(item.teamMembers) ? item.teamMembers : [],
+          remarks: item.remarks || '',
+        }));
+        setSafetyEntries(mapped);
+      } catch (err: any) {
+        toast.showError(err?.message || 'Failed to load safety list');
+      } finally {
+        setIsLoadingSafety(false);
       }
-      return newMap;
-    });
+    };
+    fetchSafetyList();
+  }, [showSafetySelection, isAuthenticated]);
+
+  const handleAddSafetyEntry = async () => {
+    const tempId = `temp-${Date.now()}`;
+    setSafetyEntries(prev => [...prev, { id: tempId }]);
+    try {
+      const payload: Record<string, any> = { details: '', remarks: '' };
+      if (selectedProject) payload.project_id = selectedProject.numericId ?? selectedProject.id;
+      if (selectedSubproject) payload.subproject_id = selectedSubproject.numericId ?? selectedSubproject.id;
+      const res = await safetyAPI.addSafety(payload);
+      const raw = res?.data ?? res;
+      if (raw && (raw.id !== undefined || raw.uuid)) {
+        setSafetyEntries(prev =>
+          prev.map(e => (e.id === tempId ? {
+            id: raw.uuid || String(raw.id),
+            serverId: raw.id,
+            details: e.details || raw.details || raw.description || '',
+            image: e.image || raw.image || raw.image_url || '',
+            teamMembers: e.teamMembers?.length ? e.teamMembers : Array.isArray(raw.team_members) ? raw.team_members.map((m: any) => String(m?.id ?? m)) : raw.teamMembers || [],
+            remarks: e.remarks || raw.remarks || '',
+          } : e))
+        );
+      }
+    } catch {
+      // Keep local row with temp id; user can still fill and use locally
+    }
   };
 
-  const handleSafetyImageUpload = (problemId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleRemoveSafetyEntry = async (id: string) => {
+    const entry = safetyEntries.find(e => e.id === id);
+    if (entry?.serverId != null) {
+      try {
+        await safetyAPI.deleteSafety(String(entry.serverId));
+      } catch (err: any) {
+        toast.showError(err?.message || 'Failed to delete safety entry');
+        return;
+      }
+    }
+    setSafetyEntries(prev => prev.filter(e => e.id !== id));
+  };
+
+  const handleSafetyEntryDetailsChange = (id: string, details: string) => {
+    setSafetyEntries(prev => prev.map(e => e.id === id ? { ...e, details } : e));
+  };
+
+  const handleSafetyEntryImageUpload = (id: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-
     const reader = new FileReader();
     reader.onload = (event) => {
       const result = event.target?.result as string;
-      setSelectedSafetyProblems(prev => {
-        const newMap = new Map(prev);
-        const problem = newMap.get(problemId);
-        if (problem) {
-          newMap.set(problemId, { ...problem, image: result });
-        }
-        return newMap;
-      });
+      setSafetyEntries(prev => prev.map(entry => entry.id === id ? { ...entry, image: result } : entry));
     };
     reader.readAsDataURL(files[0]);
   };
 
-  const handleSafetyRemoveImage = (problemId: string) => {
-    setSelectedSafetyProblems(prev => {
-      const newMap = new Map(prev);
-      const problem = newMap.get(problemId);
-      if (problem) {
-        newMap.set(problemId, { ...problem, image: '' });
-      }
-      return newMap;
-    });
+  const handleSafetyEntryRemoveImage = (id: string) => {
+    setSafetyEntries(prev => prev.map(e => e.id === id ? { ...e, image: '' } : e));
   };
 
-  const handleSafetyTeamMembersChange = (problemId: string, memberIds: string[]) => {
-    setSelectedSafetyProblems(prev => {
-      const newMap = new Map(prev);
-      const problem = newMap.get(problemId);
-      if (problem) {
-        newMap.set(problemId, { ...problem, teamMembers: memberIds });
-      }
-      return newMap;
-    });
+  const handleSafetyEntryTeamMembersChange = (id: string, memberIds: string[]) => {
+    setSafetyEntries(prev => prev.map(e => e.id === id ? { ...e, teamMembers: memberIds } : e));
   };
 
-  const handleSafetyRemarksChange = (problemId: string, remarks: string) => {
-    setSelectedSafetyProblems(prev => {
-      const newMap = new Map(prev);
-      const problem = newMap.get(problemId);
-      if (problem) {
-        newMap.set(problemId, { ...problem, remarks });
-      }
-      return newMap;
-    });
+  const handleSafetyEntryRemarksChange = (id: string, remarks: string) => {
+    setSafetyEntries(prev => prev.map(e => e.id === id ? { ...e, remarks } : e));
   };
 
   const handleSafetyNext = () => {
@@ -1383,91 +1541,40 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setShowHindranceSelection(true);
   };
 
-  // Initialize default hindrance problems
-  useEffect(() => {
-    const defaultHindranceProblems: HindranceProblem[] = [
-      { id: '1', details: 'Weather delays' },
-      { id: '2', details: 'Material unavailability' },
-      { id: '3', details: 'Equipment breakdown' },
-      { id: '4', details: 'Labour shortage' },
-      { id: '5', details: 'Site access issues' },
-      { id: '6', details: 'Permit delays' },
-      { id: '7', details: 'Design changes' },
-      { id: '8', details: 'Utility conflicts' },
-      { id: '9', details: 'Traffic restrictions' },
-      { id: '10', details: 'Environmental concerns' },
-    ];
-    setHindranceProblems(defaultHindranceProblems);
-  }, []);
-
-  const handleToggleHindranceProblem = (problem: HindranceProblem) => {
-    setSelectedHindranceProblems(prev => {
-      const newMap = new Map(prev);
-      if (newMap.has(problem.id)) {
-        newMap.delete(problem.id);
-      } else {
-        newMap.set(problem.id, {
-          id: problem.id,
-          details: problem.details,
-          image: '',
-          teamMembers: [],
-          remarks: ''
-        });
-      }
-      return newMap;
-    });
+  const handleAddHindranceEntry = () => {
+    const newId = String(Date.now());
+    setHindranceEntries(prev => [...prev, { id: newId }]);
   };
 
-  const handleHindranceImageUpload = (problemId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleRemoveHindranceEntry = (id: string) => {
+    setHindranceEntries(prev => prev.filter(e => e.id !== id));
+  };
+
+  const handleHindranceEntryDetailsChange = (id: string, details: string) => {
+    setHindranceEntries(prev => prev.map(e => e.id === id ? { ...e, details } : e));
+  };
+
+  const handleHindranceEntryImageUpload = (id: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-
     const reader = new FileReader();
     reader.onload = (event) => {
       const result = event.target?.result as string;
-      setSelectedHindranceProblems(prev => {
-        const newMap = new Map(prev);
-        const problem = newMap.get(problemId);
-        if (problem) {
-          newMap.set(problemId, { ...problem, image: result });
-        }
-        return newMap;
-      });
+      setHindranceEntries(prev => prev.map(entry => entry.id === id ? { ...entry, image: result } : entry));
     };
     reader.readAsDataURL(files[0]);
   };
 
-  const handleHindranceRemoveImage = (problemId: string) => {
-    setSelectedHindranceProblems(prev => {
-      const newMap = new Map(prev);
-      const problem = newMap.get(problemId);
-      if (problem) {
-        newMap.set(problemId, { ...problem, image: '' });
-      }
-      return newMap;
-    });
+  const handleHindranceEntryRemoveImage = (id: string) => {
+    setHindranceEntries(prev => prev.map(e => e.id === id ? { ...e, image: '' } : e));
   };
 
-  const handleHindranceTeamMembersChange = (problemId: string, memberIds: string[]) => {
-    setSelectedHindranceProblems(prev => {
-      const newMap = new Map(prev);
-      const problem = newMap.get(problemId);
-      if (problem) {
-        newMap.set(problemId, { ...problem, teamMembers: memberIds });
-      }
-      return newMap;
-    });
+  const handleHindranceEntryTeamMembersChange = (id: string, memberIds: string[]) => {
+    setHindranceEntries(prev => prev.map(e => e.id === id ? { ...e, teamMembers: memberIds } : e));
   };
 
-  const handleHindranceRemarksChange = (problemId: string, remarks: string) => {
-    setSelectedHindranceProblems(prev => {
-      const newMap = new Map(prev);
-      const problem = newMap.get(problemId);
-      if (problem) {
-        newMap.set(problemId, { ...problem, remarks });
-      }
-      return newMap;
-    });
+  const handleHindranceEntryRemarksChange = (id: string, remarks: string) => {
+    setHindranceEntries(prev => prev.map(e => e.id === id ? { ...e, remarks } : e));
   };
 
   const generateDPRPDF = async () => {
@@ -1816,8 +1923,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       yPosition += sectionSpacing;
     }
 
-    // Safety Problems Section
-    if (selectedSafetyProblems.size > 0) {
+    // Safety Section
+    if (safetyEntries.length > 0) {
       checkPageBreak(30);
       doc.setFontSize(14);
       doc.setFont('helvetica', 'bold');
@@ -1827,32 +1934,32 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
       let srNo = 1;
-      for (const problem of selectedSafetyProblems.values()) {
+      for (const entry of safetyEntries) {
         checkPageBreak(20);
         doc.setFont('helvetica', 'bold');
-        doc.text(`${srNo}. ${problem.details}`, margin, yPosition);
+        doc.text(`${srNo}. ${entry.details || '—'}`, margin, yPosition);
         yPosition += lineHeight;
         
         doc.setFont('helvetica', 'normal');
-        if (problem.teamMembers && problem.teamMembers.length > 0) {
-          const teamMemberNames = problem.teamMembers.map(id => {
-            const member = teamMembers.find(m => m.id === id);
-            return member ? member.name : id;
+        if (entry.teamMembers && entry.teamMembers.length > 0) {
+          const teamMemberNames = entry.teamMembers.map(mid => {
+            const member = teamMembers.find(m => m.id === mid);
+            return member ? member.name : mid;
           }).join(', ');
           doc.text(`Team Members: ${teamMemberNames}`, margin + 5, yPosition);
           yPosition += lineHeight;
         }
         
-        if (problem.remarks) {
-          const remarksLines = doc.splitTextToSize(`Remarks: ${problem.remarks}`, pageWidth - 2 * margin - 10);
+        if (entry.remarks) {
+          const remarksLines = doc.splitTextToSize(`Remarks: ${entry.remarks}`, pageWidth - 2 * margin - 10);
           doc.text(remarksLines, margin + 5, yPosition);
           yPosition += remarksLines.length * lineHeight;
         }
         
-        if (problem.image) {
+        if (entry.image) {
           doc.text('Image:', margin + 5, yPosition);
           yPosition += lineHeight + 2;
-          const imageHeight = await addImageToPDF(problem.image, margin + 5, yPosition, pageWidth - 2 * margin - 10, 50);
+          const imageHeight = await addImageToPDF(entry.image, margin + 5, yPosition, pageWidth - 2 * margin - 10, 50);
           yPosition += imageHeight;
         }
         
@@ -1862,8 +1969,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       yPosition += sectionSpacing;
     }
 
-    // Hindrance Problems Section
-    if (selectedHindranceProblems.size > 0) {
+    // Hindrance Section
+    if (hindranceEntries.length > 0) {
       checkPageBreak(30);
       doc.setFontSize(14);
       doc.setFont('helvetica', 'bold');
@@ -1873,32 +1980,32 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
       let srNo = 1;
-      for (const problem of selectedHindranceProblems.values()) {
+      for (const entry of hindranceEntries) {
         checkPageBreak(20);
         doc.setFont('helvetica', 'bold');
-        doc.text(`${srNo}. ${problem.details}`, margin, yPosition);
+        doc.text(`${srNo}. ${entry.details || '—'}`, margin, yPosition);
         yPosition += lineHeight;
         
         doc.setFont('helvetica', 'normal');
-        if (problem.teamMembers && problem.teamMembers.length > 0) {
-          const teamMemberNames = problem.teamMembers.map(id => {
-            const member = teamMembers.find(m => m.id === id);
-            return member ? member.name : id;
+        if (entry.teamMembers && entry.teamMembers.length > 0) {
+          const teamMemberNames = entry.teamMembers.map(mid => {
+            const member = teamMembers.find(m => m.id === mid);
+            return member ? member.name : mid;
           }).join(', ');
           doc.text(`Team Members: ${teamMemberNames}`, margin + 5, yPosition);
           yPosition += lineHeight;
         }
         
-        if (problem.remarks) {
-          const remarksLines = doc.splitTextToSize(`Remarks: ${problem.remarks}`, pageWidth - 2 * margin - 10);
+        if (entry.remarks) {
+          const remarksLines = doc.splitTextToSize(`Remarks: ${entry.remarks}`, pageWidth - 2 * margin - 10);
           doc.text(remarksLines, margin + 5, yPosition);
           yPosition += remarksLines.length * lineHeight;
         }
         
-        if (problem.image) {
+        if (entry.image) {
           doc.text('Image:', margin + 5, yPosition);
           yPosition += lineHeight + 2;
-          const imageHeight = await addImageToPDF(problem.image, margin + 5, yPosition, pageWidth - 2 * margin - 10, 50);
+          const imageHeight = await addImageToPDF(entry.image, margin + 5, yPosition, pageWidth - 2 * margin - 10, 50);
           yPosition += imageHeight;
         }
         
@@ -1930,119 +2037,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     await generateDPRPDF();
   };
 
-  const handleAssetCreated = (newAsset: AssetEquipment) => {
-    // Update local state
-    setAssets(prev => [...prev, newAsset]);
-    // Reload assets from localStorage to ensure consistency
-    const savedAssets = localStorage.getItem('assetsEquipments');
-    if (savedAssets) {
-      try {
-        const parsed = JSON.parse(savedAssets);
-        const defaultAssets: AssetEquipment[] = [
-          { id: '1', code: 'AE001', name: 'Machinery Hire', specification: 'Heavy Duty', unit: 'Hrs', createdAt: '2024-01-15T00:00:00.000Z' },
-          { id: '2', code: 'AE002', name: 'Breaker Hire', specification: 'Industrial Grade', unit: 'Hrs', createdAt: '2024-01-16T00:00:00.000Z' },
-          { id: '3', code: 'AE003', name: 'MS Props', specification: 'Standard Size', unit: 'Nos', createdAt: '2024-01-17T00:00:00.000Z' },
-          { id: '4', code: 'AE004', name: 'MS Shikanja', specification: 'Reinforced', unit: 'Nos', createdAt: '2024-01-18T00:00:00.000Z' },
-          { id: '5', code: 'AE005', name: 'MS Shuttering Plates', specification: 'Steel Grade', unit: 'Sqm', createdAt: '2024-01-19T00:00:00.000Z' },
-          { id: '6', code: 'AE006', name: 'Concrete Breaker Machine', specification: 'Portable', unit: 'Hrs', createdAt: '2024-01-20T00:00:00.000Z' },
-          { id: '7', code: 'AE007', name: 'Measuring Tape', specification: '50m', unit: 'Nos', createdAt: '2024-01-21T00:00:00.000Z' },
-          { id: '8', code: 'AE008', name: 'Helmets', specification: 'Safety Certified', unit: 'Nos', createdAt: '2024-01-22T00:00:00.000Z' },
-        ];
-        const userAssets = parsed.map((asset: any) => ({
-          id: asset.id,
-          code: asset.code,
-          name: asset.name,
-          specification: asset.specification || '',
-          unit: asset.unit,
-          createdAt: asset.createdAt
-        }));
-        setAssets([...defaultAssets, ...userAssets]);
-      } catch (e) {
-        console.error('Error parsing assets:', e);
-      }
-    }
-  };
-
-  const handleLabourCreated = (newLabour: { id: string; name: string; category: 'Skilled' | 'Unskilled' | 'Semi Skilled'; trade?: string; skillLevel?: string; status: 'Active' | 'Inactive'; createdAt?: string }) => {
-    // Transform the labour from CreateLabourModal to match DPR's Labour type
-    const transformedLabour: Labour = {
-      id: newLabour.id,
-      name: newLabour.name,
-      type: newLabour.name, // Use name as type since CreateLabourModal doesn't have type
-      category: newLabour.category,
-      createdAt: newLabour.createdAt
-    };
-    // Update local state
-    setLabours(prev => [...prev, transformedLabour]);
-    // Reload labours from localStorage to ensure consistency
-    const savedLabours = localStorage.getItem('labours');
-    if (savedLabours) {
-      try {
-        const parsed = JSON.parse(savedLabours);
-        const defaultLabours: Labour[] = [
-          { id: 'LAB001', name: 'Supervisor', type: 'Supervisor', category: 'Skilled', createdAt: '2024-01-15T00:00:00.000Z' },
-          { id: 'LAB002', name: 'Foremen', type: 'Foremen', category: 'Skilled', createdAt: '2024-01-16T00:00:00.000Z' },
-          { id: 'LAB003', name: 'Helpers', type: 'Helpers', category: 'Semi Skilled', createdAt: '2024-01-17T00:00:00.000Z' },
-          { id: 'LAB004', name: 'Male Coolie', type: 'Male Coolie', category: 'Unskilled', createdAt: '2024-01-18T00:00:00.000Z' },
-          { id: 'LAB005', name: 'Female Coolie', type: 'Female Coolie', category: 'Unskilled', createdAt: '2024-01-19T00:00:00.000Z' },
-          { id: 'LAB006', name: 'General Laborers', type: 'General Laborers', category: 'Unskilled', createdAt: '2024-01-20T00:00:00.000Z' },
-          { id: 'LAB007', name: 'Beldar', type: 'Beldar', category: 'Unskilled', createdAt: '2024-01-21T00:00:00.000Z' },
-          { id: 'LAB008', name: 'Masons', type: 'Masons', category: 'Skilled', createdAt: '2024-01-22T00:00:00.000Z' },
-          { id: 'LAB009', name: 'Carpenters', type: 'Carpenters', category: 'Skilled', createdAt: '2024-01-23T00:00:00.000Z' },
-          { id: 'LAB010', name: 'Electricians', type: 'Electricians', category: 'Skilled', createdAt: '2024-01-24T00:00:00.000Z' },
-        ];
-        const userLabours = parsed.map((lab: any) => ({
-          id: lab.id,
-          name: lab.name || lab.type,
-          type: lab.type,
-          category: lab.category,
-          createdAt: lab.createdAt
-        }));
-        setLabours([...defaultLabours, ...userLabours]);
-      } catch (e) {
-        console.error('Error parsing labours:', e);
-      }
-    }
-  };
-
-  const handleMaterialCreated = (newMaterial: Material) => {
-    // Update local state
-    setMaterials(prev => [...prev, newMaterial]);
-    // Reload materials from localStorage to ensure consistency
-    const savedMaterials = localStorage.getItem('materials');
-    if (savedMaterials) {
-      try {
-        const parsed = JSON.parse(savedMaterials);
-        const defaultMaterials: Material[] = [
-          { id: '1', class: 'A', code: 'M685270', name: 'Cement', specification: 'OPC testy', unit: 'Packet', createdAt: '2024-01-15T00:00:00.000Z' },
-          { id: '2', class: 'A', code: 'M984236', name: 'RMC', specification: 'M40', unit: 'Cft', createdAt: '2024-01-16T00:00:00.000Z' },
-          { id: '3', class: 'B', code: 'M211203', name: 'Measuring Tape', specification: '1/2 Inches', unit: 'Nos', createdAt: '2024-01-17T00:00:00.000Z' },
-          { id: '4', class: 'B', code: 'M257929', name: 'Hose Pipe', specification: '1 Inches', unit: 'Nos', createdAt: '2024-01-18T00:00:00.000Z' },
-          { id: '5', class: 'B', code: 'M205837', name: 'Hose Pipe', specification: '', unit: 'Rft', createdAt: '2024-01-19T00:00:00.000Z' },
-          { id: '6', class: 'B', code: 'M987837', name: 'Nylon Rope', specification: '', unit: 'Rft', createdAt: '2024-01-20T00:00:00.000Z' },
-          { id: '7', class: 'C', code: 'M183654', name: 'Oil', specification: '', unit: 'Ltr', createdAt: '2024-01-21T00:00:00.000Z' },
-          { id: '8', class: 'C', code: 'M976735', name: 'Cover Blocks', specification: '20mm', unit: 'Nos', createdAt: '2024-01-22T00:00:00.000Z' },
-          { id: '9', class: 'C', code: 'M421512', name: 'Cover Blocks', specification: '25mm', unit: 'Nos', createdAt: '2024-01-23T00:00:00.000Z' },
-          { id: '10', class: 'C', code: 'M625759', name: 'Petrol', specification: '', unit: 'Ltr', createdAt: '2024-01-24T00:00:00.000Z' },
-          { id: '11', class: 'C', code: 'M232620', name: 'Diesel', specification: '', unit: 'Ltr', createdAt: '2024-01-25T00:00:00.000Z' },
-          { id: '12', class: 'B', code: 'M932823', name: 'UPVC', specification: '12 inch', unit: 'Rmt', createdAt: '2024-01-26T00:00:00.000Z' },
-          { id: '13', class: 'A', code: 'M880841', name: 'Tmt Concrete', specification: '', unit: 'Cft', createdAt: '2024-01-27T00:00:00.000Z' },
-          { id: '14', class: 'A', code: 'M100439', name: 'Cement', specification: 'OPC 53 grade', unit: 'Bags', createdAt: '2024-01-28T00:00:00.000Z' },
-        ];
-        const userMaterials = parsed.map((mat: any) => ({
-          id: mat.id,
-          class: mat.class,
-          code: mat.code,
-          name: mat.name,
-          specification: mat.specification || '',
-          unit: mat.unit,
-          createdAt: mat.createdAt
-        }));
-        setMaterials([...defaultMaterials, ...userMaterials]);
-      } catch (e) {
-        console.error('Error parsing materials:', e);
-      }
-    }
+  const handleMaterialCreated = () => {
+    setMaterialsRefreshKey(k => k + 1); // Refetch materials from Masters API
   };
 
   const handleCreateNewProject = () => {
@@ -2073,79 +2069,86 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6 p-2 sm:p-0">
       {/* Header */}
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-4">
-          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
-            <ClipboardCheck className="w-6 h-6 text-[#C2D642]" />
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-2">
+        <div className="flex items-center gap-3 sm:gap-4">
+          <div className={`p-2.5 sm:p-3 rounded-xl flex-shrink-0 ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
+            <ClipboardCheck className="w-5 h-5 sm:w-6 sm:h-6 text-[#C2D642]" />
           </div>
           <div>
-            <h1 className={`text-2xl font-black tracking-tight ${textPrimary}`}>Daily Progress Report (DPR)</h1>
-            <p className={`text-[11px] font-bold opacity-50 uppercase tracking-widest mt-1 ${textSecondary}`}>
+            <h1 className={`text-xl sm:text-2xl font-black tracking-tight ${textPrimary}`}>Daily Progress Report (DPR)</h1>
+            <p className={`text-[10px] sm:text-[11px] font-bold opacity-50 uppercase tracking-widest mt-1 ${textSecondary}`}>
               Track daily work progress and activities
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <button
             onClick={handleCreateNewDPR}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white'} shadow-md`}
+            className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white'} shadow-md`}
           >
-            <Plus className="w-4 h-4" /> Create a new DPR
+            <Plus className="w-4 h-4 flex-shrink-0" /> <span className="hidden sm:inline">Create a new DPR</span><span className="sm:hidden">New DPR</span>
           </button>
           <button
             onClick={handleEditPrevious}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all border-2 ${isDark ? 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10' : 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10'}`}
+            className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all border-2 whitespace-nowrap ${isDark ? 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10' : 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10'}`}
           >
-            <Edit className="w-4 h-4" /> Edit previous
+            <Edit className="w-4 h-4 flex-shrink-0" /> Edit previous
           </button>
         </div>
       </div>
 
       {/* Project Selection Modal */}
       {showProjectSelection && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col`}>
-            {/* Modal Header */}
-            <div className="flex items-center justify-between p-6 border-b border-inherit">
-              <div>
-                <h2 className={`text-xl font-black ${textPrimary}`}>Select a Project</h2>
-                <p className={`text-sm ${textSecondary} mt-1`}>Choose a project to create a new DPR</p>
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
+          <div
+            ref={projectModalScrollRef}
+            className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-4xl h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-y-auto overflow-x-hidden`}
+          >
+            {/* X - fixed top right corner */}
+            <button
+              onClick={() => {
+                setShowProjectSelection(false);
+                setProjectSearchQuery('');
+              }}
+              className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+              title="Close"
+            >
+              <X className={`w-5 h-5 ${textSecondary}`} />
+            </button>
+            {/* Header + Search - scrolls up with content, user scrolls to see */}
+            <div ref={projectModalHeaderRef} className={`${bgPrimary} flex-shrink-0`}>
+              {/* Modal Header */}
+              <div className="flex items-start gap-4 p-4 sm:p-6 pr-16 sm:pr-20 border-b border-inherit">
+                <div className="min-w-0 flex-1">
+                  <h2 className={`text-lg sm:text-xl font-black ${textPrimary}`}>Select a Project</h2>
+                  <p className={`text-sm ${textSecondary} mt-1`}>Choose a project to create a new DPR</p>
+                </div>
               </div>
-              <button
-                onClick={() => {
-                  setShowProjectSelection(false);
-                  setProjectSearchQuery('');
-                }}
-                className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
-              >
-                <X className={`w-5 h-5 ${textSecondary}`} />
-              </button>
+              {/* Search and Create New */}
+              <div className="p-4 sm:p-6 flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4">
+                <div className="relative flex-1">
+                  <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 ${textSecondary} pointer-events-none`} />
+                  <input
+                    type="text"
+                    placeholder="Search projects..."
+                    value={projectSearchQuery}
+                    onChange={(e) => setProjectSearchQuery(e.target.value)}
+                    className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                  />
+                </div>
+                <button
+                  onClick={handleCreateNewProject}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all border-2 ${isDark ? 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10' : 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10'}`}
+                >
+                  <Plus className="w-4 h-4" /> Create New
+                </button>
+              </div>
             </div>
 
-            {/* Search and Create New */}
-            <div className="p-6 border-b border-inherit flex items-center gap-4">
-              <div className="relative flex-1">
-                <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 ${textSecondary} pointer-events-none`} />
-                <input
-                  type="text"
-                  placeholder="Search projects..."
-                  value={projectSearchQuery}
-                  onChange={(e) => setProjectSearchQuery(e.target.value)}
-                  className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                />
-              </div>
-              <button
-                onClick={handleCreateNewProject}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all border-2 ${isDark ? 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10' : 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10'}`}
-              >
-                <Plus className="w-4 h-4" /> Create New
-              </button>
-            </div>
-
-            {/* Projects Grid */}
-            <div className="flex-1 overflow-y-auto p-6 flex flex-col">
+            {/* Projects Grid - starts from top, takes full space */}
+            <div className="p-4 sm:p-6 flex flex-col min-h-0">
               {filteredProjects.length > 0 ? (
                 <>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -2204,50 +2207,58 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
       {/* Subproject Selection Modal */}
       {showSubprojectSelection && selectedProject && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col`}>
-            {/* Modal Header */}
-            <div className="flex items-center justify-between p-6 border-b border-inherit">
-              <div>
-                <h2 className={`text-xl font-black ${textPrimary}`}>Select One Subproject</h2>
-                <p className={`text-sm ${textSecondary} mt-1`}>
-                  Please select a subproject for <span className="font-bold text-[#C2D642]">{selectedProject.name}</span>
-                </p>
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
+          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-4xl h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-hidden flex flex-col`}>
+            {/* X - fixed top right corner */}
+            <button
+              onClick={() => {
+                setShowSubprojectSelection(false);
+                setSubprojectSearchQuery('');
+                setSelectedProject(null);
+              }}
+              className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+              title="Close"
+            >
+              <X className={`w-5 h-5 ${textSecondary}`} />
+            </button>
+            <div
+              ref={subprojectModalScrollRef}
+              className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden"
+            >
+              {/* Header + Search - scrolls up with content, user scrolls to see */}
+              <div ref={subprojectModalHeaderRef} className={`${bgPrimary} flex-shrink-0`}>
+                {/* Modal Header */}
+                <div className="flex items-start gap-4 p-4 sm:p-6 pr-16 sm:pr-20 border-b border-inherit">
+                  <div className="min-w-0 flex-1">
+                    <h2 className={`text-lg sm:text-xl font-black ${textPrimary}`}>Select One Subproject</h2>
+                    <p className={`text-sm ${textSecondary} mt-1`}>
+                      Please select a subproject for <span className="font-bold text-[#C2D642]">{selectedProject.name}</span>
+                    </p>
+                  </div>
+                </div>
+                {/* Search and Create New */}
+                <div className="p-4 sm:p-6 flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4">
+                  <div className="relative flex-1">
+                    <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 ${textSecondary} pointer-events-none`} />
+                    <input
+                      type="text"
+                      placeholder="Search subprojects..."
+                      value={subprojectSearchQuery}
+                      onChange={(e) => setSubprojectSearchQuery(e.target.value)}
+                      className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                    />
+                  </div>
+                  <button
+                    onClick={handleCreateNewSubproject}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all border-2 ${isDark ? 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10' : 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10'}`}
+                  >
+                    <Plus className="w-4 h-4" /> Create New
+                  </button>
+                </div>
               </div>
-              <button
-                onClick={() => {
-                  setShowSubprojectSelection(false);
-                  setSubprojectSearchQuery('');
-                  setSelectedProject(null);
-                }}
-                className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
-              >
-                <X className={`w-5 h-5 ${textSecondary}`} />
-              </button>
-            </div>
 
-            {/* Search and Create New */}
-            <div className="p-6 border-b border-inherit flex items-center gap-4">
-              <div className="relative flex-1">
-                <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 ${textSecondary} pointer-events-none`} />
-                <input
-                  type="text"
-                  placeholder="Search subprojects..."
-                  value={subprojectSearchQuery}
-                  onChange={(e) => setSubprojectSearchQuery(e.target.value)}
-                  className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                />
-              </div>
-              <button
-                onClick={handleCreateNewSubproject}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all border-2 ${isDark ? 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10' : 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10'}`}
-              >
-                <Plus className="w-4 h-4" /> Create New
-              </button>
-            </div>
-
-            {/* Subprojects List */}
-            <div className="flex-1 overflow-y-auto p-6">
+              {/* Subprojects List - starts from top, takes full space */}
+              <div className="p-4 sm:p-6 flex flex-col min-h-0">
               {isLoadingSubprojects ? (
                 <div className={`flex flex-col items-center justify-center py-16 ${textSecondary}`}>
                   <div className="w-10 h-10 border-2 border-[#C2D642] border-t-transparent rounded-full animate-spin mb-4" />
@@ -2328,10 +2339,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                   )}
                 </div>
               )}
+              </div>
             </div>
 
-            {/* Footer with Back button */}
-            <div className={`flex items-center justify-start p-6 border-t border-inherit`}>
+            {/* Footer with Back and Next buttons - sticky at bottom */}
+            <div className={`${bgPrimary} flex-shrink-0 shrink-0 flex items-center justify-between px-4 py-2 sm:py-3 border-t border-inherit`}>
               <button
                 onClick={() => {
                   setShowSubprojectSelection(false);
@@ -2339,9 +2351,15 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                   setSubprojectSearchQuery('');
                   setSelectedProject(null);
                 }}
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold transition-colors ${isDark ? 'hover:bg-slate-800/50 text-slate-300' : 'hover:bg-slate-100 text-slate-700'}`}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-colors ${isDark ? 'hover:bg-slate-800/50 text-slate-300' : 'hover:bg-slate-100 text-slate-700'}`}
               >
                 <ChevronLeft className="w-4 h-4" /> Back
+              </button>
+              <button
+                onClick={handleSkipSubproject}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white'} shadow-md`}
+              >
+                Next <ArrowRight className="w-4 h-4" />
               </button>
             </div>
           </div>
@@ -2351,7 +2369,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       {/* Activity Selection Modal */}
       {showActivitySelection && selectedProject && (
         <div 
-          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden"
           onClick={(e) => {
             // Prevent closing modal when clicking backdrop
             if (e.target === e.currentTarget) {
@@ -2361,39 +2379,129 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           }}
         >
           <div 
-            className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col`}
+            className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[95vw] h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-hidden flex flex-col`}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Modal Header */}
-            <div className="flex items-center justify-between p-6 border-b border-inherit">
-              <div>
-                <h2 className={`text-xl font-black ${textPrimary}`}>Select Activities</h2>
-                <p className={`text-sm ${textSecondary} mt-1`}>
-                  Select activities for <span className="font-bold text-[#C2D642]">{selectedProject.name}</span>
-                  {selectedSubproject && ` - ${selectedSubproject.name}`}
-                </p>
+            {/* X - fixed top right corner */}
+            <button
+              onClick={() => {
+                setShowActivitySelection(false);
+                setSelectedActivities(new Map());
+              }}
+              className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+              title="Close"
+            >
+              <X className={`w-5 h-5 ${textSecondary}`} />
+            </button>
+            {/* Single scroll container - header scrolls away, list appears first */}
+            <div
+              ref={activityModalScrollRef}
+              className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden"
+            >
+              {/* Header - scrolls up with content, scroll up to see */}
+              <div ref={activityModalHeaderRef} className={`${bgPrimary} flex-shrink-0`}>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-6 pr-16 sm:pr-20 border-b border-inherit">
+                  <div>
+                    <h2 className={`text-lg sm:text-xl font-black ${textPrimary}`}>Select Activities</h2>
+                    <p className={`text-sm ${textSecondary} mt-1`}>
+                      Select project and subproject to load activities (like Masters &gt; Activities)
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setShowCreateActivityModal(true)}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all border-2 flex-shrink-0 ${isDark ? 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10' : 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10'}`}
+                  >
+                    <Plus className="w-4 h-4" /> Create New
+                  </button>
+                </div>
+                {/* Project and Subproject selectors - like Masters > Activities */}
+                <div className="px-4 sm:px-6 pb-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                        Select Project <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        value={selectedProject?.id ?? ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (!val) return;
+                          const proj = projects.find(p => p.id === val || String(p.numericId) === val);
+                          if (proj) {
+                            setSelectedProject(proj);
+                            setSelectedSubproject(null);
+                            setActivities([]);
+                          }
+                        }}
+                        className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+                          isDark
+                            ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800'
+                            : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
+                        } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                      >
+                        <option value="">-- Select Project --</option>
+                        {projects.map((project) => (
+                          <option key={project.id} value={project.id}>
+                            {project.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                        Select Subproject (Optional)
+                      </label>
+                      {isLoadingSubprojects ? (
+                        <div className={`w-full px-4 py-3 rounded-lg text-sm ${textSecondary} flex items-center gap-2`}>
+                          <div className="w-4 h-4 border-2 border-[#C2D642] border-t-transparent rounded-full animate-spin" />
+                          Loading subprojects...
+                        </div>
+                      ) : (
+                        <select
+                          value={selectedSubproject?.id ?? ''}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (!val) {
+                              setSelectedSubproject(null);
+                              return;
+                            }
+                            const sub = subprojects.find(s => s.id === val || String(s.numericId) === val);
+                            if (sub) setSelectedSubproject(sub);
+                          }}
+                          disabled={!selectedProject}
+                          className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+                            isDark
+                              ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800'
+                              : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
+                          } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none ${!selectedProject ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                          <option value="">-- All Subprojects --</option>
+                          {subprojects.map((subproject) => (
+                            <option key={subproject.id} value={subproject.id}>
+                              {subproject.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="p-4 sm:p-6 pt-0 border-b border-inherit">
+                  <div className="relative">
+                    <Search className={`absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 ${textSecondary}`} />
+                    <input
+                      type="text"
+                      value={activitySearchQuery}
+                      onChange={e => setActivitySearchQuery(e.target.value)}
+                      placeholder="Search by activity name or unit..."
+                      className={`w-full pl-10 pr-4 py-3 rounded-lg text-sm font-bold border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                    />
+                  </div>
+                </div>
               </div>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => setShowCreateActivityModal(true)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all border-2 ${isDark ? 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10' : 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10'}`}
-                >
-                  <Plus className="w-4 h-4" /> Create New
-                </button>
-                <button
-                  onClick={() => {
-                    setShowActivitySelection(false);
-                    setSelectedActivities(new Map());
-                  }}
-                  className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
-                >
-                  <X className={`w-5 h-5 ${textSecondary}`} />
-                </button>
-              </div>
-            </div>
 
-            {/* Activities Table */}
-            <div className="flex-1 overflow-y-auto p-6">
+              {/* Activities Table - takes full space, appears first on open */}
+              <div className="p-4 sm:p-6">
               {isLoadingActivities ? (
                 <div className={`flex flex-col items-center justify-center py-16 ${textSecondary}`}>
                   <div className="w-10 h-10 border-2 border-[#C2D642] border-t-transparent rounded-full animate-spin mb-4" />
@@ -2402,13 +2510,13 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
               ) : filteredActivities.length > 0 ? (
                 <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
                   <div className="overflow-x-auto">
-                    <table className="w-full">
+                    <table className="w-full min-w-[700px]">
                       <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
                         <tr>
-                          <th className={`w-14 pl-6 py-4 text-left ${textSecondary}`}>
+                          <th className={`w-14 pl-4 sm:pl-6 py-3 sm:py-4 text-left ${textSecondary}`}>
                             {(() => {
-                              const activitiesOnly = paginatedActivities.filter(a => a.type === 'activity');
-                              const allActivitiesSelected = activitiesOnly.length > 0 && activitiesOnly.every(act => selectedActivities.has(act.id));
+                              const activitiesOnly = paginatedActivities.filter(n => n.item.type === 'activity');
+                              const allActivitiesSelected = activitiesOnly.length > 0 && activitiesOnly.every(n => selectedActivities.has(n.item.id));
                               return (
                                 <input
                                   type="checkbox"
@@ -2417,13 +2525,14 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   onChange={(e) => {
                                     if (e.target.checked) {
                                       const newMap = new Map(selectedActivities);
-                                      activitiesOnly.forEach(act => {
+                                      activitiesOnly.forEach(n => {
+                                        const act = n.item;
                                         newMap.set(act.id, { id: act.id, name: act.name, unit: act.unit, quantity: 0 });
                                       });
                                       setSelectedActivities(newMap);
                                     } else {
                                       const newMap = new Map(selectedActivities);
-                                      activitiesOnly.forEach(act => newMap.delete(act.id));
+                                      activitiesOnly.forEach(n => newMap.delete(n.item.id));
                                       setSelectedActivities(newMap);
                                     }
                                   }}
@@ -2434,14 +2543,15 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                           <th className={`px-4 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>SR No</th>
                           <th className={`px-4 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Activities</th>
                           <th className={`px-4 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Unit</th>
-                          <th className={`px-4 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Quantity</th>
-                          <th className={`px-4 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Tag Contractor</th>
-                          <th className={`px-4 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Upload Image</th>
-                          <th className={`px-4 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Remarks</th>
+                          <th className={`px-4 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Quantity <span className="text-red-500">*</span></th>
+                          <th className={`px-4 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Tag Contractor <span className="text-slate-400 font-normal text-[10px]">(Optional)</span></th>
+                          <th className={`px-4 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Upload Image <span className="text-slate-400 font-normal text-[10px]">(Optional)</span></th>
+                          <th className={`px-4 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Remarks <span className="text-slate-400 font-normal text-[10px]">(Optional)</span></th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-inherit">
-                        {paginatedActivities.map((activity, idx) => {
+                        {paginatedActivities.map((node, idx) => {
+                          const activity = node.item;
                           const isHeading = activity.type === 'heading';
                           const isSelected = !isHeading && selectedActivities.has(activity.id);
                           const selectedActivity = selectedActivities.get(activity.id);
@@ -2476,7 +2586,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   )}
                                 </div>
                               </td>
-                              <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary}`}>{(activityPage - 1) * PAGE_SIZE + idx + 1}</td>
+                              <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary}`}>{node.srNo}</td>
                               <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary} ${isHeading ? 'font-extrabold' : ''}`}>
                                 <span>{activity.name}</span>
                                 {isHeading && (
@@ -2492,14 +2602,16 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                     type="number"
                                     min="0"
                                     step="0.01"
-                                    value={selectedActivity?.quantity || 0}
+                                    value={focusedQuantityField === `act-${activity.id}` && (selectedActivity?.quantity ?? 0) === 0 ? '' : (selectedActivity?.quantity ?? 0)}
                                     onChange={(e) => handleQuantityChange(activity.id, parseFloat(e.target.value) || 0)}
+                                    onFocus={() => setFocusedQuantityField(`act-${activity.id}`)}
+                                    onBlur={() => setFocusedQuantityField(null)}
                                     className={`w-24 px-3 py-2 rounded-lg text-sm font-bold border ${
                                       isDark 
                                         ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
                                         : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
                                     } focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                                    placeholder="0"
+                                    placeholder=""
                                   />
                                 ) : (
                                   <span className={`text-sm ${textSecondary}`}>-</span>
@@ -2624,14 +2736,15 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                   <Activity className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
                   <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>No activities available</h3>
                   <p className={`text-sm ${textSecondary}`}>
-                    There are no activities available for {selectedSubproject?.name ?? 'the selected subproject'}. Please create activities first.
+                    {activitySearchQuery ? 'No activities found matching your search.' : `There are no activities available for ${selectedSubproject?.name ?? 'the selected subproject'}. Please create activities first.`}
                   </p>
                 </div>
               )}
+              </div>
             </div>
 
-            {/* Modal Footer */}
-            <div className="flex items-center justify-between p-6 border-t border-inherit">
+            {/* Modal Footer - sticky at bottom */}
+            <div className={`${bgPrimary} flex flex-row items-center justify-between gap-2 sm:gap-4 px-4 py-2 sm:py-3 border-t border-inherit flex-shrink-0 shrink-0`}>
               <button
                 type="button"
                 onClick={() => {
@@ -2639,13 +2752,13 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                   setShowSubprojectSelection(true);
                   setSelectedActivities(new Map());
                 }}
-                className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                   isDark
                     ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
                     : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
                 }`}
               >
-                Back
+                <ChevronLeft className="w-4 h-4" /> Back
               </button>
               <button
                 type="button"
@@ -2655,7 +2768,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                   e.stopPropagation();
                 }}
                 disabled={selectedActivities.size === 0}
-                className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                   selectedActivities.size === 0
                     ? isDark
                       ? 'bg-slate-700/50 text-slate-500 cursor-not-allowed'
@@ -2674,49 +2787,59 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       {/* Material Selection Modal */}
       {showMaterialSelection && selectedProject && selectedSubproject && (
         <div 
-          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden"
           onClick={(e) => {
-            // Prevent closing modal when clicking backdrop
-            if (e.target === e.currentTarget) {
-              e.preventDefault();
-              e.stopPropagation();
-            }
+            if (e.target === e.currentTarget) { e.preventDefault(); e.stopPropagation(); }
           }}
         >
           <div 
-            className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col`}
+            className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[95vw] h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-hidden flex flex-col`}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Modal Header */}
-            <div className="flex items-center justify-between p-6 border-b border-inherit">
-              <div>
-                <h2 className={`text-xl font-black ${textPrimary}`}>Select Materials Used</h2>
-                <p className={`text-sm ${textSecondary} mt-1`}>
-                  Select materials for <span className="font-bold text-[#C2D642]">{selectedProject.name}</span> - <span className="font-bold text-[#C2D642]">{selectedSubproject.name}</span>
-                </p>
+            {/* X - fixed top right corner */}
+            <button
+              onClick={() => { setShowMaterialSelection(false); setSelectedMaterials(new Map()); }}
+              className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+              title="Close"
+            >
+              <X className={`w-5 h-5 ${textSecondary}`} />
+            </button>
+            <div ref={materialModalScrollRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+              <div ref={materialModalHeaderRef} className={`${bgPrimary} flex-shrink-0`}>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-6 pr-16 sm:pr-20 border-b border-inherit">
+                  <div>
+                    <h2 className={`text-lg sm:text-xl font-black ${textPrimary}`}>Select Materials Used</h2>
+                    <p className={`text-sm ${textSecondary} mt-1`}>
+                      Select materials for <span className="font-bold text-[#C2D642]">{selectedProject.name}</span> - <span className="font-bold text-[#C2D642]">{selectedSubproject.name}</span>
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setShowCreateMaterialModal(true)}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all border-2 flex-shrink-0 ${isDark ? 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10' : 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10'}`}
+                  >
+                    <Plus className="w-4 h-4" /> Create New
+                  </button>
+                </div>
+                <div className="p-4 sm:p-6 pt-0 border-b border-inherit">
+                  <div className="relative">
+                    <Search className={`absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 ${textSecondary}`} />
+                    <input
+                      type="text"
+                      value={materialSearchQuery}
+                      onChange={e => setMaterialSearchQuery(e.target.value)}
+                      placeholder="Search by class, code, name, specification, or unit..."
+                      className={`w-full pl-10 pr-4 py-3 rounded-lg text-sm font-bold border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                    />
+                  </div>
+                </div>
               </div>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => setShowCreateMaterialModal(true)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all border-2 ${isDark ? 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10' : 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10'}`}
-                >
-                  <Plus className="w-4 h-4" /> Create New
-                </button>
-                <button
-                  onClick={() => {
-                    setShowMaterialSelection(false);
-                    setSelectedMaterials(new Map());
-                  }}
-                  className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
-                >
-                  <X className={`w-5 h-5 ${textSecondary}`} />
-                </button>
-              </div>
-            </div>
-
-            {/* Materials Table */}
-            <div className="flex-1 overflow-y-auto p-6">
-              {materials.length > 0 ? (
+              <div className="p-4 sm:p-6">
+              {isLoadingMaterials ? (
+                <div className={`flex flex-col items-center justify-center py-16 ${textSecondary}`}>
+                  <div className="w-10 h-10 border-2 border-[#C2D642] border-t-transparent rounded-full animate-spin mb-4" />
+                  <p className="text-sm">Loading materials from Masters...</p>
+                </div>
+              ) : filteredMaterials.length > 0 ? (
                 <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
                   <div className="overflow-x-auto">
                     <table className="w-full">
@@ -2755,7 +2878,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                           <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Material Name</th>
                           <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Specification</th>
                           <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Unit</th>
-                          <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Quantity</th>
+                          <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Quantity <span className="text-red-500">*</span></th>
                           <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Tag Activity</th>
                           <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Remarks</th>
                         </tr>
@@ -2788,14 +2911,16 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                     type="number"
                                     min="0"
                                     step="0.01"
-                                    value={selectedMaterial?.quantity || 0}
+                                    value={focusedQuantityField === `mat-${material.id}` && (selectedMaterial?.quantity ?? 0) === 0 ? '' : (selectedMaterial?.quantity ?? 0)}
                                     onChange={(e) => handleMaterialQuantityChange(material.id, parseFloat(e.target.value) || 0)}
+                                    onFocus={() => setFocusedQuantityField(`mat-${material.id}`)}
+                                    onBlur={() => setFocusedQuantityField(null)}
                                     className={`w-24 px-3 py-2 rounded-lg text-sm font-bold border ${
                                       isDark 
                                         ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
                                         : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
                                     } focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                                    placeholder="0"
+                                    placeholder=""
                                   />
                                 ) : (
                                   <span className={`text-sm ${textSecondary}`}>-</span>
@@ -2846,28 +2971,29 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                       </tbody>
                     </table>
                   </div>
-                  <PaginationBar currentPage={materialsPage} totalItems={materials.length} onPageChange={setMaterialsPage} />
+                  <PaginationBar currentPage={materialsPage} totalItems={filteredMaterials.length} onPageChange={setMaterialsPage} />
                 </div>
               ) : (
                 <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
                   <Boxes className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
                   <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>No materials available</h3>
                   <p className={`text-sm ${textSecondary}`}>
-                    There are no materials available. Please create materials first.
+                    {materialSearchQuery ? 'No materials found matching your search.' : 'There are no materials in Masters. Please create materials in Masters > Materials first.'}
                   </p>
                 </div>
               )}
+              </div>
             </div>
 
-            {/* Modal Footer */}
-            <div className="flex items-center justify-between p-6 border-t border-inherit">
+            {/* Modal Footer - sticky at bottom */}
+            <div className={`${bgPrimary} flex items-center justify-between gap-2 sm:gap-4 px-4 py-2 sm:py-3 border-t border-inherit flex-shrink-0 shrink-0`}>
               <button
                 onClick={() => {
                   setShowMaterialSelection(false);
                   setShowActivitySelection(true);
                   setSelectedMaterials(new Map());
                 }}
-                className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
+                className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                   isDark
                     ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
                     : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
@@ -2878,7 +3004,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
               <button
                 onClick={handleMaterialSelectionNext}
                 disabled={selectedMaterials.size === 0}
-                className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                   selectedMaterials.size === 0
                     ? isDark
                       ? 'bg-slate-700/50 text-slate-500 cursor-not-allowed'
@@ -2896,38 +3022,52 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
       {/* Labour Selection Modal */}
       {showLabourSelection && selectedProject && selectedSubproject && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col`}>
-            {/* Modal Header */}
-            <div className="flex items-center justify-between p-6 border-b border-inherit">
-              <div>
-                <h2 className={`text-xl font-black ${textPrimary}`}>Select Labours</h2>
-                <p className={`text-sm ${textSecondary} mt-1`}>
-                  Select labours for <span className="font-bold text-[#C2D642]">{selectedProject.name}</span> - <span className="font-bold text-[#C2D642]">{selectedSubproject.name}</span>
-                </p>
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
+          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[95vw] h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-hidden flex flex-col`}>
+            {/* X - fixed top right corner */}
+            <button
+              onClick={() => { setShowLabourSelection(false); setSelectedLabours(new Map()); }}
+              className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+              title="Close"
+            >
+              <X className={`w-5 h-5 ${textSecondary}`} />
+            </button>
+            <div ref={labourModalScrollRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+              <div ref={labourModalHeaderRef} className={`${bgPrimary} flex-shrink-0`}>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-6 pr-16 sm:pr-20 border-b border-inherit">
+                  <div>
+                    <h2 className={`text-lg sm:text-xl font-black ${textPrimary}`}>Select Labours</h2>
+                    <p className={`text-sm ${textSecondary} mt-1`}>
+                      Select labours for <span className="font-bold text-[#C2D642]">{selectedProject.name}</span> - <span className="font-bold text-[#C2D642]">{selectedSubproject.name}</span>
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setShowCreateLabourModal(true)}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all border-2 flex-shrink-0 ${isDark ? 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10' : 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10'}`}
+                  >
+                    <Plus className="w-4 h-4" /> Create New
+                  </button>
+                </div>
+                <div className="p-4 sm:p-6 pt-0 border-b border-inherit">
+                  <div className="relative">
+                    <Search className={`absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 ${textSecondary}`} />
+                    <input
+                      type="text"
+                      value={labourSearchQuery}
+                      onChange={e => setLabourSearchQuery(e.target.value)}
+                      placeholder="Search by name, type, or category..."
+                      className={`w-full pl-10 pr-4 py-3 rounded-lg text-sm font-bold border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                    />
+                  </div>
+                </div>
               </div>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => setShowCreateLabourModal(true)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all border-2 ${isDark ? 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10' : 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10'}`}
-                >
-                  <Plus className="w-4 h-4" /> Create New
-                </button>
-                <button
-                  onClick={() => {
-                    setShowLabourSelection(false);
-                    setSelectedLabours(new Map());
-                  }}
-                  className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
-                >
-                  <X className={`w-5 h-5 ${textSecondary}`} />
-                </button>
-              </div>
-            </div>
-
-            {/* Labours Table */}
-            <div className="flex-1 overflow-y-auto p-6">
-              {labours.length > 0 ? (
+              <div className="p-4 sm:p-6">
+              {isLoadingLabours ? (
+                <div className={`flex flex-col items-center justify-center py-16 ${textSecondary}`}>
+                  <div className="w-10 h-10 border-2 border-[#C2D642] border-t-transparent rounded-full animate-spin mb-4" />
+                  <p className="text-sm">Loading labours from Masters...</p>
+                </div>
+              ) : filteredLabours.length > 0 ? (
                 <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
                   <div className="overflow-x-auto">
                     <table className="w-full">
@@ -2962,7 +3102,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                           </th>
                           <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Category</th>
                           <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Labour Name</th>
-                          <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Quantity</th>
+                          <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Quantity <span className="text-red-500">*</span></th>
                           <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Overtime Quantity</th>
                           <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Tag Activity</th>
                           <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Tag Contractor</th>
@@ -2995,14 +3135,16 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                     type="number"
                                     min="0"
                                     step="0.01"
-                                    value={selectedLabour?.quantity || 0}
+                                    value={focusedQuantityField === `lab-qty-${labour.id}` && (selectedLabour?.quantity ?? 0) === 0 ? '' : (selectedLabour?.quantity ?? 0)}
                                     onChange={(e) => handleLabourQuantityChange(labour.id, parseFloat(e.target.value) || 0)}
+                                    onFocus={() => setFocusedQuantityField(`lab-qty-${labour.id}`)}
+                                    onBlur={() => setFocusedQuantityField(null)}
                                     className={`w-24 px-3 py-2 rounded-lg text-sm font-bold border ${
                                       isDark 
                                         ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
                                         : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
                                     } focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                                    placeholder="0"
+                                    placeholder=""
                                   />
                                 ) : (
                                   <span className={`text-sm ${textSecondary}`}>-</span>
@@ -3014,14 +3156,16 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                     type="number"
                                     min="0"
                                     step="0.01"
-                                    value={selectedLabour?.overtimeQuantity || 0}
+                                    value={focusedQuantityField === `lab-ot-${labour.id}` && (selectedLabour?.overtimeQuantity ?? 0) === 0 ? '' : (selectedLabour?.overtimeQuantity ?? 0)}
                                     onChange={(e) => handleLabourOvertimeQuantityChange(labour.id, parseFloat(e.target.value) || 0)}
+                                    onFocus={() => setFocusedQuantityField(`lab-ot-${labour.id}`)}
+                                    onBlur={() => setFocusedQuantityField(null)}
                                     className={`w-24 px-3 py-2 rounded-lg text-sm font-bold border ${
                                       isDark 
                                         ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
                                         : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
                                     } focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                                    placeholder="0"
+                                    placeholder=""
                                   />
                                 ) : (
                                   <span className={`text-sm ${textSecondary}`}>-</span>
@@ -3077,14 +3221,16 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                     type="number"
                                     min="0"
                                     step="0.01"
-                                    value={selectedLabour?.ratePerUnit || 0}
+                                    value={focusedQuantityField === `lab-rate-${labour.id}` && (selectedLabour?.ratePerUnit ?? 0) === 0 ? '' : (selectedLabour?.ratePerUnit ?? 0)}
                                     onChange={(e) => handleLabourRateChange(labour.id, parseFloat(e.target.value) || 0)}
+                                    onFocus={() => setFocusedQuantityField(`lab-rate-${labour.id}`)}
+                                    onBlur={() => setFocusedQuantityField(null)}
                                     className={`w-24 px-3 py-2 rounded-lg text-sm font-bold border ${
                                       isDark 
                                         ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
                                         : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
                                     } focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                                    placeholder="0"
+                                    placeholder=""
                                   />
                                 ) : (
                                   <span className={`text-sm ${textSecondary}`}>-</span>
@@ -3113,28 +3259,29 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                       </tbody>
                     </table>
                   </div>
-                  <PaginationBar currentPage={laboursPage} totalItems={labours.length} onPageChange={setLaboursPage} />
+                  <PaginationBar currentPage={laboursPage} totalItems={filteredLabours.length} onPageChange={setLaboursPage} />
                 </div>
               ) : (
                 <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
                   <Users className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
                   <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>No labours available</h3>
                   <p className={`text-sm ${textSecondary}`}>
-                    There are no labours available. Please create labours first.
+                    {labourSearchQuery ? 'No labours found matching your search.' : 'There are no labours available. Please create labours first.'}
                   </p>
                 </div>
               )}
+              </div>
             </div>
 
-            {/* Modal Footer */}
-            <div className="flex items-center justify-between p-6 border-t border-inherit">
+            {/* Modal Footer - sticky at bottom */}
+            <div className={`${bgPrimary} flex items-center justify-between gap-2 sm:gap-4 px-4 py-2 sm:py-3 border-t border-inherit flex-shrink-0 shrink-0`}>
               <button
                 onClick={() => {
                   setShowLabourSelection(false);
                   setShowMaterialSelection(true);
                   setSelectedLabours(new Map());
                 }}
-                className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
+                className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                   isDark
                     ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
                     : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
@@ -3145,7 +3292,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
               <button
                 onClick={handleLabourSelectionNext}
                 disabled={selectedLabours.size === 0}
-                className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                   selectedLabours.size === 0
                     ? isDark
                       ? 'bg-slate-700/50 text-slate-500 cursor-not-allowed'
@@ -3163,57 +3310,54 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
       {/* Asset Selection Modal */}
       {showAssetSelection && selectedProject && selectedSubproject && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col`}>
-            {/* Modal Header */}
-            <div className="flex items-center justify-between p-6 border-b border-inherit">
-              <div>
-                <h2 className={`text-xl font-black ${textPrimary}`}>Select Machines/Assets</h2>
-                <p className={`text-sm ${textSecondary} mt-1`}>
-                  Select machines/assets for <span className="font-bold text-[#C2D642]">{selectedProject.name}</span> - <span className="font-bold text-[#C2D642]">{selectedSubproject.name}</span>
-                </p>
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
+          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[95vw] h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-hidden flex flex-col`}>
+            {/* X - fixed top right corner */}
+            <button
+              onClick={() => { setShowAssetSelection(false); setSelectedAssets(new Map()); setAssetSearchQuery(''); }}
+              className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+              title="Close"
+            >
+              <X className={`w-5 h-5 ${textSecondary}`} />
+            </button>
+            <div ref={assetModalScrollRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+              <div ref={assetModalHeaderRef} className={`${bgPrimary} flex-shrink-0`}>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-6 pr-16 sm:pr-20 border-b border-inherit">
+                  <div>
+                    <h2 className={`text-lg sm:text-xl font-black ${textPrimary}`}>Select Machines/Assets</h2>
+                    <p className={`text-sm ${textSecondary} mt-1`}>
+                      Select machines/assets for <span className="font-bold text-[#C2D642]">{selectedProject.name}</span> - <span className="font-bold text-[#C2D642]">{selectedSubproject.name}</span>
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setShowCreateAssetModal(true)}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all border-2 flex-shrink-0 ${isDark ? 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10' : 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10'}`}
+                  >
+                    <Plus className="w-4 h-4" /> Create New
+                  </button>
+                </div>
+                <div className="p-4 sm:p-6 border-b border-inherit">
+                  <div className="relative">
+                    <Search className={`absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 ${textSecondary}`} />
+                    <input
+                      type="text"
+                      value={assetSearchQuery}
+                      onChange={(e) => setAssetSearchQuery(e.target.value)}
+                      placeholder="Search by code, name, specification, or unit..."
+                      className={`w-full pl-10 pr-4 py-3 rounded-lg text-sm font-bold border ${
+                        isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+                      } focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                    />
+                  </div>
+                </div>
               </div>
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => setShowCreateAssetModal(true)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all border-2 ${isDark ? 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10' : 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10'}`}
-                >
-                  <Plus className="w-4 h-4" /> Create New
-                </button>
-                <button
-                  onClick={() => {
-                    setShowAssetSelection(false);
-                    setSelectedAssets(new Map());
-                    setAssetSearchQuery('');
-                  }}
-                  className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
-                >
-                  <X className={`w-5 h-5 ${textSecondary}`} />
-                </button>
-              </div>
-            </div>
-
-            {/* Search Bar */}
-            <div className="p-6 border-b border-inherit">
-              <div className="relative">
-                <Search className={`absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 ${textSecondary}`} />
-                <input
-                  type="text"
-                  value={assetSearchQuery}
-                  onChange={(e) => setAssetSearchQuery(e.target.value)}
-                  placeholder="Search by code, name, specification, or unit..."
-                  className={`w-full pl-10 pr-4 py-3 rounded-lg text-sm font-bold border ${
-                    isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
-                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-                  } focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                />
-              </div>
-            </div>
-
-            {/* Assets Table */}
-            <div className="flex-1 overflow-y-auto p-6">
-              {filteredAssets.length > 0 ? (
+              <div className="p-4 sm:p-6">
+              {isLoadingAssets ? (
+                <div className={`flex flex-col items-center justify-center py-16 ${textSecondary}`}>
+                  <div className="w-10 h-10 border-2 border-[#C2D642] border-t-transparent rounded-full animate-spin mb-4" />
+                  <p className="text-sm">Loading assets from Masters...</p>
+                </div>
+              ) : filteredAssets.length > 0 ? (
                 <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
                   <div className="overflow-x-auto">
                     <table className="w-full">
@@ -3249,7 +3393,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                           <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Name</th>
                           <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Specification</th>
                           <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Unit</th>
-                          <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Quantity</th>
+                          <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Quantity <span className="text-red-500">*</span></th>
                           <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Tag Activity</th>
                           <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Tag Contractor</th>
                           <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Rate Per Unit</th>
@@ -3283,14 +3427,16 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                     type="number"
                                     min="0"
                                     step="0.01"
-                                    value={selectedAsset?.quantity || 0}
+                                    value={focusedQuantityField === `ast-qty-${asset.id}` && (selectedAsset?.quantity ?? 0) === 0 ? '' : (selectedAsset?.quantity ?? 0)}
                                     onChange={(e) => handleAssetQuantityChange(asset.id, parseFloat(e.target.value) || 0)}
+                                    onFocus={() => setFocusedQuantityField(`ast-qty-${asset.id}`)}
+                                    onBlur={() => setFocusedQuantityField(null)}
                                     className={`w-24 px-3 py-2 rounded-lg text-sm font-bold border ${
                                       isDark 
                                         ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
                                         : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
                                     } focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                                    placeholder="0"
+                                    placeholder=""
                                   />
                                 ) : (
                                   <span className={`text-sm ${textSecondary}`}>-</span>
@@ -3346,14 +3492,16 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                     type="number"
                                     min="0"
                                     step="0.01"
-                                    value={selectedAsset?.ratePerUnit || 0}
+                                    value={focusedQuantityField === `ast-rate-${asset.id}` && (selectedAsset?.ratePerUnit ?? 0) === 0 ? '' : (selectedAsset?.ratePerUnit ?? 0)}
                                     onChange={(e) => handleAssetRateChange(asset.id, parseFloat(e.target.value) || 0)}
+                                    onFocus={() => setFocusedQuantityField(`ast-rate-${asset.id}`)}
+                                    onBlur={() => setFocusedQuantityField(null)}
                                     className={`w-24 px-3 py-2 rounded-lg text-sm font-bold border ${
                                       isDark 
                                         ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
                                         : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
                                     } focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                                    placeholder="0"
+                                    placeholder=""
                                   />
                                 ) : (
                                   <span className={`text-sm ${textSecondary}`}>-</span>
@@ -3395,10 +3543,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                   </p>
                 </div>
               )}
+              </div>
             </div>
 
-            {/* Modal Footer */}
-            <div className="flex items-center justify-between p-6 border-t border-inherit">
+            {/* Modal Footer - sticky at bottom */}
+            <div className={`${bgPrimary} flex items-center justify-between gap-2 sm:gap-4 px-4 py-2 sm:py-3 border-t border-inherit flex-shrink-0 shrink-0`}>
               <button
                 onClick={() => {
                   setShowAssetSelection(false);
@@ -3406,7 +3555,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                   setSelectedAssets(new Map());
                   setAssetSearchQuery('');
                 }}
-                className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
+                className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                   isDark
                     ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
                     : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
@@ -3417,7 +3566,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
               <button
                 onClick={handleAssetSelectionNext}
                 disabled={selectedAssets.size === 0}
-                className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                   selectedAssets.size === 0
                     ? isDark
                       ? 'bg-slate-700/50 text-slate-500 cursor-not-allowed'
@@ -3435,221 +3584,128 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
       {/* Safety Selection Modal */}
       {showSafetySelection && selectedProject && selectedSubproject && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col`}>
-            {/* Modal Header */}
-            <div className="flex items-center justify-between p-6 border-b border-inherit">
-              <h2 className={`text-xl font-black ${textPrimary}`}>Safety</h2>
-              <button
-                onClick={() => setShowSafetySelection(false)}
-                className={`p-2 rounded-lg transition-all ${
-                  isDark ? 'hover:bg-slate-800 text-slate-400' : 'hover:bg-slate-100 text-slate-600'
-                }`}
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="flex-1 overflow-y-auto p-6">
-              {safetyProblems.length > 0 ? (
-                <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
-                  <div className="overflow-x-auto">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
+          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[95vw] h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-hidden flex flex-col`}>
+            {/* X - fixed top right corner */}
+            <button
+              onClick={() => setShowSafetySelection(false)}
+              className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+              title="Close"
+            >
+              <X className={`w-5 h-5 ${textSecondary}`} />
+            </button>
+            <div ref={safetyModalScrollRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+              <div ref={safetyModalHeaderRef} className={`${bgPrimary} flex-shrink-0`}>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-6 pr-16 sm:pr-20 border-b border-inherit">
+                  <div>
+                    <h2 className={`text-lg sm:text-xl font-black ${textPrimary}`}>Safety</h2>
+                    <p className={`text-sm ${textSecondary} mt-1`}>
+                      Report safety issues and concerns for <span className="font-bold text-[#C2D642]">{selectedProject?.name}</span>
+                      {selectedSubproject && <> - <span className="font-bold text-[#C2D642]">{selectedSubproject.name}</span></>}
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleAddSafetyEntry}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all border-2 flex-shrink-0 ${isDark ? 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10' : 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10'}`}
+                  >
+                    <Plus className="w-4 h-4" /> Add New
+                  </button>
+                </div>
+              </div>
+              <div className="p-6">
+              {isLoadingSafety ? (
+                <div className={`flex items-center justify-center py-12 ${textSecondary}`}>
+                  <Loader2 className="w-8 h-8 animate-spin" />
+                  <span className="ml-2 font-bold">Loading safety list...</span>
+                </div>
+              ) : (
+              <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
+                <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>
                       <tr className={`border-b ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
-                        <th className="px-6 py-3 text-left text-xs font-black uppercase tracking-wider">
-                          <input
-                            type="checkbox"
-                            checked={paginatedSafetyProblems.length > 0 && paginatedSafetyProblems.every(p => selectedSafetyProblems.has(p.id))}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                const newMap = new Map(selectedSafetyProblems);
-                                paginatedSafetyProblems.forEach(problem => {
-                                  newMap.set(problem.id, {
-                                    id: problem.id,
-                                    details: problem.details,
-                                    image: '',
-                                    teamMembers: [],
-                                    remarks: ''
-                                  });
-                                });
-                                setSelectedSafetyProblems(newMap);
-                              } else {
-                                const newMap = new Map(selectedSafetyProblems);
-                                paginatedSafetyProblems.forEach(p => newMap.delete(p.id));
-                                setSelectedSafetyProblems(newMap);
-                              }
-                            }}
-                            className={`w-4 h-4 rounded border-2 ${
-                              isDark 
-                                ? 'bg-slate-800 border-slate-600 checked:bg-[#C2D642] checked:border-[#C2D642]' 
-                                : 'bg-white border-slate-300 checked:bg-[#C2D642] checked:border-[#C2D642]'
-                            }`}
-                          />
-                        </th>
-                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textPrimary}`}>
-                          SR No
-                        </th>
-                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textPrimary}`}>
-                          Safety Problem Details
-                        </th>
-                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textPrimary}`}>
-                          Image
-                        </th>
-                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textPrimary}`}>
-                          Tag Team Members
-                        </th>
-                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textPrimary}`}>
-                          Remarks
-                        </th>
+                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>SR No</th>
+                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Safety Problem Details</th>
+                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Image</th>
+                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Tag Team Members</th>
+                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Remarks</th>
+                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}></th>
                       </tr>
                     </thead>
                     <tbody className={`divide-y ${isDark ? 'divide-slate-700' : 'divide-slate-200'}`}>
-                      {paginatedSafetyProblems.map((problem, index) => {
-                        const isSelected = selectedSafetyProblems.has(problem.id);
-                        const selectedProblem = selectedSafetyProblems.get(problem.id);
-                        return (
-                          <tr 
-                            key={problem.id} 
-                            className={`transition-colors ${
-                              isSelected 
-                                ? isDark ? 'bg-slate-800/50' : 'bg-slate-50' 
-                                : ''
-                            }`}
-                          >
-                            <td className="px-6 py-4">
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => handleToggleSafetyProblem(problem)}
-                                className={`w-4 h-4 rounded border-2 ${
-                                  isDark 
-                                    ? 'bg-slate-800 border-slate-600 checked:bg-[#C2D642] checked:border-[#C2D642]' 
-                                    : 'bg-white border-slate-300 checked:bg-[#C2D642] checked:border-[#C2D642]'
-                                }`}
-                              />
-                            </td>
-                            <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
-                              {(safetyPage - 1) * PAGE_SIZE + index + 1}
-                            </td>
-                            <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
-                              {problem.details}
-                            </td>
-                            <td className="px-6 py-4">
-                              {isSelected ? (
-                                <div className="flex items-center gap-2">
-                                  {selectedProblem?.image ? (
-                                    <div className="relative">
-                                      <img 
-                                        src={selectedProblem.image} 
-                                        alt="Safety issue" 
-                                        className="w-16 h-16 object-cover rounded-lg border border-inherit"
-                                      />
-                                      <button
-                                        onClick={() => handleSafetyRemoveImage(problem.id)}
-                                        className="absolute -top-2 -right-2 p-1 rounded-full bg-red-500 text-white hover:bg-red-600"
-                                      >
-                                        <X className="w-3 h-3" />
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <label className="cursor-pointer">
-                                      <input
-                                        type="file"
-                                        accept="image/*"
-                                        onChange={(e) => handleSafetyImageUpload(problem.id, e)}
-                                        className="hidden"
-                                      />
-                                      <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed transition-all ${
-                                        isDark
-                                          ? 'border-slate-600 hover:border-[#C2D642] text-slate-400 hover:text-[#C2D642]'
-                                          : 'border-slate-300 hover:border-[#C2D642] text-slate-600 hover:text-[#C2D642]'
-                                      }`}>
-                                        <Upload className="w-4 h-4" />
-                                        <span className="text-xs font-bold">Upload</span>
-                                      </div>
-                                    </label>
-                                  )}
+                      {paginatedSafetyEntries.map((entry, index) => (
+                        <tr key={entry.id} className={isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'}>
+                          <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{(safetyPage - 1) * PAGE_SIZE + index + 1}</td>
+                          <td className="px-6 py-4">
+                            <input
+                              type="text"
+                              value={entry.details || ''}
+                              onChange={(e) => handleSafetyEntryDetailsChange(entry.id, e.target.value)}
+                              placeholder="Enter details (optional)"
+                              className={`w-full min-w-[180px] px-3 py-2 rounded-lg text-sm font-bold border ${
+                                isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 placeholder-slate-500 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400 focus:border-[#C2D642]'
+                              } focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                            />
+                          </td>
+                          <td className="px-6 py-4">
+                            {entry.image ? (
+                              <div className="relative inline-block">
+                                <img src={entry.image} alt="Safety" className="w-16 h-16 object-cover rounded-lg border border-inherit" />
+                                <button onClick={() => handleSafetyEntryRemoveImage(entry.id)} className="absolute -top-2 -right-2 p-1 rounded-full bg-red-500 text-white hover:bg-red-600">
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </div>
+                            ) : (
+                              <label className="cursor-pointer">
+                                <input type="file" accept="image/*" onChange={(e) => handleSafetyEntryImageUpload(entry.id, e)} className="hidden" />
+                                <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed w-fit ${isDark ? 'border-slate-600 hover:border-[#C2D642] text-slate-400' : 'border-slate-300 hover:border-[#C2D642] text-slate-600'}`}>
+                                  <Upload className="w-4 h-4" /><span className="text-xs font-bold">Upload</span>
                                 </div>
-                              ) : (
-                                <span className={`text-sm ${textSecondary}`}>-</span>
-                              )}
-                            </td>
-                            <td className="px-6 py-4">
-                              {isSelected ? (
-                                <select
-                                  multiple
-                                  value={selectedProblem?.teamMembers || []}
-                                  onChange={(e) => {
-                                    const selected = Array.from(e.target.selectedOptions, option => option.value);
-                                    handleSafetyTeamMembersChange(problem.id, selected);
-                                  }}
-                                  className={`w-full min-w-[200px] px-3 py-2 rounded-lg text-sm font-bold border ${
-                                    isDark 
-                                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
-                                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-                                  } focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                                  size={Math.min(Math.max(teamMembers.length, 3), 5)}
-                                >
-                                  {teamMembers.length > 0 ? (
-                                    teamMembers.map(member => (
-                                      <option key={member.id} value={member.id}>
-                                        {member.name} ({member.email})
-                                      </option>
-                                    ))
-                                  ) : (
-                                    <option disabled>No team members available</option>
-                                  )}
-                                </select>
-                              ) : (
-                                <span className={`text-sm ${textSecondary}`}>-</span>
-                              )}
-                            </td>
-                            <td className="px-6 py-4">
-                              {isSelected ? (
-                                <textarea
-                                  value={selectedProblem?.remarks || ''}
-                                  onChange={(e) => handleSafetyRemarksChange(problem.id, e.target.value)}
-                                  placeholder="Enter remarks..."
-                                  rows={2}
-                                  className={`w-full min-w-[200px] px-3 py-2 rounded-lg text-sm font-bold border resize-none ${
-                                    isDark 
-                                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 placeholder-slate-500 focus:border-[#C2D642]' 
-                                      : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400 focus:border-[#C2D642]'
-                                  } focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                                />
-                              ) : (
-                                <span className={`text-sm ${textSecondary}`}>-</span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
+                              </label>
+                            )}
+                          </td>
+                          <td className="px-6 py-4">
+                            <TeamMembersDropdown
+                              teamMembers={teamMembers}
+                              value={entry.teamMembers || []}
+                              onChange={(memberIds) => handleSafetyEntryTeamMembersChange(entry.id, memberIds)}
+                              isDark={isDark}
+                              placeholder="Select team members"
+                            />
+                          </td>
+                          <td className="px-6 py-4">
+                            <textarea
+                              value={entry.remarks || ''}
+                              onChange={(e) => handleSafetyEntryRemarksChange(entry.id, e.target.value)}
+                              placeholder="Remarks (optional)"
+                              rows={2}
+                              className={`w-full min-w-[180px] px-3 py-2 rounded-lg text-sm font-bold border resize-none ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 placeholder-slate-500 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400 focus:border-[#C2D642]'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                            />
+                          </td>
+                          <td className="px-6 py-4">
+                            <button onClick={() => handleRemoveSafetyEntry(entry.id)} className={`p-2 rounded-lg ${isDark ? 'hover:bg-red-500/20 text-red-400' : 'hover:bg-red-100 text-red-600'}`} title="Remove">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
-                  </div>
-                  <PaginationBar currentPage={safetyPage} totalItems={safetyProblems.length} onPageChange={setSafetyPage} />
                 </div>
-              ) : (
-                <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
-                  <Users className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
-                  <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>No safety problems available</h3>
-                  <p className={`text-sm ${textSecondary}`}>
-                    There are no safety problems configured.
-                  </p>
-                </div>
+                {safetyEntries.length > 0 && <PaginationBar currentPage={safetyPage} totalItems={safetyEntries.length} onPageChange={setSafetyPage} />}
+              </div>
               )}
+              </div>
             </div>
 
-            {/* Modal Footer */}
-            <div className="flex items-center justify-between p-6 border-t border-inherit">
+            {/* Modal Footer - sticky at bottom */}
+            <div className={`${bgPrimary} flex items-center justify-between gap-2 sm:gap-4 px-4 py-2 sm:py-3 border-t border-inherit flex-shrink-0 shrink-0`}>
               <button
                 onClick={() => {
                   setShowSafetySelection(false);
                   setShowAssetSelection(true);
                 }}
-                className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
+                className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                   isDark
                     ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
                     : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
@@ -3657,10 +3713,10 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
               >
                 Back
               </button>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
                 <button
                   onClick={handleSafetySkip}
-                  className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
+                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                     isDark
                       ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
                       : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
@@ -3670,7 +3726,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                 </button>
                 <button
                   onClick={handleSafetyNext}
-                  className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-bold transition-all bg-[#C2D642] hover:bg-[#C2D642]/90 text-white shadow-md`}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all bg-[#C2D642] hover:bg-[#C2D642]/90 text-white shadow-md`}
                 >
                   Next
                   <ArrowRight className="w-4 h-4" />
@@ -3683,221 +3739,119 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
       {/* Hindrance Selection Modal */}
       {showHindranceSelection && selectedProject && selectedSubproject && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col`}>
-            {/* Modal Header */}
-            <div className="flex items-center justify-between p-6 border-b border-inherit">
-              <h2 className={`text-xl font-black ${textPrimary}`}>Hindrance</h2>
-              <button
-                onClick={() => setShowHindranceSelection(false)}
-                className={`p-2 rounded-lg transition-all ${
-                  isDark ? 'hover:bg-slate-800 text-slate-400' : 'hover:bg-slate-100 text-slate-600'
-                }`}
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <div className="flex-1 overflow-y-auto p-6">
-              {hindranceProblems.length > 0 ? (
-                <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
-                  <div className="overflow-x-auto">
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
+          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[95vw] h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-hidden flex flex-col`}>
+            {/* X - fixed top right corner */}
+            <button
+              onClick={() => setShowHindranceSelection(false)}
+              className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+              title="Close"
+            >
+              <X className={`w-5 h-5 ${textSecondary}`} />
+            </button>
+            <div ref={hindranceModalScrollRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+              <div ref={hindranceModalHeaderRef} className={`${bgPrimary} flex-shrink-0`}>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 sm:p-6 pr-16 sm:pr-20 border-b border-inherit">
+                  <div>
+                    <h2 className={`text-lg sm:text-xl font-black ${textPrimary}`}>Hindrance</h2>
+                    <p className={`text-sm ${textSecondary} mt-1`}>
+                      Report hindrances affecting progress for <span className="font-bold text-[#C2D642]">{selectedProject?.name}</span>
+                      {selectedSubproject && <> - <span className="font-bold text-[#C2D642]">{selectedSubproject.name}</span></>}
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleAddHindranceEntry}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all border-2 flex-shrink-0 ${isDark ? 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10' : 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10'}`}
+                  >
+                    <Plus className="w-4 h-4" /> Add New
+                  </button>
+                </div>
+              </div>
+              <div className="p-6">
+              <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
+                <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>
                       <tr className={`border-b ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
-                        <th className="px-6 py-3 text-left text-xs font-black uppercase tracking-wider">
-                          <input
-                            type="checkbox"
-                            checked={paginatedHindranceProblems.length > 0 && paginatedHindranceProblems.every(p => selectedHindranceProblems.has(p.id))}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                const newMap = new Map(selectedHindranceProblems);
-                                paginatedHindranceProblems.forEach(problem => {
-                                  newMap.set(problem.id, {
-                                    id: problem.id,
-                                    details: problem.details,
-                                    image: '',
-                                    teamMembers: [],
-                                    remarks: ''
-                                  });
-                                });
-                                setSelectedHindranceProblems(newMap);
-                              } else {
-                                const newMap = new Map(selectedHindranceProblems);
-                                paginatedHindranceProblems.forEach(p => newMap.delete(p.id));
-                                setSelectedHindranceProblems(newMap);
-                              }
-                            }}
-                            className={`w-4 h-4 rounded border-2 ${
-                              isDark 
-                                ? 'bg-slate-800 border-slate-600 checked:bg-[#C2D642] checked:border-[#C2D642]' 
-                                : 'bg-white border-slate-300 checked:bg-[#C2D642] checked:border-[#C2D642]'
-                            }`}
-                          />
-                        </th>
-                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textPrimary}`}>
-                          SR No
-                        </th>
-                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textPrimary}`}>
-                          Hindrance Problem Details
-                        </th>
-                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textPrimary}`}>
-                          Image
-                        </th>
-                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textPrimary}`}>
-                          Tag Team Members
-                        </th>
-                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textPrimary}`}>
-                          Remarks
-                        </th>
+                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>SR No</th>
+                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Hindrance Problem Details</th>
+                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Image</th>
+                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Tag Team Members</th>
+                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Remarks</th>
+                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}></th>
                       </tr>
                     </thead>
                     <tbody className={`divide-y ${isDark ? 'divide-slate-700' : 'divide-slate-200'}`}>
-                      {paginatedHindranceProblems.map((problem, index) => {
-                        const isSelected = selectedHindranceProblems.has(problem.id);
-                        const selectedProblem = selectedHindranceProblems.get(problem.id);
-                        return (
-                          <tr 
-                            key={problem.id} 
-                            className={`transition-colors ${
-                              isSelected 
-                                ? isDark ? 'bg-slate-800/50' : 'bg-slate-50' 
-                                : ''
-                            }`}
-                          >
-                            <td className="px-6 py-4">
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => handleToggleHindranceProblem(problem)}
-                                className={`w-4 h-4 rounded border-2 ${
-                                  isDark 
-                                    ? 'bg-slate-800 border-slate-600 checked:bg-[#C2D642] checked:border-[#C2D642]' 
-                                    : 'bg-white border-slate-300 checked:bg-[#C2D642] checked:border-[#C2D642]'
-                                }`}
-                              />
-                            </td>
-                            <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
-                              {(hindrancePage - 1) * PAGE_SIZE + index + 1}
-                            </td>
-                            <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
-                              {problem.details}
-                            </td>
-                            <td className="px-6 py-4">
-                              {isSelected ? (
-                                <div className="flex items-center gap-2">
-                                  {selectedProblem?.image ? (
-                                    <div className="relative">
-                                      <img 
-                                        src={selectedProblem.image} 
-                                        alt="Hindrance issue" 
-                                        className="w-16 h-16 object-cover rounded-lg border border-inherit"
-                                      />
-                                      <button
-                                        onClick={() => handleHindranceRemoveImage(problem.id)}
-                                        className="absolute -top-2 -right-2 p-1 rounded-full bg-red-500 text-white hover:bg-red-600"
-                                      >
-                                        <X className="w-3 h-3" />
-                                      </button>
-                                    </div>
-                                  ) : (
-                                    <label className="cursor-pointer">
-                                      <input
-                                        type="file"
-                                        accept="image/*"
-                                        onChange={(e) => handleHindranceImageUpload(problem.id, e)}
-                                        className="hidden"
-                                      />
-                                      <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed transition-all ${
-                                        isDark
-                                          ? 'border-slate-600 hover:border-[#C2D642] text-slate-400 hover:text-[#C2D642]'
-                                          : 'border-slate-300 hover:border-[#C2D642] text-slate-600 hover:text-[#C2D642]'
-                                      }`}>
-                                        <Upload className="w-4 h-4" />
-                                        <span className="text-xs font-bold">Upload</span>
-                                      </div>
-                                    </label>
-                                  )}
+                      {paginatedHindranceEntries.map((entry, index) => (
+                        <tr key={entry.id} className={isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'}>
+                          <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{(hindrancePage - 1) * PAGE_SIZE + index + 1}</td>
+                          <td className="px-6 py-4">
+                            <input
+                              type="text"
+                              value={entry.details || ''}
+                              onChange={(e) => handleHindranceEntryDetailsChange(entry.id, e.target.value)}
+                              placeholder="Enter details (optional)"
+                              className={`w-full min-w-[180px] px-3 py-2 rounded-lg text-sm font-bold border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 placeholder-slate-500 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400 focus:border-[#C2D642]'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                            />
+                          </td>
+                          <td className="px-6 py-4">
+                            {entry.image ? (
+                              <div className="relative inline-block">
+                                <img src={entry.image} alt="Hindrance" className="w-16 h-16 object-cover rounded-lg border border-inherit" />
+                                <button onClick={() => handleHindranceEntryRemoveImage(entry.id)} className="absolute -top-2 -right-2 p-1 rounded-full bg-red-500 text-white hover:bg-red-600">
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </div>
+                            ) : (
+                              <label className="cursor-pointer">
+                                <input type="file" accept="image/*" onChange={(e) => handleHindranceEntryImageUpload(entry.id, e)} className="hidden" />
+                                <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed w-fit ${isDark ? 'border-slate-600 hover:border-[#C2D642] text-slate-400' : 'border-slate-300 hover:border-[#C2D642] text-slate-600'}`}>
+                                  <Upload className="w-4 h-4" /><span className="text-xs font-bold">Upload</span>
                                 </div>
-                              ) : (
-                                <span className={`text-sm ${textSecondary}`}>-</span>
-                              )}
-                            </td>
-                            <td className="px-6 py-4">
-                              {isSelected ? (
-                                <select
-                                  multiple
-                                  value={selectedProblem?.teamMembers || []}
-                                  onChange={(e) => {
-                                    const selected = Array.from(e.target.selectedOptions, option => option.value);
-                                    handleHindranceTeamMembersChange(problem.id, selected);
-                                  }}
-                                  className={`w-full min-w-[200px] px-3 py-2 rounded-lg text-sm font-bold border ${
-                                    isDark 
-                                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
-                                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-                                  } focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                                  size={Math.min(Math.max(teamMembers.length, 3), 5)}
-                                >
-                                  {teamMembers.length > 0 ? (
-                                    teamMembers.map(member => (
-                                      <option key={member.id} value={member.id}>
-                                        {member.name} ({member.email})
-                                      </option>
-                                    ))
-                                  ) : (
-                                    <option disabled>No team members available</option>
-                                  )}
-                                </select>
-                              ) : (
-                                <span className={`text-sm ${textSecondary}`}>-</span>
-                              )}
-                            </td>
-                            <td className="px-6 py-4">
-                              {isSelected ? (
-                                <textarea
-                                  value={selectedProblem?.remarks || ''}
-                                  onChange={(e) => handleHindranceRemarksChange(problem.id, e.target.value)}
-                                  placeholder="Enter remarks..."
-                                  rows={2}
-                                  className={`w-full min-w-[200px] px-3 py-2 rounded-lg text-sm font-bold border resize-none ${
-                                    isDark 
-                                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 placeholder-slate-500 focus:border-[#C2D642]' 
-                                      : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400 focus:border-[#C2D642]'
-                                  } focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                                />
-                              ) : (
-                                <span className={`text-sm ${textSecondary}`}>-</span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
+                              </label>
+                            )}
+                          </td>
+                          <td className="px-6 py-4">
+                            <TeamMembersDropdown
+                              teamMembers={teamMembers}
+                              value={entry.teamMembers || []}
+                              onChange={(memberIds) => handleHindranceEntryTeamMembersChange(entry.id, memberIds)}
+                              isDark={isDark}
+                              placeholder="Select team members"
+                            />
+                          </td>
+                          <td className="px-6 py-4">
+                            <textarea
+                              value={entry.remarks || ''}
+                              onChange={(e) => handleHindranceEntryRemarksChange(entry.id, e.target.value)}
+                              placeholder="Remarks (optional)"
+                              rows={2}
+                              className={`w-full min-w-[180px] px-3 py-2 rounded-lg text-sm font-bold border resize-none ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 placeholder-slate-500 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400 focus:border-[#C2D642]'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                            />
+                          </td>
+                          <td className="px-6 py-4">
+                            <button onClick={() => handleRemoveHindranceEntry(entry.id)} className={`p-2 rounded-lg ${isDark ? 'hover:bg-red-500/20 text-red-400' : 'hover:bg-red-100 text-red-600'}`} title="Remove">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
-                <PaginationBar currentPage={hindrancePage} totalItems={hindranceProblems.length} onPageChange={setHindrancePage} />
+                {hindranceEntries.length > 0 && <PaginationBar currentPage={hindrancePage} totalItems={hindranceEntries.length} onPageChange={setHindrancePage} />}
               </div>
-              ) : (
-                <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
-                  <Users className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
-                  <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>No hindrance problems available</h3>
-                  <p className={`text-sm ${textSecondary}`}>
-                    There are no hindrance problems configured.
-                  </p>
-                </div>
-              )}
+              </div>
             </div>
 
-            {/* Modal Footer */}
-            <div className="flex items-center justify-between p-6 border-t border-inherit">
+            {/* Modal Footer - sticky at bottom */}
+            <div className={`${bgPrimary} flex items-center justify-between gap-2 sm:gap-4 px-4 py-2 sm:py-3 border-t border-inherit flex-shrink-0 shrink-0`}>
               <button
                 onClick={() => {
                   setShowHindranceSelection(false);
                   setShowSafetySelection(true);
                 }}
-                className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
+                className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                   isDark
                     ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
                     : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
@@ -3905,10 +3859,10 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
               >
                 Back
               </button>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
                 <button
                   onClick={handleHindranceSkip}
-                  className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
+                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                     isDark
                       ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
                       : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
@@ -3918,7 +3872,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                 </button>
                 <button
                   onClick={handleHindranceNext}
-                  className={`flex items-center gap-2 px-6 py-2.5 rounded-lg text-sm font-bold transition-all bg-[#C2D642] hover:bg-[#C2D642]/90 text-white shadow-md`}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all bg-[#C2D642] hover:bg-[#C2D642]/90 text-white shadow-md`}
                 >
                   Next
                   <ArrowRight className="w-4 h-4" />
@@ -3931,19 +3885,19 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
       {/* DPR Complete Modal */}
       {showDPRComplete && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-md overflow-hidden flex flex-col`}>
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-md overflow-hidden flex flex-col`}>
+            {/* X - fixed top right corner */}
+            <button
+              onClick={resetDPRForm}
+              className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+              title="Close"
+            >
+              <X className={`w-5 h-5 ${textSecondary}`} />
+            </button>
             {/* Modal Header */}
-            <div className="flex items-center justify-between p-6 border-b border-inherit">
+            <div className="p-6 pr-16 sm:pr-20 border-b border-inherit">
               <h2 className={`text-xl font-black ${textPrimary}`}>DPR Complete</h2>
-              <button
-                onClick={resetDPRForm}
-                className={`p-2 rounded-lg transition-all ${
-                  isDark ? 'hover:bg-slate-800 text-slate-400' : 'hover:bg-slate-100 text-slate-600'
-                }`}
-              >
-                <X className="w-5 h-5" />
-              </button>
             </div>
 
             {/* Modal Body */}
@@ -4011,41 +3965,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         onClose={() => setShowCreateMaterialModal(false)}
         onSuccess={() => {
           setShowCreateMaterialModal(false);
-          // Reload materials from localStorage
-          const savedMaterials = localStorage.getItem('materials');
-          if (savedMaterials) {
-            try {
-              const parsed = JSON.parse(savedMaterials);
-              const defaultMaterials: Material[] = [
-                { id: '1', class: 'A', code: 'M685270', name: 'Cement', specification: 'OPC testy', unit: 'Packet', createdAt: '2024-01-15T00:00:00.000Z' },
-                { id: '2', class: 'A', code: 'M984236', name: 'RMC', specification: 'M40', unit: 'Cft', createdAt: '2024-01-16T00:00:00.000Z' },
-                { id: '3', class: 'B', code: 'M211203', name: 'Measuring Tape', specification: '1/2 Inches', unit: 'Nos', createdAt: '2024-01-17T00:00:00.000Z' },
-                { id: '4', class: 'B', code: 'M257929', name: 'Hose Pipe', specification: '1 Inches', unit: 'Nos', createdAt: '2024-01-18T00:00:00.000Z' },
-                { id: '5', class: 'B', code: 'M205837', name: 'Hose Pipe', specification: '', unit: 'Rft', createdAt: '2024-01-19T00:00:00.000Z' },
-                { id: '6', class: 'B', code: 'M987837', name: 'Nylon Rope', specification: '', unit: 'Rft', createdAt: '2024-01-20T00:00:00.000Z' },
-                { id: '7', class: 'C', code: 'M183654', name: 'Oil', specification: '', unit: 'Ltr', createdAt: '2024-01-21T00:00:00.000Z' },
-                { id: '8', class: 'C', code: 'M976735', name: 'Cover Blocks', specification: '20mm', unit: 'Nos', createdAt: '2024-01-22T00:00:00.000Z' },
-                { id: '9', class: 'C', code: 'M421512', name: 'Cover Blocks', specification: '25mm', unit: 'Nos', createdAt: '2024-01-23T00:00:00.000Z' },
-                { id: '10', class: 'C', code: 'M625759', name: 'Petrol', specification: '', unit: 'Ltr', createdAt: '2024-01-24T00:00:00.000Z' },
-                { id: '11', class: 'C', code: 'M232620', name: 'Diesel', specification: '', unit: 'Ltr', createdAt: '2024-01-25T00:00:00.000Z' },
-                { id: '12', class: 'B', code: 'M932823', name: 'UPVC', specification: '12 inch', unit: 'Rmt', createdAt: '2024-01-26T00:00:00.000Z' },
-                { id: '13', class: 'A', code: 'M880841', name: 'Tmt Concrete', specification: '', unit: 'Cft', createdAt: '2024-01-27T00:00:00.000Z' },
-                { id: '14', class: 'A', code: 'M100439', name: 'Cement', specification: 'OPC 53 grade', unit: 'Bags', createdAt: '2024-01-28T00:00:00.000Z' },
-              ];
-              const userMaterials = parsed.map((mat: any) => ({
-                id: mat.id,
-                class: mat.class,
-                code: mat.code,
-                name: mat.name,
-                specification: mat.specification || '',
-                unit: mat.unit,
-                createdAt: mat.createdAt
-              }));
-              setMaterials([...defaultMaterials, ...userMaterials]);
-            } catch (e) {
-              console.error('Error parsing materials:', e);
-            }
-          }
+          setMaterialsRefreshKey(k => k + 1); // Refetch from Masters API
         }}
       />
 
@@ -4056,35 +3976,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         onClose={() => setShowCreateLabourModal(false)}
         onSuccess={() => {
           setShowCreateLabourModal(false);
-          // Reload labours from localStorage
-          const savedLabours = localStorage.getItem('labours');
-          if (savedLabours) {
-            try {
-              const parsed = JSON.parse(savedLabours);
-              const defaultLabours: Labour[] = [
-                { id: 'LAB001', name: 'Supervisor', type: 'Supervisor', category: 'Skilled', createdAt: '2024-01-15T00:00:00.000Z' },
-                { id: 'LAB002', name: 'Foremen', type: 'Foremen', category: 'Skilled', createdAt: '2024-01-16T00:00:00.000Z' },
-                { id: 'LAB003', name: 'Helpers', type: 'Helpers', category: 'Semi Skilled', createdAt: '2024-01-17T00:00:00.000Z' },
-                { id: 'LAB004', name: 'Male Coolie', type: 'Male Coolie', category: 'Unskilled', createdAt: '2024-01-18T00:00:00.000Z' },
-                { id: 'LAB005', name: 'Female Coolie', type: 'Female Coolie', category: 'Unskilled', createdAt: '2024-01-19T00:00:00.000Z' },
-                { id: 'LAB006', name: 'General Laborers', type: 'General Laborers', category: 'Unskilled', createdAt: '2024-01-20T00:00:00.000Z' },
-                { id: 'LAB007', name: 'Beldar', type: 'Beldar', category: 'Unskilled', createdAt: '2024-01-21T00:00:00.000Z' },
-                { id: 'LAB008', name: 'Masons', type: 'Masons', category: 'Skilled', createdAt: '2024-01-22T00:00:00.000Z' },
-                { id: 'LAB009', name: 'Carpenters', type: 'Carpenters', category: 'Skilled', createdAt: '2024-01-23T00:00:00.000Z' },
-                { id: 'LAB010', name: 'Electricians', type: 'Electricians', category: 'Skilled', createdAt: '2024-01-24T00:00:00.000Z' },
-              ];
-              const userLabours = parsed.map((lab: any) => ({
-                id: lab.id,
-                name: lab.name || lab.type,
-                type: lab.type,
-                category: lab.category,
-                createdAt: lab.createdAt
-              }));
-              setLabours([...defaultLabours, ...userLabours]);
-            } catch (e) {
-              console.error('Error parsing labours:', e);
-            }
-          }
+          setLaboursRefreshKey(prev => prev + 1);
         }}
       />
 
@@ -4095,34 +3987,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         onClose={() => setShowCreateAssetModal(false)}
         onSuccess={() => {
           setShowCreateAssetModal(false);
-          // Reload assets from localStorage
-          const savedAssets = localStorage.getItem('assetsEquipments');
-          if (savedAssets) {
-            try {
-              const parsed = JSON.parse(savedAssets);
-              const defaultAssets: AssetEquipment[] = [
-                { id: '1', code: 'AE001', name: 'Machinery Hire', specification: 'Heavy Duty', unit: 'Hrs', createdAt: '2024-01-15T00:00:00.000Z' },
-                { id: '2', code: 'AE002', name: 'Breaker Hire', specification: 'Industrial Grade', unit: 'Hrs', createdAt: '2024-01-16T00:00:00.000Z' },
-                { id: '3', code: 'AE003', name: 'MS Props', specification: 'Standard Size', unit: 'Nos', createdAt: '2024-01-17T00:00:00.000Z' },
-                { id: '4', code: 'AE004', name: 'MS Shikanja', specification: 'Reinforced', unit: 'Nos', createdAt: '2024-01-18T00:00:00.000Z' },
-                { id: '5', code: 'AE005', name: 'MS Shuttering Plates', specification: 'Steel Grade', unit: 'Sqm', createdAt: '2024-01-19T00:00:00.000Z' },
-                { id: '6', code: 'AE006', name: 'Concrete Breaker Machine', specification: 'Portable', unit: 'Hrs', createdAt: '2024-01-20T00:00:00.000Z' },
-                { id: '7', code: 'AE007', name: 'Measuring Tape', specification: '50m', unit: 'Nos', createdAt: '2024-01-21T00:00:00.000Z' },
-                { id: '8', code: 'AE008', name: 'Helmets', specification: 'Safety Certified', unit: 'Nos', createdAt: '2024-01-22T00:00:00.000Z' },
-              ];
-              const userAssets = parsed.map((asset: any) => ({
-                id: asset.id,
-                code: asset.code,
-                name: asset.name,
-                specification: asset.specification || '',
-                unit: asset.unit,
-                createdAt: asset.createdAt
-              }));
-              setAssets([...defaultAssets, ...userAssets]);
-            } catch (e) {
-              console.error('Error parsing assets:', e);
-            }
-          }
+          setAssetsRefreshKey(prev => prev + 1);
         }}
       />
 

@@ -101,23 +101,33 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
 
   const isEditing = !!editingActivityId;
 
-  // Fetch units from API
+  // Fetch units from Masters (unit-list API) - same source as Masters > Units
   useEffect(() => {
     const fetchUnits = async () => {
       if (!isOpen) return;
-      
+
       setIsLoadingUnits(true);
       try {
         const fetchedUnits = await masterDataAPI.getUnits();
-        const transformedUnits = fetchedUnits.map((unit: any) => ({
-          id: unit.id,
-          unit: unit.unit || unit.name || '',
-          uuid: unit.uuid
-        }));
+        const raw = Array.isArray(fetchedUnits) ? fetchedUnits : [];
+        const transformedUnits = raw
+          .filter((unit: any) => {
+            const isActive = unit.is_active;
+            return isActive === 1 || isActive === '1' || isActive === true || isActive === undefined || isActive === null;
+          })
+          .map((unit: any) => ({
+            id: unit.id,
+            unit: (unit.unit || unit.name || '').toString().trim(),
+            uuid: unit.uuid
+          }))
+          .filter((u) => u.unit)
+          .filter((u, i, arr) => arr.findIndex((x) => x.id === u.id) === i)
+          .sort((a, b) => a.unit.localeCompare(b.unit, undefined, { sensitivity: 'base' }));
         setUnits(transformedUnits);
       } catch (error: any) {
-        console.error('Failed to fetch units:', error);
-        toast.showError('Failed to load units');
+        console.error('Failed to fetch units from masters:', error);
+        toast.showError('Failed to load units from Masters');
+        setUnits([]);
       } finally {
         setIsLoadingUnits(false);
       }

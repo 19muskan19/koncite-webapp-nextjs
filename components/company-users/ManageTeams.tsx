@@ -14,8 +14,15 @@ import {
   Settings,
   User,
   ChevronUp,
-  ChevronDown
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Download,
+  RefreshCw
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 interface UserData {
   id: string;
@@ -36,6 +43,8 @@ interface UserData {
 interface ManageTeamsProps {
   theme: ThemeType;
 }
+
+const PAGE_SIZE = 10;
 
 const ROLE_ID_TO_NAME: Record<string, string> = {
   '1': 'Super Admin',
@@ -86,6 +95,7 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
   const [useApiData, setUseApiData] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
   const [availableRoles, setAvailableRoles] = useState<Array<{ id: string; name: string }>>([]);
   const [formData, setFormData] = useState({
     name: '',
@@ -308,6 +318,23 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
     return filtered;
   }, [allUsers, searchQuery, sortConfig]);
 
+  const paginatedUsers = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return filteredAndSortedUsers.slice(start, start + PAGE_SIZE);
+  }, [filteredAndSortedUsers, currentPage]);
+
+  const totalPages = Math.ceil(filteredAndSortedUsers.length / PAGE_SIZE);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (totalPages > 0 && currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [totalPages, currentPage]);
+
   const handleSort = (key: string) => {
     setSortConfig(prev => {
       if (prev?.key === key) {
@@ -495,6 +522,29 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
     ));
   };
 
+  const handleDownloadExcel = () => {
+    const headers = ['Sr No', 'Name', 'Email', 'Contact Number', 'Role Type', 'Reporting Person', 'Status'];
+    const rows = filteredAndSortedUsers.map((user, idx) => [
+      idx + 1,
+      user.name,
+      user.email,
+      user.contactNumber,
+      user.roleType,
+      `${user.reportingPerson?.name || ''} ${user.reportingPerson?.role || ''}`.trim() || '—',
+      user.status ? 'Active' : 'Inactive'
+    ]);
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Staff');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.setAttribute('download', `staff_export_${new Date().toISOString().split('T')[0]}.xlsx`);
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+
   const getSortIcon = (key: string) => {
     if (sortConfig?.key !== key) {
       return <ChevronUp className="w-3 h-3 opacity-30" />;
@@ -508,24 +558,49 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-4">
-          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5'}`}>
-            <Users className="w-6 h-6 text-[#6B8E23]" />
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-2">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center justify-center sm:justify-start gap-3">
+            <div className={`p-2.5 sm:p-3 rounded-xl flex-shrink-0 ${isDark ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5'}`}>
+              <Users className="w-5 h-5 sm:w-6 sm:h-6 text-[#6B8E23]" />
+            </div>
+            <h1 className={`text-xl sm:text-2xl font-black tracking-tight whitespace-nowrap ${textPrimary}`}>Manage Teams</h1>
           </div>
-          <div>
-            <h1 className={`text-2xl font-black tracking-tight ${textPrimary}`}>Manage Teams</h1>
-            <p className={`text-[11px] font-bold opacity-50 uppercase tracking-widest mt-1 ${textSecondary}`}>
-              Manage company users and team assignments
-            </p>
-          </div>
+          <p className={`text-[10px] sm:text-[11px] font-bold opacity-50 uppercase tracking-widest text-center sm:text-left ${textSecondary}`}>
+            Manage company users and team assignments
+          </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-center sm:justify-end gap-2">
+          <button 
+            onClick={handleDownloadExcel}
+            className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${
+              isDark 
+                ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' 
+                : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
+            } shadow-sm`}
+            title="Download as Excel"
+          >
+            <Download className="w-4 h-4" />
+          </button>
+          <button 
+            onClick={() => {
+              setSearchQuery('');
+              fetchStaffList();
+            }}
+            className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${
+              isDark 
+                ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' 
+                : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
+            } shadow-sm`}
+            title="Refresh Staff List"
+          >
+            <RefreshCw className="w-4 h-4" /> <span className="hidden sm:inline">Refresh</span>
+          </button>
           <button 
             onClick={() => setShowUserModal(true)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md`}
+            className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md`}
           >
-            <Plus className="w-4 h-4" /> Add New
+            <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Add New</span><span className="sm:hidden">Add</span>
           </button>
         </div>
       </div>
@@ -560,7 +635,7 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
                     onClick={() => handleSort('id')}
                   >
                     <div className="flex items-center gap-2">
-                      #
+                      Sr No
                       {getSortIcon('id')}
                     </div>
                   </th>
@@ -621,10 +696,10 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-inherit">
-                {filteredAndSortedUsers.map((user, idx) => (
+                {paginatedUsers.map((user, idx) => (
                   <tr key={user.id} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
-                      {idx + 1}
+                      {(currentPage - 1) * PAGE_SIZE + idx + 1}
                     </td>
                     <td className="px-6 py-4">
                       <div className="w-10 h-10 rounded-full overflow-hidden bg-slate-200 dark:bg-slate-700 flex items-center justify-center">
@@ -698,6 +773,50 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
               </tbody>
             </table>
           </div>
+          {filteredAndSortedUsers.length > PAGE_SIZE && (
+            <div className={`flex items-center justify-between px-6 py-3 border-t border-inherit ${isDark ? 'bg-slate-800/30' : 'bg-slate-50/50'}`}>
+              <span className={`text-sm ${textSecondary}`}>
+                Showing {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, filteredAndSortedUsers.length)} of {filteredAndSortedUsers.length}
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setCurrentPage(1)}
+                  disabled={currentPage <= 1}
+                  className={`p-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}
+                  title="First page"
+                >
+                  <ChevronsLeft className={`w-4 h-4 ${textSecondary}`} />
+                </button>
+                <button
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage <= 1}
+                  className={`p-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}
+                  title="Previous page"
+                >
+                  <ChevronLeft className={`w-4 h-4 ${textSecondary}`} />
+                </button>
+                <span className={`px-3 py-1 text-sm font-bold ${textPrimary}`}>
+                  Page {currentPage} of {totalPages}
+                </span>
+                <button
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage >= totalPages}
+                  className={`p-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}
+                  title="Next page"
+                >
+                  <ChevronRight className={`w-4 h-4 ${textSecondary}`} />
+                </button>
+                <button
+                  onClick={() => setCurrentPage(totalPages)}
+                  disabled={currentPage >= totalPages}
+                  className={`p-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}
+                  title="Last page"
+                >
+                  <ChevronsRight className={`w-4 h-4 ${textSecondary}`} />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <div className={`p-12 rounded-xl border text-center ${cardClass}`}>

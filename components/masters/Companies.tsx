@@ -964,6 +964,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4 flex-1 min-w-0">
+                  <span className={`text-xs font-bold ${textSecondary} flex-shrink-0 w-6`}>{idx + 1}</span>
                   <div className="w-12 h-12 rounded-lg overflow-hidden border-2 border-[#C2D642]/20 flex-shrink-0">
                     <img 
                       src={company.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=6366f1&color=fff&size=128`}

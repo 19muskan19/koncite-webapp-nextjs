@@ -2147,6 +2147,55 @@ export const masterDataAPI = {
   },
 };
 
+// Safety API - Matching Laravel routes (SafetyController)
+export const safetyAPI = {
+  getSafetyList: async (params?: { project_id?: string | number; subproject_id?: string | number }): Promise<any[]> => {
+    try {
+      const response = await apiClient.get('/safety-list', { params: params || {} });
+      const data = response.data?.data ?? response.data ?? [];
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch safety list',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  addSafety: async (data: Record<string, any>): Promise<any> => {
+    try {
+      const response = await apiClient.post('/safety-add', data);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to add safety',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  getSafety: async (uuid: string): Promise<any> => {
+    try {
+      const response = await apiClient.get(`/safety-edit/${encodeURIComponent(uuid)}`);
+      return response.data?.data ?? response.data ?? {};
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch safety',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  deleteSafety: async (id: string): Promise<any> => {
+    try {
+      const response = await apiClient.delete(`/safety-delete/${encodeURIComponent(id)}`);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to delete safety',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
 // Document Management API - Matching Laravel routes
 export const documentAPI = {
   /**

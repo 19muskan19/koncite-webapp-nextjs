@@ -596,6 +596,12 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
                     <div className="flex items-center gap-2">
                       <ArrowUpDown className="w-3 h-3" />
+                      Sr No
+                    </div>
+                  </th>
+                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                    <div className="flex items-center gap-2">
+                      <ArrowUpDown className="w-3 h-3" />
                       Unit
                     </div>
                   </th>
@@ -639,6 +645,9 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
                           : 'hover:bg-slate-50/50'
                     } transition-colors`}
                   >
+                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
+                      {(currentPage - 1) * entriesPerPage + rowIdx + 1}
+                    </td>
                     <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
                       {row.name || row.unit || ''}
                       {row.status === 'Inactive' && (

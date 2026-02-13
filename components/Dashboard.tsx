@@ -133,7 +133,7 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
         {/* Distribution Pie Chart */}
         <div className={`p-6 rounded-2xl border shadow-sm ${cardClass}`}>
           <h3 className="text-xs font-black uppercase tracking-widest opacity-60 mb-8">Intensity Distribution</h3>
-          <div className="h-[240px] w-full flex items-center justify-center">
+          <div className="relative h-[240px] w-full flex items-center justify-center">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
@@ -152,7 +152,7 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
                 <Tooltip />
               </PieChart>
             </ResponsiveContainer>
-            <div className="absolute flex flex-col items-center">
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
               <span className="text-2xl font-black">94%</span>
               <span className="text-[9px] font-bold opacity-40 uppercase">Optimal</span>
             </div>
