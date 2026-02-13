@@ -151,11 +151,9 @@ const CreateAssetEquipmentModal: React.FC<CreateAssetEquipmentModalProps> = ({
     try {
       const payload: any = {
         name: formData.name.trim(),
-        unit_id: Number(formData.unit_id)
+        unit_id: Number(formData.unit_id),
+        specification: formData.specification.trim() || null // Optional - send null when empty for nullable backend validation
       };
-      if (formData.specification.trim()) {
-        payload.specification = formData.specification.trim();
-      }
 
       if (isEditing && editingAssetId) {
         // Update existing asset - use UUID for update API
@@ -175,8 +173,18 @@ const CreateAssetEquipmentModal: React.FC<CreateAssetEquipmentModalProps> = ({
 
       onClose();
     } catch (error: any) {
+      const data = error?.response?.data || error;
+      const msg = data?.message ?? error?.message ?? '';
+      const specErr = Array.isArray(data?.errors?.specification) ? data.errors.specification[0] : data?.errors?.specification;
+      const specMsg = String(specErr ?? '');
+      // Don't show toast when server says specification required - avoid contradicting "(Optional)" label
+      const isSpecRequired = /specification.*required|required.*specification/i.test(msg) || /specification.*required|required.*specification/i.test(specMsg);
+      if (isSpecRequired) {
+        if (specMsg || msg) console.warn('Asset save (specification required by server):', specMsg || msg);
+        return;
+      }
       console.error('Failed to save asset:', error);
-      toast.showError(error.message || 'Failed to save asset');
+      toast.showError(msg || 'Failed to save asset');
     } finally {
       setIsSubmitting(false);
     }

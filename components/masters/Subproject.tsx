@@ -707,7 +707,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
         </div>
       ) : filteredAndSortedSubprojects.length > 0 ? (
         <div className="space-y-3">
-          {filteredAndSortedSubprojects.map((subproject) => {
+          {filteredAndSortedSubprojects.map((subproject, idx) => {
             const isExpanded = expandedCards.has(subproject.id);
             return (
               <div 
@@ -736,6 +736,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                   onClick={() => handleToggleCard(subproject.id)}
                 >
                   <div className="flex items-center gap-4 flex-1 min-w-0">
+                    <span className="text-xs font-bold text-white/70 flex-shrink-0 w-6">{idx + 1}</span>
                     <div className={`w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0 transition-all ${
                       isExpanded 
                         ? 'bg-[#C2D642]/20' 

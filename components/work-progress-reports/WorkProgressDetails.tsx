@@ -500,16 +500,16 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6 p-2 sm:p-0">
       {/* Header */}
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-4">
-          <div className={`p-3 rounded-xl ${isDark ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5'}`}>
-            <ClipboardCheck className="w-6 h-6 text-[#6B8E23]" />
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-2">
+        <div className="flex items-center gap-3 sm:gap-4">
+          <div className={`p-2.5 sm:p-3 rounded-xl flex-shrink-0 ${isDark ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5'}`}>
+            <ClipboardCheck className="w-5 h-5 sm:w-6 sm:h-6 text-[#6B8E23]" />
           </div>
           <div>
-            <h1 className={`text-2xl font-black tracking-tight ${textPrimary}`}>Work Progress Details</h1>
-            <p className={`text-[11px] font-bold opacity-50 uppercase tracking-widest mt-1 ${textSecondary}`}>
+            <h1 className={`text-xl sm:text-2xl font-black tracking-tight ${textPrimary}`}>Work Progress Details</h1>
+            <p className={`text-[10px] sm:text-[11px] font-bold opacity-50 uppercase tracking-widest mt-1 ${textSecondary}`}>
               Track and manage work progress activities
             </p>
           </div>
@@ -517,8 +517,8 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
       </div>
 
       {/* Filter Section */}
-      <div className={`rounded-xl border ${cardClass} p-4`}>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className={`rounded-xl border ${cardClass} p-3 sm:p-4`}>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
               Project <span className="text-red-500">*</span>
@@ -580,7 +580,7 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
       </div>
 
       {/* Export Buttons and Search */}
-      <div className={`flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 rounded-xl border ${cardClass}`}>
+      <div className={`flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4 p-3 sm:p-4 rounded-xl border ${cardClass}`}>
         <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => handleExport('Copy')}
@@ -631,7 +631,7 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
       {/* Work Progress Table */}
       <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="w-full min-w-[900px]">
             <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
               <tr>
                 {[
@@ -648,7 +648,7 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
                 ].map(({ key, label }) => (
                   <th
                     key={key}
-                    className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary} cursor-pointer hover:opacity-80`}
+                    className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-[10px] sm:text-xs font-black uppercase tracking-wider ${textSecondary} cursor-pointer hover:opacity-80 whitespace-nowrap`}
                     onClick={() => handleSort(key)}
                   >
                     <div className="flex items-center gap-2">
@@ -662,34 +662,34 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
             <tbody className="divide-y divide-inherit">
               {paginatedActivities.map((activity) => (
                 <tr key={activity.id} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
-                  <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
+                  <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${textPrimary}`}>
                     {activity.slNo}
                   </td>
-                  <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
+                  <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${textPrimary}`}>
                     {activity.activities}
                   </td>
-                  <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
+                  <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${textPrimary}`}>
                     {activity.unit}
                   </td>
-                  <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
+                  <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${textPrimary}`}>
                     {activity.estimateQty}
                   </td>
-                  <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
+                  <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${textPrimary}`}>
                     {formatNumber(activity.estRate)}
                   </td>
-                  <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
+                  <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${textPrimary}`}>
                     {formatNumber(activity.estAmount)}
                   </td>
-                  <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
+                  <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${textPrimary}`}>
                     {formatNumber(activity.completedQty)}
                   </td>
-                  <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
+                  <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${textPrimary}`}>
                     {formatNumber(activity.estAmountForCompletion)}
                   </td>
-                  <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
+                  <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${textPrimary}`}>
                     {formatNumber(activity.completionPercentage)}
                   </td>
-                  <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
+                  <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${textPrimary}`}>
                     {formatNumber(activity.balanceQty)}
                   </td>
                 </tr>
@@ -699,11 +699,11 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
         </div>
 
         {/* Pagination Footer */}
-        <div className="p-4 border-t border-inherit flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className={`text-sm font-bold ${textSecondary}`}>
+        <div className="p-3 sm:p-4 border-t border-inherit flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4">
+          <div className={`text-xs sm:text-sm font-bold ${textSecondary}`}>
             Showing {filteredAndSortedActivities.length === 0 ? 0 : startIndex + 1} to {Math.min(endIndex, filteredAndSortedActivities.length)} of {filteredAndSortedActivities.length} entries
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-center sm:justify-end gap-1 sm:gap-2">
             <button
               onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
               disabled={currentPage === 1}

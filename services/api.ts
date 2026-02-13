@@ -2147,6 +2147,180 @@ export const masterDataAPI = {
   },
 };
 
+// Safety API - Matching Laravel routes (SafetyController)
+export const safetyAPI = {
+  getSafetyList: async (params?: { project_id?: string | number; subproject_id?: string | number }): Promise<any[]> => {
+    try {
+      const response = await apiClient.get('/safety-list', { params: params || {} });
+      const data = response.data?.data ?? response.data ?? [];
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch safety list',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  addSafety: async (data: Record<string, any>): Promise<any> => {
+    try {
+      const response = await apiClient.post('/safety-add', data);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to add safety',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  getSafety: async (uuid: string): Promise<any> => {
+    try {
+      const response = await apiClient.get(`/safety-edit/${encodeURIComponent(uuid)}`);
+      return response.data?.data ?? response.data ?? {};
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch safety',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  deleteSafety: async (id: string): Promise<any> => {
+    try {
+      const response = await apiClient.delete(`/safety-delete/${encodeURIComponent(id)}`);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to delete safety',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
+// DPR API - Matching Laravel routes (DprController)
+export const dprAPI = {
+  getList: async (): Promise<any> => {
+    try {
+      const response = await apiClient.get('/dpr-list');
+      const res = response.data;
+      if (Array.isArray(res)) return res;
+      if (Array.isArray(res?.data)) return res.data;
+      if (res?.data && typeof res.data === 'object' && !Array.isArray(res.data)) {
+        const d = res.data;
+        if (Array.isArray(d.dprs)) return d.dprs;
+        if (Array.isArray(d.list)) return d.list;
+        if (Array.isArray(d.items)) return d.items;
+      }
+      return [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch DPR list',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  add: async (data: Record<string, any>): Promise<any> => {
+    try {
+      const response = await apiClient.post('/dpr-add', data);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to add DPR',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  edit: async (id: string | number): Promise<any> => {
+    try {
+      const response = await apiClient.get(`/dpr-edit/${encodeURIComponent(id)}`);
+      return response.data?.data ?? response.data ?? [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch DPR',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  getDetails: async (id: string | number): Promise<any> => {
+    try {
+      const response = await apiClient.get(`/dpr-details/${encodeURIComponent(id)}`);
+      return response.data?.data ?? response.data ?? {};
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch DPR details',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  delete: async (id: string | number): Promise<any> => {
+    try {
+      const response = await apiClient.delete(`/dpr-delete/${encodeURIComponent(id)}`);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to delete DPR',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  dprCheck: async (): Promise<any> => {
+    try {
+      const response = await apiClient.get('/dpr-check');
+      return response.data?.data ?? response.data ?? [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch DPR check',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  dprHistoryEdit: async (data: { type: string; dprId: number }): Promise<any> => {
+    try {
+      const response = await apiClient.post('/fetch-dpr-history-edit', data);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch DPR history',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  dprHistoryUpdate: async (data: Record<string, any>): Promise<any> => {
+    try {
+      const response = await apiClient.post('/dpr-history-Update', data);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to update DPR history',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  generatePDF: async (dprId: number | string): Promise<any> => {
+    try {
+      const response = await apiClient.post('/generate-pdf', { dpr: dprId });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to generate PDF',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  bulkAdd: async (formData: FormData): Promise<any> => {
+    try {
+      const response = await apiClient.post('/dpr-bulk-add', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to add DPR',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
 // Document Management API - Matching Laravel routes
 export const documentAPI = {
   /**

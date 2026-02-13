@@ -640,7 +640,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
             <table className="w-full min-w-[640px]">
               <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
                 <tr>
-                  <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>SR No</th>
+                  <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Sr No</th>
                   <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Name</th>
                   <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Specification</th>
                   <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Unit</th>

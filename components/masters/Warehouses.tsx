@@ -547,7 +547,7 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
         </div>
       ) : !isLoadingWarehouses && !warehousesError && filteredWarehouses.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredWarehouses.map((warehouse) => (
+          {filteredWarehouses.map((warehouse, idx) => (
             <div 
               key={warehouse.id} 
               className={`rounded-xl border p-5 transition-all ${cardClass} ${
@@ -556,6 +556,7 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
             >
               <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center gap-3">
+                  <span className={`text-xs font-bold ${textSecondary} flex-shrink-0 w-6`}>{idx + 1}</span>
                   <div className={`p-2 rounded-lg ${isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/10'}`}>
                     <Warehouse className="w-5 h-5 text-[#C2D642]" />
                   </div>

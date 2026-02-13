@@ -485,6 +485,12 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
                     <div className="flex items-center gap-2">
                       <ArrowUpDown className="w-3 h-3" />
+                      Sr No
+                    </div>
+                  </th>
+                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                    <div className="flex items-center gap-2">
+                      <ArrowUpDown className="w-3 h-3" />
                       Class
                     </div>
                   </th>
@@ -516,8 +522,9 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-inherit">
-                {paginatedMaterials.map((row) => (
+                {paginatedMaterials.map((row, idx) => (
                   <tr key={row.id} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
+                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{(listCurrentPage - 1) * listEntriesPerPage + idx + 1}</td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.class}</td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.code}</td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.name || '-'}</td>
@@ -958,7 +965,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                           <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
                             <div className="flex items-center gap-2">
                               <ArrowUpDown className="w-3 h-3" />
-                              #
+                              Sr No
                             </div>
                           </th>
                           <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
@@ -1047,7 +1054,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                           .slice(0, entriesPerPage)
                           .map((row, index) => (
                             <tr key={row.id} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
-                              <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{row.id}</td>
+                              <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{index + 1}</td>
                               <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{row.project}</td>
                               <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{row.store}</td>
                               <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{row.class}</td>

@@ -440,7 +440,7 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
                     <div className="flex items-center gap-2">
                       <ArrowUpDown className="w-3 h-3" />
-                      SR No
+                      Sr No
                     </div>
                   </th>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
