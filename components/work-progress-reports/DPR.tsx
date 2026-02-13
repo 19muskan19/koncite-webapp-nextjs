@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { ThemeType } from '../../types';
 import { 
   ClipboardCheck,
@@ -9,6 +9,8 @@ import {
   Search,
   X,
   Loader2,
+  ChevronDown,
+  RefreshCw,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
@@ -34,7 +36,7 @@ import CreateAssetEquipmentModal from '../masters/Modals/CreateAssetEquipmentMod
 import TeamMembersDropdown from './TeamMembersDropdown';
 import { useUser } from '../../contexts/UserContext';
 import { useToast } from '../../contexts/ToastContext';
-import { masterDataAPI, teamsAPI, safetyAPI } from '../../services/api';
+import { masterDataAPI, teamsAPI, safetyAPI, dprAPI } from '../../services/api';
 
 interface Project {
   id: string;
@@ -242,6 +244,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [isLoadingProjects, setIsLoadingProjects] = useState<boolean>(false);
   const [isLoadingSafety, setIsLoadingSafety] = useState<boolean>(false);
+  const [dprList, setDprList] = useState<any[]>([]);
+  const [isLoadingDprList, setIsLoadingDprList] = useState<boolean>(false);
 
   // Pagination state per sector (reset when modal/search changes)
   const [projectPage, setProjectPage] = useState(1);
@@ -1465,6 +1469,34 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     fetchSafetyList();
   }, [showSafetySelection, isAuthenticated]);
 
+  const DPR_STORAGE_KEY = 'dpr_list';
+
+  const fetchDprList = useCallback(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = localStorage.getItem(DPR_STORAGE_KEY);
+      const list = raw ? JSON.parse(raw) : [];
+      setDprList(Array.isArray(list) ? list : []);
+    } catch {
+      setDprList([]);
+    } finally {
+      setIsLoadingDprList(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    setIsLoadingDprList(true);
+    fetchDprList();
+  }, [isAuthenticated, fetchDprList]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const handleVisibility = () => { if (document.visibilityState === 'visible') fetchDprList(); };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, [isAuthenticated, fetchDprList]);
+
   const handleAddSafetyEntry = async () => {
     const tempId = `temp-${Date.now()}`;
     setSafetyEntries(prev => [...prev, { id: tempId }]);
@@ -1577,14 +1609,67 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setHindranceEntries(prev => prev.map(e => e.id === id ? { ...e, remarks } : e));
   };
 
-  const generateDPRPDF = async () => {
+  const generateDPRPDF = async (snapshotData?: { project: any; subproject: any; activities: any[]; materials: any[]; labours: any[]; assets: any[]; safety: any[]; hindrance: any[]; teamMembers: any[] }) => {
+    const proj = snapshotData?.project ?? selectedProject;
+    const subproj = snapshotData?.subproject ?? selectedSubproject;
+    const actList = snapshotData?.activities ?? Array.from(selectedActivities.values());
+    const matList = snapshotData?.materials ?? Array.from(selectedMaterials.values());
+    const labList = snapshotData?.labours ?? Array.from(selectedLabours.values());
+    const astList = snapshotData?.assets ?? Array.from(selectedAssets.values());
+    const safeList = snapshotData?.safety ?? safetyEntries;
+    const hindList = snapshotData?.hindrance ?? hindranceEntries;
+    const tmList = snapshotData?.teamMembers ?? teamMembers;
+
     const doc = new jsPDF();
     let yPosition = 20;
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
     const margin = 20;
     const lineHeight = 7;
-    const sectionSpacing = 10;
+    const sectionSpacing = 12;
+    const rowPad = 3;
+
+    // Colors (RGB 0-255)
+    const colorAccent = [194, 214, 66] as [number, number, number];
+    const colorHeaderBg = [224, 238, 180] as [number, number, number];
+    const colorAltRow = [248, 249, 250] as [number, number, number];
+    const colorMetadataBg = [240, 245, 250] as [number, number, number];
+    const colorBorder = [180, 195, 210] as [number, number, number];
+
+    const drawTableHeader = (headers: string[], colWidths: number[], startY: number) => {
+      const tw = colWidths.reduce((a, b) => a + b, 0);
+      doc.setDrawColor(...colorBorder);
+      doc.setLineWidth(0.25);
+      doc.setFillColor(...colorHeaderBg);
+      doc.rect(margin, startY, tw, lineHeight + rowPad * 2, 'FD');
+      doc.setTextColor(30, 45, 60);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9);
+      let x = margin + 2;
+      headers.forEach((h, i) => {
+        doc.text(h, x, startY + lineHeight + rowPad - 1);
+        x += colWidths[i];
+      });
+      doc.setTextColor(0, 0, 0);
+      return startY + lineHeight + rowPad * 2;
+    };
+
+    const drawTableRowBg = (y: number, rowHeight: number, colWidths: number[], isAlt: boolean) => {
+      const tw = colWidths.reduce((a, b) => a + b, 0);
+      if (isAlt) {
+        doc.setFillColor(...colorAltRow);
+        doc.rect(margin, y, tw, rowHeight, 'F');
+      }
+      doc.setDrawColor(...colorBorder);
+      doc.rect(margin, y, tw, rowHeight);
+      let x = margin;
+      colWidths.forEach((w, i) => {
+        if (i < colWidths.length - 1) {
+          doc.line(x + w, y, x + w, y + rowHeight);
+          x += w;
+        }
+      });
+    };
 
     // Helper function to add a new page if needed
     const checkPageBreak = (requiredSpace: number) => {
@@ -1689,90 +1774,88 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     };
 
     // Title
-    doc.setFontSize(20);
+    doc.setFontSize(22);
     doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...colorAccent);
     doc.text('Daily Progress Report (DPR)', pageWidth / 2, yPosition, { align: 'center' });
-    yPosition += 15;
+    doc.setTextColor(0, 0, 0);
+    yPosition += 18;
 
-    // Date
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'normal');
-    const currentDate = new Date().toLocaleDateString('en-US', { 
-      year: 'numeric', 
-      month: 'long', 
-      day: 'numeric' 
-    });
-    doc.text(`Date: ${currentDate}`, margin, yPosition);
-    yPosition += sectionSpacing;
-
-    // Project Information
-    if (selectedProject && selectedSubproject) {
-      checkPageBreak(20);
-      doc.setFontSize(14);
+    // Project Information - styled metadata box
+    if (proj || subproj) {
+      const metaLines = 2 + (proj ? 1 : 0) + (subproj ? 1 : 0) + (proj?.code ? 1 : 0);
+      const metaBoxH = 8 + 10 + metaLines * lineHeight + 6;
+      checkPageBreak(metaBoxH + 10);
+      const metaBoxTop = yPosition;
+      doc.setFillColor(...colorMetadataBg);
+      doc.setDrawColor(...colorBorder);
+      doc.setLineWidth(0.5);
+      doc.rect(margin, metaBoxTop, pageWidth - 2 * margin, metaBoxH, 'FD');
+      doc.rect(margin, metaBoxTop, pageWidth - 2 * margin, metaBoxH);
+      yPosition = metaBoxTop + 8;
+      doc.setFontSize(11);
       doc.setFont('helvetica', 'bold');
-      doc.text('Project Information', margin, yPosition);
-      yPosition += lineHeight + 2;
-
+      doc.setTextColor(40, 60, 80);
+      doc.text('Project Information', margin + 8, yPosition);
+      yPosition += 10;
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
-      doc.text(`Project: ${selectedProject.name}`, margin, yPosition);
+      doc.setTextColor(50, 50, 50);
+      const currentDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+      doc.text(`Date: ${currentDate}`, margin + 8, yPosition);
       yPosition += lineHeight;
-      doc.text(`Subproject: ${selectedSubproject.name}`, margin, yPosition);
-      yPosition += lineHeight;
-      if (selectedProject.code) {
-        doc.text(`Project Code: ${selectedProject.code}`, margin, yPosition);
-        yPosition += lineHeight;
-      }
-      yPosition += sectionSpacing;
+      if (proj) { doc.text(`Project: ${proj.name}`, margin + 8, yPosition); yPosition += lineHeight; }
+      if (subproj) { doc.text(`Subproject: ${subproj.name}`, margin + 8, yPosition); yPosition += lineHeight; }
+      if (proj?.code) { doc.text(`Project Code: ${proj.code}`, margin + 8, yPosition); yPosition += lineHeight; }
+      doc.setTextColor(0, 0, 0);
+      yPosition = metaBoxTop + metaBoxH + sectionSpacing;
     }
 
     // Activities Section
-    if (selectedActivities.size > 0) {
-      checkPageBreak(30);
-      doc.setFontSize(14);
+    if (actList.length > 0) {
+      checkPageBreak(40);
+      doc.setFontSize(13);
       doc.setFont('helvetica', 'bold');
+      doc.setTextColor(40, 60, 80);
       doc.text('Activities', margin, yPosition);
-      yPosition += lineHeight + 2;
+      doc.setTextColor(0, 0, 0);
+      yPosition += lineHeight + 4;
 
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'bold');
-      const activitiesHeaders = ['Sr No', 'Activity', 'Unit', 'Quantity', 'Contractor', 'Remarks'];
-      const colWidths = [15, 60, 20, 25, 40, 30];
-      let xPos = margin;
-      
-      activitiesHeaders.forEach((header, idx) => {
-        doc.text(header, xPos, yPosition);
-        xPos += colWidths[idx];
-      });
-      yPosition += lineHeight + 2;
+      const activitiesHeaders = ['Sr No', 'Activity', 'Unit', 'Qty', 'Contractor', 'Remarks'];
+      const colWidths = [12, 55, 18, 20, 35, 30];
+      yPosition = drawTableHeader(activitiesHeaders, colWidths, yPosition);
 
       doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
       let srNo = 1;
-      for (const activity of selectedActivities.values()) {
-        checkPageBreak(15);
-        xPos = margin;
-        doc.text(srNo.toString(), xPos, yPosition);
-        xPos += colWidths[0];
-        doc.text(activity.name || '-', xPos, yPosition);
-        xPos += colWidths[1];
-        doc.text(activity.unit || '-', xPos, yPosition);
-        xPos += colWidths[2];
-        doc.text(activity.quantity.toString(), xPos, yPosition);
-        xPos += colWidths[3];
-        doc.text(activity.contractor || '-', xPos, yPosition);
-        xPos += colWidths[4];
+      for (const activity of actList) {
         const remarksLines = doc.splitTextToSize(activity.remarks || '-', colWidths[5]);
-        doc.text(remarksLines, xPos, yPosition);
-        yPosition += Math.max(lineHeight, remarksLines.length * lineHeight);
+        const rowH = Math.max(lineHeight + rowPad, remarksLines.length * lineHeight + rowPad * 2);
+        checkPageBreak(rowH + 5);
+        drawTableRowBg(yPosition, rowH, colWidths, (srNo - 1) % 2 === 1);
+        let xPos = margin + 2;
+        doc.text(srNo.toString(), xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += colWidths[0];
+        doc.text(activity.name || '-', xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += colWidths[1];
+        doc.text(activity.unit || '-', xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += colWidths[2];
+        doc.text(activity.quantity.toString(), xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += colWidths[3];
+        doc.text(activity.contractor || '-', xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += colWidths[4];
+        doc.text(remarksLines, xPos, yPosition + lineHeight + rowPad - 1);
+        yPosition += rowH;
         
         // Add images if any
-        if (activity.images && activity.images.length > 0) {
+        const actImages = (activity as any)?.images;
+        if (actImages && actImages.length > 0) {
           yPosition += lineHeight;
           doc.setFontSize(9);
           doc.text('Images:', margin, yPosition);
           yPosition += lineHeight + 2;
           
-          for (const image of activity.images) {
+          for (const image of actImages) {
             const imageHeight = await addImageToPDF(image, margin, yPosition, pageWidth - 2 * margin, 40);
             yPosition += imageHeight + 2;
             checkPageBreak(50);
@@ -1787,250 +1870,400 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     }
 
     // Materials Section
-    if (selectedMaterials.size > 0) {
-      checkPageBreak(30);
-      doc.setFontSize(14);
+    if (matList.length > 0) {
+      checkPageBreak(40);
+      doc.setFontSize(13);
       doc.setFont('helvetica', 'bold');
+      doc.setTextColor(40, 60, 80);
       doc.text('Materials', margin, yPosition);
-      yPosition += lineHeight + 2;
+      doc.setTextColor(0, 0, 0);
+      yPosition += lineHeight + 4;
 
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'bold');
-      const materialsHeaders = ['Sr No', 'Material', 'Unit', 'Quantity', 'Activity', 'Remarks'];
-      const materialColWidths = [15, 50, 20, 25, 40, 30];
-      let xPos = margin;
-      
-      materialsHeaders.forEach((header, idx) => {
-        doc.text(header, xPos, yPosition);
-        xPos += materialColWidths[idx];
-      });
-      yPosition += lineHeight + 2;
+      const materialsHeaders = ['Sr No', 'Material', 'Unit', 'Qty', 'Activity', 'Remarks'];
+      const materialColWidths = [12, 48, 18, 20, 35, 30];
+      yPosition = drawTableHeader(materialsHeaders, materialColWidths, yPosition);
 
       doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
       let srNo = 1;
-      selectedMaterials.forEach((material) => {
-        checkPageBreak(15);
-        xPos = margin;
-        doc.text(srNo.toString(), xPos, yPosition);
-        xPos += materialColWidths[0];
-        doc.text(`${material.name} (${material.code})`, xPos, yPosition);
-        xPos += materialColWidths[1];
-        doc.text(material.unit, xPos, yPosition);
-        xPos += materialColWidths[2];
-        doc.text(material.quantity.toString(), xPos, yPosition);
-        xPos += materialColWidths[3];
-        doc.text(material.activity || '-', xPos, yPosition);
-        xPos += materialColWidths[4];
+      matList.forEach((material) => {
         const remarksLines = doc.splitTextToSize(material.remarks || '-', materialColWidths[5]);
-        doc.text(remarksLines, xPos, yPosition);
-        yPosition += Math.max(lineHeight, remarksLines.length * lineHeight);
+        const rowH = Math.max(lineHeight + rowPad, remarksLines.length * lineHeight + rowPad * 2);
+        checkPageBreak(rowH + 5);
+        drawTableRowBg(yPosition, rowH, materialColWidths, (srNo - 1) % 2 === 1);
+        let xPos = margin + 2;
+        doc.text(srNo.toString(), xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += materialColWidths[0];
+        doc.text(`${material.name} (${material.code})`, xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += materialColWidths[1];
+        doc.text(material.unit, xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += materialColWidths[2];
+        doc.text(material.quantity.toString(), xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += materialColWidths[3];
+        doc.text(material.activity || '-', xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += materialColWidths[4];
+        doc.text(remarksLines, xPos, yPosition + lineHeight + rowPad - 1);
+        yPosition += rowH;
         srNo++;
       });
       yPosition += sectionSpacing;
     }
 
     // Labours Section
-    if (selectedLabours.size > 0) {
-      checkPageBreak(30);
-      doc.setFontSize(14);
+    if (labList.length > 0) {
+      checkPageBreak(40);
+      doc.setFontSize(13);
       doc.setFont('helvetica', 'bold');
+      doc.setTextColor(40, 60, 80);
       doc.text('Labours', margin, yPosition);
-      yPosition += lineHeight + 2;
+      doc.setTextColor(0, 0, 0);
+      yPosition += lineHeight + 4;
 
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'bold');
-      const laboursHeaders = ['Sr No', 'Labour', 'Category', 'Qty', 'OT Qty', 'Activity', 'Contractor', 'Rate', 'Remarks'];
-      const labourColWidths = [12, 35, 20, 15, 15, 30, 30, 20, 25];
-      let xPos = margin;
-      
-      laboursHeaders.forEach((header, idx) => {
-        doc.text(header, xPos, yPosition);
-        xPos += labourColWidths[idx];
-      });
-      yPosition += lineHeight + 2;
+      const laboursHeaders = ['Sr No', 'Labour', 'Category', 'Qty', 'OT', 'Activity', 'Contractor', 'Rate', 'Remarks'];
+      const labourColWidths = [10, 28, 16, 10, 10, 24, 24, 16, 22];
+      yPosition = drawTableHeader(laboursHeaders, labourColWidths, yPosition);
 
       doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
       let srNo = 1;
-      selectedLabours.forEach((labour) => {
-        checkPageBreak(15);
-        xPos = margin;
-        doc.text(srNo.toString(), xPos, yPosition);
-        xPos += labourColWidths[0];
-        doc.text(labour.type || '-', xPos, yPosition);
-        xPos += labourColWidths[1];
-        doc.text(labour.category || '-', xPos, yPosition);
-        xPos += labourColWidths[2];
-        doc.text(labour.quantity.toString(), xPos, yPosition);
-        xPos += labourColWidths[3];
-        doc.text(labour.overtimeQuantity.toString(), xPos, yPosition);
-        xPos += labourColWidths[4];
-        doc.text(labour.activity || '-', xPos, yPosition);
-        xPos += labourColWidths[5];
-        doc.text(labour.contractor || '-', xPos, yPosition);
-        xPos += labourColWidths[6];
-        doc.text(labour.ratePerUnit.toString(), xPos, yPosition);
-        xPos += labourColWidths[7];
+      labList.forEach((labour) => {
         const remarksLines = doc.splitTextToSize(labour.remarks || '-', labourColWidths[8]);
-        doc.text(remarksLines, xPos, yPosition);
-        yPosition += Math.max(lineHeight, remarksLines.length * lineHeight);
+        const rowH = Math.max(lineHeight + rowPad, remarksLines.length * lineHeight + rowPad * 2);
+        checkPageBreak(rowH + 5);
+        drawTableRowBg(yPosition, rowH, labourColWidths, (srNo - 1) % 2 === 1);
+        let xPos = margin + 2;
+        doc.text(srNo.toString(), xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += labourColWidths[0];
+        doc.text(labour.type || '-', xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += labourColWidths[1];
+        doc.text(labour.category || '-', xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += labourColWidths[2];
+        doc.text(labour.quantity.toString(), xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += labourColWidths[3];
+        doc.text(labour.overtimeQuantity.toString(), xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += labourColWidths[4];
+        doc.text(labour.activity || '-', xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += labourColWidths[5];
+        doc.text(labour.contractor || '-', xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += labourColWidths[6];
+        doc.text(labour.ratePerUnit.toString(), xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += labourColWidths[7];
+        doc.text(remarksLines, xPos, yPosition + lineHeight + rowPad - 1);
+        yPosition += rowH;
         srNo++;
       });
       yPosition += sectionSpacing;
     }
 
     // Assets Section
-    if (selectedAssets.size > 0) {
-      checkPageBreak(30);
-      doc.setFontSize(14);
+    if (astList.length > 0) {
+      checkPageBreak(40);
+      doc.setFontSize(13);
       doc.setFont('helvetica', 'bold');
+      doc.setTextColor(40, 60, 80);
       doc.text('Assets & Equipments', margin, yPosition);
-      yPosition += lineHeight + 2;
+      doc.setTextColor(0, 0, 0);
+      yPosition += lineHeight + 4;
 
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'bold');
-      const assetsHeaders = ['Sr No', 'Asset', 'Quantity', 'Activity', 'Contractor', 'Rate', 'Remarks'];
-      const assetColWidths = [12, 50, 20, 30, 30, 20, 28];
-      let xPos = margin;
-      
-      assetsHeaders.forEach((header, idx) => {
-        doc.text(header, xPos, yPosition);
-        xPos += assetColWidths[idx];
-      });
-      yPosition += lineHeight + 2;
+      const assetsHeaders = ['Sr No', 'Asset', 'Qty', 'Activity', 'Contractor', 'Rate', 'Remarks'];
+      const assetColWidths = [10, 45, 16, 26, 26, 16, 26];
+      yPosition = drawTableHeader(assetsHeaders, assetColWidths, yPosition);
 
       doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
       let srNo = 1;
-      selectedAssets.forEach((asset) => {
-        checkPageBreak(15);
-        xPos = margin;
-        doc.text(srNo.toString(), xPos, yPosition);
-        xPos += assetColWidths[0];
-        doc.text(`${asset.name} (${asset.code})`, xPos, yPosition);
-        xPos += assetColWidths[1];
-        doc.text(asset.quantity.toString(), xPos, yPosition);
-        xPos += assetColWidths[2];
-        doc.text(asset.activity || '-', xPos, yPosition);
-        xPos += assetColWidths[3];
-        doc.text(asset.contractor || '-', xPos, yPosition);
-        xPos += assetColWidths[4];
-        doc.text(asset.ratePerUnit.toString(), xPos, yPosition);
-        xPos += assetColWidths[5];
+      astList.forEach((asset) => {
         const remarksLines = doc.splitTextToSize(asset.remarks || '-', assetColWidths[6]);
-        doc.text(remarksLines, xPos, yPosition);
-        yPosition += Math.max(lineHeight, remarksLines.length * lineHeight);
+        const rowH = Math.max(lineHeight + rowPad, remarksLines.length * lineHeight + rowPad * 2);
+        checkPageBreak(rowH + 5);
+        drawTableRowBg(yPosition, rowH, assetColWidths, (srNo - 1) % 2 === 1);
+        let xPos = margin + 2;
+        doc.text(srNo.toString(), xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += assetColWidths[0];
+        doc.text(`${asset.name} (${asset.code})`, xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += assetColWidths[1];
+        doc.text(asset.quantity.toString(), xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += assetColWidths[2];
+        doc.text(asset.activity || '-', xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += assetColWidths[3];
+        doc.text(asset.contractor || '-', xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += assetColWidths[4];
+        doc.text(asset.ratePerUnit.toString(), xPos, yPosition + lineHeight + rowPad - 1);
+        xPos += assetColWidths[5];
+        doc.text(remarksLines, xPos, yPosition + lineHeight + rowPad - 1);
+        yPosition += rowH;
         srNo++;
       });
       yPosition += sectionSpacing;
     }
 
     // Safety Section
-    if (safetyEntries.length > 0) {
+    if (safeList.length > 0) {
       checkPageBreak(30);
-      doc.setFontSize(14);
+      doc.setFontSize(13);
       doc.setFont('helvetica', 'bold');
+      doc.setTextColor(40, 60, 80);
       doc.text('Safety Issues', margin, yPosition);
-      yPosition += lineHeight + 2;
+      doc.setTextColor(0, 0, 0);
+      yPosition += lineHeight + 4;
 
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
       let srNo = 1;
-      for (const entry of safetyEntries) {
-        checkPageBreak(20);
+      for (const entry of safeList) {
+        checkPageBreak(25);
+        doc.setFillColor(...colorAltRow);
+        doc.setDrawColor(...colorBorder);
+        doc.rect(margin, yPosition - 2, pageWidth - 2 * margin, 1, 'F');
         doc.setFont('helvetica', 'bold');
-        doc.text(`${srNo}. ${entry.details || '—'}`, margin, yPosition);
-        yPosition += lineHeight;
+        doc.setTextColor(35, 55, 75);
+        doc.text(`${srNo}. ${entry.details || '—'}`, margin + 4, yPosition + lineHeight);
+        yPosition += lineHeight + 2;
         
         doc.setFont('helvetica', 'normal');
+        doc.setTextColor(60, 60, 60);
         if (entry.teamMembers && entry.teamMembers.length > 0) {
-          const teamMemberNames = entry.teamMembers.map(mid => {
-            const member = teamMembers.find(m => m.id === mid);
+          const teamMemberNames = entry.teamMembers.map((mid: string) => {
+            const member = tmList.find((m: any) => m.id === mid);
             return member ? member.name : mid;
           }).join(', ');
-          doc.text(`Team Members: ${teamMemberNames}`, margin + 5, yPosition);
+          doc.text(`Team Members: ${teamMemberNames}`, margin + 8, yPosition);
           yPosition += lineHeight;
         }
         
         if (entry.remarks) {
           const remarksLines = doc.splitTextToSize(`Remarks: ${entry.remarks}`, pageWidth - 2 * margin - 10);
-          doc.text(remarksLines, margin + 5, yPosition);
+          doc.text(remarksLines, margin + 8, yPosition);
           yPosition += remarksLines.length * lineHeight;
         }
         
         if (entry.image) {
-          doc.text('Image:', margin + 5, yPosition);
+          doc.text('Image:', margin + 8, yPosition);
           yPosition += lineHeight + 2;
-          const imageHeight = await addImageToPDF(entry.image, margin + 5, yPosition, pageWidth - 2 * margin - 10, 50);
+          const imageHeight = await addImageToPDF(entry.image, margin + 8, yPosition, pageWidth - 2 * margin - 16, 50);
           yPosition += imageHeight;
         }
         
-        yPosition += 3;
+        doc.setTextColor(0, 0, 0);
+        yPosition += 6;
         srNo++;
       }
       yPosition += sectionSpacing;
     }
 
     // Hindrance Section
-    if (hindranceEntries.length > 0) {
+    if (hindList.length > 0) {
       checkPageBreak(30);
-      doc.setFontSize(14);
+      doc.setFontSize(13);
       doc.setFont('helvetica', 'bold');
+      doc.setTextColor(40, 60, 80);
       doc.text('Hindrance Issues', margin, yPosition);
-      yPosition += lineHeight + 2;
+      doc.setTextColor(0, 0, 0);
+      yPosition += lineHeight + 4;
 
       doc.setFontSize(10);
       doc.setFont('helvetica', 'normal');
       let srNo = 1;
-      for (const entry of hindranceEntries) {
-        checkPageBreak(20);
+      for (const entry of hindList) {
+        checkPageBreak(25);
+        doc.setFillColor(...colorAltRow);
+        doc.setDrawColor(...colorBorder);
+        doc.rect(margin, yPosition - 2, pageWidth - 2 * margin, 1, 'F');
         doc.setFont('helvetica', 'bold');
-        doc.text(`${srNo}. ${entry.details || '—'}`, margin, yPosition);
-        yPosition += lineHeight;
+        doc.setTextColor(35, 55, 75);
+        doc.text(`${srNo}. ${entry.details || '—'}`, margin + 4, yPosition + lineHeight);
+        yPosition += lineHeight + 2;
         
         doc.setFont('helvetica', 'normal');
+        doc.setTextColor(60, 60, 60);
         if (entry.teamMembers && entry.teamMembers.length > 0) {
-          const teamMemberNames = entry.teamMembers.map(mid => {
-            const member = teamMembers.find(m => m.id === mid);
+          const teamMemberNames = entry.teamMembers.map((mid: string) => {
+            const member = tmList.find((m: any) => m.id === mid);
             return member ? member.name : mid;
           }).join(', ');
-          doc.text(`Team Members: ${teamMemberNames}`, margin + 5, yPosition);
+          doc.text(`Team Members: ${teamMemberNames}`, margin + 8, yPosition);
           yPosition += lineHeight;
         }
         
         if (entry.remarks) {
           const remarksLines = doc.splitTextToSize(`Remarks: ${entry.remarks}`, pageWidth - 2 * margin - 10);
-          doc.text(remarksLines, margin + 5, yPosition);
+          doc.text(remarksLines, margin + 8, yPosition);
           yPosition += remarksLines.length * lineHeight;
         }
         
         if (entry.image) {
-          doc.text('Image:', margin + 5, yPosition);
+          doc.text('Image:', margin + 8, yPosition);
           yPosition += lineHeight + 2;
-          const imageHeight = await addImageToPDF(entry.image, margin + 5, yPosition, pageWidth - 2 * margin - 10, 50);
+          const imageHeight = await addImageToPDF(entry.image, margin + 8, yPosition, pageWidth - 2 * margin - 16, 50);
           yPosition += imageHeight;
         }
         
-        yPosition += 3;
+        doc.setTextColor(0, 0, 0);
+        yPosition += 6;
         srNo++;
       }
     }
 
     // Generate filename
-    const projectName = selectedProject?.name || 'DPR';
-    const subprojectName = selectedSubproject?.name || '';
+    const projectName = proj?.name || 'DPR';
+    const subprojectName = subproj?.name || '';
     const filename = `DPR_${projectName}_${subprojectName}_${new Date().toISOString().split('T')[0]}.pdf`.replace(/[^a-z0-9]/gi, '_');
 
     // Save PDF
     doc.save(filename);
   };
 
+  const dataURLtoFile = (dataUrl: string, filename: string): File | null => {
+    try {
+      const arr = dataUrl.split(',');
+      const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
+      const bstr = atob(arr[1]);
+      const u8arr = new Uint8Array(bstr.length);
+      for (let i = 0; i < bstr.length; i++) u8arr[i] = bstr.charCodeAt(i);
+      return new File([u8arr], filename, { type: mime });
+    } catch {
+      return null;
+    }
+  };
+
+  const buildDprFormData = (): FormData | null => {
+    const projectId = selectedProject?.numericId ?? Number(selectedProject?.id);
+    const subprojectId = selectedSubproject ? (selectedSubproject.numericId ?? Number(selectedSubproject.id)) : null;
+    if (!projectId) return null;
+
+    const formData = new FormData();
+    formData.append('dpr', JSON.stringify({
+      projects_id: projectId,
+      sub_projects_id: subprojectId,
+      name: new Date().toISOString().split('T')[0],
+      staps: 7,
+    }));
+
+    if (selectedActivities.size > 0) {
+      const activitiesList: any[] = [];
+      const activityImages: File[] = [];
+      let idx = 0;
+      for (const a of selectedActivities.values()) {
+        activitiesList.push({
+          activities_history_activities_id: Number(a.id) || a.id,
+          activities_history_qty: a.quantity,
+          activities_history_completion: 0,
+          activities_history_vendors_id: null,
+          remaining_qty: 0,
+          total_qty: a.quantity,
+          activities_history_remarks: a.remarks || '',
+        });
+        const img = a.images?.[0];
+        if (img && typeof img === 'string') {
+          const f = dataURLtoFile(img, `activity_${idx}.jpg`);
+          if (f) activityImages.push(f);
+        }
+        idx++;
+      }
+      formData.append('activities', JSON.stringify(activitiesList));
+      activityImages.forEach((f, i) => formData.append(`activities_images[${i}]`, f));
+    }
+    if (selectedMaterials.size > 0) {
+      formData.append('materials', JSON.stringify(Array.from(selectedMaterials.values()).map(m => ({
+        materials_id: Number(m.id) || m.id,
+        qty: m.quantity,
+        remarkes: m.remarks || '',
+      }))));
+    }
+    if (selectedLabours.size > 0) {
+      formData.append('labour', JSON.stringify(Array.from(selectedLabours.values()).map(l => ({
+        labours_id: Number(l.id) || l.id,
+        qty: l.quantity,
+        ot_qty: l.overtimeQuantity || 0,
+        rate_per_unit: l.ratePerUnit || 0,
+        vendors_id: null,
+        remarkes: l.remarks || '',
+      }))));
+    }
+    if (selectedAssets.size > 0) {
+      formData.append('assets', JSON.stringify(Array.from(selectedAssets.values()).map(a => ({
+        assets_id: Number(a.id) || a.id,
+        qty: a.quantity,
+        rate_per_unit: a.ratePerUnit || 0,
+        vendors_id: null,
+        remarkes: a.remarks || '',
+      }))));
+    }
+    if (safetyEntries.length > 0) {
+      formData.append('safety', JSON.stringify(safetyEntries.map(s => ({
+        name: (s.details || '').substring(0, 100) || 'Safety',
+        details: s.details || '',
+        remarks: s.remarks || '',
+      }))));
+      safetyEntries.forEach((s, i) => {
+        if (s.image && typeof s.image === 'string') {
+          const f = dataURLtoFile(s.image, `safety_${i}.jpg`);
+          if (f) formData.append(`safety_images[${i}]`, f);
+        }
+      });
+    }
+    if (hindranceEntries.length > 0) {
+      formData.append('hinderance', JSON.stringify(hindranceEntries.map(h => ({
+        name: (h.details || '').substring(0, 100) || 'Hindrance',
+        details: h.details || '',
+        remarks: h.remarks || '',
+      }))));
+      hindranceEntries.forEach((h, i) => {
+        if (h.image && typeof h.image === 'string') {
+          const f = dataURLtoFile(h.image, `hinderance_${i}.jpg`);
+          if (f) formData.append(`hinderance_images[${i}]`, f);
+        }
+      });
+    }
+    return formData;
+  };
+
+  const saveDprToLocalStorage = () => {
+    if (!selectedProject) return;
+    const dprNo = String(Date.now()).slice(-6);
+    const dprSnapshot = {
+      id: `local-${Date.now()}`,
+      dpr_no: dprNo,
+      date: new Date().toISOString().split('T')[0],
+      projects_id: selectedProject.numericId ?? selectedProject.id,
+      sub_projects_id: selectedSubproject ? (selectedSubproject.numericId ?? selectedSubproject.id) : null,
+      projects: { project_name: selectedProject.name, name: selectedProject.name },
+      sub_projects: selectedSubproject ? { name: selectedSubproject.name } : null,
+      subProjects: selectedSubproject ? { name: selectedSubproject.name } : null,
+      staps: 7,
+      _local: true,
+      snapshot: {
+        project: selectedProject,
+        subproject: selectedSubproject,
+        activities: Array.from(selectedActivities.values()),
+        materials: Array.from(selectedMaterials.values()),
+        labours: Array.from(selectedLabours.values()),
+        assets: Array.from(selectedAssets.values()),
+        safety: [...safetyEntries],
+        hindrance: [...hindranceEntries],
+        teamMembers: [...teamMembers],
+      },
+    };
+    try {
+      const raw = localStorage.getItem(DPR_STORAGE_KEY);
+      const list = raw ? JSON.parse(raw) : [];
+      list.unshift(dprSnapshot);
+      localStorage.setItem(DPR_STORAGE_KEY, JSON.stringify(list));
+    } catch {
+      // ignore
+    }
+  };
+
   const handleHindranceNext = () => {
+    if (!selectedProject) return;
     setShowHindranceSelection(false);
+    saveDprToLocalStorage();
     setShowDPRComplete(true);
+    fetchDprList();
   };
 
   const handleHindranceSkip = () => {
-    setShowHindranceSelection(false);
-    setShowDPRComplete(true);
+    handleHindranceNext();
   };
 
   const handleDownloadDPR = async () => {
@@ -2096,6 +2329,78 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           >
             <Edit className="w-4 h-4 flex-shrink-0" /> Edit previous
           </button>
+        </div>
+      </div>
+
+      {/* DPR List */}
+      <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
+        <div className={`px-4 py-3 border-b ${isDark ? 'border-slate-700' : 'border-slate-200'} flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2`}>
+          <div>
+            <h2 className={`text-base font-black ${textPrimary}`}>DPR List</h2>
+            <p className={`text-xs ${textSecondary} mt-0.5`}>Your daily progress reports</p>
+          </div>
+          <button
+            onClick={() => fetchDprList()}
+            disabled={isLoadingDprList}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all self-start sm:self-auto ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-200' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'} disabled:opacity-50`}
+          >
+            <RefreshCw className={`w-4 h-4 ${isLoadingDprList ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
+        <div className="overflow-x-auto">
+          {isLoadingDprList ? (
+            <div className={`flex items-center justify-center py-12 ${textSecondary}`}>
+              <Loader2 className="w-8 h-8 animate-spin" />
+              <span className="ml-2 font-bold">Loading DPR list...</span>
+            </div>
+          ) : dprList.length === 0 ? (
+            <div className={`px-4 py-8 text-center ${textSecondary}`}>
+              <ClipboardCheck className="w-12 h-12 mx-auto mb-2 opacity-50" />
+              <p className="text-sm font-bold">No DPRs yet</p>
+              <p className="text-xs mt-1">Create your first DPR using the button above</p>
+            </div>
+          ) : (
+            <table className="w-full">
+              <thead>
+                <tr className={`border-b ${isDark ? 'border-slate-700 bg-slate-800/50' : 'border-slate-200 bg-slate-50/50'}`}>
+                  <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>DPR No</th>
+                  <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Date</th>
+                  <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Project</th>
+                  <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Subproject</th>
+                  <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Status</th>
+                  <th className={`px-4 py-3 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>Actions</th>
+                </tr>
+              </thead>
+              <tbody className={`divide-y ${isDark ? 'divide-slate-700' : 'divide-slate-200'}`}>
+                {dprList.map((dpr: any) => (
+                  <tr key={dpr.id} className={isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'}>
+                    <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{dpr.dpr_no ?? '-'}</td>
+                    <td className={`px-4 py-3 text-sm ${textPrimary}`}>{dpr.date ?? '-'}</td>
+                    <td className={`px-4 py-3 text-sm ${textPrimary}`}>{dpr.projects?.project_name ?? dpr.projects?.name ?? `Project #${dpr.projects_id}` ?? '-'}</td>
+                    <td className={`px-4 py-3 text-sm ${textPrimary}`}>{dpr.sub_projects?.name ?? dpr.subProjects?.name ?? (dpr.sub_projects_id ? `#${dpr.sub_projects_id}` : '-')}</td>
+                    <td className={`px-4 py-3 text-sm ${textPrimary}`}>
+                      <span className={`px-2 py-1 rounded text-xs font-bold ${dpr.staps === 7 ? (isDark ? 'bg-green-500/20 text-green-400' : 'bg-green-100 text-green-700') : (isDark ? 'bg-amber-500/20 text-amber-400' : 'bg-amber-100 text-amber-700')}`}>
+                        {dpr.staps === 7 ? 'Complete' : `Step ${dpr.staps ?? 0}`}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        onClick={async () => {
+                          if (dpr._local && dpr.snapshot) {
+                            await generateDPRPDF(dpr.snapshot);
+                          }
+                        }}
+                        className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold ${isDark ? 'bg-[#C2D642]/20 text-[#C2D642] hover:bg-[#C2D642]/30' : 'bg-[#C2D642]/10 text-[#C2D642] hover:bg-[#C2D642]/20'}`}
+                      >
+                        <Download className="w-3.5 h-3.5" /> PDF
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
 
