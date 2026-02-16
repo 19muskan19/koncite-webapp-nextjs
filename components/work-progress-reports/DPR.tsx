@@ -36,7 +36,7 @@ import CreateAssetEquipmentModal from '../masters/Modals/CreateAssetEquipmentMod
 import TeamMembersDropdown from './TeamMembersDropdown';
 import { useUser } from '../../contexts/UserContext';
 import { useToast } from '../../contexts/ToastContext';
-import { masterDataAPI, teamsAPI, safetyAPI, dprAPI } from '../../services/api';
+import { masterDataAPI, teamsAPI, safetyAPI, hinderanceAPI, dprAPI, activitiesHistoryAPI, labourHistoryAPI, assetsHistoryAPI, materialsHistoryAPI } from '../../services/api';
 
 interface Project {
   id: string;
@@ -81,6 +81,7 @@ interface ActivityItem {
 
 interface SelectedActivity {
   id: string;
+  numericId?: number;
   name: string;
   unit?: string;
   quantity: number;
@@ -97,6 +98,7 @@ interface Contractor {
 
 interface Labour {
   id: string;
+  numericId?: number;
   name: string;
   type: string;
   category: string;
@@ -105,16 +107,19 @@ interface Labour {
 
 interface Material {
   id: string;
+  numericId?: number;
   class: 'A' | 'B' | 'C';
   code: string;
   name: string;
   specification: string;
   unit: string;
   createdAt?: string;
+  openingQty?: number;
 }
 
 interface SelectedMaterial {
   id: string;
+  numericId?: number;
   class: 'A' | 'B' | 'C';
   code: string;
   name: string;
@@ -127,6 +132,7 @@ interface SelectedMaterial {
 
 interface AssetEquipment {
   id: string;
+  numericId?: number;
   code: string;
   name: string;
   specification: string;
@@ -136,6 +142,7 @@ interface AssetEquipment {
 
 interface SelectedAsset {
   id: string;
+  numericId?: number;
   code: string;
   name: string;
   quantity: number;
@@ -163,6 +170,7 @@ interface TeamMember {
 
 interface HindranceEntry {
   id: string;
+  serverId?: number; // ID from API for edit/delete
   details?: string;
   image?: string; // legacy single - normalized to images when loading
   images?: string[];
@@ -172,6 +180,7 @@ interface HindranceEntry {
 
 interface SelectedLabour {
   id: string;
+  numericId?: number;
   type: string;
   category: string;
   quantity: number;
@@ -200,6 +209,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const [showSafetySelection, setShowSafetySelection] = useState<boolean>(false);
   const [showHindranceSelection, setShowHindranceSelection] = useState<boolean>(false);
   const [showDPRComplete, setShowDPRComplete] = useState<boolean>(false);
+  const [viewingDpr, setViewingDpr] = useState<any>(null);
+  const [dprDetails, setDprDetails] = useState<any>(null);
+  const [incompleteDprs, setIncompleteDprs] = useState<any[]>([]);
+  const [showIncompleteModal, setShowIncompleteModal] = useState(false);
+  const [dprListError, setDprListError] = useState<string | null>(null);
   const [showCreateSubprojectModal, setShowCreateSubprojectModal] = useState<boolean>(false);
   const [showCreateActivityModal, setShowCreateActivityModal] = useState<boolean>(false);
   const [showCreateMaterialModal, setShowCreateMaterialModal] = useState<boolean>(false);
@@ -246,6 +260,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [isLoadingProjects, setIsLoadingProjects] = useState<boolean>(false);
   const [isLoadingSafety, setIsLoadingSafety] = useState<boolean>(false);
+  const [isLoadingHindrance, setIsLoadingHindrance] = useState<boolean>(false);
   const [dprList, setDprList] = useState<any[]>([]);
   const [isLoadingDprList, setIsLoadingDprList] = useState<boolean>(false);
 
@@ -381,25 +396,28 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
       setIsLoadingProjects(true);
       try {
-        console.log('📡 Fetching user-associated projects from API...');
+        console.log('📡 Fetching projects from API...');
         const fetchedProjects = await masterDataAPI.getProjects();
-        console.log('✅ Fetched projects from API:', fetchedProjects?.length || 0);
+        const arr = Array.isArray(fetchedProjects) ? fetchedProjects : (fetchedProjects?.data ?? fetchedProjects?.projects ?? []);
+        console.log('✅ Fetched projects from API:', arr?.length || 0);
 
-        if (!Array.isArray(fetchedProjects)) {
+        if (!Array.isArray(arr)) {
           console.error('❌ API did not return an array:', fetchedProjects);
           setProjects([]);
           return;
         }
 
         // Transform API response to match DPR Project interface
-        const transformedProjects: Project[] = fetchedProjects.map((p: any) => {
-          const numericId = p.id;
+        // Backend activities-project-search expects numeric project_id; ensure we capture it
+        const transformedProjects: Project[] = arr.map((p: any) => {
+          const rawId = p.id ?? p.project_id ?? p.projects_id;
+          const numericId = Number.isFinite(Number(rawId)) ? Number(rawId) : undefined;
           const uuid = p.uuid;
           const companyName = p.companies?.registration_name || p.companies?.name || p.company || p.company_name || '';
           
           return {
-            id: uuid || String(numericId),
-            numericId: Number.isFinite(Number(numericId)) ? Number(numericId) : undefined,
+            id: uuid || String(rawId),
+            numericId,
             name: p.project_name || p.name || '',
             logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name || p.name || '')}&background=C2D642&color=fff&size=128`,
             code: p.code || '',
@@ -459,9 +477,13 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const [materialsRefreshKey, setMaterialsRefreshKey] = useState(0); // Increment to trigger materials refetch
 
   // Transform API subproject response to DPR Subproject interface
-  const transformSubproject = (sub: any, projectName: string): Subproject => ({
-    id: sub.uuid || String(sub.id),
-    numericId: Number.isFinite(Number(sub.id)) ? Number(sub.id) : undefined,
+  // Backend activities-project-search expects numeric subproject_id; ensure we capture it
+  const transformSubproject = (sub: any, projectName: string): Subproject => {
+    const rawId = sub.id ?? sub.subproject_id ?? sub.sub_projects_id;
+    const numericId = Number.isFinite(Number(rawId)) ? Number(rawId) : undefined;
+    return {
+    id: sub.uuid || String(rawId),
+    numericId,
     name: sub.name || sub.subproject_name || '',
     code: sub.code || `SUB${String(sub.id || '').padStart(3, '0')}`,
     project: projectName,
@@ -470,7 +492,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     progress: sub.progress || 0,
     startDate: sub.start_date || sub.planned_start_date || sub.startDate || '',
     endDate: sub.end_date || sub.planned_end_date || sub.endDate || ''
-  });
+  };
+  };
 
   // Fetch subprojects when project is selected - try numeric ID first, then UUID
   useEffect(() => {
@@ -483,7 +506,6 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       setIsLoadingSubprojects(true);
       setSubprojectSearchQuery('');
       try {
-        // Prefer numeric ID - backend /project-subproject and /sub-project-list expect project_id
         const projectId = selectedProject.numericId ?? selectedProject.id;
         const result = await masterDataAPI.getSubprojects(projectId);
         const res = result as any;
@@ -593,6 +615,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setShowActivitySelection(false);
     setShowMaterialSelection(false);
     setShowLabourSelection(false);
+    setEditingDprId(null);
     setShowAssetSelection(false);
     setShowSafetySelection(false);
     setShowHindranceSelection(false);
@@ -651,9 +674,10 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     fetchContractors();
   }, [showActivitySelection, isAuthenticated]);
 
-  // Load activities from API (same as /masters/activities) when Select Activities modal opens
+  // Load activities via activities-project-search (DPR activities API)
   const [isLoadingActivities, setIsLoadingActivities] = useState(false);
   const [activitiesRefreshKey, setActivitiesRefreshKey] = useState(0);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!showActivitySelection || !selectedProject) {
@@ -661,19 +685,26 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       return;
     }
 
-    const fetchActivities = async () => {
+    // Use activities-project-search (Masters) so newly created activities appear immediately.
+    // activities-history-list returns only activities with DPR history; project-search returns all Master activities.
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    const kw = activitySearchQuery.trim();
+    const doFetch = async () => {
       setIsLoadingActivities(true);
       try {
-        const projectId = selectedProject.numericId ?? selectedProject.id;
-        const subprojectId = selectedSubproject?.numericId ?? selectedSubproject?.id;
-        const { data } = await masterDataAPI.getActivities(projectId, subprojectId);
-        const raw = Array.isArray(data) ? data : [];
+        // Backend expects numeric project_id/subproject_id; prefer numericId, fallback to parsed id
+        const rawProjectId = selectedProject.numericId ?? selectedProject.id;
+        const rawSubprojectId = selectedSubproject?.numericId ?? selectedSubproject?.id;
+        const projectId = Number.isFinite(Number(rawProjectId)) ? Number(rawProjectId) : rawProjectId;
+        const subprojectId = rawSubprojectId != null && rawSubprojectId !== '' && Number.isFinite(Number(rawSubprojectId))
+          ? Number(rawSubprojectId) : (rawSubprojectId ?? null);
         const getUnitName = (a: any) => {
-          const fromApi = a.units?.unit || a.units?.name || a.unit?.unit || a.unit?.name || (typeof a.unit === 'string' ? a.unit : '');
-          if (fromApi) return fromApi;
-          return '';
+          const u = a.unit_id ?? a.units ?? a.unit;
+          const fromApi = (u?.unit ?? u?.name ?? (typeof a.unit === 'string' ? a.unit : '')) ?? '';
+          return typeof fromApi === 'string' ? fromApi : '';
         };
-        const transformed: ActivityItem[] = raw.map((a: any) => {
+        const raw = await activitiesHistoryAPI.projectSearch(projectId, subprojectId ?? null, kw || undefined);
+        const transformed: ActivityItem[] = (Array.isArray(raw) ? raw : []).map((a: any) => {
           const actType = (a.type ?? a.activity_type ?? '').toString().toLowerCase();
           const type: 'heading' | 'activity' = actType === 'heading' ? 'heading' : 'activity';
           return {
@@ -701,9 +732,15 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         setIsLoadingActivities(false);
       }
     };
-
-    fetchActivities();
-  }, [showActivitySelection, selectedProject, selectedSubproject, activitiesRefreshKey]);
+    if (kw) {
+      searchDebounceRef.current = setTimeout(doFetch, 300);
+    } else {
+      doFetch();
+    }
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, [showActivitySelection, selectedProject, selectedSubproject, activitiesRefreshKey, activitySearchQuery]);
 
   // Build hierarchical tree like Masters > Activities (headings first, then children, srNo: 1, 1.1, 1.2, 1.3, 1.3.1)
   type ActivityTreeNode = { item: ActivityItem; srNo: string };
@@ -775,6 +812,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       } else {
         newMap.set(activity.id, {
           id: activity.id,
+          numericId: activity.numericId,
           name: activity.name,
           unit: activity.unit,
           quantity: 0
@@ -913,7 +951,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     return false;
   };
 
-  // Load materials from Masters > Materials (GET /materials-list) - associated with logged-in user
+  // Load materials: materials-opening-list (available to consume) when project selected, else Masters
   useEffect(() => {
     if (!showMaterialSelection || !isAuthenticated) {
       return;
@@ -922,14 +960,48 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     const fetchMaterials = async () => {
       setIsLoadingMaterials(true);
       try {
+        const projectId = selectedProject?.numericId ?? selectedProject?.id;
+        let raw: any[] = [];
+        if (projectId) {
+          try {
+            raw = await materialsHistoryAPI.openingList(projectId, null);
+            // Opening stock items: { material: {...}, qty, ... } - extract material for list
+            if (raw.length > 0) {
+              const fromOpening = raw.map((o: any) => {
+                const m = o.material ?? o.materials ?? o;
+                const materialClass = m.class?.value ?? m.class ?? '';
+                const unitObj = m.units ?? m.unit_id ?? m.unit;
+                const unitLabel = (unitObj?.unit ?? unitObj?.name ?? (typeof m.unit === 'string' ? m.unit : '')) || '';
+                return {
+                  id: m.uuid || String(m.id),
+                  numericId: m.id,
+                  class: (materialClass || 'B') as 'A' | 'B' | 'C',
+                  code: m.code || '',
+                  name: m.name || '',
+                  specification: m.specification ?? '',
+                  unit: unitLabel,
+                  openingQty: o.qty ?? o.quantity,
+                  createdAt: m.created_at || m.createdAt
+                };
+              });
+              const transformed: Material[] = fromOpening;
+              setMaterials(transformed);
+              setIsLoadingMaterials(false);
+              return;
+            }
+          } catch (_) {
+            /* fallback to Masters */
+          }
+        }
         const fetchedMaterials = await masterDataAPI.getMaterials();
-        const raw = Array.isArray(fetchedMaterials) ? fetchedMaterials : [];
+        raw = Array.isArray(fetchedMaterials) ? fetchedMaterials : [];
         const transformed: Material[] = raw.map((m: any) => {
           const materialClass = m.class?.value || m.class || '';
           const unitObj = m.units || m.unit;
           const unitLabel = unitObj?.unit || unitObj?.name || (typeof m.unit === 'string' ? m.unit : '') || '';
           return {
             id: m.uuid || String(m.id),
+            numericId: Number.isFinite(Number(m.id)) ? Number(m.id) : undefined,
             class: (materialClass || 'B') as 'A' | 'B' | 'C',
             code: m.code || '',
             name: m.name || '',
@@ -940,7 +1012,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         });
         setMaterials(transformed);
       } catch (err: any) {
-        console.error('Failed to fetch materials from Masters:', err);
+        console.error('Failed to fetch materials:', err);
         toast.showError(err.message || 'Failed to load materials');
         setMaterials([]);
       } finally {
@@ -949,7 +1021,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     };
 
     fetchMaterials();
-  }, [showMaterialSelection, isAuthenticated, materialsRefreshKey]);
+  }, [showMaterialSelection, isAuthenticated, materialsRefreshKey, selectedProject]);
 
   const handleToggleMaterial = (material: Material) => {
     setSelectedMaterials(prev => {
@@ -959,6 +1031,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       } else {
         newMap.set(material.id, {
           id: material.id,
+          numericId: material.numericId ?? (Number.isFinite(Number(material.id)) ? Number(material.id) : undefined),
           class: material.class,
           code: material.code,
           name: material.name,
@@ -1055,6 +1128,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           const category = categoryMap[cat] || (lab.category || '');
           return {
             id: lab.uuid || String(lab.id),
+            numericId: Number.isFinite(Number(lab.id)) ? Number(lab.id) : undefined,
             name: lab.name || '',
             type: lab.name || '',
             category: category || 'Skilled',
@@ -1090,6 +1164,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           const unitLabel = unitObj?.unit || asset.unit?.unit || asset.unit || '';
           return {
             id: asset.uuid || String(asset.id),
+            numericId: Number.isFinite(Number(asset.id)) ? Number(asset.id) : undefined,
             code: asset.code || '',
             name: asset.assets || asset.name || '',
             specification: asset.specification ?? '',
@@ -1192,6 +1267,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       } else {
         newMap.set(labour.id, {
           id: labour.id,
+          numericId: labour.numericId,
           type: labour.type,
           category: labour.category,
           quantity: 0,
@@ -1311,6 +1387,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       } else {
         newMap.set(asset.id, {
           id: asset.id,
+          numericId: asset.numericId,
           code: asset.code,
           name: asset.name,
           quantity: 0,
@@ -1444,14 +1521,17 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   }, [isAuthenticated]);
 
   // Load safety entries from API when Safety modal opens
+  // safety-list expects dprId for existing DPR, or projects_id/sub_projects_id
+  const [editingDprId, setEditingDprId] = useState<string | number | null>(null);
   useEffect(() => {
     if (!showSafetySelection || !isAuthenticated) return;
     const fetchSafetyList = async () => {
       setIsLoadingSafety(true);
       try {
-        const params: { project_id?: string | number; subproject_id?: string | number } = {};
-        if (selectedProject) params.project_id = selectedProject.numericId ?? selectedProject.id;
-        if (selectedSubproject) params.subproject_id = selectedSubproject.numericId ?? selectedSubproject.id;
+        const params: { dprId?: string | number; projects_id?: string | number; sub_projects_id?: string | number } = {};
+        if (editingDprId) params.dprId = editingDprId;
+        if (selectedProject) params.projects_id = selectedProject.numericId ?? selectedProject.id;
+        if (selectedSubproject) params.sub_projects_id = selectedSubproject.numericId ?? selectedSubproject.id;
         const list = await safetyAPI.getSafetyList(params);
         const mapped: SafetyEntry[] = (list || []).map((item: any) => {
           const singleImg = item.image || item.image_url || '';
@@ -1473,19 +1553,54 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       }
     };
     fetchSafetyList();
-  }, [showSafetySelection, isAuthenticated]);
+  }, [showSafetySelection, isAuthenticated, editingDprId]);
 
-  const DPR_STORAGE_KEY = 'dpr_list';
+  // Load hinderance entries from API when Hindrance modal opens
+  useEffect(() => {
+    if (!showHindranceSelection || !isAuthenticated) return;
+    const fetchHinderanceList = async () => {
+      setIsLoadingHindrance(true);
+      try {
+        const params: { dprId?: string | number; projects_id?: string | number; sub_projects_id?: string | number } = {};
+        if (editingDprId) params.dprId = editingDprId;
+        if (selectedProject) params.projects_id = selectedProject.numericId ?? selectedProject.id;
+        if (selectedSubproject) params.sub_projects_id = selectedSubproject.numericId ?? selectedSubproject.id;
+        const list = await hinderanceAPI.getList(params);
+        const mapped: HindranceEntry[] = (list || []).map((item: any) => {
+          const singleImg = item.image || item.image_url || item.img || '';
+          const imgArr = Array.isArray(item.images) ? item.images : (singleImg ? [singleImg] : []);
+          return {
+            id: item.uuid || String(item.id),
+            serverId: item.id,
+            details: item.details || item.description || '',
+            images: imgArr.filter(Boolean),
+            teamMembers: Array.isArray(item.team_members) ? item.team_members.map((m: any) => String(m?.id ?? m)) : Array.isArray(item.teamMembers) ? item.teamMembers : [],
+            remarks: item.remarks || '',
+          };
+        });
+        setHindranceEntries(mapped);
+      } catch (err: any) {
+        toast.showError(err?.message || 'Failed to load hinderance list');
+      } finally {
+        setIsLoadingHindrance(false);
+      }
+    };
+    fetchHinderanceList();
+  }, [showHindranceSelection, isAuthenticated, editingDprId, selectedProject, selectedSubproject]);
 
-  const fetchDprList = useCallback(async () => {
+  const fetchDprList = useCallback(async (opts?: { preserveOnEmpty?: boolean }) => {
     if (typeof window === 'undefined') return;
     setIsLoadingDprList(true);
+    setDprListError(null);
     try {
       const list = await dprAPI.getList();
-      setDprList(Array.isArray(list) ? list : []);
+      const arr = Array.isArray(list) ? list : [];
+      if (arr.length > 0 || !opts?.preserveOnEmpty) setDprList(arr);
+      else setDprList(prev => prev);
     } catch (err: any) {
+      setDprListError(err?.message || 'Failed to load DPR list');
+      if (!opts?.preserveOnEmpty) setDprList([]);
       toast.showError(err?.message || 'Failed to load DPR list');
-      setDprList([]);
     } finally {
       setIsLoadingDprList(false);
     }
@@ -1509,8 +1624,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setSafetyEntries(prev => [...prev, { id: tempId }]);
     try {
       const payload: Record<string, any> = { details: '', remarks: '' };
-      if (selectedProject) payload.project_id = selectedProject.numericId ?? selectedProject.id;
-      if (selectedSubproject) payload.subproject_id = selectedSubproject.numericId ?? selectedSubproject.id;
+      if (editingDprId) payload.dpr_id = editingDprId;
+      if (selectedProject) payload.projects_id = selectedProject.numericId ?? selectedProject.id;
+      if (selectedSubproject) payload.sub_projects_id = selectedSubproject.numericId ?? selectedSubproject.id;
       const res = await safetyAPI.addSafety(payload);
       const raw = res?.data ?? res;
       if (raw && (raw.id !== undefined || raw.uuid)) {
@@ -1595,12 +1711,43 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setShowHindranceSelection(true);
   };
 
-  const handleAddHindranceEntry = () => {
-    const newId = String(Date.now());
-    setHindranceEntries(prev => [...prev, { id: newId }]);
+  const handleAddHindranceEntry = async () => {
+    const tempId = `temp-hind-${Date.now()}`;
+    setHindranceEntries(prev => [...prev, { id: tempId }]);
+    try {
+      const payload: Record<string, any> = { details: '', remarks: '' };
+      if (editingDprId) payload.dpr_id = editingDprId;
+      if (selectedProject) payload.projects_id = selectedProject.numericId ?? selectedProject.id;
+      if (selectedSubproject) payload.sub_projects_id = selectedSubproject.numericId ?? selectedSubproject.id;
+      const res = await hinderanceAPI.add(payload);
+      const raw = res?.data ?? res;
+      if (raw && (raw.id !== undefined || raw.uuid)) {
+        setHindranceEntries(prev =>
+          prev.map(e => (e.id === tempId ? {
+            id: raw.uuid || String(raw.id),
+            serverId: raw.id,
+            details: e.details || raw.details || raw.description || '',
+            images: e.images?.length ? e.images : (raw.image || raw.image_url || raw.img ? [raw.image || raw.image_url || raw.img] : []),
+            teamMembers: e.teamMembers?.length ? e.teamMembers : Array.isArray(raw.team_members) ? raw.team_members.map((m: any) => String(m?.id ?? m)) : raw.teamMembers || [],
+            remarks: e.remarks || raw.remarks || '',
+          } : e))
+        );
+      }
+    } catch {
+      // Keep local row with temp id; user can still fill and use locally
+    }
   };
 
-  const handleRemoveHindranceEntry = (id: string) => {
+  const handleRemoveHindranceEntry = async (id: string) => {
+    const entry = hindranceEntries.find(e => e.id === id);
+    if (entry?.serverId != null) {
+      try {
+        await hinderanceAPI.delete(String(entry.serverId));
+      } catch (err: any) {
+        toast.showError(err?.message || 'Failed to delete hinderance entry');
+        return;
+      }
+    }
     setHindranceEntries(prev => prev.filter(e => e.id !== id));
   };
 
@@ -2268,8 +2415,10 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     if (selectedActivities.size > 0) {
       const activitiesList: any[] = [];
       for (const a of selectedActivities.values()) {
+        const actId = a.numericId ?? (Number.isFinite(Number(a.id)) ? Number(a.id) : null);
+        if (actId == null) continue;
         activitiesList.push({
-          activities_history_activities_id: Number(a.id) || a.id,
+          activities_history_activities_id: actId,
           activities_history_qty: a.quantity,
           activities_history_completion: 0,
           activities_history_vendors_id: null,
@@ -2294,15 +2443,15 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       }
     }
     if (selectedMaterials.size > 0) {
-      formData.append('materials', JSON.stringify(Array.from(selectedMaterials.values()).map(m => ({
-        materials_id: Number(m.id) || m.id,
+      formData.append('materials', JSON.stringify(Array.from(selectedMaterials.values()).filter(m => (m.numericId ?? Number(m.id)) != null).map(m => ({
+        materials_id: m.numericId ?? Number(m.id) ?? m.id,
         qty: m.quantity,
         remarkes: m.remarks || '',
       }))));
     }
     if (selectedLabours.size > 0) {
-      formData.append('labour', JSON.stringify(Array.from(selectedLabours.values()).map(l => ({
-        labours_id: Number(l.id) || l.id,
+      formData.append('labour', JSON.stringify(Array.from(selectedLabours.values()).filter(l => (l.numericId ?? Number(l.id)) != null).map(l => ({
+        labours_id: l.numericId ?? Number(l.id) ?? l.id,
         qty: l.quantity,
         ot_qty: l.overtimeQuantity || 0,
         rate_per_unit: l.ratePerUnit || 0,
@@ -2311,21 +2460,21 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       }))));
     }
     if (selectedAssets.size > 0) {
-      formData.append('assets', JSON.stringify(Array.from(selectedAssets.values()).map(a => ({
-        assets_id: Number(a.id) || a.id,
+      formData.append('assets', JSON.stringify(Array.from(selectedAssets.values()).filter(a => (a.numericId ?? Number(a.id)) != null).map(a => ({
+        assets_id: a.numericId ?? Number(a.id) ?? a.id,
         qty: a.quantity,
         rate_per_unit: a.ratePerUnit || 0,
         vendors_id: null,
         remarkes: a.remarks || '',
       }))));
     }
+    // Send safety as PHP array format (safety[0][details]=...) so backend receives array not JSON string.
+    // Backend calls ->isNotEmpty() on safety; FormData JSON arrives as string and causes that error.
     if (safetyEntries.length > 0) {
-      formData.append('safety', JSON.stringify(safetyEntries.map(s => ({
-        name: (s.details || '').substring(0, 100) || 'Safety',
-        details: s.details || '',
-        remarks: s.remarks || '',
-      }))));
       safetyEntries.forEach((s, i) => {
+        formData.append(`safety[${i}][name]`, (s.details || '').substring(0, 100) || 'Safety');
+        formData.append(`safety[${i}][details]`, s.details || '');
+        formData.append(`safety[${i}][remarks]`, s.remarks || '');
         const imgs = s.images || (s.image ? [s.image] : []);
         imgs.forEach((dataUrl, j) => {
           if (dataUrl && typeof dataUrl === 'string') {
@@ -2334,14 +2483,18 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           }
         });
       });
+    } else {
+      // When skipped: send one empty item so backend gets array structure (avoids default string '[]' causing ->isNotEmpty() on string)
+      formData.append('safety[0][details]', '');
+      formData.append('safety[0][remarks]', '');
+      formData.append('safety[0][name]', '');
     }
+    // Same for hinderance - PHP array format
     if (hindranceEntries.length > 0) {
-      formData.append('hinderance', JSON.stringify(hindranceEntries.map(h => ({
-        name: (h.details || '').substring(0, 100) || 'Hindrance',
-        details: h.details || '',
-        remarks: h.remarks || '',
-      }))));
       hindranceEntries.forEach((h, i) => {
+        formData.append(`hinderance[${i}][name]`, (h.details || '').substring(0, 100) || 'Hindrance');
+        formData.append(`hinderance[${i}][details]`, h.details || '');
+        formData.append(`hinderance[${i}][remarks]`, h.remarks || '');
         const imgs = h.images || (h.image ? [h.image] : []);
         imgs.forEach((dataUrl, j) => {
           if (dataUrl && typeof dataUrl === 'string') {
@@ -2350,52 +2503,61 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           }
         });
       });
+    } else {
+      formData.append('hinderance[0][details]', '');
+      formData.append('hinderance[0][remarks]', '');
+      formData.append('hinderance[0][name]', '');
     }
     return formData;
   };
 
-  const saveDprToLocalStorage = () => {
-    if (!selectedProject) return;
-    const dprNo = String(Date.now()).slice(-6);
-    const dprSnapshot = {
-      id: `local-${Date.now()}`,
-      dpr_no: dprNo,
-      date: new Date().toISOString().split('T')[0],
-      projects_id: selectedProject.numericId ?? selectedProject.id,
-      sub_projects_id: selectedSubproject ? (selectedSubproject.numericId ?? selectedSubproject.id) : null,
-      projects: { project_name: selectedProject.name, name: selectedProject.name },
-      sub_projects: selectedSubproject ? { name: selectedSubproject.name } : null,
-      subProjects: selectedSubproject ? { name: selectedSubproject.name } : null,
-      staps: 7,
-      _local: true,
-      snapshot: {
-        project: selectedProject,
-        subproject: selectedSubproject,
-        activities: Array.from(selectedActivities.values()),
-        materials: Array.from(selectedMaterials.values()),
-        labours: Array.from(selectedLabours.values()),
-        assets: Array.from(selectedAssets.values()),
-        safety: [...safetyEntries],
-        hindrance: [...hindranceEntries],
-        teamMembers: [...teamMembers],
-      },
-    };
-    try {
-      const raw = localStorage.getItem(DPR_STORAGE_KEY);
-      const list = raw ? JSON.parse(raw) : [];
-      list.unshift(dprSnapshot);
-      localStorage.setItem(DPR_STORAGE_KEY, JSON.stringify(list));
-    } catch {
-      // ignore
-    }
-  };
-
-  const handleHindranceNext = () => {
+  const handleHindranceNext = async () => {
     if (!selectedProject) return;
     setShowHindranceSelection(false);
-    saveDprToLocalStorage();
     setShowDPRComplete(true);
-    fetchDprList();
+    const formData = buildDprFormData();
+    if (!formData) {
+      toast.showError('Failed to build DPR data');
+      return;
+    }
+    try {
+      const res = await dprAPI.bulkAdd(formData);
+      const created = res?.dpr ?? res?.data?.dpr ?? res?.data ?? (res?.id != null ? res : null);
+      const dprId = created?.id ?? res?.data?.id ?? res?.data?.dpr_id ?? res?.id ?? res?.response?.id;
+      toast.showSuccess('DPR saved successfully.');
+      setEditingDprId(null);
+      // Optimistic update: prepend new DPR from bulk-add response so it shows immediately
+      if (created && created.id != null) {
+        const newItem = {
+          id: created.id,
+          dpr_no: created.dpr_no ?? created.dpr_number ?? `DPR-${created.id}`,
+          date: created.date ?? created.dpr_date ?? new Date().toISOString().slice(0, 10),
+          projects_id: created.projects_id ?? (selectedProject ? { id: selectedProject.id, name: selectedProject.name, project_name: selectedProject.name } : null),
+          sub_projects_id: created.sub_projects_id ?? (selectedSubproject ? { id: selectedSubproject.id, name: selectedSubproject.name } : null),
+          projects: selectedProject ? { name: selectedProject.name, project_name: selectedProject.name } : created.projects,
+          sub_projects: selectedSubproject ? { name: selectedSubproject.name } : created.sub_projects,
+          subProjects: selectedSubproject ? { name: selectedSubproject.name } : created.subProjects,
+          staps: created.staps ?? 7,
+        };
+        setDprList(prev => [newItem, ...prev.filter((d: any) => String(d.id) !== String(created.id))]);
+      }
+      // Always call /generate-pdf when we have dprId (bulk-add may not return pdf_url)
+      let pdfUrl = res?.dpr_pdf?.pdf_url ?? res?.dpr_pdf?.data?.pdf_url;
+      if (!pdfUrl && dprId != null) {
+        try {
+          const pdfRes = await dprAPI.generatePDF(dprId);
+          pdfUrl = pdfRes?.pdf_url ?? pdfRes?.data?.pdf_url;
+        } catch (_) {
+          /* PDF generation failed; DPR still saved */
+        }
+      }
+      if (pdfUrl) window.open(pdfUrl, '_blank');
+      // Short delay then refresh so backend has committed; preserve optimistic item if fetch returns empty
+      setTimeout(() => fetchDprList({ preserveOnEmpty: true }), 800);
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to save DPR');
+      fetchDprList();
+    }
   };
 
   const handleHindranceSkip = () => {
@@ -2432,9 +2594,16 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setActivitiesRefreshKey(k => k + 1); // Refetch to sync with server
   };
 
-  const handleEditPrevious = () => {
-    // TODO: Implement edit previous DPR logic
-    console.log('Edit previous DPR');
+  const handleEditPrevious = async () => {
+    try {
+      const checkData = await dprAPI.dprCheck();
+      const list = Array.isArray(checkData) ? checkData : (checkData?.data ? (Array.isArray(checkData.data) ? checkData.data : []) : []);
+      setIncompleteDprs(list);
+      setShowIncompleteModal(list.length > 0);
+      if (list.length === 0) toast.showWarning('No incomplete DPRs to edit.');
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to load incomplete DPRs');
+    }
   };
 
   return (
@@ -2484,11 +2653,26 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             Refresh
           </button>
         </div>
+        {dprListError && (
+          <div className={`mx-4 mt-2 p-3 rounded-lg ${isDark ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-amber-50 border border-amber-200'}`}>
+            <p className={`text-sm font-bold ${isDark ? 'text-amber-400' : 'text-amber-800'}`}>{dprListError}</p>
+          </div>
+        )}
         <div className="overflow-x-auto">
           {isLoadingDprList ? (
             <div className={`flex items-center justify-center py-12 ${textSecondary}`}>
               <Loader2 className="w-8 h-8 animate-spin" />
               <span className="ml-2 font-bold">Loading DPR list...</span>
+            </div>
+          ) : dprListError && dprList.length === 0 ? (
+            <div className={`px-4 py-8 text-center ${textSecondary}`}>
+              <p className="text-sm font-bold mb-2">{dprListError}</p>
+              <button
+                onClick={() => fetchDprList()}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642]/90 text-white"
+              >
+                <RefreshCw className="w-4 h-4" /> Retry
+              </button>
             </div>
           ) : dprList.length === 0 ? (
             <div className={`px-4 py-8 text-center ${textSecondary}`}>
@@ -2513,24 +2697,104 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                   <tr key={dpr.id} className={isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'}>
                     <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{dpr.dpr_no ?? '-'}</td>
                     <td className={`px-4 py-3 text-sm ${textPrimary}`}>{dpr.date ?? '-'}</td>
-                    <td className={`px-4 py-3 text-sm ${textPrimary}`}>{dpr.projects?.project_name ?? dpr.projects?.name ?? `Project #${dpr.projects_id}` ?? '-'}</td>
-                    <td className={`px-4 py-3 text-sm ${textPrimary}`}>{dpr.sub_projects?.name ?? dpr.subProjects?.name ?? (dpr.sub_projects_id ? `#${dpr.sub_projects_id}` : '-')}</td>
+                    <td className={`px-4 py-3 text-sm ${textPrimary}`}>
+                      {typeof dpr.projects_id === 'object' && dpr.projects_id
+                        ? (dpr.projects_id?.project_name ?? dpr.projects_id?.name ?? '-')
+                        : (dpr.projects?.project_name ?? dpr.projects?.name ?? (dpr.projects_id ? `Project #${dpr.projects_id}` : '-'))}
+                    </td>
+                    <td className={`px-4 py-3 text-sm ${textPrimary}`}>
+                      {typeof dpr.sub_projects_id === 'object' && dpr.sub_projects_id
+                        ? (dpr.sub_projects_id?.name ?? '-')
+                        : (dpr.sub_projects?.name ?? dpr.subProjects?.name ?? (dpr.sub_projects_id ? `#${dpr.sub_projects_id}` : '-'))}
+                    </td>
                     <td className={`px-4 py-3 text-sm ${textPrimary}`}>
                       <span className={`px-2 py-1 rounded text-xs font-bold ${dpr.staps === 7 ? (isDark ? 'bg-green-500/20 text-green-400' : 'bg-green-100 text-green-700') : (isDark ? 'bg-amber-500/20 text-amber-400' : 'bg-amber-100 text-amber-700')}`}>
                         {dpr.staps === 7 ? 'Complete' : `Step ${dpr.staps ?? 0}`}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={async () => {
-                          if (dpr._local && dpr.snapshot) {
-                            await generateDPRPDF(dpr.snapshot);
-                          }
-                        }}
-                        className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold ${isDark ? 'bg-[#C2D642]/20 text-[#C2D642] hover:bg-[#C2D642]/30' : 'bg-[#C2D642]/10 text-[#C2D642] hover:bg-[#C2D642]/20'}`}
-                      >
-                        <Download className="w-3.5 h-3.5" /> PDF
-                      </button>
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          onClick={async () => {
+                            try {
+                              const details = await dprAPI.getDetails(dpr.id);
+                              const resolved = details?.data ?? details ?? {};
+                              const dprId = resolved.id ?? dpr.id;
+                              if ((!resolved.labour || resolved.labour.length === 0) && dprId) {
+                                try {
+                                  const labourList = await labourHistoryAPI.list(dprId);
+                                  if (labourList?.length) resolved.labour = labourList;
+                                } catch (_) { /* keep existing */ }
+                              }
+                              if ((!resolved.assets || resolved.assets.length === 0) && dprId) {
+                                try {
+                                  const assetsList = await assetsHistoryAPI.list(dprId);
+                                  if (assetsList?.length) resolved.assets = assetsList;
+                                } catch (_) { /* keep existing */ }
+                              }
+                              if ((!resolved.materials || resolved.materials.length === 0) && dprId) {
+                                try {
+                                  const materialsHist = await materialsHistoryAPI.list();
+                                  const forDpr = Array.isArray(materialsHist) ? materialsHist.filter((m: any) => String(m.dpr_id) === String(dprId)) : [];
+                                  if (forDpr?.length) resolved.materials = forDpr;
+                                } catch (_) { /* keep existing */ }
+                              }
+                              if ((!resolved.safety || resolved.safety.length === 0) && dprId) {
+                                try {
+                                  const safetyList = await safetyAPI.getSafetyList({ dprId });
+                                  if (safetyList?.length) resolved.safety = safetyList;
+                                } catch (_) { /* keep existing */ }
+                              }
+                              if ((!resolved.hindrance || resolved.hindrance.length === 0) && dprId) {
+                                try {
+                                  const hindranceList = await hinderanceAPI.getList({ dprId });
+                                  if (hindranceList?.length) resolved.hindrance = hindranceList;
+                                } catch (_) { /* keep existing */ }
+                              }
+                              setDprDetails(resolved);
+                              setViewingDpr(dpr);
+                            } catch (err: any) {
+                              toast.showError(err?.message || 'Failed to load DPR details');
+                            }
+                          }}
+                          className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold ${isDark ? 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30' : 'bg-blue-100 text-blue-700 hover:bg-blue-200'}`}
+                          title="View"
+                        >
+                          <ClipboardCheck className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={async () => {
+                            try {
+                              const res = await dprAPI.generatePDF(dpr.id);
+                              const url = res?.pdf_url ?? res?.data?.pdf_url;
+                              if (url) window.open(url, '_blank');
+                              else toast.showError('PDF URL not found');
+                            } catch (err: any) {
+                              toast.showError(err?.message || 'Failed to generate PDF');
+                            }
+                          }}
+                          className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold ${isDark ? 'bg-[#C2D642]/20 text-[#C2D642] hover:bg-[#C2D642]/30' : 'bg-[#C2D642]/10 text-[#C2D642] hover:bg-[#C2D642]/20'}`}
+                          title="Download PDF"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (!confirm('Delete this DPR?')) return;
+                            try {
+                              await dprAPI.delete(dpr.id);
+                              toast.showSuccess('DPR deleted.');
+                              fetchDprList();
+                            } catch (err: any) {
+                              toast.showError(err?.message || 'Failed to delete DPR');
+                            }
+                          }}
+                          className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold ${isDark ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' : 'bg-red-100 text-red-700 hover:bg-red-200'}`}
+                          title="Delete"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -2539,6 +2803,123 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           )}
         </div>
       </div>
+
+      {/* Incomplete DPRs Modal (Edit previous) */}
+      {showIncompleteModal && incompleteDprs.length > 0 && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowIncompleteModal(false)}>
+          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-md max-h-[80vh] overflow-hidden flex flex-col`} onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b border-inherit">
+              <h2 className={`text-lg font-black ${textPrimary}`}>Incomplete DPRs</h2>
+              <button onClick={() => setShowIncompleteModal(false)} className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'}`}><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-4 overflow-y-auto flex-1">
+              {incompleteDprs.map((dpr: any) => (
+                <div
+                  key={dpr.id}
+                  className={`p-3 rounded-lg mb-2 border cursor-pointer ${isDark ? 'border-slate-700 hover:bg-slate-800/50' : 'border-slate-200 hover:bg-slate-50'}`}
+                  onClick={async () => {
+                    try {
+                      const editData = await dprAPI.edit(dpr.id);
+                      const details = await dprAPI.getDetails(dpr.id);
+                      const resolved = details?.data ?? details ?? {};
+                      const dprId = resolved.id ?? dpr.id;
+                      if ((!resolved.labour || resolved.labour.length === 0) && dprId) {
+                        try {
+                          const labourList = await labourHistoryAPI.list(dprId);
+                          if (labourList?.length) resolved.labour = labourList;
+                        } catch (_) { /* keep existing */ }
+                      }
+                      if ((!resolved.assets || resolved.assets.length === 0) && dprId) {
+                        try {
+                          const assetsList = await assetsHistoryAPI.list(dprId);
+                          if (assetsList?.length) resolved.assets = assetsList;
+                        } catch (_) { /* keep existing */ }
+                      }
+                      if ((!resolved.materials || resolved.materials.length === 0) && dprId) {
+                        try {
+                          const materialsHist = await materialsHistoryAPI.list();
+                          const forDpr = Array.isArray(materialsHist) ? materialsHist.filter((m: any) => String(m.dpr_id) === String(dprId)) : [];
+                          if (forDpr?.length) resolved.materials = forDpr;
+                        } catch (_) { /* keep existing */ }
+                      }
+                      if ((!resolved.safety || resolved.safety.length === 0) && dprId) {
+                        try {
+                          const safetyList = await safetyAPI.getSafetyList({ dprId });
+                          if (safetyList?.length) resolved.safety = safetyList;
+                        } catch (_) { /* keep existing */ }
+                      }
+                      if ((!resolved.hindrance || resolved.hindrance.length === 0) && dprId) {
+                        try {
+                          const hindranceList = await hinderanceAPI.getList({ dprId });
+                          if (hindranceList?.length) resolved.hindrance = hindranceList;
+                        } catch (_) { /* keep existing */ }
+                      }
+                      setEditingDprId(dprId);
+                      setDprDetails(resolved);
+                      setViewingDpr(dpr);
+                      setShowIncompleteModal(false);
+                    } catch (err: any) {
+                      toast.showError(err?.message || 'Failed to load DPR');
+                    }
+                  }}
+                >
+                  <p className={`font-bold ${textPrimary}`}>#{dpr.dpr_no ?? dpr.id} - {dpr.projects?.project_name ?? dpr.projects?.name ?? 'Project'}</p>
+                  <p className={`text-xs ${textSecondary}`}>Date: {dpr.date ?? '-'} | Step {dpr.staps ?? 0}/7</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DPR View Details Modal */}
+      {viewingDpr && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setViewingDpr(null)}>
+          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-2xl max-h-[90vh] overflow-y-auto`} onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b border-inherit">
+              <h2 className={`text-lg font-black ${textPrimary}`}>DPR #{dprDetails?.dpr_no ?? viewingDpr?.dpr_no ?? '-'} - Details</h2>
+              <button onClick={() => { setViewingDpr(null); setDprDetails(null); setEditingDprId(null); }} className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'}`}>
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+              <p className={textSecondary}>Date: {dprDetails?.date ?? '-'}</p>
+              <p className={textSecondary}>Project: {dprDetails?.projects_id?.project_name ?? viewingDpr?.projects?.project_name ?? '-'}</p>
+              <p className={textSecondary}>Subproject: {dprDetails?.sub_projects_id?.name ?? viewingDpr?.sub_projects?.name ?? '-'}</p>
+              {(dprDetails?.activities?.length > 0) && <p className={textSecondary}>Activities: {dprDetails.activities.length} item(s)</p>}
+              {(dprDetails?.materials?.length > 0) && <p className={textSecondary}>Materials: {dprDetails.materials.length} item(s)</p>}
+              {(dprDetails?.labour?.length > 0) && <p className={textSecondary}>Labour: {dprDetails.labour.length} item(s)</p>}
+              {(dprDetails?.assets?.length > 0) && <p className={textSecondary}>Assets: {dprDetails.assets.length} item(s)</p>}
+              {(dprDetails?.safety?.length > 0) && <p className={textSecondary}>Safety: {dprDetails.safety.length} item(s)</p>}
+              {(dprDetails?.hindrance?.length > 0) && <p className={textSecondary}>Hindrance: {dprDetails.hindrance.length} item(s)</p>}
+              {viewingDpr && (viewingDpr.staps ?? 0) < 7 && (
+                <button
+                  onClick={() => {
+                    const projId = dprDetails?.projects_id?.id ?? dprDetails?.projects_id ?? viewingDpr?.projects_id ?? viewingDpr?.projects?.id;
+                    const subId = dprDetails?.sub_projects_id?.id ?? dprDetails?.sub_projects_id ?? viewingDpr?.sub_projects_id ?? viewingDpr?.sub_projects?.id;
+                    const proj = projects.find((p: any) => String(p.id) === String(projId) || String(p.numericId) === String(projId));
+                    const sub = subprojects.find((s: any) => String(s.id) === String(subId) || String(s.numericId) === String(subId));
+                    if (proj) setSelectedProject(proj);
+                    if (sub) setSelectedSubproject(sub);
+                    const step = Math.min((viewingDpr?.staps ?? 0) + 1, 7);
+                    setViewingDpr(null);
+                    setDprDetails(null);
+                    if (step <= 2) setShowSubprojectSelection(true);
+                    else if (step <= 3) setShowActivitySelection(true);
+                    else if (step <= 4) setShowMaterialSelection(true);
+                    else if (step <= 5) setShowLabourSelection(true);
+                    else if (step <= 6) setShowAssetSelection(true);
+                    else setShowSafetySelection(true);
+                  }}
+                  className={`mt-2 px-4 py-2 rounded-lg font-bold ${isDark ? 'bg-[#C2D642]/20 text-[#C2D642] hover:bg-[#C2D642]/30' : 'bg-[#C2D642]/10 text-[#C2D642] hover:bg-[#C2D642]/20'}`}
+                >
+                  Continue Editing
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Project Selection Modal */}
       {showProjectSelection && (
@@ -2968,7 +3349,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                       const newMap = new Map(selectedActivities);
                                       activitiesOnly.forEach(n => {
                                         const act = n.item;
-                                        newMap.set(act.id, { id: act.id, name: act.name, unit: act.unit, quantity: 0 });
+                                        newMap.set(act.id, { id: act.id, numericId: act.numericId, name: act.name, unit: act.unit, quantity: 0 });
                                       });
                                       setSelectedActivities(newMap);
                                     } else {
@@ -3297,6 +3678,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   paginatedMaterials.forEach(mat => {
                                     newMap.set(mat.id, {
                                       id: mat.id,
+                                      numericId: mat.numericId ?? (Number.isFinite(Number(mat.id)) ? Number(mat.id) : undefined),
                                       class: mat.class,
                                       code: mat.code,
                                       name: mat.name,
@@ -3525,6 +3907,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   paginatedLabours.forEach(lab => {
                                     newMap.set(lab.id, {
                                       id: lab.id,
+                                      numericId: lab.numericId,
                                       type: lab.type,
                                       category: lab.category,
                                       quantity: 0,
@@ -3815,6 +4198,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   paginatedAssets.forEach(asset => {
                                     newMap.set(asset.id, {
                                       id: asset.id,
+                                      numericId: asset.numericId,
                                       code: asset.code,
                                       name: asset.name,
                                       quantity: 0,
@@ -4214,6 +4598,12 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                 </div>
               </div>
               <div className="p-6">
+              {isLoadingHindrance ? (
+                <div className={`flex items-center gap-2 py-8 ${textSecondary}`}>
+                  <Loader2 className="w-5 h-5 animate-spin flex-shrink-0" />
+                  <span className="font-bold">Loading hinderance list...</span>
+                </div>
+              ) : (
               <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
                 <div className="overflow-x-auto">
                   <table className="w-full">
@@ -4292,6 +4682,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                 </div>
                 {hindranceEntries.length > 0 && <PaginationBar currentPage={hindrancePage} totalItems={hindranceEntries.length} onPageChange={setHindrancePage} />}
               </div>
+              )}
               </div>
             </div>
 

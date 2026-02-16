@@ -1737,28 +1737,28 @@ export const masterDataAPI = {
       } as ApiError;
     }
   },
-  // DPR-specific subproject APIs - uses POST /project-subproject (same as getProjectSubprojects)
+  /**
+   * POST /fetch-project-subproject - DPR project/subproject (returns 404 if not implemented)
+   * DPR uses getProjects + getSubprojects instead - /project-list and /sub-project-list
+   */
   fetchProjectSubproject: async (data?: Record<string, any>): Promise<any> => {
+    const payload = data || {};
+    const projectId = payload.project_id ?? payload.projectId;
     try {
-      const payload = data || {};
-      const projectId = payload.project_id ?? payload.projectId;
-      if (!projectId) {
-        console.warn('fetchProjectSubproject: No project_id in payload, returning empty array');
-        return [];
-      }
-      // Use existing /project-subproject endpoint (fetch-project-subproject does not exist on backend)
-      const response = await apiClient.post('/project-subproject', { project_id: projectId });
-      let result: any = null;
-      if (response.data?.data !== undefined) {
-        result = response.data.data;
-      } else if (response.data) {
-        result = response.data;
-      }
-      return result ?? [];
+      const response = await apiClient.post('/fetch-project-subproject', payload);
+      const res = response.data;
+      if (res?.data !== undefined) return res.data;
+      if (Array.isArray(res)) return res;
+      if (res?.projects !== undefined) return res.projects;
+      if (res?.subProject !== undefined) return res.subProject;
+      if (res?.subprojects !== undefined) return res.subprojects;
+      return res ?? [];
     } catch (error: any) {
-      console.error('❌ /project-subproject (fetchProjectSubproject) error:', error);
+      if (error?.response?.status === 404) {
+        return projectId ? this.getSubprojects(projectId) : this.getProjects();
+      }
       throw {
-        message: error.response?.data?.message || 'Failed to fetch project subprojects',
+        message: error.response?.data?.message || 'Failed to fetch project/subproject',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
@@ -2148,10 +2148,23 @@ export const masterDataAPI = {
 };
 
 // Safety API - Matching Laravel routes (SafetyController)
+// safety-list: GET or POST, expects dprId (optionally projects_id, sub_projects_id)
 export const safetyAPI = {
-  getSafetyList: async (params?: { project_id?: string | number; subproject_id?: string | number }): Promise<any[]> => {
+  getSafetyList: async (params?: {
+    dprId?: string | number;
+    projects_id?: string | number;
+    sub_projects_id?: string | number;
+    project_id?: string | number;
+    subproject_id?: string | number;
+  }): Promise<any[]> => {
     try {
-      const response = await apiClient.get('/safety-list', { params: params || {} });
+      const p = params || {};
+      const payload = {
+        dprId: p.dprId,
+        projects_id: p.projects_id ?? p.project_id,
+        sub_projects_id: p.sub_projects_id ?? p.subproject_id,
+      };
+      const response = await apiClient.post('/safety-list', payload);
       const data = response.data?.data ?? response.data ?? [];
       return Array.isArray(data) ? data : [];
     } catch (error: any) {
@@ -2196,24 +2209,354 @@ export const safetyAPI = {
   },
 };
 
+// Hinderance API - Matching Laravel routes (HinderanceController)
+// hinderance-list: GET or POST, expects dprId (optionally projects_id, sub_projects_id)
+export const hinderanceAPI = {
+  getList: async (params?: {
+    dprId?: string | number;
+    projects_id?: string | number;
+    sub_projects_id?: string | number;
+  }): Promise<any[]> => {
+    try {
+      const p = params || {};
+      const payload = {
+        dprId: p.dprId,
+        projects_id: p.projects_id,
+        sub_projects_id: p.sub_projects_id,
+      };
+      const response = await apiClient.post('/hinderance-list', payload);
+      const data = response.data?.data ?? response.data ?? [];
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch hinderance list',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  add: async (data: Record<string, any>): Promise<any> => {
+    try {
+      const response = await apiClient.post('/hinderance-add', data);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to add hinderance',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  get: async (uuid: string): Promise<any> => {
+    try {
+      const response = await apiClient.get(`/hinderance-edit/${encodeURIComponent(uuid)}`);
+      return response.data?.data ?? response.data ?? {};
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch hinderance',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  delete: async (id: string): Promise<any> => {
+    try {
+      const response = await apiClient.delete(`/hinderance-delete/${encodeURIComponent(id)}`);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to delete hinderance',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
+// Activities History API - DPR activities (ActivityHistoryController)
+export const activitiesHistoryAPI = {
+  /** Load activities for a DPR. If DPR exists for today, returns activities with history; else all for project/subproject. */
+  list: async (projectId: number | string, subprojectId: number | string | null): Promise<any[]> => {
+    try {
+      const response = await apiClient.post('/activities-history-list', {
+        project_id: projectId,
+        subproject_id: subprojectId ?? null,
+      });
+      const data = response.data?.data ?? response.data?.response ?? response.data ?? [];
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch activities history list',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /** Add or update activity history entries for a DPR. Uses updateOrCreate on activities_id + dpr_id + company_id. */
+  add: async (entries: Array<{
+    activities_history_activities_id: number;
+    activities_history_qty: number;
+    activities_history_completion?: number;
+    activities_history_vendors_id?: number | null;
+    activities_history_remarkes?: string;
+    activities_history_img?: string; // base64
+    activities_history_dpr_id?: number | null;
+  }>): Promise<any> => {
+    try {
+      const response = await apiClient.post('/activities-history-add', entries);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to add activity history',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /** Load activity data for editing. Returns activities filtered by DPR ID and activity IDs. */
+  edit: async (dprId: number | string, activityIds: (number | string)[]): Promise<any[]> => {
+    try {
+      const response = await apiClient.post('/activities-history-edit/', {
+        dprId,
+        getActivites: activityIds,
+      });
+      const data = response.data?.data ?? response.data?.response ?? response.data ?? [];
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch activity history for edit',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /** Search activities by project/subproject. Used when choosing activities to add to a DPR.
+   * Backend expects numeric project_id/subproject_id; send both param names for compatibility. */
+  projectSearch: async (
+    projectId: number | string,
+    subprojectId?: number | string | null,
+    searchKeyword?: string
+  ): Promise<any[]> => {
+    try {
+      const payload: Record<string, any> = { project: projectId, project_id: projectId };
+      if (subprojectId != null && subprojectId !== '') {
+        payload.subproject = subprojectId;
+        payload.subproject_id = subprojectId;
+      }
+      if (searchKeyword != null && searchKeyword.trim()) payload.search_keyword = searchKeyword.trim();
+      const response = await apiClient.post('/activities-project-search', payload);
+      const data = response.data?.data ?? response.data?.response ?? response.data ?? [];
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to search activities',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
+// Labour History API - DPR labour usage (LabourHistoryController)
+export const labourHistoryAPI = {
+  /** Returns all labour history records for a DPR. */
+  list: async (dprId: number | string): Promise<any[]> => {
+    try {
+      const response = await apiClient.get(`/labour-history-list/${encodeURIComponent(dprId)}`);
+      const data = response.data?.data ?? response.data ?? [];
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch labour history list',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /** Creates/updates labour entries for a DPR. Uses updateOrCreate on labours_id + dpr_id. */
+  add: async (entries: Array<{
+    labours_id: number;
+    dpr_id: number;
+    qty: number;
+    ot_qty?: number;
+    activities_id?: number | null;
+    vendors_id?: number | null;
+    rate_per_unit: number;
+    remarkes?: string;
+  }>): Promise<any> => {
+    try {
+      const response = await apiClient.post('/labour-history-add', entries);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to add labour history',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /** Returns labour records for a given DPR and labour IDs. Used when editing DPR labour section. */
+  edit: async (dprId: number | string, labourIds: (number | string)[]): Promise<any[]> => {
+    try {
+      const response = await apiClient.post('/labour-history-edit/', {
+        dprId,
+        getLabour: labourIds,
+      });
+      const data = response.data?.data ?? response.data ?? [];
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch labour history for edit',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
+// Assets History API - DPR asset/equipment usage (AssetsHistoryController)
+export const assetsHistoryAPI = {
+  /** Returns all asset history records for a DPR. DPR ID in request body. */
+  list: async (dprId: number | string): Promise<any[]> => {
+    try {
+      const response = await apiClient.post('/assets-history-list', { dpr_id: dprId });
+      const data = response.data?.data ?? response.data ?? [];
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch assets history list',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /** Creates/updates asset entries for a DPR. Uses updateOrCreate on assets_id + dpr_id. */
+  add: async (entries: Array<{
+    assets_id: number;
+    dpr_id: number;
+    qty: number;
+    activities_id?: number | null;
+    vendors_id?: number | null;
+    rate_per_unit: number;
+    remarkes?: string;
+  }>): Promise<any> => {
+    try {
+      const response = await apiClient.post('/assets-history-add', entries);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to add assets history',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /** Returns asset records for a given DPR and asset IDs. Used when editing DPR asset section. */
+  edit: async (dprId: number | string, assetIds: (number | string)[]): Promise<any[]> => {
+    try {
+      const response = await apiClient.post('/assets-history-edit', {
+        dprId,
+        getAssets: assetIds,
+      });
+      const data = response.data?.data ?? response.data ?? [];
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch assets history for edit',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
+// Materials History API - DPR material consumption (MaterialsHistoryController)
+export const materialsHistoryAPI = {
+  /** Returns all materials history records for the company. Used for listing consumption. */
+  list: async (): Promise<any[]> => {
+    try {
+      const response = await apiClient.get('/materials-history-list/');
+      const data = response.data?.data ?? response.data ?? [];
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch materials history list',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /** Creates/updates material consumption entries for a DPR. Uses updateOrCreate on materials_id + dpr_id + activities_id. */
+  add: async (entries: Array<{
+    materials_id: number;
+    dpr_id: number;
+    activities_id?: number | null;
+    qty: number;
+    remarkes?: string;
+  }>): Promise<any> => {
+    try {
+      const response = await apiClient.post('/materials-history-add', entries);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to add materials history',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /** Returns material records for a given DPR and material IDs. Used when editing DPR materials section. */
+  edit: async (dprId: number | string, materialIds: (number | string)[]): Promise<any[]> => {
+    try {
+      const response = await apiClient.post('/materials-history-edit', {
+        dprId,
+        getMaterials: materialIds,
+      });
+      const data = response.data?.data ?? response.data ?? [];
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch materials history for edit',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /** Returns opening stock of materials for a project or store. Used to see available materials before adding to DPR. */
+  openingList: async (projectId?: number | string | null, storeId?: number | string | null): Promise<any[]> => {
+    try {
+      const payload: Record<string, any> = {};
+      if (projectId != null && projectId !== '') payload.projectId = projectId;
+      if (storeId != null && storeId !== '') payload.storeId = storeId;
+      const response = await apiClient.post('/materials-opening-list', payload);
+      const data = response.data?.data ?? response.data ?? [];
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch materials opening list',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
 // DPR API - Matching Laravel routes (DprController)
 export const dprAPI = {
   getList: async (): Promise<any> => {
     try {
       const response = await apiClient.get('/dpr-list');
       const res = response.data;
+      // Handle various response shapes from Laravel (responseJson, resources, etc.)
+      const toArray = (val: any): any[] => {
+        if (Array.isArray(val)) return val;
+        if (val && typeof val === 'object' && !Array.isArray(val)) {
+          const arr = Object.values(val);
+          if (arr.length > 0) return arr;
+        }
+        return [];
+      };
       if (Array.isArray(res)) return res;
       if (Array.isArray(res?.data)) return res.data;
-      if (res?.data && typeof res.data === 'object' && !Array.isArray(res.data)) {
+      const fromData = toArray(res?.data);
+      if (fromData.length > 0) return fromData;
+      if (res?.data && typeof res.data === 'object') {
         const d = res.data;
-        if (Array.isArray(d.dprs)) return d.dprs;
-        if (Array.isArray(d.list)) return d.list;
-        if (Array.isArray(d.items)) return d.items;
+        if (Array.isArray(d)) return d;
+        const fromD = toArray(d?.data ?? d?.dprs ?? d?.list ?? d?.items);
+        if (fromD.length > 0) return fromD;
       }
+      if (Array.isArray(res?.response)) return res.response;
+      if (res?.data?.data && Array.isArray(res.data.data)) return res.data.data;
+      const fromDataData = toArray(res?.data?.data);
+      if (fromDataData.length > 0) return fromDataData;
       return [];
     } catch (error: any) {
+      const msg = error.response?.data?.message || 'Failed to fetch DPR list';
       throw {
-        message: error.response?.data?.message || 'Failed to fetch DPR list',
+        message: msg,
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
