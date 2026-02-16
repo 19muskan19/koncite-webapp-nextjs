@@ -318,6 +318,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
 
   // Keep dropdowns open based on current pathname - this ensures dropdowns stay open when on child pages
   useEffect(() => {
+    if (!pathname) return;
     // Find all parent IDs for the current path
     const parentIds = findParentIdsForPath(pathname);
     

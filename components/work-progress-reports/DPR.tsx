@@ -149,7 +149,8 @@ interface SafetyEntry {
   id: string;
   serverId?: string | number; // Backend id for delete API
   details?: string;
-  image?: string;
+  image?: string; // legacy single - normalized to images when loading
+  images?: string[];
   teamMembers?: string[];
   remarks?: string;
 }
@@ -163,7 +164,8 @@ interface TeamMember {
 interface HindranceEntry {
   id: string;
   details?: string;
-  image?: string;
+  image?: string; // legacy single - normalized to images when loading
+  images?: string[];
   teamMembers?: string[];
   remarks?: string;
 }
@@ -1451,14 +1453,18 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         if (selectedProject) params.project_id = selectedProject.numericId ?? selectedProject.id;
         if (selectedSubproject) params.subproject_id = selectedSubproject.numericId ?? selectedSubproject.id;
         const list = await safetyAPI.getSafetyList(params);
-        const mapped: SafetyEntry[] = (list || []).map((item: any) => ({
-          id: item.uuid || String(item.id),
-          serverId: item.id,
-          details: item.details || item.description || '',
-          image: item.image || item.image_url || '',
-          teamMembers: Array.isArray(item.team_members) ? item.team_members.map((m: any) => String(m?.id ?? m)) : Array.isArray(item.teamMembers) ? item.teamMembers : [],
-          remarks: item.remarks || '',
-        }));
+        const mapped: SafetyEntry[] = (list || []).map((item: any) => {
+          const singleImg = item.image || item.image_url || '';
+          const imgArr = Array.isArray(item.images) ? item.images : (singleImg ? [singleImg] : []);
+          return {
+            id: item.uuid || String(item.id),
+            serverId: item.id,
+            details: item.details || item.description || '',
+            images: imgArr.filter(Boolean),
+            teamMembers: Array.isArray(item.team_members) ? item.team_members.map((m: any) => String(m?.id ?? m)) : Array.isArray(item.teamMembers) ? item.teamMembers : [],
+            remarks: item.remarks || '',
+          };
+        });
         setSafetyEntries(mapped);
       } catch (err: any) {
         toast.showError(err?.message || 'Failed to load safety list');
@@ -1512,7 +1518,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             id: raw.uuid || String(raw.id),
             serverId: raw.id,
             details: e.details || raw.details || raw.description || '',
-            image: e.image || raw.image || raw.image_url || '',
+            images: e.images?.length ? e.images : (raw.image || raw.image_url ? [raw.image || raw.image_url] : []),
             teamMembers: e.teamMembers?.length ? e.teamMembers : Array.isArray(raw.team_members) ? raw.team_members.map((m: any) => String(m?.id ?? m)) : raw.teamMembers || [],
             remarks: e.remarks || raw.remarks || '',
           } : e))
@@ -1543,16 +1549,31 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const handleSafetyEntryImageUpload = (id: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const result = event.target?.result as string;
-      setSafetyEntries(prev => prev.map(entry => entry.id === id ? { ...entry, image: result } : entry));
-    };
-    reader.readAsDataURL(files[0]);
+    const fileList = Array.from(files);
+    const readAsDataURL = (file: File): Promise<string> =>
+      new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    Promise.all(fileList.map(readAsDataURL)).then((results) => {
+      setSafetyEntries(prev => prev.map(entry => {
+        if (entry.id !== id) return entry;
+        const current = entry.images || (entry.image ? [entry.image] : []);
+        return { ...entry, images: [...current, ...results] };
+      }));
+    }).catch(() => toast.showError('Failed to load some images'));
+    e.target.value = '';
   };
 
-  const handleSafetyEntryRemoveImage = (id: string) => {
-    setSafetyEntries(prev => prev.map(e => e.id === id ? { ...e, image: '' } : e));
+  const handleSafetyEntryRemoveImage = (id: string, index: number) => {
+    setSafetyEntries(prev => prev.map(e => {
+      if (e.id !== id) return e;
+      const arr = e.images || (e.image ? [e.image] : []);
+      const next = arr.filter((_, i) => i !== index);
+      return { ...e, images: next };
+    }));
   };
 
   const handleSafetyEntryTeamMembersChange = (id: string, memberIds: string[]) => {
@@ -1589,16 +1610,31 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const handleHindranceEntryImageUpload = (id: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const result = event.target?.result as string;
-      setHindranceEntries(prev => prev.map(entry => entry.id === id ? { ...entry, image: result } : entry));
-    };
-    reader.readAsDataURL(files[0]);
+    const fileList = Array.from(files);
+    const readAsDataURL = (file: File): Promise<string> =>
+      new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    Promise.all(fileList.map(readAsDataURL)).then((results) => {
+      setHindranceEntries(prev => prev.map(entry => {
+        if (entry.id !== id) return entry;
+        const current = entry.images || (entry.image ? [entry.image] : []);
+        return { ...entry, images: [...current, ...results] };
+      }));
+    }).catch(() => toast.showError('Failed to load some images'));
+    e.target.value = '';
   };
 
-  const handleHindranceEntryRemoveImage = (id: string) => {
-    setHindranceEntries(prev => prev.map(e => e.id === id ? { ...e, image: '' } : e));
+  const handleHindranceEntryRemoveImage = (id: string, index: number) => {
+    setHindranceEntries(prev => prev.map(e => {
+      if (e.id !== id) return e;
+      const arr = e.images || (e.image ? [e.image] : []);
+      const next = arr.filter((_, i) => i !== index);
+      return { ...e, images: next };
+    }));
   };
 
   const handleHindranceEntryTeamMembersChange = (id: string, memberIds: string[]) => {
@@ -1628,6 +1664,19 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     const lineHeight = 7;
     const sectionSpacing = 12;
     const rowPad = 3;
+
+    // A4 fixed table width: full content area (width does not resize; height varies with content)
+    const TABLE_CONTENT_WIDTH = pageWidth - 2 * margin;
+
+    // Normalize column widths so total equals TABLE_CONTENT_WIDTH (fixed to A4)
+    const normalizeColWidths = (colWidths: number[]): number[] => {
+      const sum = colWidths.reduce((a, b) => a + b, 0);
+      if (Math.abs(sum - TABLE_CONTENT_WIDTH) < 0.5) return colWidths;
+      const diff = TABLE_CONTENT_WIDTH - sum;
+      const out = [...colWidths];
+      out[out.length - 1] = Math.max(5, out[out.length - 1] + diff);
+      return out;
+    };
 
     // Colors (RGB 0-255)
     const colorAccent = [194, 214, 66] as [number, number, number];
@@ -1669,6 +1718,51 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           x += w;
         }
       });
+    };
+
+    // Helper: draw text wrapped to cell width, return number of lines
+    const drawWrappedCell = (text: string, x: number, y: number, cellWidth: number, align: 'left' | 'center' | 'right' = 'left') => {
+      const lines = doc.splitTextToSize(String(text || '-'), Math.max(cellWidth - 4, 10));
+      const pad = 2;
+      lines.forEach((line: string, i: number) => {
+        const lineY = y + rowPad + (i + 1) * lineHeight - 1;
+        if (align === 'center') {
+          doc.text(line, x + cellWidth / 2, lineY, { align: 'center' });
+        } else if (align === 'right') {
+          doc.text(line, x + cellWidth - pad, lineY, { align: 'right' });
+        } else {
+          doc.text(line, x + pad, lineY);
+        }
+      });
+      return lines.length;
+    };
+
+    // Helper: draw table header with alignment (alignments: 'left'|'center'|'right' per column)
+    const drawTableHeaderWithAlign = (headers: string[], colWidths: number[], startY: number, alignments?: ('left' | 'center' | 'right')[]) => {
+      const tw = colWidths.reduce((a, b) => a + b, 0);
+      doc.setDrawColor(...colorBorder);
+      doc.setLineWidth(0.25);
+      doc.setFillColor(...colorHeaderBg);
+      doc.rect(margin, startY, tw, lineHeight + rowPad * 2, 'FD');
+      doc.setTextColor(30, 45, 60);
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9);
+      let x = margin;
+      headers.forEach((h, i) => {
+        const align = alignments?.[i] || 'left';
+        const cellW = colWidths[i];
+        const textY = startY + lineHeight + rowPad - 1;
+        if (align === 'center') {
+          doc.text(h, x + cellW / 2, textY, { align: 'center' });
+        } else if (align === 'right') {
+          doc.text(h, x + cellW - 2, textY, { align: 'right' });
+        } else {
+          doc.text(h, x + 2, textY);
+        }
+        x += cellW;
+      });
+      doc.setTextColor(0, 0, 0);
+      return startY + lineHeight + rowPad * 2;
     };
 
     // Helper function to add a new page if needed
@@ -1822,29 +1916,33 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       yPosition += lineHeight + 4;
 
       const activitiesHeaders = ['Sr No', 'Activity', 'Unit', 'Qty', 'Contractor', 'Remarks'];
-      const colWidths = [12, 55, 18, 20, 35, 30];
-      yPosition = drawTableHeader(activitiesHeaders, colWidths, yPosition);
+      const colWidths = normalizeColWidths([12, 55, 18, 20, 35, 30]);
+      const actAlignments: ('left' | 'center' | 'right')[] = ['center', 'left', 'center', 'center', 'left', 'left'];
+      yPosition = drawTableHeaderWithAlign(activitiesHeaders, colWidths, yPosition, actAlignments);
 
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(9);
       let srNo = 1;
       for (const activity of actList) {
-        const remarksLines = doc.splitTextToSize(activity.remarks || '-', colWidths[5]);
-        const rowH = Math.max(lineHeight + rowPad, remarksLines.length * lineHeight + rowPad * 2);
+        const activityLines = doc.splitTextToSize(activity.name || '-', colWidths[1] - 4);
+        const contractorLines = doc.splitTextToSize(activity.contractor || '-', colWidths[4] - 4);
+        const remarksLines = doc.splitTextToSize(activity.remarks || '-', colWidths[5] - 4);
+        const maxLines = Math.max(1, activityLines.length, contractorLines.length, remarksLines.length);
+        const rowH = Math.max(lineHeight + rowPad, maxLines * lineHeight + rowPad * 2);
         checkPageBreak(rowH + 5);
         drawTableRowBg(yPosition, rowH, colWidths, (srNo - 1) % 2 === 1);
-        let xPos = margin + 2;
-        doc.text(srNo.toString(), xPos, yPosition + lineHeight + rowPad - 1);
+        let xPos = margin;
+        drawWrappedCell(srNo.toString(), xPos, yPosition, colWidths[0], 'center');
         xPos += colWidths[0];
-        doc.text(activity.name || '-', xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(activity.name || '-', xPos, yPosition, colWidths[1], 'left');
         xPos += colWidths[1];
-        doc.text(activity.unit || '-', xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(activity.unit || '-', xPos, yPosition, colWidths[2], 'center');
         xPos += colWidths[2];
-        doc.text(activity.quantity.toString(), xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(activity.quantity.toString(), xPos, yPosition, colWidths[3], 'center');
         xPos += colWidths[3];
-        doc.text(activity.contractor || '-', xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(activity.contractor || '-', xPos, yPosition, colWidths[4], 'left');
         xPos += colWidths[4];
-        doc.text(remarksLines, xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(activity.remarks || '-', xPos, yPosition, colWidths[5], 'left');
         yPosition += rowH;
         
         // Add images if any
@@ -1880,29 +1978,33 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       yPosition += lineHeight + 4;
 
       const materialsHeaders = ['Sr No', 'Material', 'Unit', 'Qty', 'Activity', 'Remarks'];
-      const materialColWidths = [12, 48, 18, 20, 35, 30];
-      yPosition = drawTableHeader(materialsHeaders, materialColWidths, yPosition);
+      const materialColWidths = normalizeColWidths([12, 48, 18, 20, 35, 30]);
+      const matAlignments: ('left' | 'center' | 'right')[] = ['center', 'left', 'center', 'center', 'left', 'left'];
+      yPosition = drawTableHeaderWithAlign(materialsHeaders, materialColWidths, yPosition, matAlignments);
 
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(9);
       let srNo = 1;
       matList.forEach((material) => {
-        const remarksLines = doc.splitTextToSize(material.remarks || '-', materialColWidths[5]);
-        const rowH = Math.max(lineHeight + rowPad, remarksLines.length * lineHeight + rowPad * 2);
+        const materialLines = doc.splitTextToSize(`${material.name} (${material.code})`, materialColWidths[1] - 4);
+        const activityLines = doc.splitTextToSize(material.activity || '-', materialColWidths[4] - 4);
+        const remarksLines = doc.splitTextToSize(material.remarks || '-', materialColWidths[5] - 4);
+        const maxLines = Math.max(1, materialLines.length, activityLines.length, remarksLines.length);
+        const rowH = Math.max(lineHeight + rowPad, maxLines * lineHeight + rowPad * 2);
         checkPageBreak(rowH + 5);
         drawTableRowBg(yPosition, rowH, materialColWidths, (srNo - 1) % 2 === 1);
-        let xPos = margin + 2;
-        doc.text(srNo.toString(), xPos, yPosition + lineHeight + rowPad - 1);
+        let xPos = margin;
+        drawWrappedCell(srNo.toString(), xPos, yPosition, materialColWidths[0], 'center');
         xPos += materialColWidths[0];
-        doc.text(`${material.name} (${material.code})`, xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(`${material.name} (${material.code})`, xPos, yPosition, materialColWidths[1], 'left');
         xPos += materialColWidths[1];
-        doc.text(material.unit, xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(material.unit, xPos, yPosition, materialColWidths[2], 'center');
         xPos += materialColWidths[2];
-        doc.text(material.quantity.toString(), xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(material.quantity.toString(), xPos, yPosition, materialColWidths[3], 'center');
         xPos += materialColWidths[3];
-        doc.text(material.activity || '-', xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(material.activity || '-', xPos, yPosition, materialColWidths[4], 'left');
         xPos += materialColWidths[4];
-        doc.text(remarksLines, xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(material.remarks || '-', xPos, yPosition, materialColWidths[5], 'left');
         yPosition += rowH;
         srNo++;
       });
@@ -1920,35 +2022,40 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       yPosition += lineHeight + 4;
 
       const laboursHeaders = ['Sr No', 'Labour', 'Category', 'Qty', 'OT', 'Activity', 'Contractor', 'Rate', 'Remarks'];
-      const labourColWidths = [10, 28, 16, 10, 10, 24, 24, 16, 22];
-      yPosition = drawTableHeader(laboursHeaders, labourColWidths, yPosition);
+      const labourColWidths = normalizeColWidths([10, 28, 16, 10, 10, 24, 26, 16, 22]);
+      const labAlignments: ('left' | 'center' | 'right')[] = ['center', 'left', 'center', 'center', 'center', 'left', 'left', 'right', 'left'];
+      yPosition = drawTableHeaderWithAlign(laboursHeaders, labourColWidths, yPosition, labAlignments);
 
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(9);
       let srNo = 1;
       labList.forEach((labour) => {
-        const remarksLines = doc.splitTextToSize(labour.remarks || '-', labourColWidths[8]);
-        const rowH = Math.max(lineHeight + rowPad, remarksLines.length * lineHeight + rowPad * 2);
+        const labourLines = doc.splitTextToSize(labour.type || '-', labourColWidths[1] - 4);
+        const activityLines = doc.splitTextToSize(labour.activity || '-', labourColWidths[5] - 4);
+        const contractorLines = doc.splitTextToSize(labour.contractor || '-', labourColWidths[6] - 4);
+        const remarksLines = doc.splitTextToSize(labour.remarks || '-', labourColWidths[8] - 4);
+        const maxLines = Math.max(1, labourLines.length, activityLines.length, contractorLines.length, remarksLines.length);
+        const rowH = Math.max(lineHeight + rowPad, maxLines * lineHeight + rowPad * 2);
         checkPageBreak(rowH + 5);
         drawTableRowBg(yPosition, rowH, labourColWidths, (srNo - 1) % 2 === 1);
-        let xPos = margin + 2;
-        doc.text(srNo.toString(), xPos, yPosition + lineHeight + rowPad - 1);
+        let xPos = margin;
+        drawWrappedCell(srNo.toString(), xPos, yPosition, labourColWidths[0], 'center');
         xPos += labourColWidths[0];
-        doc.text(labour.type || '-', xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(labour.type || '-', xPos, yPosition, labourColWidths[1], 'left');
         xPos += labourColWidths[1];
-        doc.text(labour.category || '-', xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(labour.category || '-', xPos, yPosition, labourColWidths[2], 'center');
         xPos += labourColWidths[2];
-        doc.text(labour.quantity.toString(), xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(labour.quantity.toString(), xPos, yPosition, labourColWidths[3], 'center');
         xPos += labourColWidths[3];
-        doc.text(labour.overtimeQuantity.toString(), xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(labour.overtimeQuantity.toString(), xPos, yPosition, labourColWidths[4], 'center');
         xPos += labourColWidths[4];
-        doc.text(labour.activity || '-', xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(labour.activity || '-', xPos, yPosition, labourColWidths[5], 'left');
         xPos += labourColWidths[5];
-        doc.text(labour.contractor || '-', xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(labour.contractor || '-', xPos, yPosition, labourColWidths[6], 'left');
         xPos += labourColWidths[6];
-        doc.text(labour.ratePerUnit.toString(), xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(labour.ratePerUnit.toString(), xPos, yPosition, labourColWidths[7], 'right');
         xPos += labourColWidths[7];
-        doc.text(remarksLines, xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(labour.remarks || '-', xPos, yPosition, labourColWidths[8], 'left');
         yPosition += rowH;
         srNo++;
       });
@@ -1966,40 +2073,45 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       yPosition += lineHeight + 4;
 
       const assetsHeaders = ['Sr No', 'Asset', 'Qty', 'Activity', 'Contractor', 'Rate', 'Remarks'];
-      const assetColWidths = [10, 45, 16, 26, 26, 16, 26];
-      yPosition = drawTableHeader(assetsHeaders, assetColWidths, yPosition);
+      const assetColWidths = normalizeColWidths([10, 45, 16, 26, 30, 16, 26]);
+      const assetAlignments: ('left' | 'center' | 'right')[] = ['center', 'left', 'center', 'left', 'left', 'right', 'left'];
+      yPosition = drawTableHeaderWithAlign(assetsHeaders, assetColWidths, yPosition, assetAlignments);
 
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(9);
       let srNo = 1;
       astList.forEach((asset) => {
-        const remarksLines = doc.splitTextToSize(asset.remarks || '-', assetColWidths[6]);
-        const rowH = Math.max(lineHeight + rowPad, remarksLines.length * lineHeight + rowPad * 2);
+        const assetLines = doc.splitTextToSize(`${asset.name || ''} (${asset.code || ''})`, assetColWidths[1] - 4);
+        const activityLines = doc.splitTextToSize(asset.activity || '-', assetColWidths[3] - 4);
+        const contractorLines = doc.splitTextToSize(asset.contractor || '-', assetColWidths[4] - 4);
+        const remarksLines = doc.splitTextToSize(asset.remarks || '-', assetColWidths[6] - 4);
+        const maxLines = Math.max(1, assetLines.length, activityLines.length, contractorLines.length, remarksLines.length);
+        const rowH = Math.max(lineHeight + rowPad, maxLines * lineHeight + rowPad * 2);
         checkPageBreak(rowH + 5);
         drawTableRowBg(yPosition, rowH, assetColWidths, (srNo - 1) % 2 === 1);
-        let xPos = margin + 2;
-        doc.text(srNo.toString(), xPos, yPosition + lineHeight + rowPad - 1);
+        let xPos = margin;
+        drawWrappedCell(srNo.toString(), xPos, yPosition, assetColWidths[0], 'center');
         xPos += assetColWidths[0];
-        doc.text(`${asset.name} (${asset.code})`, xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(`${asset.name || ''} (${asset.code || ''})`, xPos, yPosition, assetColWidths[1], 'left');
         xPos += assetColWidths[1];
-        doc.text(asset.quantity.toString(), xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(asset.quantity.toString(), xPos, yPosition, assetColWidths[2], 'center');
         xPos += assetColWidths[2];
-        doc.text(asset.activity || '-', xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(asset.activity || '-', xPos, yPosition, assetColWidths[3], 'left');
         xPos += assetColWidths[3];
-        doc.text(asset.contractor || '-', xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(asset.contractor || '-', xPos, yPosition, assetColWidths[4], 'left');
         xPos += assetColWidths[4];
-        doc.text(asset.ratePerUnit.toString(), xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(asset.ratePerUnit.toString(), xPos, yPosition, assetColWidths[5], 'right');
         xPos += assetColWidths[5];
-        doc.text(remarksLines, xPos, yPosition + lineHeight + rowPad - 1);
+        drawWrappedCell(asset.remarks || '-', xPos, yPosition, assetColWidths[6], 'left');
         yPosition += rowH;
         srNo++;
       });
       yPosition += sectionSpacing;
     }
 
-    // Safety Section
+    // Safety Section - table structure
     if (safeList.length > 0) {
-      checkPageBreak(30);
+      checkPageBreak(40);
       doc.setFontSize(13);
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(40, 60, 80);
@@ -2007,53 +2119,59 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       doc.setTextColor(0, 0, 0);
       yPosition += lineHeight + 4;
 
-      doc.setFontSize(10);
+      const safetyHeaders = ['Sr No', 'Problem Details', 'Team Members', 'Remarks'];
+      const safetyColWidths = normalizeColWidths([10, 60, 40, 65]);
+      const safetyAlignments: ('left' | 'center' | 'right')[] = ['center', 'left', 'left', 'left'];
+      yPosition = drawTableHeaderWithAlign(safetyHeaders, safetyColWidths, yPosition, safetyAlignments);
+
       doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
       let srNo = 1;
       for (const entry of safeList) {
-        checkPageBreak(25);
-        doc.setFillColor(...colorAltRow);
-        doc.setDrawColor(...colorBorder);
-        doc.rect(margin, yPosition - 2, pageWidth - 2 * margin, 1, 'F');
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(35, 55, 75);
-        doc.text(`${srNo}. ${entry.details || '—'}`, margin + 4, yPosition + lineHeight);
-        yPosition += lineHeight + 2;
-        
-        doc.setFont('helvetica', 'normal');
-        doc.setTextColor(60, 60, 60);
-        if (entry.teamMembers && entry.teamMembers.length > 0) {
-          const teamMemberNames = entry.teamMembers.map((mid: string) => {
-            const member = tmList.find((m: any) => m.id === mid);
-            return member ? member.name : mid;
-          }).join(', ');
-          doc.text(`Team Members: ${teamMemberNames}`, margin + 8, yPosition);
+        const teamMemberNames = (entry.teamMembers || []).map((mid: string) => {
+          const member = tmList.find((m: any) => m.id === mid);
+          return member ? member.name : mid;
+        }).join(', ');
+        const detailsLines = doc.splitTextToSize(entry.details || '—', safetyColWidths[1] - 4);
+        const teamLines = doc.splitTextToSize(teamMemberNames || '-', safetyColWidths[2] - 4);
+        const remarksLines = doc.splitTextToSize(entry.remarks || '-', safetyColWidths[3] - 4);
+        const textMaxLines = Math.max(1, detailsLines.length, teamLines.length, remarksLines.length);
+        const rowH = Math.max(lineHeight + rowPad, textMaxLines * lineHeight + rowPad * 2);
+        checkPageBreak(rowH + 5);
+        drawTableRowBg(yPosition, rowH, safetyColWidths, (srNo - 1) % 2 === 1);
+
+        let xPos = margin;
+        drawWrappedCell(srNo.toString(), xPos, yPosition, safetyColWidths[0], 'center');
+        xPos += safetyColWidths[0];
+        drawWrappedCell(entry.details || '—', xPos, yPosition, safetyColWidths[1], 'left');
+        xPos += safetyColWidths[1];
+        drawWrappedCell(teamMemberNames || '-', xPos, yPosition, safetyColWidths[2], 'left');
+        xPos += safetyColWidths[2];
+        drawWrappedCell(entry.remarks || '-', xPos, yPosition, safetyColWidths[3], 'left');
+        yPosition += rowH;
+
+        // Images below row (like Activities)
+        const safetyImgs = entry.images || (entry.image ? [entry.image] : []);
+        if (safetyImgs.length > 0) {
           yPosition += lineHeight;
-        }
-        
-        if (entry.remarks) {
-          const remarksLines = doc.splitTextToSize(`Remarks: ${entry.remarks}`, pageWidth - 2 * margin - 10);
-          doc.text(remarksLines, margin + 8, yPosition);
-          yPosition += remarksLines.length * lineHeight;
-        }
-        
-        if (entry.image) {
-          doc.text('Image:', margin + 8, yPosition);
+          doc.setFontSize(9);
+          doc.text('Images:', margin, yPosition);
           yPosition += lineHeight + 2;
-          const imageHeight = await addImageToPDF(entry.image, margin + 8, yPosition, pageWidth - 2 * margin - 16, 50);
-          yPosition += imageHeight;
+          for (const img of safetyImgs) {
+            const imageHeight = await addImageToPDF(img, margin, yPosition, pageWidth - 2 * margin, 40);
+            yPosition += imageHeight + 2;
+            checkPageBreak(50);
+          }
+          doc.setFontSize(9);
         }
-        
-        doc.setTextColor(0, 0, 0);
-        yPosition += 6;
         srNo++;
       }
       yPosition += sectionSpacing;
     }
 
-    // Hindrance Section
+    // Hindrance Section - table structure (same as Safety)
     if (hindList.length > 0) {
-      checkPageBreak(30);
+      checkPageBreak(40);
       doc.setFontSize(13);
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(40, 60, 80);
@@ -2061,47 +2179,54 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       doc.setTextColor(0, 0, 0);
       yPosition += lineHeight + 4;
 
-      doc.setFontSize(10);
+      const hindranceHeaders = ['Sr No', 'Problem Details', 'Team Members', 'Remarks'];
+      const hindranceColWidths = normalizeColWidths([10, 60, 40, 65]);
+      const hindranceAlignments: ('left' | 'center' | 'right')[] = ['center', 'left', 'left', 'left'];
+      yPosition = drawTableHeaderWithAlign(hindranceHeaders, hindranceColWidths, yPosition, hindranceAlignments);
+
       doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
       let srNo = 1;
       for (const entry of hindList) {
-        checkPageBreak(25);
-        doc.setFillColor(...colorAltRow);
-        doc.setDrawColor(...colorBorder);
-        doc.rect(margin, yPosition - 2, pageWidth - 2 * margin, 1, 'F');
-        doc.setFont('helvetica', 'bold');
-        doc.setTextColor(35, 55, 75);
-        doc.text(`${srNo}. ${entry.details || '—'}`, margin + 4, yPosition + lineHeight);
-        yPosition += lineHeight + 2;
-        
-        doc.setFont('helvetica', 'normal');
-        doc.setTextColor(60, 60, 60);
-        if (entry.teamMembers && entry.teamMembers.length > 0) {
-          const teamMemberNames = entry.teamMembers.map((mid: string) => {
-            const member = tmList.find((m: any) => m.id === mid);
-            return member ? member.name : mid;
-          }).join(', ');
-          doc.text(`Team Members: ${teamMemberNames}`, margin + 8, yPosition);
+        const teamMemberNames = (entry.teamMembers || []).map((mid: string) => {
+          const member = tmList.find((m: any) => m.id === mid);
+          return member ? member.name : mid;
+        }).join(', ');
+        const detailsLines = doc.splitTextToSize(entry.details || '—', hindranceColWidths[1] - 4);
+        const teamLines = doc.splitTextToSize(teamMemberNames || '-', hindranceColWidths[2] - 4);
+        const remarksLines = doc.splitTextToSize(entry.remarks || '-', hindranceColWidths[3] - 4);
+        const textMaxLines = Math.max(1, detailsLines.length, teamLines.length, remarksLines.length);
+        const rowH = Math.max(lineHeight + rowPad, textMaxLines * lineHeight + rowPad * 2);
+        checkPageBreak(rowH + 5);
+        drawTableRowBg(yPosition, rowH, hindranceColWidths, (srNo - 1) % 2 === 1);
+
+        let xPos = margin;
+        drawWrappedCell(srNo.toString(), xPos, yPosition, hindranceColWidths[0], 'center');
+        xPos += hindranceColWidths[0];
+        drawWrappedCell(entry.details || '—', xPos, yPosition, hindranceColWidths[1], 'left');
+        xPos += hindranceColWidths[1];
+        drawWrappedCell(teamMemberNames || '-', xPos, yPosition, hindranceColWidths[2], 'left');
+        xPos += hindranceColWidths[2];
+        drawWrappedCell(entry.remarks || '-', xPos, yPosition, hindranceColWidths[3], 'left');
+        yPosition += rowH;
+
+        // Images below row (like Activities)
+        const hindranceImgs = entry.images || (entry.image ? [entry.image] : []);
+        if (hindranceImgs.length > 0) {
           yPosition += lineHeight;
-        }
-        
-        if (entry.remarks) {
-          const remarksLines = doc.splitTextToSize(`Remarks: ${entry.remarks}`, pageWidth - 2 * margin - 10);
-          doc.text(remarksLines, margin + 8, yPosition);
-          yPosition += remarksLines.length * lineHeight;
-        }
-        
-        if (entry.image) {
-          doc.text('Image:', margin + 8, yPosition);
+          doc.setFontSize(9);
+          doc.text('Images:', margin, yPosition);
           yPosition += lineHeight + 2;
-          const imageHeight = await addImageToPDF(entry.image, margin + 8, yPosition, pageWidth - 2 * margin - 16, 50);
-          yPosition += imageHeight;
+          for (const img of hindranceImgs) {
+            const imageHeight = await addImageToPDF(img, margin, yPosition, pageWidth - 2 * margin, 40);
+            yPosition += imageHeight + 2;
+            checkPageBreak(50);
+          }
+          doc.setFontSize(9);
         }
-        
-        doc.setTextColor(0, 0, 0);
-        yPosition += 6;
         srNo++;
       }
+      yPosition += sectionSpacing;
     }
 
     // Generate filename
@@ -2141,8 +2266,6 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
     if (selectedActivities.size > 0) {
       const activitiesList: any[] = [];
-      const activityImages: File[] = [];
-      let idx = 0;
       for (const a of selectedActivities.values()) {
         activitiesList.push({
           activities_history_activities_id: Number(a.id) || a.id,
@@ -2153,15 +2276,21 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           total_qty: a.quantity,
           activities_history_remarks: a.remarks || '',
         });
-        const img = a.images?.[0];
-        if (img && typeof img === 'string') {
-          const f = dataURLtoFile(img, `activity_${idx}.jpg`);
-          if (f) activityImages.push(f);
-        }
-        idx++;
       }
       formData.append('activities', JSON.stringify(activitiesList));
-      activityImages.forEach((f, i) => formData.append(`activities_images[${i}]`, f));
+      let imgIdx = 0;
+      for (const a of selectedActivities.values()) {
+        const imgs = a.images || [];
+        imgs.forEach((dataUrl, j) => {
+          if (dataUrl && typeof dataUrl === 'string') {
+            const f = dataURLtoFile(dataUrl, `activity_${imgIdx}_${j}.jpg`);
+            if (f) {
+              formData.append(`activities_images[${imgIdx}][${j}]`, f);
+            }
+          }
+        });
+        imgIdx++;
+      }
     }
     if (selectedMaterials.size > 0) {
       formData.append('materials', JSON.stringify(Array.from(selectedMaterials.values()).map(m => ({
@@ -2196,10 +2325,13 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         remarks: s.remarks || '',
       }))));
       safetyEntries.forEach((s, i) => {
-        if (s.image && typeof s.image === 'string') {
-          const f = dataURLtoFile(s.image, `safety_${i}.jpg`);
-          if (f) formData.append(`safety_images[${i}]`, f);
-        }
+        const imgs = s.images || (s.image ? [s.image] : []);
+        imgs.forEach((dataUrl, j) => {
+          if (dataUrl && typeof dataUrl === 'string') {
+            const f = dataURLtoFile(dataUrl, `safety_${i}_${j}.jpg`);
+            if (f) formData.append(`safety_images[${i}][${j}]`, f);
+          }
+        });
       });
     }
     if (hindranceEntries.length > 0) {
@@ -2209,10 +2341,13 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         remarks: h.remarks || '',
       }))));
       hindranceEntries.forEach((h, i) => {
-        if (h.image && typeof h.image === 'string') {
-          const f = dataURLtoFile(h.image, `hinderance_${i}.jpg`);
-          if (f) formData.append(`hinderance_images[${i}]`, f);
-        }
+        const imgs = h.images || (h.image ? [h.image] : []);
+        imgs.forEach((dataUrl, j) => {
+          if (dataUrl && typeof dataUrl === 'string') {
+            const f = dataURLtoFile(dataUrl, `hinderance_${i}_${j}.jpg`);
+            if (f) formData.append(`hinderance_images[${i}][${j}]`, f);
+          }
+        });
       });
     }
     return formData;
@@ -3931,7 +4066,6 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                       <tr className={`border-b ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>SR No</th>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Safety Problem Details</th>
-                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Image</th>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Tag Team Members</th>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Remarks</th>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}></th>
@@ -3939,60 +4073,66 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                     </thead>
                     <tbody className={`divide-y ${isDark ? 'divide-slate-700' : 'divide-slate-200'}`}>
                       {paginatedSafetyEntries.map((entry, index) => (
-                        <tr key={entry.id} className={isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'}>
-                          <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{(safetyPage - 1) * PAGE_SIZE + index + 1}</td>
-                          <td className="px-6 py-4">
-                            <input
-                              type="text"
-                              value={entry.details || ''}
-                              onChange={(e) => handleSafetyEntryDetailsChange(entry.id, e.target.value)}
-                              placeholder="Enter details (optional)"
-                              className={`w-full min-w-[180px] px-3 py-2 rounded-lg text-sm font-bold border ${
-                                isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 placeholder-slate-500 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400 focus:border-[#C2D642]'
-                              } focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                            />
-                          </td>
-                          <td className="px-6 py-4">
-                            {entry.image ? (
-                              <div className="relative inline-block">
-                                <img src={entry.image} alt="Safety" className="w-16 h-16 object-cover rounded-lg border border-inherit" />
-                                <button onClick={() => handleSafetyEntryRemoveImage(entry.id)} className="absolute -top-2 -right-2 p-1 rounded-full bg-red-500 text-white hover:bg-red-600">
-                                  <X className="w-3 h-3" />
-                                </button>
+                        <React.Fragment key={entry.id}>
+                          <tr className={isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'}>
+                            <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{(safetyPage - 1) * PAGE_SIZE + index + 1}</td>
+                            <td className="px-6 py-4">
+                              <input
+                                type="text"
+                                value={entry.details || ''}
+                                onChange={(e) => handleSafetyEntryDetailsChange(entry.id, e.target.value)}
+                                placeholder="Enter details (optional)"
+                                className={`w-full min-w-[180px] px-3 py-2 rounded-lg text-sm font-bold border ${
+                                  isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 placeholder-slate-500 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400 focus:border-[#C2D642]'
+                                } focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                              />
+                            </td>
+                            <td className="px-6 py-4">
+                              <TeamMembersDropdown
+                                teamMembers={teamMembers}
+                                value={entry.teamMembers || []}
+                                onChange={(memberIds) => handleSafetyEntryTeamMembersChange(entry.id, memberIds)}
+                                isDark={isDark}
+                                placeholder="Select team members"
+                              />
+                            </td>
+                            <td className="px-6 py-4">
+                              <textarea
+                                value={entry.remarks || ''}
+                                onChange={(e) => handleSafetyEntryRemarksChange(entry.id, e.target.value)}
+                                placeholder="Remarks (optional)"
+                                rows={2}
+                                className={`w-full min-w-[180px] px-3 py-2 rounded-lg text-sm font-bold border resize-none ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 placeholder-slate-500 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400 focus:border-[#C2D642]'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                              />
+                            </td>
+                            <td className="px-6 py-4">
+                              <button onClick={() => handleRemoveSafetyEntry(entry.id)} className={`p-2 rounded-lg ${isDark ? 'hover:bg-red-500/20 text-red-400' : 'hover:bg-red-100 text-red-600'}`} title="Remove">
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </td>
+                          </tr>
+                          <tr className={isDark ? 'bg-slate-800/20' : 'bg-slate-50/50'}>
+                            <td colSpan={5} className="px-6 py-3 border-t-0">
+                              <div className="flex flex-wrap gap-2 items-center">
+                                <span className={`text-xs font-bold ${textSecondary} mr-2`}>Images:</span>
+                                {(entry.images || (entry.image ? [entry.image] : [])).map((img, idx) => (
+                                  <div key={idx} className="relative flex-shrink-0">
+                                    <img src={img} alt={`Safety ${idx + 1}`} className="w-14 h-14 object-cover rounded-lg border border-inherit" />
+                                    <button onClick={() => handleSafetyEntryRemoveImage(entry.id, idx)} className="absolute -top-1.5 -right-1.5 p-0.5 rounded-full bg-red-500 text-white hover:bg-red-600">
+                                      <X className="w-2.5 h-2.5" />
+                                    </button>
+                                  </div>
+                                ))}
+                                <label className="cursor-pointer flex-shrink-0">
+                                  <input type="file" accept="image/*" multiple onChange={(e) => handleSafetyEntryImageUpload(entry.id, e)} className="hidden" />
+                                  <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed w-fit ${isDark ? 'border-slate-600 hover:border-[#C2D642] text-slate-400' : 'border-slate-300 hover:border-[#C2D642] text-slate-600'}`}>
+                                    <Upload className="w-4 h-4" /><span className="text-xs font-bold">Add</span>
+                                  </div>
+                                </label>
                               </div>
-                            ) : (
-                              <label className="cursor-pointer">
-                                <input type="file" accept="image/*" onChange={(e) => handleSafetyEntryImageUpload(entry.id, e)} className="hidden" />
-                                <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed w-fit ${isDark ? 'border-slate-600 hover:border-[#C2D642] text-slate-400' : 'border-slate-300 hover:border-[#C2D642] text-slate-600'}`}>
-                                  <Upload className="w-4 h-4" /><span className="text-xs font-bold">Upload</span>
-                                </div>
-                              </label>
-                            )}
-                          </td>
-                          <td className="px-6 py-4">
-                            <TeamMembersDropdown
-                              teamMembers={teamMembers}
-                              value={entry.teamMembers || []}
-                              onChange={(memberIds) => handleSafetyEntryTeamMembersChange(entry.id, memberIds)}
-                              isDark={isDark}
-                              placeholder="Select team members"
-                            />
-                          </td>
-                          <td className="px-6 py-4">
-                            <textarea
-                              value={entry.remarks || ''}
-                              onChange={(e) => handleSafetyEntryRemarksChange(entry.id, e.target.value)}
-                              placeholder="Remarks (optional)"
-                              rows={2}
-                              className={`w-full min-w-[180px] px-3 py-2 rounded-lg text-sm font-bold border resize-none ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 placeholder-slate-500 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400 focus:border-[#C2D642]'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                            />
-                          </td>
-                          <td className="px-6 py-4">
-                            <button onClick={() => handleRemoveSafetyEntry(entry.id)} className={`p-2 rounded-lg ${isDark ? 'hover:bg-red-500/20 text-red-400' : 'hover:bg-red-100 text-red-600'}`} title="Remove">
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </td>
-                        </tr>
+                            </td>
+                          </tr>
+                        </React.Fragment>
                       ))}
                     </tbody>
                   </table>
@@ -4080,7 +4220,6 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                       <tr className={`border-b ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>SR No</th>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Hindrance Problem Details</th>
-                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Image</th>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Tag Team Members</th>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Remarks</th>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}></th>
@@ -4088,58 +4227,64 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                     </thead>
                     <tbody className={`divide-y ${isDark ? 'divide-slate-700' : 'divide-slate-200'}`}>
                       {paginatedHindranceEntries.map((entry, index) => (
-                        <tr key={entry.id} className={isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'}>
-                          <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{(hindrancePage - 1) * PAGE_SIZE + index + 1}</td>
-                          <td className="px-6 py-4">
-                            <input
-                              type="text"
-                              value={entry.details || ''}
-                              onChange={(e) => handleHindranceEntryDetailsChange(entry.id, e.target.value)}
-                              placeholder="Enter details (optional)"
-                              className={`w-full min-w-[180px] px-3 py-2 rounded-lg text-sm font-bold border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 placeholder-slate-500 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400 focus:border-[#C2D642]'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                            />
-                          </td>
-                          <td className="px-6 py-4">
-                            {entry.image ? (
-                              <div className="relative inline-block">
-                                <img src={entry.image} alt="Hindrance" className="w-16 h-16 object-cover rounded-lg border border-inherit" />
-                                <button onClick={() => handleHindranceEntryRemoveImage(entry.id)} className="absolute -top-2 -right-2 p-1 rounded-full bg-red-500 text-white hover:bg-red-600">
-                                  <X className="w-3 h-3" />
-                                </button>
+                        <React.Fragment key={entry.id}>
+                          <tr className={isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'}>
+                            <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{(hindrancePage - 1) * PAGE_SIZE + index + 1}</td>
+                            <td className="px-6 py-4">
+                              <input
+                                type="text"
+                                value={entry.details || ''}
+                                onChange={(e) => handleHindranceEntryDetailsChange(entry.id, e.target.value)}
+                                placeholder="Enter details (optional)"
+                                className={`w-full min-w-[180px] px-3 py-2 rounded-lg text-sm font-bold border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 placeholder-slate-500 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400 focus:border-[#C2D642]'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                              />
+                            </td>
+                            <td className="px-6 py-4">
+                              <TeamMembersDropdown
+                                teamMembers={teamMembers}
+                                value={entry.teamMembers || []}
+                                onChange={(memberIds) => handleHindranceEntryTeamMembersChange(entry.id, memberIds)}
+                                isDark={isDark}
+                                placeholder="Select team members"
+                              />
+                            </td>
+                            <td className="px-6 py-4">
+                              <textarea
+                                value={entry.remarks || ''}
+                                onChange={(e) => handleHindranceEntryRemarksChange(entry.id, e.target.value)}
+                                placeholder="Remarks (optional)"
+                                rows={2}
+                                className={`w-full min-w-[180px] px-3 py-2 rounded-lg text-sm font-bold border resize-none ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 placeholder-slate-500 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400 focus:border-[#C2D642]'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                              />
+                            </td>
+                            <td className="px-6 py-4">
+                              <button onClick={() => handleRemoveHindranceEntry(entry.id)} className={`p-2 rounded-lg ${isDark ? 'hover:bg-red-500/20 text-red-400' : 'hover:bg-red-100 text-red-600'}`} title="Remove">
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </td>
+                          </tr>
+                          <tr className={isDark ? 'bg-slate-800/20' : 'bg-slate-50/50'}>
+                            <td colSpan={5} className="px-6 py-3 border-t-0">
+                              <div className="flex flex-wrap gap-2 items-center">
+                                <span className={`text-xs font-bold ${textSecondary} mr-2`}>Images:</span>
+                                {(entry.images || (entry.image ? [entry.image] : [])).map((img, idx) => (
+                                  <div key={idx} className="relative flex-shrink-0">
+                                    <img src={img} alt={`Hindrance ${idx + 1}`} className="w-14 h-14 object-cover rounded-lg border border-inherit" />
+                                    <button onClick={() => handleHindranceEntryRemoveImage(entry.id, idx)} className="absolute -top-1.5 -right-1.5 p-0.5 rounded-full bg-red-500 text-white hover:bg-red-600">
+                                      <X className="w-2.5 h-2.5" />
+                                    </button>
+                                  </div>
+                                ))}
+                                <label className="cursor-pointer flex-shrink-0">
+                                  <input type="file" accept="image/*" multiple onChange={(e) => handleHindranceEntryImageUpload(entry.id, e)} className="hidden" />
+                                  <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed w-fit ${isDark ? 'border-slate-600 hover:border-[#C2D642] text-slate-400' : 'border-slate-300 hover:border-[#C2D642] text-slate-600'}`}>
+                                    <Upload className="w-4 h-4" /><span className="text-xs font-bold">Add</span>
+                                  </div>
+                                </label>
                               </div>
-                            ) : (
-                              <label className="cursor-pointer">
-                                <input type="file" accept="image/*" onChange={(e) => handleHindranceEntryImageUpload(entry.id, e)} className="hidden" />
-                                <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed w-fit ${isDark ? 'border-slate-600 hover:border-[#C2D642] text-slate-400' : 'border-slate-300 hover:border-[#C2D642] text-slate-600'}`}>
-                                  <Upload className="w-4 h-4" /><span className="text-xs font-bold">Upload</span>
-                                </div>
-                              </label>
-                            )}
-                          </td>
-                          <td className="px-6 py-4">
-                            <TeamMembersDropdown
-                              teamMembers={teamMembers}
-                              value={entry.teamMembers || []}
-                              onChange={(memberIds) => handleHindranceEntryTeamMembersChange(entry.id, memberIds)}
-                              isDark={isDark}
-                              placeholder="Select team members"
-                            />
-                          </td>
-                          <td className="px-6 py-4">
-                            <textarea
-                              value={entry.remarks || ''}
-                              onChange={(e) => handleHindranceEntryRemarksChange(entry.id, e.target.value)}
-                              placeholder="Remarks (optional)"
-                              rows={2}
-                              className={`w-full min-w-[180px] px-3 py-2 rounded-lg text-sm font-bold border resize-none ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 placeholder-slate-500 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400 focus:border-[#C2D642]'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                            />
-                          </td>
-                          <td className="px-6 py-4">
-                            <button onClick={() => handleRemoveHindranceEntry(entry.id)} className={`p-2 rounded-lg ${isDark ? 'hover:bg-red-500/20 text-red-400' : 'hover:bg-red-100 text-red-600'}`} title="Remove">
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </td>
-                        </tr>
+                            </td>
+                          </tr>
+                        </React.Fragment>
                       ))}
                     </tbody>
                   </table>
