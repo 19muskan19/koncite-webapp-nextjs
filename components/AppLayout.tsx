@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { 
   Bell,
@@ -70,18 +71,26 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-w-0 lg:ml-0">
         <header className={`h-14 flex items-center justify-between px-4 sm:px-6 z-30 transition-all duration-500 ${getThemeClass('header')}`}>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
+            {/* Logo - always visible, leftmost, above page title row */}
+            <Link href="/dashboard" className="flex-shrink-0 flex items-center gap-2">
+              <img 
+                src="/logo.png" 
+                alt="Logo" 
+                className="w-8 h-8 sm:w-9 sm:h-9 object-contain"
+              />
+            </Link>
             {/* Mobile Hamburger Menu Button */}
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="lg:hidden p-2 hover:bg-white/10 rounded-lg transition-colors border border-white/5"
+              className="lg:hidden p-2 hover:bg-white/10 rounded-lg transition-colors border border-white/5 flex-shrink-0"
               aria-label="Toggle sidebar"
             >
               <Menu className="w-5 h-5" />
             </button>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-4">
+          <div className="flex items-center gap-2 sm:gap-4 flex-shrink-0">
 
             <button onClick={toggleTheme} className="p-2 hover:bg-white/10 rounded-lg transition-colors flex items-center gap-2 border border-white/5">
               {theme === 'dark' ? <Sun className="w-5 h-5 text-[#C2D642]" /> : <Moon className="w-5 h-5 text-[#C2D642]" />}
