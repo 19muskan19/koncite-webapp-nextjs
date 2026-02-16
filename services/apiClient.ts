@@ -98,18 +98,8 @@ apiClient.interceptors.response.use(
             // Let the component handle the error instead
             const isDocumentEndpoint = url.includes('/documents');
             
-            console.error('❌ 401 Unauthorized Error:', {
-              url,
-              message,
-              tokenExists: !!token,
-              tokenLength: token?.length || 0,
-              isDocumentEndpoint,
-              responseData,
-              headers: error.config?.headers,
-            });
-            
             if (isDocumentEndpoint) {
-              console.warn('⚠️ 401 Unauthorized on document endpoint - not logging out, letting component handle');
+              console.warn('⚠️ 401 on document API:', message || 'Check: (1) Auth token valid? (2) Laravel routes use auth:sanctum for API? (3) API URL correct?');
               // Don't logout - let the component handle the error
             } else if (token) {
               // Only logout if token exists (meaning user was authenticated but token expired/invalid)

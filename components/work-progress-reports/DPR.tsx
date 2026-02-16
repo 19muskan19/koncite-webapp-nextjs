@@ -1477,18 +1477,19 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
   const DPR_STORAGE_KEY = 'dpr_list';
 
-  const fetchDprList = useCallback(() => {
+  const fetchDprList = useCallback(async () => {
     if (typeof window === 'undefined') return;
+    setIsLoadingDprList(true);
     try {
-      const raw = localStorage.getItem(DPR_STORAGE_KEY);
-      const list = raw ? JSON.parse(raw) : [];
+      const list = await dprAPI.getList();
       setDprList(Array.isArray(list) ? list : []);
-    } catch {
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to load DPR list');
       setDprList([]);
     } finally {
       setIsLoadingDprList(false);
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     if (!isAuthenticated) return;

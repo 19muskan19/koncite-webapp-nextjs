@@ -185,7 +185,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
           isContractor: p.own_project_or_contractor === 'yes' || p.is_contractor || p.isContractor,
           projectManager: p.project_manager || p.projectManager,
           createdAt: p.created_at || p.createdAt,
-          azure_folder_path: p.azure_folder_path || p.azureFolderPath, // Store Azure folder path
+          azure_folder_path: p.azure_folder_path || p.azureFolderPath || (p as any).azure_folder_path,
         };
       });
       
@@ -219,20 +219,18 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
       // This ensures projects have corresponding folders in Azure Blob Storage
       const projectsWithBlobStorage = await Promise.all(
         transformedProjects.map(async (project) => {
-          // If project doesn't have azure_folder_path, try to get it from backend
-          if (!project.azure_folder_path && project.numericId) {
-            console.warn(`⚠️ Project "${project.name}" missing azure_folder_path - attempting to fetch from backend...`);
+          // If project doesn't have azure_folder_path, try to get it from backend (project-edit uses uuid)
+          if (!project.azure_folder_path && (project.id || project.numericId)) {
+            console.warn(`⚠️ Project "${project.name}" missing azure_folder_path - fetching from backend...`);
             try {
-              // Try to get project details from backend to get azure_folder_path
-              const projectDetails = await masterDataAPI.getProject(String(project.numericId));
-              if (projectDetails?.data?.azure_folder_path) {
-                project.azure_folder_path = projectDetails.data.azure_folder_path;
-                console.log(`✅ Retrieved azure_folder_path for project "${project.name}":`, project.azure_folder_path);
-              } else if (projectDetails?.azure_folder_path) {
-                project.azure_folder_path = projectDetails.azure_folder_path;
-                console.log(`✅ Retrieved azure_folder_path for project "${project.name}":`, project.azure_folder_path);
+              const projectIdOrUuid = project.id || String(project.numericId);
+              const projectDetails = await masterDataAPI.getProject(projectIdOrUuid);
+              const path = projectDetails?.azure_folder_path ?? projectDetails?.data?.azure_folder_path ?? (projectDetails as any)?.azure_folder_path;
+              if (path) {
+                project.azure_folder_path = path;
+                console.log(`✅ Retrieved azure_folder_path for project "${project.name}":`, path);
               } else {
-                console.warn(`⚠️ Project "${project.name}" still missing azure_folder_path after fetch - backend may need to create folder`);
+                console.warn(`⚠️ Project "${project.name}" - backend did not return azure_folder_path. Ensure GET /project-edit includes it.`);
                 return { ...project, blobStorageConnected: false, blobError: 'Azure folder path not configured' };
               }
             } catch (err: any) {
@@ -398,36 +396,27 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
               folderPath = project.azure_folder_path;
               console.log('📁 Using project azure_folder_path for blob listing:', folderPath);
             } else if (!project.azure_folder_path && currentPath.length === 2) {
-              // Project doesn't have azure_folder_path - try to fetch it
-              console.warn(`⚠️ Project "${project.name}" missing azure_folder_path - attempting to fetch from backend...`);
+              // Project doesn't have azure_folder_path - try to fetch from backend (use project.id for project-edit/{uuid})
+              console.warn(`⚠️ Project "${project.name}" missing azure_folder_path - fetching from backend...`);
               try {
-                const projectDetails = await masterDataAPI.getProject(String(project.numericId));
-                if (projectDetails?.data?.azure_folder_path) {
-                  folderPath = projectDetails.data.azure_folder_path;
-                  // Update project in state
+                const projectIdOrUuid = project.id || String(project.numericId);
+                const projectDetails = await masterDataAPI.getProject(projectIdOrUuid);
+                const path = projectDetails?.azure_folder_path ?? projectDetails?.data?.azure_folder_path ?? (projectDetails as any)?.azure_folder_path;
+                if (path) {
+                  folderPath = path;
                   setProjects(prev => prev.map(p => 
-                    p.id === project.id 
-                      ? { ...p, azure_folder_path: folderPath }
-                      : p
+                    p.id === project.id ? { ...p, azure_folder_path: path } : p
                   ));
-                  console.log(`✅ Retrieved azure_folder_path for project "${project.name}":`, folderPath);
-                } else if (projectDetails?.azure_folder_path) {
-                  folderPath = projectDetails.azure_folder_path;
-                  setProjects(prev => prev.map(p => 
-                    p.id === project.id 
-                      ? { ...p, azure_folder_path: folderPath }
-                      : p
-                  ));
-                  console.log(`✅ Retrieved azure_folder_path for project "${project.name}":`, folderPath);
+                  console.log(`✅ Retrieved azure_folder_path for project "${project.name}":`, path);
                 } else {
-                  console.error(`❌ Project "${project.name}" still missing azure_folder_path after fetch`);
-                  toast.showError(`Project "${project.name}" does not have an Azure folder path configured. Please contact administrator.`);
+                  console.error(`❌ Project "${project.name}" - backend did not return azure_folder_path`);
+                  toast.showError(`Project "${project.name}" does not have an Azure folder path configured. Ensure GET /project-edit includes azure_folder_path.`);
                   setDocuments([]);
                   return;
                 }
               } catch (fetchErr: any) {
                 console.error(`❌ Failed to fetch project details for "${project.name}":`, fetchErr.message);
-                toast.showError(`Failed to load project folder. Project may not have Azure storage configured.`);
+                toast.showError(`Failed to load project folder. Check auth (401) or backend.`);
                 setDocuments([]);
                 return;
               }
@@ -437,9 +426,14 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
         // Check if we're navigating into a folder
         if (currentPath.length > 2) {
           const folderSegment = currentPath[currentPath.length - 1];
-          // Check if it's a UUID format or a path
+          const projectIdStr = projectSegment.replace('project_', '');
+          const projectForPath = projects.find(p => p.id === projectIdStr || String(p.id) === projectIdStr) ?? null;
+          // Check if it's a UUID format (DB) or full Azure path
           if (folderSegment.includes('/')) {
             folderPath = folderSegment;
+          } else if (projectForPath?.azure_folder_path) {
+            const segments = currentPath.slice(2);
+            folderPath = [projectForPath.azure_folder_path, ...segments].join('/');
           } else {
             folderUuid = folderSegment;
           }
@@ -509,6 +503,11 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
       
       if (folderPath) {
         params.folder_path = folderPath;
+      }
+
+      // Recursive search: backend searches current folder + all nested subfolders
+      if (searchQuery && searchQuery.trim().length >= 2) {
+        params.search = searchQuery.trim();
       }
 
       console.log('📄 Loading documents with params:', params);
@@ -616,7 +615,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
       setDocuments([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPath, isLoading, selectedProjectFilter]);
+  }, [currentPath, isLoading, selectedProjectFilter, searchQuery]);
 
   // Update currentPath when sidebar folder changes
   useEffect(() => {
@@ -918,25 +917,22 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
     if (firstSegment === 'projects' && currentPath.length > 1) {
       category = 'project';
       const projectSegment = currentPath[1];
-      if (projectSegment.startsWith('project_')) {
-        const projectIdStr = projectSegment.replace('project_', '');
-        const project = projects.find(p => p.id === projectIdStr || String(p.id) === projectIdStr);
-        if (project) {
-          projectId = project.numericId || (typeof project.id === 'number' ? project.id : parseInt(projectIdStr));
-          
-          // If project has azure_folder_path and we're creating folder at project root,
-          // use the azure_folder_path as base path
-          if (project.azure_folder_path && currentPath.length === 2) {
-            folderPathParam = project.azure_folder_path;
-            console.log('📁 Using project azure_folder_path for folder creation:', folderPathParam);
-          }
+      const projectForFolder = projectSegment.startsWith('project_')
+        ? projects.find(p => p.id === projectSegment.replace('project_', '') || String(p.id) === projectSegment.replace('project_', ''))
+        : null;
+      if (projectSegment.startsWith('project_') && projectForFolder) {
+        projectId = projectForFolder.numericId || (typeof projectForFolder.id === 'number' ? projectForFolder.id : parseInt(projectSegment.replace('project_', ''), 10));
+        if (projectForFolder.azure_folder_path && currentPath.length === 2) {
+          folderPathParam = projectForFolder.azure_folder_path;
+          console.log('📁 Using project azure_folder_path for folder creation:', folderPathParam);
         }
       }
-      // Check if we're in a subproject or nested folder
       if (currentPath.length > 2) {
         const folderSegment = currentPath[currentPath.length - 1];
         if (folderSegment.includes('/')) {
           folderPathParam = folderSegment;
+        } else if (projectForFolder?.azure_folder_path) {
+          folderPathParam = [projectForFolder.azure_folder_path, ...currentPath.slice(2)].join('/');
         } else {
           parentFolderUuid = folderSegment;
         }
@@ -1230,27 +1226,22 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
     if (firstSegment === 'projects' && currentPath.length > 1) {
       category = 'project';
       const projectSegment = currentPath[1];
-      if (projectSegment.startsWith('project_')) {
-        const projectIdStr = projectSegment.replace('project_', '');
-        const project = projects.find(p => p.id === projectIdStr || String(p.id) === projectIdStr);
-        if (project) {
-          projectId = project.numericId || (typeof project.id === 'number' ? project.id : parseInt(projectIdStr));
-          
-          // If project has azure_folder_path and we're uploading to project root,
-          // use the azure_folder_path for folder_path parameter
-          // Backend will append filename to this path
-          if (project.azure_folder_path && currentPath.length === 2) {
-            folderPathParam = project.azure_folder_path;
-            console.log('📤 Using project azure_folder_path for upload:', folderPathParam);
-          }
+      const projectForUpload = projectSegment.startsWith('project_')
+        ? projects.find(p => p.id === projectSegment.replace('project_', '') || String(p.id) === projectSegment.replace('project_', ''))
+        : null;
+      if (projectForUpload) {
+        projectId = projectForUpload.numericId || (typeof projectForUpload.id === 'number' ? projectForUpload.id : parseInt(projectSegment.replace('project_', ''), 10));
+        if (projectForUpload.azure_folder_path && currentPath.length === 2) {
+          folderPathParam = projectForUpload.azure_folder_path;
+          console.log('📤 Using project azure_folder_path for upload:', folderPathParam);
         }
       }
-      // Check if we're in a subproject folder
       if (currentPath.length > 2) {
         const folderSegment = currentPath[currentPath.length - 1];
-        // Check if it's a folder path or UUID
         if (folderSegment.includes('/')) {
           folderPathParam = folderSegment;
+        } else if (projectForUpload?.azure_folder_path) {
+          folderPathParam = [projectForUpload.azure_folder_path, ...currentPath.slice(2)].join('/');
         } else {
           parentFolderUuid = folderSegment;
         }
@@ -1490,56 +1481,72 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
     setSelectedFiles(new Set());
   };
 
-  const handleDeleteFiles = () => {
+  const handleDeleteFiles = async () => {
     if (selectedFiles.size === 0) {
       toast.showWarning('Please select files to delete');
       return;
     }
     
-    const fileCount = selectedFiles.size;
-    if (window.confirm(`Are you sure you want to move ${fileCount} file(s) to trash?`)) {
-      const filesToMove = documents.filter(doc => selectedFiles.has(doc.id));
+    const filesToMove = documents.filter(doc => selectedFiles.has(doc.id));
+    const fileCount = filesToMove.length;
+    
+    // Check if any files have API path (blob_path from Azure/document API)
+    const apiFiles = filesToMove.filter(f => f.path && (f.path.includes('/') || f.path.length > 50));
+    
+    if (apiFiles.length > 0) {
+      // API-backed documents: call delete API
+      const confirmMsg = apiFiles.length === fileCount
+        ? `Are you sure you want to permanently delete ${fileCount} file(s)?`
+        : `Delete ${apiFiles.length} file(s) from storage and move ${fileCount - apiFiles.length} to trash?`;
       
-      // Load existing trash documents
+      if (!window.confirm(confirmMsg)) return;
+      
+      try {
+        let successCount = 0;
+        for (const file of apiFiles) {
+          try {
+            const response = await documentAPI.deleteFile(file.path!);
+            if (response?.status) successCount++;
+          } catch (err) {
+            console.error(`Delete failed for ${file.name}:`, err);
+            toast.showError(`Failed to delete ${file.name}`);
+          }
+        }
+        if (successCount > 0) {
+          setDocuments(prev => prev.filter(doc => !selectedFiles.has(doc.id)));
+          setSelectedFiles(new Set());
+          await loadDocuments();
+          toast.showSuccess(`${successCount} file(s) deleted successfully`);
+        }
+      } catch (err: any) {
+        toast.showError(err?.message || 'Failed to delete files');
+      }
+      return;
+    }
+    
+    // Local/legacy: move to trash
+    if (window.confirm(`Are you sure you want to move ${fileCount} file(s) to trash?`)) {
       const savedTrash = localStorage.getItem('documents_trash');
       let trashDocuments: FileItem[] = [];
       if (savedTrash) {
-        try {
-          trashDocuments = JSON.parse(savedTrash);
-        } catch (e) {
-          console.error('Error loading trash:', e);
-        }
+        try { trashDocuments = JSON.parse(savedTrash); } catch (e) { console.error('Error loading trash:', e); }
       }
-      
       const currentFolderPath = getCurrentFolderPath();
-      
-      // Add deleted files to trash with updated path and original location
       const filesForTrash = filesToMove.map(file => ({
         ...file,
         path: 'trash',
-        originalPath: file.path || currentFolderPath, // Store original path
+        originalPath: file.path || currentFolderPath,
         lastModified: 'Just now',
         deletedAt: new Date().toISOString()
       }));
-      
-      // Save to trash (only serializable data)
       const trashToStore = [...trashDocuments, ...filesForTrash].map(doc => ({
-        id: doc.id,
-        name: doc.name,
-        size: doc.size,
-        lastModified: doc.lastModified,
-        owner: doc.owner,
-        type: doc.type,
-        path: doc.path,
-        originalPath: (doc as any).originalPath,
-        deletedAt: (doc as any).deletedAt,
-        fileData: (doc as any).fileData,
-        mimeType: (doc as any).mimeType
+        id: doc.id, name: doc.name, size: doc.size, lastModified: doc.lastModified,
+        owner: doc.owner, type: doc.type, path: doc.path,
+        originalPath: (doc as any).originalPath, deletedAt: (doc as any).deletedAt,
+        fileData: (doc as any).fileData, mimeType: (doc as any).mimeType
       }));
-      
       const saved = safeSetItem('documents_trash', JSON.stringify(trashToStore));
       if (saved) {
-        // Remove from current folder
         setDocuments(prev => prev.filter(doc => !selectedFiles.has(doc.id)));
         setSelectedFiles(new Set());
         toast.showSuccess(`${fileCount} file(s) moved to trash`);
@@ -1699,20 +1706,22 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
       return;
     }
     
-    const filesToDownload = documents.filter(doc => selectedFiles.has(doc.id));
+    const filesToDownload = documents.filter(doc => selectedFiles.has(doc.id)).filter(doc => doc.type === 'file');
     
     for (const file of filesToDownload) {
       try {
         let blob: Blob;
         
         if (file.file) {
-          // Use the File object directly if available
           blob = file.file;
+        } else if (file.fileData && typeof file.fileData === 'string' && file.fileData.startsWith('http')) {
+          // Azure signed URL - fetch and create blob for download
+          const response = await fetch(file.fileData);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          blob = await response.blob();
         } else if (file.fileData && file.mimeType) {
-          // Convert base64 to Blob
           blob = base64ToBlob(file.fileData, file.mimeType);
         } else {
-          // Fallback: create empty blob
           toast.showWarning(`File "${file.name}" data not found`);
           continue;
         }
@@ -1731,7 +1740,9 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
       }
     }
     
-    toast.showSuccess(`${filesToDownload.length} file(s) download started`);
+    if (filesToDownload.length > 0) {
+      toast.showSuccess(`${filesToDownload.length} file(s) download started`);
+    }
   };
 
   const handleShareFiles = () => {
@@ -1742,37 +1753,96 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
     setShowShareModal(true);
   };
 
-  const handleShareSubmit = () => {
+  const handleShareSubmit = async () => {
     const filesToShare = documents.filter(doc => selectedFiles.has(doc.id));
-    const fileNames = filesToShare.map(f => f.name).join(', ');
-    
-    if (shareMode === 'team') {
-      // Handle team sharing
-      const members = Array.from(selectedTeamMembers);
-      console.log('Sharing with team members:', members);
-      toast.showSuccess(`Shared ${selectedFiles.size} file(s) with ${members.length} team member(s)`);
-    } else {
-      // Handle link sharing
-      const shareLink = `${window.location.origin}/share/${Date.now()}`;
-      navigator.clipboard.writeText(shareLink).then(() => {
-        toast.showSuccess('Share link copied to clipboard!');
-      });
+    const firstSegment = currentPath[0];
+    let section = 'office';
+    let projectId: string | undefined;
+    if (firstSegment === 'projects' && currentPath.length > 1) {
+      section = 'project';
+      const seg = currentPath[1];
+      if (seg?.startsWith('project_')) projectId = seg.replace('project_', '');
+    } else if (firstSegment === 'shared') section = 'shared';
+
+    const items = filesToShare.map(doc => ({
+      type: doc.type as 'folder' | 'document',
+      uuid: doc.id,
+      name: doc.name,
+      section,
+      path: doc.path,
+      projectId,
+    }));
+
+    try {
+      if (shareMode === 'team') {
+        const memberIds = Array.from(selectedTeamMembers).map(id => parseInt(id, 10));
+        if (memberIds.length === 0) {
+          toast.showWarning('Please select at least one team member');
+          return;
+        }
+        const response = await documentAPI.shareItems({
+          items,
+          shared_with: memberIds,
+        });
+        if (response?.status) {
+          toast.showSuccess(response.message || `Shared with ${memberIds.length} team member(s)`);
+          setShowShareModal(false);
+          setSelectedTeamMembers(new Set());
+          setTeamMemberSearch('');
+          setIsSearchFocused(false);
+        } else {
+          toast.showError(response?.message || 'Failed to share');
+        }
+      } else {
+        const response = await documentAPI.shareItems({
+          items,
+          is_public: true,
+        });
+        if (response?.status && response?.data?.length > 0) {
+          const token = response.data[0]?.public_token;
+          const shareLink = token ? `${typeof window !== 'undefined' ? window.location.origin : ''}/shared/${token}` : '';
+          if (shareLink) {
+            await navigator.clipboard.writeText(shareLink);
+            toast.showSuccess('Public link copied to clipboard!');
+          } else {
+            toast.showSuccess(response.message || 'Public link created');
+          }
+          setShowShareModal(false);
+          setSelectedTeamMembers(new Set());
+          setTeamMemberSearch('');
+          setIsSearchFocused(false);
+        } else {
+          toast.showError(response?.message || 'Failed to create share link');
+        }
+      }
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to share');
     }
-    
-    setShowShareModal(false);
-    setSelectedTeamMembers(new Set());
-    setTeamMemberSearch('');
-    setIsSearchFocused(false);
   };
 
-  // Mock team members data
-  const teamMembers = [
-    { id: '1', name: 'John Doe', email: 'john@example.com', avatar: 'https://ui-avatars.com/api/?name=John+Doe&background=6366f1&color=fff' },
-    { id: '2', name: 'Jane Smith', email: 'jane@example.com', avatar: 'https://ui-avatars.com/api/?name=Jane+Smith&background=10b981&color=fff' },
-    { id: '3', name: 'Mike Johnson', email: 'mike@example.com', avatar: 'https://ui-avatars.com/api/?name=Mike+Johnson&background=f59e0b&color=fff' },
-    { id: '4', name: 'Sarah Williams', email: 'sarah@example.com', avatar: 'https://ui-avatars.com/api/?name=Sarah+Williams&background=ef4444&color=fff' },
-    { id: '5', name: 'David Brown', email: 'david@example.com', avatar: 'https://ui-avatars.com/api/?name=David+Brown&background=8b5cf6&color=fff' },
-  ];
+  const [teamMembers, setTeamMembers] = useState<Array<{ id: string; name: string; email: string; avatar?: string }>>([]);
+  const [teamMembersLoading, setTeamMembersLoading] = useState(false);
+
+  useEffect(() => {
+    if (showShareModal) {
+      setTeamMembersLoading(true);
+      documentAPI.getTeamMembers()
+        .then((res: any) => {
+          if (res?.status && Array.isArray(res?.data)) {
+            setTeamMembers(res.data.map((u: any) => ({
+              id: String(u.id),
+              name: u.name || '',
+              email: u.email || '',
+              avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name || '')}&background=6366f1&color=fff`,
+            })));
+          } else {
+            setTeamMembers([]);
+          }
+        })
+        .catch(() => setTeamMembers([]))
+        .finally(() => setTeamMembersLoading(false));
+    }
+  }, [showShareModal]);
 
   const filteredTeamMembers = teamMembers.filter(member =>
     member.name.toLowerCase().includes(teamMemberSearch.toLowerCase()) ||
@@ -2701,7 +2771,9 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                   {/* Team Members List - Only show when search is clicked/focused */}
                   {isSearchFocused && (
                     <div className="max-h-60 overflow-y-auto custom-scrollbar space-y-2 team-members-list">
-                      {filteredTeamMembers.length > 0 ? (
+                      {teamMembersLoading ? (
+                        <p className={`text-sm ${textSecondary} text-center py-4`}>Loading team members...</p>
+                      ) : filteredTeamMembers.length > 0 ? (
                         filteredTeamMembers.map((member) => {
                           const isSelected = selectedTeamMembers.has(member.id);
                           return (
@@ -2722,7 +2794,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                               }`}
                             >
                               <img
-                                src={member.avatar}
+                                src={member.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(member.name || '')}&background=6366f1&color=fff`}
                                 alt={member.name}
                                 className="w-10 h-10 rounded-full"
                               />

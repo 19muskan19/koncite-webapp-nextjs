@@ -2321,17 +2321,91 @@ export const dprAPI = {
   },
 };
 
-// Document Management API - Matching Laravel routes
+// Azure Storage API - Matching Laravel AzureStorageController
+export const azureStorageAPI = {
+  /**
+   * Upload files to Azure Blob Storage
+   * POST /api/azure-storage/upload
+   */
+  upload: async (formData: FormData): Promise<any> => {
+    try {
+      const response = await apiClient.post('/azure-storage/upload', formData);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to upload to Azure',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Get signed URL for private blob access
+   * POST /api/azure-storage/get-signed-url
+   */
+  getSignedUrl: async (blob_path: string, expiry_minutes?: number): Promise<any> => {
+    try {
+      const response = await apiClient.post('/azure-storage/get-signed-url', {
+        blob_path,
+        expiry_minutes: expiry_minutes ?? 60,
+      });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to get signed URL',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Create folder in Azure
+   * POST /api/azure-storage/create-folder
+   */
+  createFolder: async (folder_path: string): Promise<any> => {
+    try {
+      const response = await apiClient.post('/azure-storage/create-folder', {
+        folder_path,
+      });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to create folder',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Get Azure configuration status
+   * GET /api/azure-storage/status
+   */
+  status: async (): Promise<any> => {
+    try {
+      const response = await apiClient.get('/azure-storage/status');
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to get Azure status',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
+// Document Management API - Matching Laravel DocumentManagementController
 export const documentAPI = {
   /**
    * Get documents
    * GET /api/documents
+   * Supports search for recursive search in current folder + nested subfolders
    */
   getDocuments: async (params: {
     category: 'office' | 'project' | 'shared';
     project_id?: number;
     folder_uuid?: string;
     folder_path?: string;
+    search?: string;
   }): Promise<any> => {
     try {
       // Verify token before making request
@@ -2724,6 +2798,127 @@ export const teamsAPI = {
   },
 };
 
+// Material Request APIs - Inventory > Purchase Request
+// Backend routes: materials-request-list, materials-request-add, materials-request-edit,
+// materials-request-details-list, materials-request-details-add, materials-request-details-edit
+export const materialRequestAPI = {
+  /** POST /api/inventory/materials-request-add - Create (no id) or update (with id) Material Request header */
+  add: async (data: { projects_id: number | string; sub_projects_id?: number | string; id?: number | string; request_id?: string }): Promise<any> => {
+    try {
+      const response = await apiClient.post('/inventory/materials-request-add', data);
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to create material request',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /** GET/POST /api/inventory/materials-request-list - List all Material Requests, optionally filtered by projectId */
+  list: async (filters?: { projectId?: number | string; subprojectId?: number | string }): Promise<any[]> => {
+    try {
+      let response;
+      if (filters?.subprojectId) {
+        response = await apiClient.post('/inventory/materials-request-list', {
+          projectId: filters.projectId,
+          subprojectId: filters.subprojectId,
+        });
+      } else if (filters?.projectId) {
+        response = await apiClient.get('/inventory/materials-request-list', { params: { projectId: filters.projectId } });
+      } else {
+        response = await apiClient.get('/inventory/materials-request-list');
+      }
+      const data = response.data?.data ?? response.data;
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch material requests',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /** POST /api/inventory/materials-request-edit - Get Material Request details for edit */
+  edit: async (id: number | string): Promise<any> => {
+    try {
+      const response = await apiClient.post('/inventory/materials-request-edit', { id });
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch material request',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /** POST /api/inventory/materials-request-details-add - Add/update Material Request line items in bulk */
+  detailsAdd: async (items: Array<{
+    inventoryId: number | string;
+    material_id: number | string;
+    projects_id: number | string;
+    qty: number;
+    sub_projects_id?: number | string;
+    activities_id?: number | string;
+    date?: string;
+    remarks?: string;
+  }>): Promise<any> => {
+    try {
+      const response = await apiClient.post('/inventory/materials-request-details-add', items);
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to add material request details',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /** POST /api/inventory/materials-request-details-list - List details by projectId (optional searchkey). Filter by material_requests_id on frontend. */
+  detailsList: async (projectId: number | string, searchkey?: string): Promise<any[]> => {
+    try {
+      const body: Record<string, any> = { projectId };
+      if (searchkey) body.searchkey = searchkey;
+      const response = await apiClient.post('/inventory/materials-request-details-list', body);
+      const data = response.data?.data ?? response.data;
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch material request details',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /** POST /api/inventory/materials-request-details-edit - Get materials with existing details for edit. Backend expects inventoryId, materials[]. */
+  detailsEdit: async (inventoryId: number | string, materials: (number | string)[]): Promise<any> => {
+    try {
+      const response = await apiClient.post('/inventory/materials-request-details-edit', {
+        inventoryId,
+        materials,
+      });
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch material request details for edit',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /** POST /api/inventory/generate-pdf - Generate PDF for Material Request. Returns { pdf_url } - open in new tab. */
+  generatePdf: async (requestId: number | string): Promise<{ pdf_url: string }> => {
+    try {
+      const response = await apiClient.post('/inventory/generate-pdf', { type: 'material_request', requestId });
+      const data = response.data?.data ?? response.data;
+      const pdfUrl = response.data?.pdf_url ?? data?.pdf_url;
+      if (!pdfUrl) {
+        throw new Error('No PDF URL in response');
+      }
+      return { pdf_url: pdfUrl };
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.response?.data?.error || 'Failed to generate PDF',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
 // Export default for convenience
 export default {
   auth: authAPI,
@@ -2732,4 +2927,5 @@ export default {
   document: documentAPI,
   common: commonAPI,
   teams: teamsAPI,
+  materialRequest: materialRequestAPI,
 };
