@@ -51,13 +51,18 @@ const ToastItem: React.FC<ToastProps> = ({ toast, onClose, isDark }) => {
 
   const Icon = icons[toast.type];
   const colorClass = colors[toast.type];
+  const displayMessage = typeof toast.message === 'string'
+    ? toast.message
+    : (toast.message && typeof toast.message === 'object' && 'message' in toast.message)
+      ? String((toast.message as { message?: unknown }).message ?? 'An error occurred')
+      : String(toast.message ?? 'An error occurred');
 
   return (
     <div
       className={`flex items-center gap-3 px-4 py-3 rounded-lg border shadow-xl min-w-[300px] max-w-[500px] animate-slide-in ${colorClass}`}
     >
       <Icon className="w-5 h-5 flex-shrink-0" />
-      <p className="flex-1 text-sm font-bold">{toast.message}</p>
+      <p className="flex-1 text-sm font-bold">{displayMessage}</p>
       <button
         onClick={() => onClose(toast.id)}
         className={`flex-shrink-0 p-1 rounded hover:opacity-70 transition-opacity ${isDark ? 'hover:bg-white/10' : 'hover:bg-black/5'}`}

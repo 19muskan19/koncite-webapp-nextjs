@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
 import { Wrench, MoreVertical, Download, Plus, Search, FileSpreadsheet, Upload, ArrowUpDown, Loader2, Edit, Trash2, RefreshCw, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import DatePickerInput from '../ui/DatePickerInput';
 import CreateAssetEquipmentModal from './Modals/CreateAssetEquipmentModal';
 import AssetBulkUploadModal from './Modals/AssetBulkUploadModal';
 import { masterDataAPI } from '../../services/api';
@@ -978,15 +979,15 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                     <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
                       Opening Date
                     </label>
-                    <input
-                      type="date"
+                    <DatePickerInput
                       value={openingStockForm.openingDate}
                       onChange={(e) => setOpeningStockForm({ ...openingStockForm, openingDate: e.target.value })}
-                      className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                      iconClassName={textSecondary}
+                      className={`${
                         isDark 
                           ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
                           : 'bg-white border-slate-200 text-slate-900'
-                      } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                      } border focus:ring-2 focus:ring-[#C2D642]/20`}
                     />
                   </div>
 

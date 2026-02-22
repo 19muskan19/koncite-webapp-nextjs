@@ -5,7 +5,6 @@ import { ThemeType } from '../../types';
 import { 
   Package,
   Search,
-  Calendar,
   Copy,
   FileText,
   Download,
@@ -20,6 +19,7 @@ import {
   Warehouse,
   ChevronDown as ChevronDownIcon
 } from 'lucide-react';
+import DatePickerInput from '../ui/DatePickerInput';
 
 interface MaterialUsedVsStoreIssueProps {
   theme: ThemeType;
@@ -330,31 +330,28 @@ const MaterialUsedVsStoreIssue: React.FC<MaterialUsedVsStoreIssueProps> = ({ the
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
               Select From Date:
             </label>
-            <div className="relative">
-              <Calendar className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} pointer-events-none z-10`} />
-              <input
-                type="date"
-                value={fromDate}
-                onChange={(e) => setFromDate(e.target.value)}
-                placeholder="dd-mm-yyyy"
-                className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm border cursor-pointer ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-              />
-            </div>
+            <DatePickerInput
+              value={fromDate}
+              onChange={(e) => {
+                const v = e.target.value;
+                setFromDate(v);
+                if (v && toDate && new Date(v) > new Date(toDate)) setToDate(v);
+              }}
+              iconClassName={textSecondary}
+              className={`py-2 ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20`}
+            />
           </div>
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
               Select To Date:
             </label>
-            <div className="relative">
-              <Calendar className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} pointer-events-none z-10`} />
-              <input
-                type="date"
-                value={toDate}
-                onChange={(e) => setToDate(e.target.value)}
-                placeholder="dd-mm-yyyy"
-                className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm border cursor-pointer ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-              />
-            </div>
+            <DatePickerInput
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+              min={fromDate || undefined}
+              iconClassName={textSecondary}
+              className={`py-2 ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20`}
+            />
           </div>
         </div>
       </div>

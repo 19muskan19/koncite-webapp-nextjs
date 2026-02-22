@@ -531,6 +531,7 @@ export const userAPI = {
 // Master Data API - CRUD operations for projects, companies, materials, etc.
 export const masterDataAPI = {
   // Projects - Matching Laravel routes
+  getProjectsList: async (): Promise<any[]> => masterDataAPI.getProjects(),
   // Route: GET /project-list -> projectlist()
   getProjects: async (): Promise<any[]> => {
     try {
@@ -1431,6 +1432,8 @@ export const masterDataAPI = {
       } as ApiError;
     }
   },
+  getVendorTypeWiseList: async (type: 'supplier' | 'contractor'): Promise<any[]> =>
+    masterDataAPI.getSupplierContractorList(type),
   getSupplierContractorList: async (type: 'supplier' | 'contractor' | 'both'): Promise<any[]> => {
     try {
       const response = await apiClient.post('/supplier-contractor-list', { type });
@@ -2525,22 +2528,19 @@ export const materialsHistoryAPI = {
 
 // DPR API - Matching Laravel routes (DprController)
 export const dprAPI = {
-  getList: async (): Promise<any> => {
-    try {
-      const response = await apiClient.get('/dpr-list');
-      const res = response.data;
-      // Handle various response shapes from Laravel (responseJson, resources, etc.)
-      const toArray = (val: any): any[] => {
-        if (Array.isArray(val)) return val;
-        if (val && typeof val === 'object' && !Array.isArray(val)) {
-          const arr = Object.values(val);
-          if (arr.length > 0) return arr;
-        }
-        return [];
-      };
+  getList: async (params?: { project?: number | string; subproject?: number | string; date?: string }): Promise<any[]> => {
+    const toArray = (val: any): any[] => {
+      if (Array.isArray(val)) return val;
+      if (val && typeof val === 'object' && !Array.isArray(val)) {
+        const arr = Object.values(val);
+        if (arr.length > 0) return arr;
+      }
+      return [];
+    };
+    const parseResponse = (res: any): any[] => {
       if (Array.isArray(res)) return res;
       if (Array.isArray(res?.data)) return res.data;
-      const fromData = toArray(res?.data);
+      const fromData = toArray((res as any)?.data ?? res);
       if (fromData.length > 0) return fromData;
       if (res?.data && typeof res.data === 'object') {
         const d = res.data;
@@ -2553,12 +2553,17 @@ export const dprAPI = {
       const fromDataData = toArray(res?.data?.data);
       if (fromDataData.length > 0) return fromDataData;
       return [];
-    } catch (error: any) {
-      const msg = error.response?.data?.message || 'Failed to fetch DPR list';
-      throw {
-        message: msg,
-        errors: error.response?.data?.errors || {},
-      } as ApiError;
+    };
+    try {
+      const response = await apiClient.get('/dpr-list', { params: params || {} });
+      return parseResponse(response.data);
+    } catch (e) {
+      try {
+        const response = await apiClient.post('/get-work-overview', params || {});
+        return parseResponse(response.data);
+      } catch (e2) {
+        return [];
+      }
     }
   },
   add: async (data: Record<string, any>): Promise<any> => {

@@ -257,7 +257,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         } else if (user.company_name) {
           setCompany({ name: user.company_name, logo: user.company_logo || null });
         }
-      } catch {
+      } catch (e) {
         if (user.company_name) {
           setCompany({ name: user.company_name, logo: user.company_logo || null });
         }

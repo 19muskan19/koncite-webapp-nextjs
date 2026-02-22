@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
 import { Boxes, Download, Plus, Search, ArrowUpDown, Loader2, RefreshCw, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Upload, MoreVertical, Edit, Trash2, FileSpreadsheet } from 'lucide-react';
+import DatePickerInput from '../ui/DatePickerInput';
 import CreateMaterialModal from './Modals/CreateMaterialModal';
 import MaterialBulkUploadModal from './Modals/MaterialBulkUploadModal';
 import { masterDataAPI } from '../../services/api';
@@ -132,7 +133,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
             uuid: p.uuid || String(p.id),
             project_name: p.project_name || p.name || ''
           })) : []);
-        } catch {
+        } catch (e) {
           setOpeningStockProjects([]);
         } finally {
           setIsLoadingOpeningStockData(false);
@@ -819,17 +820,17 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                     <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
                       Opening Date
                     </label>
-                    <input
-                      type="date"
+                    <DatePickerInput
                       value={openingStockForm.openingDate}
                       onChange={(e) => setOpeningStockForm({ ...openingStockForm, openingDate: e.target.value })}
                       min="1900-01-01"
                       max="2100-12-31"
-                      className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all [&::-webkit-calendar-picker-indicator]:cursor-pointer [&::-webkit-calendar-picker-indicator]:opacity-80 ${
+                      iconClassName={textSecondary}
+                      className={`${
                         isDark
                           ? 'bg-slate-800/50 border-slate-700 text-slate-100'
                           : 'bg-white border-slate-200 text-slate-900'
-                      } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                      } border focus:ring-2 focus:ring-[#C2D642]/20`}
                     />
                   </div>
 

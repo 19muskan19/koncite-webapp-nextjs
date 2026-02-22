@@ -141,15 +141,7 @@ apiClient.interceptors.response.use(
           console.error('Too Many Requests: Rate limit exceeded. Please wait a moment and try again.');
           break;
         case 500:
-          console.error('Server Error: Something went wrong on the server');
-          const errorData = (error.response?.data as ErrorResponseData) || {};
-          console.error('Error details:', {
-            url: error.config?.url,
-            method: error.config?.method,
-            status: error.response?.status,
-            data: error.response?.data,
-            message: errorData?.message || error.message
-          });
+          // Server error - component handles it via toast/UI; no console spam
           break;
         default:
           console.error('An error occurred:', error.message);

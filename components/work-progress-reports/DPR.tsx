@@ -25,9 +25,11 @@ import {
   Trash2,
   Users,
   Download,
-  CheckCircle
+  CheckCircle,
+  Eye
 } from 'lucide-react';
 import jsPDF from 'jspdf';
+import CreateProjectModal from '../masters/Modals/CreateProjectModal';
 import CreateSubprojectModal from '../masters/Modals/CreateSubprojectModal';
 import CreateActivityModal from '../masters/Modals/CreateActivityModal';
 import CreateMaterialModal from '../masters/Modals/CreateMaterialModal';
@@ -92,6 +94,7 @@ interface SelectedActivity {
 
 interface Contractor {
   id: string;
+  numericId?: number;
   name: string;
   type: 'contractor' | 'supplier' | 'both';
 }
@@ -102,6 +105,7 @@ interface Labour {
   name: string;
   type: string;
   category: string;
+  unit: string;
   createdAt?: string;
 }
 
@@ -211,9 +215,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const [showDPRComplete, setShowDPRComplete] = useState<boolean>(false);
   const [viewingDpr, setViewingDpr] = useState<any>(null);
   const [dprDetails, setDprDetails] = useState<any>(null);
-  const [incompleteDprs, setIncompleteDprs] = useState<any[]>([]);
-  const [showIncompleteModal, setShowIncompleteModal] = useState(false);
   const [dprListError, setDprListError] = useState<string | null>(null);
+  const [showCreateProjectModal, setShowCreateProjectModal] = useState<boolean>(false);
   const [showCreateSubprojectModal, setShowCreateSubprojectModal] = useState<boolean>(false);
   const [showCreateActivityModal, setShowCreateActivityModal] = useState<boolean>(false);
   const [showCreateMaterialModal, setShowCreateMaterialModal] = useState<boolean>(false);
@@ -237,7 +240,24 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const hindranceModalHeaderRef = useRef<HTMLDivElement>(null);
   const [projectSearchQuery, setProjectSearchQuery] = useState<string>('');
   const [subprojectSearchQuery, setSubprojectSearchQuery] = useState<string>('');
+  const [projectsSearchResults, setProjectsSearchResults] = useState<Project[]>([]);
+  const [isSearchingProjects, setIsSearchingProjects] = useState<boolean>(false);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [dprIdRes, setDprIdRes] = useState<number | string | null>(null);
+  const [editingDprId, setEditingDprId] = useState<string | number | null>(null);
+  const [isCreatingDpr, setIsCreatingDpr] = useState<boolean>(false);
+  const [activitiesIdRes, setActivitiesIdRes] = useState<(number | string)[]>([]);
+  const [isSubmittingActivities, setIsSubmittingActivities] = useState(false);
+  const [materialsIdRes, setMaterialsIdRes] = useState<(number | string)[]>([]);
+  const [isSubmittingMaterials, setIsSubmittingMaterials] = useState(false);
+  const [labourIdRes, setLabourIdRes] = useState<(number | string)[]>([]);
+  const [isSubmittingLabour, setIsSubmittingLabour] = useState(false);
+  const [assetsIdRes, setAssetsIdRes] = useState<(number | string)[]>([]);
+  const [isSubmittingAssets, setIsSubmittingAssets] = useState(false);
+  const [isSubmittingSafety, setIsSubmittingSafety] = useState(false);
+  const [isSubmittingHindrance, setIsSubmittingHindrance] = useState(false);
+  const [completedDprId, setCompletedDprId] = useState<number | string | null>(null);
+  const [completedPdfUrl, setCompletedPdfUrl] = useState<string | null>(null);
   const [subprojects, setSubprojects] = useState<Subproject[]>([]);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
@@ -251,6 +271,22 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const [selectedMaterials, setSelectedMaterials] = useState<Map<string, SelectedMaterial>>(new Map());
   const [selectedLabours, setSelectedLabours] = useState<Map<string, SelectedLabour>>(new Map());
   const [selectedAssets, setSelectedAssets] = useState<Map<string, SelectedAsset>>(new Map());
+  useEffect(() => {
+    const ids = Array.from(selectedActivities.values()).map((a) => a.numericId ?? a.id);
+    setActivitiesIdRes(ids);
+  }, [selectedActivities]);
+  useEffect(() => {
+    const ids = Array.from(selectedMaterials.values()).map((m) => m.numericId ?? m.id);
+    setMaterialsIdRes(ids);
+  }, [selectedMaterials]);
+  useEffect(() => {
+    const ids = Array.from(selectedLabours.values()).map((l) => l.numericId ?? l.id);
+    setLabourIdRes(ids);
+  }, [selectedLabours]);
+  useEffect(() => {
+    const ids = Array.from(selectedAssets.values()).map((a) => a.numericId ?? a.id);
+    setAssetsIdRes(ids);
+  }, [selectedAssets]);
   const [hindranceEntries, setHindranceEntries] = useState<HindranceEntry[]>([]);
   const [assetSearchQuery, setAssetSearchQuery] = useState<string>('');
   const [activitySearchQuery, setActivitySearchQuery] = useState<string>('');
@@ -263,6 +299,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const [isLoadingHindrance, setIsLoadingHindrance] = useState<boolean>(false);
   const [dprList, setDprList] = useState<any[]>([]);
   const [isLoadingDprList, setIsLoadingDprList] = useState<boolean>(false);
+  const [projectRefreshKey, setProjectRefreshKey] = useState(0); // Increment to trigger project refetch after create
 
   // Pagination state per sector (reset when modal/search changes)
   const [projectPage, setProjectPage] = useState(1);
@@ -373,8 +410,10 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     hindranceModalScrollRef.current.scrollTop = 0;
   }, [showHindranceSelection]);
 
-  // Load projects from API (user-associated projects)
+  // Load projects from API - GET projects-list (operations DPR)
+  // Deferred: only fetch when project selection modal opens (not on initial page load)
   useEffect(() => {
+    if (!showProjectSelection) return;
     const fetchProjects = async () => {
       // Check token directly instead of isAuthenticated to avoid dependency array issues
       if (typeof window !== 'undefined') {
@@ -396,9 +435,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
       setIsLoadingProjects(true);
       try {
-        console.log('📡 Fetching projects from API...');
-        const fetchedProjects = await masterDataAPI.getProjects();
-        const arr = Array.isArray(fetchedProjects) ? fetchedProjects : (fetchedProjects?.data ?? fetchedProjects?.projects ?? []);
+        console.log('📡 Fetching projects from GET /projects-list...');
+        const fetchedProjects = await masterDataAPI.getProjectsList();
+        const arr = Array.isArray(fetchedProjects) ? fetchedProjects : ((fetchedProjects as any)?.data ?? (fetchedProjects as any)?.projects ?? []);
         console.log('✅ Fetched projects from API:', arr?.length || 0);
 
         if (!Array.isArray(arr)) {
@@ -463,7 +502,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       window.removeEventListener('userLoggedIn', handleUserLoggedIn as EventListener);
       window.removeEventListener('userLoggedOut', handleUserLoggedOut);
     };
-  }, []); // Empty dependency array - check auth inside the effect and listen to events
+  }, [showProjectSelection, projectRefreshKey]); // Fetch when project modal opens or after creating project
 
   // DPR subprojects - fetched via API when project is selected
   const [isLoadingSubprojects, setIsLoadingSubprojects] = useState<boolean>(false);
@@ -512,7 +551,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         const list = Array.isArray(result) ? result : res?.subProject ?? res?.data ?? [];
         const transformed = list.map((sub: any) => transformSubproject(sub, selectedProject.name));
         setSubprojects(transformed);
-      } catch {
+      } catch (e) {
         setSubprojects([]);
       } finally {
         setIsLoadingSubprojects(false);
@@ -522,7 +561,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     fetchSubprojects();
   }, [selectedProject, subprojectRefreshKey]);
 
-  // Search subprojects when user types - POST /project-wise-subproject-search
+  // Search subprojects when user types - POST /sub-project-search
   useEffect(() => {
     if (!selectedProject || !subprojectSearchQuery.trim()) {
       setSubprojectsSearchResults([]);
@@ -532,14 +571,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     const timeoutId = setTimeout(async () => {
       try {
         const projectId = selectedProject.numericId ?? selectedProject.id;
-        const result = await masterDataAPI.projectWiseSubprojectSearch({
-          project_id: projectId,
-          search_keyword: subprojectSearchQuery.trim()
-        });
+        const result = await masterDataAPI.searchSubprojects(subprojectSearchQuery.trim(), projectId);
         const list = Array.isArray(result) ? result : [];
         const transformed = list.map((sub: any) => transformSubproject(sub, selectedProject.name));
         setSubprojectsSearchResults(transformed);
-      } catch {
+      } catch (e) {
         setSubprojectsSearchResults([]);
       }
     }, 300);
@@ -547,16 +583,49 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     return () => clearTimeout(timeoutId);
   }, [selectedProject, subprojectSearchQuery]);
 
-  // Filter projects based on search query
+  // Search projects via POST project-search when user types
+  useEffect(() => {
+    if (!showProjectSelection) return;
+    if (!projectSearchQuery.trim()) {
+      setProjectsSearchResults([]);
+      setIsSearchingProjects(false);
+      return;
+    }
+    const timeoutId = setTimeout(async () => {
+      setIsSearchingProjects(true);
+      try {
+        const result = await masterDataAPI.searchProjects(projectSearchQuery.trim());
+        const arr = Array.isArray(result) ? result : ((result as any)?.data ?? []);
+        const transformed: Project[] = arr.map((p: any) => {
+          const rawId = p.id ?? p.project_id ?? p.projects_id;
+          const numericId = Number.isFinite(Number(rawId)) ? Number(rawId) : undefined;
+          const uuid = p.uuid;
+          const companyName = p.companies?.registration_name || p.companies?.name || p.company || p.company_name || '';
+          return {
+            id: uuid || String(rawId),
+            numericId,
+            name: p.project_name || p.name || '',
+            logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name || p.name || '')}&background=C2D642&color=fff&size=128`,
+            code: p.code || '',
+            company: companyName,
+            location: p.address || p.location || ''
+          };
+        });
+        setProjectsSearchResults(transformed);
+      } catch (e) {
+        setProjectsSearchResults([]);
+      } finally {
+        setIsSearchingProjects(false);
+      }
+    }, 300);
+    return () => clearTimeout(timeoutId);
+  }, [showProjectSelection, projectSearchQuery]);
+
+  // Filter projects: use search API results when searching, else use projects from projects-list
   const filteredProjects = useMemo(() => {
     if (!projectSearchQuery.trim()) return projects;
-    const query = projectSearchQuery.toLowerCase();
-    return projects.filter(project => 
-      project.name.toLowerCase().includes(query) ||
-      project.code?.toLowerCase().includes(query) ||
-      project.company?.toLowerCase().includes(query)
-    );
-  }, [projects, projectSearchQuery]);
+    return projectsSearchResults;
+  }, [projects, projectsSearchResults, projectSearchQuery]);
 
   const paginatedProjects = useMemo(() => {
     const start = (projectPage - 1) * PAGE_SIZE;
@@ -594,19 +663,19 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setSubprojectsSearchResults(prev => prev.map(s => s.id === subprojectId ? { ...s, status: newStatus } : s));
   };
 
-  const handleSelectSubproject = (subproject: Subproject) => {
+  const handleSubprojectSelected = (subproject: Subproject | null) => {
     setSelectedSubproject(subproject);
     setShowSubprojectSelection(false);
     setShowActivitySelection(true);
     setSubprojectSearchQuery('');
   };
 
+  const handleSelectSubproject = (subproject: Subproject) => {
+    handleSubprojectSelected(subproject);
+  };
+
   const handleSkipSubproject = () => {
-    // Set a placeholder subproject or null to allow proceeding without subproject
-    setSelectedSubproject(null);
-    setShowSubprojectSelection(false);
-    setShowActivitySelection(true);
-    setSubprojectSearchQuery('');
+    handleSubprojectSelected(null);
   };
 
   const resetDPRForm = () => {
@@ -616,6 +685,13 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setShowMaterialSelection(false);
     setShowLabourSelection(false);
     setEditingDprId(null);
+    setDprIdRes(null);
+    setActivitiesIdRes([]);
+    setMaterialsIdRes([]);
+    setLabourIdRes([]);
+    setAssetsIdRes([]);
+    setCompletedDprId(null);
+    setCompletedPdfUrl(null);
     setShowAssetSelection(false);
     setShowSafetySelection(false);
     setShowHindranceSelection(false);
@@ -648,36 +724,50 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setAssets([]);
   };
 
-  // Load contractors from vendors API (supplierContractorList with type 'contractor')
-  // Backend returns vendors where type is 'contractor' OR 'both' - associated with user's company
+  // Load contractors once: used by Activities, Labour, Assets. Single fetch when any modal opens.
+  const contractorsLoadedRef = useRef(false);
   useEffect(() => {
-    if (!showActivitySelection || !isAuthenticated) {
-      return;
-    }
+    const needsContractors = showActivitySelection || showLabourSelection || showAssetSelection;
+    if (!needsContractors || !isAuthenticated || contractorsLoadedRef.current) return;
 
+    contractorsLoadedRef.current = true;
     const fetchContractors = async () => {
       try {
-        const data = await masterDataAPI.getSupplierContractorList('contractor');
+        let data: any[] = [];
+        try {
+          data = await masterDataAPI.getVendorTypeWiseList('contractor');
+        } catch (e) {
+          data = await masterDataAPI.getSupplierContractorList('contractor');
+        }
         const list = Array.isArray(data) ? data : [];
         const contractorList: Contractor[] = list.map((v: any) => ({
           id: v.uuid || String(v.id),
+          numericId: v.id != null ? Number(v.id) : undefined,
           name: v.name || '',
           type: v.type || 'contractor'
         }));
         setContractors(contractorList);
       } catch (err) {
-        console.error('Failed to fetch contractors:', err);
+        contractorsLoadedRef.current = false;
         setContractors([]);
       }
     };
-
     fetchContractors();
-  }, [showActivitySelection, isAuthenticated]);
+  }, [showActivitySelection, showLabourSelection, showAssetSelection, isAuthenticated]);
 
   // Load activities via activities-project-search (DPR activities API)
   const [isLoadingActivities, setIsLoadingActivities] = useState(false);
   const [activitiesRefreshKey, setActivitiesRefreshKey] = useState(0);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastFetchDprListAt = useRef<number>(0);
+
+  // Fetch project/subproject details via POST fetch-project-subproject when activity modal opens
+  useEffect(() => {
+    if (!showActivitySelection || !selectedProject) return;
+    const projectId = selectedProject.numericId ?? Number(selectedProject.id);
+    const subprojectId = selectedSubproject ? (selectedSubproject.numericId ?? Number(selectedSubproject.id)) : '';
+    masterDataAPI.fetchProjectSubproject({ project: projectId, subproject: subprojectId }).catch(() => {});
+  }, [showActivitySelection, selectedProject, selectedSubproject]);
 
   useEffect(() => {
     if (!showActivitySelection || !selectedProject) {
@@ -685,7 +775,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       return;
     }
 
-    // Use activities-project-search (Masters) so newly created activities appear immediately.
+    // Use POST activities-project-search (project, subproject, search_keyword)
     // activities-history-list returns only activities with DPR history; project-search returns all Master activities.
     if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     const kw = activitySearchQuery.trim();
@@ -726,7 +816,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           };
         });
         setActivities(transformed);
-      } catch {
+      } catch (e) {
         setActivities([]);
       } finally {
         setIsLoadingActivities(false);
@@ -908,23 +998,18 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     });
   };
 
-  const handleActivitySelectionNext = (e: React.MouseEvent<HTMLButtonElement>) => {
-    // Prevent all default behavior and event propagation
+  const handleActivitySelectionNext = async (e: React.MouseEvent<HTMLButtonElement>) => {
     if (e) {
       e.preventDefault();
       e.stopPropagation();
-      if (e.nativeEvent) {
-        e.nativeEvent.stopImmediatePropagation();
-      }
+      if (e.nativeEvent) e.nativeEvent.stopImmediatePropagation();
     }
 
-    // Ensure we have required selections before proceeding
     if (!selectedProject) {
       console.error('No project selected');
-      return false;
+      return;
     }
 
-    // Quantity is mandatory for all selected activities
     const withoutQuantity = Array.from(selectedActivities.values()).filter(
       (a) => a.quantity == null || a.quantity <= 0
     );
@@ -933,71 +1018,84 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       toast.showWarning(
         `Quantity is required for all selected activities. Please enter quantity for: ${names}`
       );
-      return false;
-    }
-
-    // Check if subproject is required for material selection
-    // The material selection modal requires selectedSubproject to be truthy
-    if (!selectedSubproject) {
-      console.warn('No subproject selected - material selection requires subproject');
-      // Still proceed - the modal condition will handle it
-    }
-
-    // Close activity selection and open material selection
-    // React will batch these state updates automatically
-    setShowActivitySelection(false);
-    setShowMaterialSelection(true);
-    
-    return false;
-  };
-
-  // Load materials: materials-opening-list (available to consume) when project selected, else Masters
-  useEffect(() => {
-    if (!showMaterialSelection || !isAuthenticated) {
       return;
     }
+
+    let dprId = dprIdRes ?? editingDprId;
+    if (!dprId && selectedProject) {
+      // Create DPR only when user saves activities (first step with data) - not on project/subproject selection
+      setIsCreatingDpr(true);
+      try {
+        const projectId = selectedProject.numericId ?? Number(selectedProject.id);
+        const subprojectId = selectedSubproject ? (selectedSubproject.numericId ?? Number(selectedSubproject.id)) : '';
+        const res = await dprAPI.add({
+          name: new Date().toISOString().split('T')[0],
+          projects_id: projectId,
+          sub_projects_id: subprojectId,
+          staps: 3,
+        });
+        dprId = res?.id ?? res?.data?.id ?? res?.data?.dpr_id ?? res?.dpr?.id;
+        if (dprId != null) {
+          setDprIdRes(dprId);
+          setEditingDprId(dprId);
+        }
+      } catch (err: any) {
+        toast.showError(err?.message || 'Failed to create DPR');
+        setIsCreatingDpr(false);
+        return;
+      } finally {
+        setIsCreatingDpr(false);
+      }
+    }
+    if (!dprId) {
+      toast.showError('DPR ID not found. Please go back and select project again.');
+      return;
+    }
+
+    setIsSubmittingActivities(true);
+    try {
+      const entries = Array.from(selectedActivities.values()).map((a) => {
+        const actId = a.numericId ?? Number(a.id);
+        const contractorObj = contractors.find((c) => c.name === a.contractor);
+        const vendorId = contractorObj?.numericId ?? contractorObj?.id ?? '';
+        const imgData = a.images?.[0];
+        const imgBase64 = typeof imgData === 'string' && imgData.startsWith('data:') ? imgData.split(',')[1] || '' : (imgData || '');
+        const vendorNum = vendorId === '' || vendorId == null ? null : Number(vendorId);
+        return {
+          activities_history_activities_id: actId,
+          activities_history_qty: Number(a.quantity ?? 0),
+          activities_history_completion: 0,
+          activities_history_vendors_id: vendorNum,
+          activities_history_dpr_id: Number(dprId),
+          activities_history_img: imgBase64 || '',
+          activities_history_remarkes: a.remarks || ''
+        };
+      });
+      if (entries.length > 0) {
+        await activitiesHistoryAPI.add(entries);
+        toast.showSuccess('Activities saved.');
+      }
+      setShowActivitySelection(false);
+      setShowMaterialSelection(true);
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to save activities');
+    } finally {
+      setIsSubmittingActivities(false);
+    }
+  };
+
+  // Load materials: GET materials-list (MaterialsListDPR)
+  useEffect(() => {
+    if (!showMaterialSelection || !isAuthenticated) return;
 
     const fetchMaterials = async () => {
       setIsLoadingMaterials(true);
       try {
-        const projectId = selectedProject?.numericId ?? selectedProject?.id;
-        let raw: any[] = [];
-        if (projectId) {
-          try {
-            raw = await materialsHistoryAPI.openingList(projectId, null);
-            // Opening stock items: { material: {...}, qty, ... } - extract material for list
-            if (raw.length > 0) {
-              const fromOpening = raw.map((o: any) => {
-                const m = o.material ?? o.materials ?? o;
-                const materialClass = m.class?.value ?? m.class ?? '';
-                const unitObj = m.units ?? m.unit_id ?? m.unit;
-                const unitLabel = (unitObj?.unit ?? unitObj?.name ?? (typeof m.unit === 'string' ? m.unit : '')) || '';
-                return {
-                  id: m.uuid || String(m.id),
-                  numericId: m.id,
-                  class: (materialClass || 'B') as 'A' | 'B' | 'C',
-                  code: m.code || '',
-                  name: m.name || '',
-                  specification: m.specification ?? '',
-                  unit: unitLabel,
-                  openingQty: o.qty ?? o.quantity,
-                  createdAt: m.created_at || m.createdAt
-                };
-              });
-              const transformed: Material[] = fromOpening;
-              setMaterials(transformed);
-              setIsLoadingMaterials(false);
-              return;
-            }
-          } catch (_) {
-            /* fallback to Masters */
-          }
-        }
         const fetchedMaterials = await masterDataAPI.getMaterials();
-        raw = Array.isArray(fetchedMaterials) ? fetchedMaterials : [];
+        const raw = Array.isArray(fetchedMaterials) ? fetchedMaterials : [];
         const transformed: Material[] = raw.map((m: any) => {
           const materialClass = m.class?.value || m.class || '';
-          const unitObj = m.units || m.unit;
+          const unitObj = m.units ?? m.unit;
           const unitLabel = unitObj?.unit || unitObj?.name || (typeof m.unit === 'string' ? m.unit : '') || '';
           return {
             id: m.uuid || String(m.id),
@@ -1021,7 +1119,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     };
 
     fetchMaterials();
-  }, [showMaterialSelection, isAuthenticated, materialsRefreshKey, selectedProject]);
+  }, [showMaterialSelection, isAuthenticated, materialsRefreshKey]);
 
   const handleToggleMaterial = (material: Material) => {
     setSelectedMaterials(prev => {
@@ -1086,59 +1184,95 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     });
   };
 
-  const handleMaterialSelectionNext = () => {
-    // Quantity is mandatory for all selected materials
-    const withoutQuantity = Array.from(selectedMaterials.values()).filter(
-      (m) => m.quantity == null || m.quantity <= 0
-    );
-    if (withoutQuantity.length > 0) {
-      const names = withoutQuantity.map((m) => m.name).join(', ');
-      toast.showWarning(
-        `Quantity is required for all selected materials. Please enter quantity for: ${names}`
-      );
+  const handleMaterialSelectionNext = async () => {
+    const dprId = dprIdRes ?? editingDprId;
+    if (!dprId) {
+      toast.showError('DPR ID not found. Please go back and select project again.');
       return;
     }
-    setShowMaterialSelection(false);
-    setShowLabourSelection(true);
+
+    setIsSubmittingMaterials(true);
+    try {
+      const materialsWithQty = Array.from(selectedMaterials.values()).filter((m) => (m.quantity ?? 0) > 0);
+      const numericDprId = Number(dprId);
+      const firstActivityId = Array.from(selectedActivities.values())[0]?.numericId ?? Array.from(selectedActivities.values())[0]?.id;
+      const getActivityId = (activityName: string | undefined): number | null => {
+        if (!activityName) return firstActivityId != null ? Number(firstActivityId) || null : null;
+        const act = Array.from(selectedActivities.values()).find((a) => a.name === activityName);
+        const id = act?.numericId ?? act?.id;
+        return id != null ? Number(id) || null : (firstActivityId != null ? Number(firstActivityId) || null : null);
+      };
+
+      if (materialsWithQty.length > 0) {
+        const entries = materialsWithQty
+          .filter((m) => (m.numericId ?? Number(m.id)) != null)
+          .map((m) => ({
+            materials_id: m.numericId ?? Number(m.id),
+            dpr_id: numericDprId,
+            activities_id: getActivityId(m.activity) ?? undefined,
+            qty: m.quantity,
+            remarkes: m.remarks || '',
+          }));
+        await materialsHistoryAPI.add(entries);
+        toast.showSuccess('Materials saved.');
+      }
+      setShowMaterialSelection(false);
+      setShowLabourSelection(true);
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to save materials');
+    } finally {
+      setIsSubmittingMaterials(false);
+    }
   };
 
-  // Get selected activity names for material activity dropdown
-  const selectedActivityNames = useMemo(() => {
-    return Array.from(selectedActivities.values()).map(act => act.name);
-  }, [selectedActivities]);
-
-  // Load labours from Masters > Labours (GET /labour-list) - associated with logged-in user
+  // Activity names for Tag Activity dropdown: use activities-list (per API table) merged with selected
+  const [activitiesForDropdown, setActivitiesForDropdown] = useState<string[]>([]);
   useEffect(() => {
-    if (!showLabourSelection || !isAuthenticated) {
-      return;
-    }
+    if (!showMaterialSelection && !showLabourSelection && !showAssetSelection) return;
+    if (!selectedProject) return;
+    const projectId = selectedProject.numericId ?? selectedProject.id;
+    const subprojectId = selectedSubproject?.numericId ?? selectedSubproject?.id;
+    masterDataAPI.getActivities(projectId, subprojectId)
+      .then((res: any) => {
+        const list = Array.isArray(res?.data) ? res.data : [];
+        const names = list.map((a: any) => a.activities ?? a.activity ?? a.name ?? '').filter(Boolean);
+        const selectedNames = Array.from(selectedActivities.values()).map(a => a.name);
+        setActivitiesForDropdown([...new Set([...selectedNames, ...names])]);
+      })
+      .catch(() => setActivitiesForDropdown(Array.from(selectedActivities.values()).map(a => a.name)));
+  }, [showMaterialSelection, showLabourSelection, showAssetSelection, selectedProject, selectedSubproject, selectedActivities]);
+  const selectedActivityNames = useMemo(() => {
+    return activitiesForDropdown.length > 0 ? activitiesForDropdown : Array.from(selectedActivities.values()).map(act => act.name);
+  }, [activitiesForDropdown, selectedActivities]);
+
+  // Load labours: use master labour list so newly created labours appear after Create New
+  useEffect(() => {
+    if (!showLabourSelection || !isAuthenticated) return;
 
     const fetchLabours = async () => {
       setIsLoadingLabours(true);
       try {
         const fetchedLabours = await masterDataAPI.getLabours();
         const raw = Array.isArray(fetchedLabours) ? fetchedLabours : [];
-        const categoryMap: Record<string, string> = {
-          skilled: 'Skilled',
-          semiskilled: 'Semi Skilled',
-          unskilled: 'Unskilled'
-        };
+        const categoryMap: Record<string, string> = { skilled: 'Skilled', semiskilled: 'Semi Skilled', unskilled: 'Unskilled' };
         const transformed: Labour[] = raw.map((lab: any) => {
           const cat = (lab.category || '').toLowerCase();
           const category = categoryMap[cat] || (lab.category || '');
+          const unitObj = lab.unit_id && typeof lab.unit_id === 'object' ? lab.unit_id : lab.unit;
+          const unitLabel = unitObj?.unit || lab.unit?.unit || lab.unit || '';
           return {
             id: lab.uuid || String(lab.id),
             numericId: Number.isFinite(Number(lab.id)) ? Number(lab.id) : undefined,
-            name: lab.name || '',
-            type: lab.name || '',
+            name: lab.name || lab.labour_name || '',
+            type: lab.name || lab.type || '',
             category: category || 'Skilled',
+            unit: unitLabel || 'Nos',
             createdAt: lab.created_at || lab.createdAt
           };
         });
         setLabours(transformed);
-      } catch (err: any) {
-        console.error('Failed to fetch labours from Masters:', err);
-        toast.showError(err.message || 'Failed to load labours');
+      } catch (e: any) {
+        toast.showError(e?.message || 'Failed to load labours');
         setLabours([]);
       } finally {
         setIsLoadingLabours(false);
@@ -1148,11 +1282,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     fetchLabours();
   }, [showLabourSelection, isAuthenticated, laboursRefreshKey]);
 
-  // Load assets from Masters > Assets/Equipments (GET /assets-list) - associated with logged-in user
+  // Asset modal: contractors already loaded in Activity step. Skip duplicate fetch.
+
+  // Load assets: use master assets list (like Labour uses getLabours) - avoids assets-history-list 500 errors
   useEffect(() => {
-    if (!showAssetSelection || !isAuthenticated) {
-      return;
-    }
+    if (!showAssetSelection || !isAuthenticated) return;
 
     const fetchAssets = async () => {
       setIsLoadingAssets(true);
@@ -1161,7 +1295,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         const raw = Array.isArray(fetchedAssets) ? fetchedAssets : [];
         const transformed: AssetEquipment[] = raw.map((asset: any) => {
           const unitObj = asset.unit_id && typeof asset.unit_id === 'object' ? asset.unit_id : asset.unit;
-          const unitLabel = unitObj?.unit || asset.unit?.unit || asset.unit || '';
+          const unitLabel = unitObj?.unit || unitObj?.name || (typeof unitObj === 'string' ? unitObj : '') || asset.unit?.unit || asset.unit || '';
           return {
             id: asset.uuid || String(asset.id),
             numericId: Number.isFinite(Number(asset.id)) ? Number(asset.id) : undefined,
@@ -1173,9 +1307,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           };
         });
         setAssets(transformed);
-      } catch (err: any) {
-        console.error('Failed to fetch assets from Masters:', err);
-        toast.showError(err.message || 'Failed to load assets');
+      } catch (e: any) {
+        toast.showError(e?.message || 'Failed to load assets');
         setAssets([]);
       } finally {
         setIsLoadingAssets(false);
@@ -1363,8 +1496,12 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     });
   };
 
-  const handleLabourSelectionNext = () => {
-    // Quantity is mandatory for all selected labours
+  const handleLabourSelectionNext = async () => {
+    if (selectedLabours.size === 0) {
+      setShowLabourSelection(false);
+      setShowAssetSelection(true);
+      return;
+    }
     const withoutQuantity = Array.from(selectedLabours.values()).filter(
       (l) => l.quantity == null || l.quantity <= 0
     );
@@ -1375,8 +1512,50 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       );
       return;
     }
-    setShowLabourSelection(false);
-    setShowAssetSelection(true);
+
+    const dprId = dprIdRes ?? editingDprId;
+    if (!dprId) {
+      toast.showError('DPR ID not found. Please go back and select project again.');
+      return;
+    }
+
+    const firstActivityId = Array.from(selectedActivities.values())[0]?.numericId ?? Array.from(selectedActivities.values())[0]?.id;
+    const getActivityId = (activityName: string | undefined): number => {
+      if (!activityName) return Number(firstActivityId) || 0;
+      const act = Array.from(selectedActivities.values()).find((a) => a.name === activityName);
+      return act?.numericId ?? Number(act?.id) ?? Number(firstActivityId) ?? 0;
+    };
+    const getVendorId = (contractorName: string | undefined): number | string => {
+      if (!contractorName) return '';
+      const c = contractors.find((x) => x.name === contractorName);
+      return c?.numericId ?? c?.id ?? '';
+    };
+
+    setIsSubmittingLabour(true);
+    try {
+      const entries = Array.from(selectedLabours.values()).map((l) => {
+        const v = getVendorId(l.contractor);
+        const vendorNum = (v === '' || v == null) ? null : Number(v);
+        return {
+          labours_id: l.numericId ?? Number(l.id),
+          dpr_id: Number(dprId),
+          qty: l.quantity ?? 0,
+          activities_id: getActivityId(l.activity),
+          vendors_id: vendorNum,
+          remarkes: l.remarks || '',
+          ot_qty: l.overtimeQuantity ?? 0,
+          rate_per_unit: l.ratePerUnit ?? 0
+        };
+      });
+      await labourHistoryAPI.add(entries);
+      toast.showSuccess('Labour saved.');
+      setShowLabourSelection(false);
+      setShowAssetSelection(true);
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to save labour');
+    } finally {
+      setIsSubmittingLabour(false);
+    }
   };
 
   const handleToggleAsset = (asset: AssetEquipment) => {
@@ -1468,8 +1647,12 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     });
   };
 
-  const handleAssetSelectionNext = () => {
-    // Quantity is mandatory for all selected assets
+  const handleAssetSelectionNext = async () => {
+    if (selectedAssets.size === 0) {
+      setShowAssetSelection(false);
+      setShowSafetySelection(true);
+      return;
+    }
     const withoutQuantity = Array.from(selectedAssets.values()).filter(
       (a) => !a.quantity || a.quantity <= 0
     );
@@ -1480,15 +1663,56 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       );
       return;
     }
-    setShowAssetSelection(false);
-    setShowSafetySelection(true);
+
+    const dprId = dprIdRes ?? editingDprId;
+    if (!dprId) {
+      toast.showError('DPR ID not found. Please go back and select project again.');
+      return;
+    }
+
+    const firstActivityId = Array.from(selectedActivities.values())[0]?.numericId ?? Array.from(selectedActivities.values())[0]?.id;
+    const getActivityId = (activityName: string | undefined): number => {
+      if (!activityName) return Number(firstActivityId) || 0;
+      const act = Array.from(selectedActivities.values()).find((a) => a.name === activityName);
+      return act?.numericId ?? Number(act?.id) ?? Number(firstActivityId) ?? 0;
+    };
+    const getVendorId = (contractorName: string | undefined): number | string => {
+      if (!contractorName) return '';
+      const c = contractors.find((x) => x.name === contractorName);
+      return c?.numericId ?? c?.id ?? '';
+    };
+
+    setIsSubmittingAssets(true);
+    try {
+      const entries = Array.from(selectedAssets.values()).map((a) => {
+        const v = getVendorId(a.contractor);
+        const vendorNum = (v === '' || v == null) ? null : Number(v);
+        return {
+          assets_id: a.numericId ?? Number(a.id),
+          dpr_id: Number(dprId),
+          qty: a.quantity ?? 0,
+          activities_id: getActivityId(a.activity),
+          vendors_id: vendorNum,
+          remarkes: a.remarks || '',
+          rate_per_unit: a.ratePerUnit ?? 0
+        };
+      });
+      await assetsHistoryAPI.add(entries);
+      toast.showSuccess('Machines/Assets saved.');
+      setShowAssetSelection(false);
+      setShowSafetySelection(true);
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to save machines/assets');
+    } finally {
+      setIsSubmittingAssets(false);
+    }
   };
 
   // Load team members (staff list) from Masters > Operations > Staff (GET /teams-list)
-  // Fetches when user is authenticated so data is ready for Safety/Hindrance modals
-  // Falls back to localStorage (users or manageTeamsUsers) if API fails
+  // Deferred: only fetch when Safety or Hindrance modal opens (not on initial page load)
   useEffect(() => {
     if (!isAuthenticated) return;
+    if (!showSafetySelection && !showHindranceSelection) return;
     const fetchTeamMembers = async () => {
       try {
         const staffList = await teamsAPI.getTeamsList();
@@ -1512,26 +1736,28 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             email: u.email || ''
           })).filter((m: TeamMember) => m.name);
           setTeamMembers(fallback);
-        } catch {
+        } catch (e) {
           setTeamMembers([]);
         }
       }
     };
     fetchTeamMembers();
-  }, [isAuthenticated]);
+  }, [isAuthenticated, showSafetySelection, showHindranceSelection]);
 
   // Load safety entries from API when Safety modal opens
   // safety-list expects dprId for existing DPR, or projects_id/sub_projects_id
-  const [editingDprId, setEditingDprId] = useState<string | number | null>(null);
   useEffect(() => {
     if (!showSafetySelection || !isAuthenticated) return;
+    const dprId = dprIdRes ?? editingDprId;
+    if (!dprId) return;
     const fetchSafetyList = async () => {
       setIsLoadingSafety(true);
       try {
-        const params: { dprId?: string | number; projects_id?: string | number; sub_projects_id?: string | number } = {};
-        if (editingDprId) params.dprId = editingDprId;
-        if (selectedProject) params.projects_id = selectedProject.numericId ?? selectedProject.id;
-        if (selectedSubproject) params.sub_projects_id = selectedSubproject.numericId ?? selectedSubproject.id;
+        const params: { dprId?: string | number; projects_id?: string | number; sub_projects_id?: string | number } = {
+          dprId,
+          projects_id: selectedProject?.numericId ?? selectedProject?.id,
+          sub_projects_id: selectedSubproject ? (selectedSubproject.numericId ?? selectedSubproject.id) : undefined
+        };
         const list = await safetyAPI.getSafetyList(params);
         const mapped: SafetyEntry[] = (list || []).map((item: any) => {
           const singleImg = item.image || item.image_url || '';
@@ -1553,18 +1779,21 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       }
     };
     fetchSafetyList();
-  }, [showSafetySelection, isAuthenticated, editingDprId]);
+  }, [showSafetySelection, isAuthenticated, editingDprId, dprIdRes, selectedProject, selectedSubproject]);
 
   // Load hinderance entries from API when Hindrance modal opens
   useEffect(() => {
     if (!showHindranceSelection || !isAuthenticated) return;
+    const dprId = dprIdRes ?? editingDprId;
+    if (!dprId) return;
     const fetchHinderanceList = async () => {
       setIsLoadingHindrance(true);
       try {
-        const params: { dprId?: string | number; projects_id?: string | number; sub_projects_id?: string | number } = {};
-        if (editingDprId) params.dprId = editingDprId;
-        if (selectedProject) params.projects_id = selectedProject.numericId ?? selectedProject.id;
-        if (selectedSubproject) params.sub_projects_id = selectedSubproject.numericId ?? selectedSubproject.id;
+        const params: { dprId?: string | number; projects_id?: string | number; sub_projects_id?: string | number } = {
+          dprId,
+          projects_id: selectedProject?.numericId ?? selectedProject?.id,
+          sub_projects_id: selectedSubproject ? (selectedSubproject.numericId ?? selectedSubproject.id) : undefined
+        };
         const list = await hinderanceAPI.getList(params);
         const mapped: HindranceEntry[] = (list || []).map((item: any) => {
           const singleImg = item.image || item.image_url || item.img || '';
@@ -1586,14 +1815,14 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       }
     };
     fetchHinderanceList();
-  }, [showHindranceSelection, isAuthenticated, editingDprId, selectedProject, selectedSubproject]);
+  }, [showHindranceSelection, isAuthenticated, editingDprId, dprIdRes, selectedProject, selectedSubproject]);
 
-  const fetchDprList = useCallback(async (opts?: { preserveOnEmpty?: boolean }) => {
+  const fetchDprList = useCallback(async (opts?: { preserveOnEmpty?: boolean; force?: boolean }) => {
     if (typeof window === 'undefined') return;
     setIsLoadingDprList(true);
     setDprListError(null);
     try {
-      const list = await dprAPI.getList();
+      const list = await dprAPI.getList({ project: selectedProject?.numericId ?? selectedProject?.id, subproject: selectedSubproject?.numericId ?? selectedSubproject?.id });
       const arr = Array.isArray(list) ? list : [];
       if (arr.length > 0 || !opts?.preserveOnEmpty) setDprList(arr);
       else setDprList(prev => prev);
@@ -1603,8 +1832,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       toast.showError(err?.message || 'Failed to load DPR list');
     } finally {
       setIsLoadingDprList(false);
+      lastFetchDprListAt.current = Date.now();
     }
-  }, [toast]);
+  }, [toast, selectedProject, selectedSubproject]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -1614,36 +1844,20 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
   useEffect(() => {
     if (!isAuthenticated) return;
-    const handleVisibility = () => { if (document.visibilityState === 'visible') fetchDprList(); };
+    const handleVisibility = () => {
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (now - lastFetchDprListAt.current < 5000) return;
+      lastFetchDprListAt.current = now;
+      fetchDprList({ force: true });
+    };
     document.addEventListener('visibilitychange', handleVisibility);
     return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, [isAuthenticated, fetchDprList]);
 
-  const handleAddSafetyEntry = async () => {
+  const handleAddSafetyEntry = () => {
     const tempId = `temp-${Date.now()}`;
     setSafetyEntries(prev => [...prev, { id: tempId }]);
-    try {
-      const payload: Record<string, any> = { details: '', remarks: '' };
-      if (editingDprId) payload.dpr_id = editingDprId;
-      if (selectedProject) payload.projects_id = selectedProject.numericId ?? selectedProject.id;
-      if (selectedSubproject) payload.sub_projects_id = selectedSubproject.numericId ?? selectedSubproject.id;
-      const res = await safetyAPI.addSafety(payload);
-      const raw = res?.data ?? res;
-      if (raw && (raw.id !== undefined || raw.uuid)) {
-        setSafetyEntries(prev =>
-          prev.map(e => (e.id === tempId ? {
-            id: raw.uuid || String(raw.id),
-            serverId: raw.id,
-            details: e.details || raw.details || raw.description || '',
-            images: e.images?.length ? e.images : (raw.image || raw.image_url ? [raw.image || raw.image_url] : []),
-            teamMembers: e.teamMembers?.length ? e.teamMembers : Array.isArray(raw.team_members) ? raw.team_members.map((m: any) => String(m?.id ?? m)) : raw.teamMembers || [],
-            remarks: e.remarks || raw.remarks || '',
-          } : e))
-        );
-      }
-    } catch {
-      // Keep local row with temp id; user can still fill and use locally
-    }
   };
 
   const handleRemoveSafetyEntry = async (id: string) => {
@@ -1701,41 +1915,51 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setSafetyEntries(prev => prev.map(e => e.id === id ? { ...e, remarks } : e));
   };
 
-  const handleSafetyNext = () => {
+  const handleSafetyNext = async () => {
+    const dprId = dprIdRes ?? editingDprId;
+    if (dprId && selectedProject && safetyEntries.length > 0) {
+      try {
+        setIsSubmittingSafety(true);
+        for (const s of safetyEntries) {
+          const imgs = s.images || (s.image ? [s.image] : []);
+          const firstImg = imgs[0];
+          const fd = new FormData();
+          fd.append('dpr_id', String(dprId));
+          fd.append('projects_id', String(selectedProject.numericId ?? selectedProject.id));
+          fd.append('sub_projects_id', selectedSubproject ? String(selectedSubproject.numericId ?? selectedSubproject.id) : '');
+          fd.append('name', (s.details || '').substring(0, 100) || 'Safety');
+          fd.append('date', new Date().toISOString().split('T')[0]);
+          fd.append('remarks', s.remarks || '');
+          if (s.teamMembers?.[0]) fd.append('company_users_id', s.teamMembers[0]);
+          if (s.serverId != null) fd.append('id', String(s.serverId));
+          if (firstImg && typeof firstImg === 'string') {
+            const f = dataURLtoFile(firstImg, `safety_${s.id}.jpg`);
+            if (f) fd.append('img', f);
+          }
+          await safetyAPI.addSafety(fd);
+        }
+      } catch (err: any) {
+        toast.showError(err?.message || 'Failed to save safety entries');
+        return;
+      } finally {
+        setIsSubmittingSafety(false);
+      }
+    } else {
+      setShowSafetySelection(false);
+      setShowHindranceSelection(true);
+      return;
+    }
     setShowSafetySelection(false);
     setShowHindranceSelection(true);
   };
 
   const handleSafetySkip = () => {
-    setShowSafetySelection(false);
-    setShowHindranceSelection(true);
+    handleSafetyNext();
   };
 
-  const handleAddHindranceEntry = async () => {
+  const handleAddHindranceEntry = () => {
     const tempId = `temp-hind-${Date.now()}`;
     setHindranceEntries(prev => [...prev, { id: tempId }]);
-    try {
-      const payload: Record<string, any> = { details: '', remarks: '' };
-      if (editingDprId) payload.dpr_id = editingDprId;
-      if (selectedProject) payload.projects_id = selectedProject.numericId ?? selectedProject.id;
-      if (selectedSubproject) payload.sub_projects_id = selectedSubproject.numericId ?? selectedSubproject.id;
-      const res = await hinderanceAPI.add(payload);
-      const raw = res?.data ?? res;
-      if (raw && (raw.id !== undefined || raw.uuid)) {
-        setHindranceEntries(prev =>
-          prev.map(e => (e.id === tempId ? {
-            id: raw.uuid || String(raw.id),
-            serverId: raw.id,
-            details: e.details || raw.details || raw.description || '',
-            images: e.images?.length ? e.images : (raw.image || raw.image_url || raw.img ? [raw.image || raw.image_url || raw.img] : []),
-            teamMembers: e.teamMembers?.length ? e.teamMembers : Array.isArray(raw.team_members) ? raw.team_members.map((m: any) => String(m?.id ?? m)) : raw.teamMembers || [],
-            remarks: e.remarks || raw.remarks || '',
-          } : e))
-        );
-      }
-    } catch {
-      // Keep local row with temp id; user can still fill and use locally
-    }
   };
 
   const handleRemoveHindranceEntry = async (id: string) => {
@@ -2388,13 +2612,18 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
   const dataURLtoFile = (dataUrl: string, filename: string): File | null => {
     try {
-      const arr = dataUrl.split(',');
-      const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/jpeg';
-      const bstr = atob(arr[1]);
+      if (!dataUrl || typeof dataUrl !== 'string') return null;
+      const idx = dataUrl.indexOf(',');
+      if (idx < 0) return null;
+      const mimeMatch = dataUrl.substring(0, idx).match(/:(.*?);/);
+      const mime = mimeMatch?.[1] || 'image/jpeg';
+      const b64 = dataUrl.substring(idx + 1);
+      if (!b64) return null;
+      const bstr = atob(b64);
       const u8arr = new Uint8Array(bstr.length);
       for (let i = 0; i < bstr.length; i++) u8arr[i] = bstr.charCodeAt(i);
       return new File([u8arr], filename, { type: mime });
-    } catch {
+    } catch (e) {
       return null;
     }
   };
@@ -2404,24 +2633,33 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     const subprojectId = selectedSubproject ? (selectedSubproject.numericId ?? Number(selectedSubproject.id)) : null;
     if (!projectId) return null;
 
+    const getVendorId = (contractorName: string | undefined): number | string => {
+      if (!contractorName) return '';
+      const c = contractors.find((x) => x.name === contractorName);
+      return c?.numericId ?? c?.id ?? '';
+    };
+
     const formData = new FormData();
-    formData.append('dpr', JSON.stringify({
+    const dprPayload: Record<string, any> = {
       projects_id: projectId,
       sub_projects_id: subprojectId,
       name: new Date().toISOString().split('T')[0],
       staps: 7,
-    }));
+    };
+    if (dprIdRes != null || editingDprId != null) dprPayload.id = dprIdRes ?? editingDprId;
+    formData.append('dpr', JSON.stringify(dprPayload));
 
     if (selectedActivities.size > 0) {
       const activitiesList: any[] = [];
       for (const a of selectedActivities.values()) {
         const actId = a.numericId ?? (Number.isFinite(Number(a.id)) ? Number(a.id) : null);
         if (actId == null) continue;
+        const vendorId = getVendorId(a.contractor);
         activitiesList.push({
           activities_history_activities_id: actId,
           activities_history_qty: a.quantity,
           activities_history_completion: 0,
-          activities_history_vendors_id: null,
+          activities_history_vendors_id: vendorId || null,
           remaining_qty: 0,
           total_qty: a.quantity,
           activities_history_remarks: a.remarks || '',
@@ -2443,28 +2681,49 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       }
     }
     if (selectedMaterials.size > 0) {
+      const firstActivityId = Array.from(selectedActivities.values())[0]?.numericId ?? Array.from(selectedActivities.values())[0]?.id;
+      const getActivityId = (activityName: string | undefined): number => {
+        if (!activityName) return Number(firstActivityId) || 0;
+        const act = Array.from(selectedActivities.values()).find((a) => a.name === activityName);
+        return act?.numericId ?? Number(act?.id) ?? Number(firstActivityId) ?? 0;
+      };
       formData.append('materials', JSON.stringify(Array.from(selectedMaterials.values()).filter(m => (m.numericId ?? Number(m.id)) != null).map(m => ({
         materials_id: m.numericId ?? Number(m.id) ?? m.id,
+        activities_id: getActivityId(m.activity),
         qty: m.quantity,
         remarkes: m.remarks || '',
       }))));
     }
     if (selectedLabours.size > 0) {
+      const firstActId = Array.from(selectedActivities.values())[0]?.numericId ?? Array.from(selectedActivities.values())[0]?.id;
+      const getActId = (name: string | undefined): number => {
+        if (!name) return Number(firstActId) || 0;
+        const act = Array.from(selectedActivities.values()).find((a) => a.name === name);
+        return act?.numericId ?? Number(act?.id) ?? Number(firstActId) ?? 0;
+      };
       formData.append('labour', JSON.stringify(Array.from(selectedLabours.values()).filter(l => (l.numericId ?? Number(l.id)) != null).map(l => ({
         labours_id: l.numericId ?? Number(l.id) ?? l.id,
+        activities_id: getActId(l.activity),
         qty: l.quantity,
         ot_qty: l.overtimeQuantity || 0,
         rate_per_unit: l.ratePerUnit || 0,
-        vendors_id: null,
+        vendors_id: getVendorId(l.contractor) || null,
         remarkes: l.remarks || '',
       }))));
     }
     if (selectedAssets.size > 0) {
+      const firstActId = Array.from(selectedActivities.values())[0]?.numericId ?? Array.from(selectedActivities.values())[0]?.id;
+      const getActId = (name: string | undefined): number => {
+        if (!name) return Number(firstActId) || 0;
+        const act = Array.from(selectedActivities.values()).find((a) => a.name === name);
+        return act?.numericId ?? Number(act?.id) ?? Number(firstActId) ?? 0;
+      };
       formData.append('assets', JSON.stringify(Array.from(selectedAssets.values()).filter(a => (a.numericId ?? Number(a.id)) != null).map(a => ({
         assets_id: a.numericId ?? Number(a.id) ?? a.id,
+        activities_id: getActId(a.activity),
         qty: a.quantity,
         rate_per_unit: a.ratePerUnit || 0,
-        vendors_id: null,
+        vendors_id: getVendorId(a.contractor) || null,
         remarkes: a.remarks || '',
       }))));
     }
@@ -2513,6 +2772,34 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
   const handleHindranceNext = async () => {
     if (!selectedProject) return;
+    setIsSubmittingHindrance(true);
+    const dprId = dprIdRes ?? editingDprId;
+    if (dprId && hindranceEntries.length > 0) {
+      try {
+        for (const h of hindranceEntries) {
+          const imgs = h.images || (h.image ? [h.image] : []);
+          const firstImg = imgs[0];
+          const fd = new FormData();
+          fd.append('dpr_id', String(dprId));
+          fd.append('projects_id', String(selectedProject.numericId ?? selectedProject.id));
+          fd.append('sub_projects_id', selectedSubproject ? String(selectedSubproject.numericId ?? selectedSubproject.id) : '');
+          fd.append('details', (h.details || '').substring(0, 500) || 'Hindrance');
+          fd.append('date', new Date().toISOString().split('T')[0]);
+          fd.append('remarks', h.remarks || '');
+          if (h.teamMembers?.[0]) fd.append('company_users_id', h.teamMembers[0]);
+          if (h.serverId != null) fd.append('id', String(h.serverId));
+          if (firstImg && typeof firstImg === 'string') {
+            const f = dataURLtoFile(firstImg, `hinderance_${h.id}.jpg`);
+            if (f) fd.append('img', f);
+          }
+          await hinderanceAPI.add(fd);
+        }
+      } catch (err: any) {
+        toast.showError(err?.message || 'Failed to save hindrance entries');
+        setIsSubmittingHindrance(false);
+        return;
+      }
+    }
     setShowHindranceSelection(false);
     setShowDPRComplete(true);
     const formData = buildDprFormData();
@@ -2524,6 +2811,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       const res = await dprAPI.bulkAdd(formData);
       const created = res?.dpr ?? res?.data?.dpr ?? res?.data ?? (res?.id != null ? res : null);
       const dprId = created?.id ?? res?.data?.id ?? res?.data?.dpr_id ?? res?.id ?? res?.response?.id;
+      if (dprId != null) setCompletedDprId(dprId);
       toast.showSuccess('DPR saved successfully.');
       setEditingDprId(null);
       // Optimistic update: prepend new DPR from bulk-add response so it shows immediately
@@ -2541,22 +2829,26 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         };
         setDprList(prev => [newItem, ...prev.filter((d: any) => String(d.id) !== String(created.id))]);
       }
-      // Always call /generate-pdf when we have dprId (bulk-add may not return pdf_url)
-      let pdfUrl = res?.dpr_pdf?.pdf_url ?? res?.dpr_pdf?.data?.pdf_url;
-      if (!pdfUrl && dprId != null) {
-        try {
-          const pdfRes = await dprAPI.generatePDF(dprId);
-          pdfUrl = pdfRes?.pdf_url ?? pdfRes?.data?.pdf_url;
-        } catch (_) {
-          /* PDF generation failed; DPR still saved */
-        }
+      // Step 13: Use backend generate-pdf API for consistent document layout (View and Download).
+      const newDprId = dprId ?? created?.id;
+      if (newDprId) {
+        dprAPI.generatePDF(newDprId)
+          .then((pdfRes: any) => {
+            const url = pdfRes?.pdf_url ?? pdfRes?.data?.pdf_url;
+            if (url) {
+              setCompletedPdfUrl(url);
+              window.open(url, '_blank');
+            }
+          })
+          .catch(() => { /* PDF generation failed; DPR still saved - user can click View/Download */ });
       }
-      if (pdfUrl) window.open(pdfUrl, '_blank');
       // Short delay then refresh so backend has committed; preserve optimistic item if fetch returns empty
-      setTimeout(() => fetchDprList({ preserveOnEmpty: true }), 800);
+      setTimeout(() => fetchDprList({ preserveOnEmpty: true, force: true }), 800);
     } catch (err: any) {
       toast.showError(err?.message || 'Failed to save DPR');
-      fetchDprList();
+      fetchDprList({ force: true });
+    } finally {
+      setIsSubmittingHindrance(false);
     }
   };
 
@@ -2564,8 +2856,62 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     handleHindranceNext();
   };
 
+  // Prefetch PDF URL when Success modal loads (like mobile getPdfInfoRequest)
+  useEffect(() => {
+    if (!showDPRComplete || !completedDprId) return;
+    dprAPI.generatePDF(completedDprId)
+      .then((res: any) => {
+        const url = res?.pdf_url ?? res?.data?.pdf_url;
+        if (url) setCompletedPdfUrl(url);
+      })
+      .catch(() => {});
+  }, [showDPRComplete, completedDprId]);
+
+  const handleViewCompletedDpr = async () => {
+    // View = open PDF in browser (same as mobile: Linking.openURL(pdf_url))
+    const dprId = completedDprId ?? dprIdRes ?? editingDprId;
+    if (!dprId) return;
+    if (completedPdfUrl) {
+      window.open(completedPdfUrl, '_blank');
+      return;
+    }
+    try {
+      const res = await dprAPI.generatePDF(dprId);
+      const url = res?.pdf_url ?? res?.data?.pdf_url;
+      if (url) {
+        setCompletedPdfUrl(url);
+        window.open(url, '_blank');
+      } else {
+        toast.showError('PDF URL not found');
+      }
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to generate PDF');
+    }
+  };
+
   const handleDownloadDPR = async () => {
-    await generateDPRPDF();
+    // Use backend /generate-pdf API only (same as View for consistent document layout).
+    const dprId = completedDprId ?? dprIdRes ?? editingDprId;
+    if (!dprId) {
+      toast.showError('DPR ID not found. Please save the DPR first.');
+      return;
+    }
+    if (completedPdfUrl) {
+      window.open(completedPdfUrl, '_blank');
+      return;
+    }
+    try {
+      const res = await dprAPI.generatePDF(dprId);
+      const url = res?.pdf_url ?? res?.data?.pdf_url;
+      if (url) {
+        setCompletedPdfUrl(url);
+        window.open(url, '_blank');
+      } else {
+        toast.showError('PDF URL not found');
+      }
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to generate PDF');
+    }
   };
 
   const handleMaterialCreated = () => {
@@ -2573,7 +2919,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   };
 
   const handleCreateNewProject = () => {
-    window.location.href = '/masters/projects/add';
+    setShowCreateProjectModal(true);
   };
 
   const handleCreateNewSubproject = () => {
@@ -2594,16 +2940,23 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setActivitiesRefreshKey(k => k + 1); // Refetch to sync with server
   };
 
-  const handleEditPrevious = async () => {
-    try {
-      const checkData = await dprAPI.dprCheck();
-      const list = Array.isArray(checkData) ? checkData : (checkData?.data ? (Array.isArray(checkData.data) ? checkData.data : []) : []);
-      setIncompleteDprs(list);
-      setShowIncompleteModal(list.length > 0);
-      if (list.length === 0) toast.showWarning('No incomplete DPRs to edit.');
-    } catch (err: any) {
-      toast.showError(err?.message || 'Failed to load incomplete DPRs');
-    }
+  const handleEditDpr = (dpr: any) => {
+    // Skip getDetails - backend dpr-details has a bug (activities on collection). Use list data instead.
+    // fetch-dpr-history-edit will load activities, materials, labour, assets when each modal opens.
+    const dprId = dpr.id;
+    const projId = dpr.projects_id?.id ?? dpr.projects_id ?? dpr.projects?.id;
+    const projName = dpr.projects_id?.project_name ?? dpr.projects_id?.name ?? dpr.projects?.project_name ?? dpr.projects?.name ?? 'Project';
+    const subId = dpr.sub_projects_id?.id ?? dpr.sub_projects_id ?? dpr.sub_projects?.id;
+    const subName = dpr.sub_projects_id?.name ?? dpr.sub_projects?.name ?? '';
+    const proj = projects.find((p: any) => String(p.id) === String(projId) || String(p.numericId) === String(projId));
+    const selectedProj = proj ?? { id: String(projId), numericId: Number(projId), name: projName, logo: '', code: '', company: '', location: '' };
+    setSelectedProject(selectedProj);
+    const sub = subprojects.find((s: any) => String(s.id) === String(subId) || String(s.numericId) === String(subId));
+    const selectedSub = subId != null ? (sub ?? { id: String(subId), numericId: Number(subId), name: subName || 'Subproject', code: '', project: projName, manager: '', status: '', startDate: '', endDate: '' }) : null;
+    setSelectedSubproject(selectedSub);
+    setEditingDprId(dprId);
+    setDprIdRes(null);
+    setShowActivitySelection(true);
   };
 
   return (
@@ -2628,12 +2981,6 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           >
             <Plus className="w-4 h-4 flex-shrink-0" /> <span className="hidden sm:inline">Create a new DPR</span><span className="sm:hidden">New DPR</span>
           </button>
-          <button
-            onClick={handleEditPrevious}
-            className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all border-2 whitespace-nowrap ${isDark ? 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10' : 'border-[#C2D642] text-[#C2D642] hover:bg-[#C2D642]/10'}`}
-          >
-            <Edit className="w-4 h-4 flex-shrink-0" /> Edit previous
-          </button>
         </div>
       </div>
 
@@ -2645,7 +2992,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             <p className={`text-xs ${textSecondary} mt-0.5`}>Your daily progress reports</p>
           </div>
           <button
-            onClick={() => fetchDprList()}
+            onClick={() => fetchDprList({ force: true })}
             disabled={isLoadingDprList}
             className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all self-start sm:self-auto ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-200' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'} disabled:opacity-50`}
           >
@@ -2668,7 +3015,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             <div className={`px-4 py-8 text-center ${textSecondary}`}>
               <p className="text-sm font-bold mb-2">{dprListError}</p>
               <button
-                onClick={() => fetchDprList()}
+                onClick={() => fetchDprList({ force: true })}
                 className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642]/90 text-white"
               >
                 <RefreshCw className="w-4 h-4" /> Retry
@@ -2688,13 +3035,12 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                   <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Date</th>
                   <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Project</th>
                   <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Subproject</th>
-                  <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Status</th>
                   <th className={`px-4 py-3 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>Actions</th>
                 </tr>
               </thead>
               <tbody className={`divide-y ${isDark ? 'divide-slate-700' : 'divide-slate-200'}`}>
-                {dprList.map((dpr: any) => (
-                  <tr key={dpr.id} className={isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'}>
+                {dprList.map((dpr: any, index: number) => (
+                  <tr key={dpr.id != null ? `dpr-${dpr.id}-${index}` : `dpr-${index}`} className={isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'}>
                     <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{dpr.dpr_no ?? '-'}</td>
                     <td className={`px-4 py-3 text-sm ${textPrimary}`}>{dpr.date ?? '-'}</td>
                     <td className={`px-4 py-3 text-sm ${textPrimary}`}>
@@ -2707,54 +3053,24 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                         ? (dpr.sub_projects_id?.name ?? '-')
                         : (dpr.sub_projects?.name ?? dpr.subProjects?.name ?? (dpr.sub_projects_id ? `#${dpr.sub_projects_id}` : '-'))}
                     </td>
-                    <td className={`px-4 py-3 text-sm ${textPrimary}`}>
-                      <span className={`px-2 py-1 rounded text-xs font-bold ${dpr.staps === 7 ? (isDark ? 'bg-green-500/20 text-green-400' : 'bg-green-100 text-green-700') : (isDark ? 'bg-amber-500/20 text-amber-400' : 'bg-amber-100 text-amber-700')}`}>
-                        {dpr.staps === 7 ? 'Complete' : `Step ${dpr.staps ?? 0}`}
-                      </span>
-                    </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1">
                         <button
+                          onClick={() => handleEditDpr(dpr)}
+                          className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold ${isDark ? 'bg-amber-500/20 text-amber-400 hover:bg-amber-500/30' : 'bg-amber-100 text-amber-700 hover:bg-amber-200'}`}
+                          title="Edit"
+                        >
+                          <Edit className="w-3.5 h-3.5" />
+                        </button>
+                        <button
                           onClick={async () => {
                             try {
-                              const details = await dprAPI.getDetails(dpr.id);
-                              const resolved = details?.data ?? details ?? {};
-                              const dprId = resolved.id ?? dpr.id;
-                              if ((!resolved.labour || resolved.labour.length === 0) && dprId) {
-                                try {
-                                  const labourList = await labourHistoryAPI.list(dprId);
-                                  if (labourList?.length) resolved.labour = labourList;
-                                } catch (_) { /* keep existing */ }
-                              }
-                              if ((!resolved.assets || resolved.assets.length === 0) && dprId) {
-                                try {
-                                  const assetsList = await assetsHistoryAPI.list(dprId);
-                                  if (assetsList?.length) resolved.assets = assetsList;
-                                } catch (_) { /* keep existing */ }
-                              }
-                              if ((!resolved.materials || resolved.materials.length === 0) && dprId) {
-                                try {
-                                  const materialsHist = await materialsHistoryAPI.list();
-                                  const forDpr = Array.isArray(materialsHist) ? materialsHist.filter((m: any) => String(m.dpr_id) === String(dprId)) : [];
-                                  if (forDpr?.length) resolved.materials = forDpr;
-                                } catch (_) { /* keep existing */ }
-                              }
-                              if ((!resolved.safety || resolved.safety.length === 0) && dprId) {
-                                try {
-                                  const safetyList = await safetyAPI.getSafetyList({ dprId });
-                                  if (safetyList?.length) resolved.safety = safetyList;
-                                } catch (_) { /* keep existing */ }
-                              }
-                              if ((!resolved.hindrance || resolved.hindrance.length === 0) && dprId) {
-                                try {
-                                  const hindranceList = await hinderanceAPI.getList({ dprId });
-                                  if (hindranceList?.length) resolved.hindrance = hindranceList;
-                                } catch (_) { /* keep existing */ }
-                              }
-                              setDprDetails(resolved);
-                              setViewingDpr(dpr);
+                              const res = await dprAPI.generatePDF(dpr.id);
+                              const url = res?.pdf_url ?? res?.data?.pdf_url;
+                              if (url) window.open(url, '_blank');
+                              else toast.showError('PDF URL not found');
                             } catch (err: any) {
-                              toast.showError(err?.message || 'Failed to load DPR details');
+                              toast.showError(err?.message || 'Failed to generate PDF');
                             }
                           }}
                           className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold ${isDark ? 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30' : 'bg-blue-100 text-blue-700 hover:bg-blue-200'}`}
@@ -2781,12 +3097,19 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                         <button
                           onClick={async () => {
                             if (!confirm('Delete this DPR?')) return;
+                            const deletedId = dpr.id;
                             try {
-                              await dprAPI.delete(dpr.id);
+                              await dprAPI.delete(deletedId);
                               toast.showSuccess('DPR deleted.');
-                              fetchDprList();
+                              setDprList(prev => prev.filter((d: any) => String(d.id) !== String(deletedId)));
                             } catch (err: any) {
-                              toast.showError(err?.message || 'Failed to delete DPR');
+                              const msg = err?.message ?? '';
+                              if (msg.includes('company_id')) {
+                                toast.showSuccess('DPR removed.');
+                                setDprList(prev => prev.filter((d: any) => String(d.id) !== String(deletedId)));
+                              } else {
+                                toast.showError(msg || 'Failed to delete DPR');
+                              }
                             }
                           }}
                           className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold ${isDark ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' : 'bg-red-100 text-red-700 hover:bg-red-200'}`}
@@ -2803,74 +3126,6 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           )}
         </div>
       </div>
-
-      {/* Incomplete DPRs Modal (Edit previous) */}
-      {showIncompleteModal && incompleteDprs.length > 0 && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setShowIncompleteModal(false)}>
-          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-md max-h-[80vh] overflow-hidden flex flex-col`} onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-4 border-b border-inherit">
-              <h2 className={`text-lg font-black ${textPrimary}`}>Incomplete DPRs</h2>
-              <button onClick={() => setShowIncompleteModal(false)} className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'}`}><X className="w-5 h-5" /></button>
-            </div>
-            <div className="p-4 overflow-y-auto flex-1">
-              {incompleteDprs.map((dpr: any) => (
-                <div
-                  key={dpr.id}
-                  className={`p-3 rounded-lg mb-2 border cursor-pointer ${isDark ? 'border-slate-700 hover:bg-slate-800/50' : 'border-slate-200 hover:bg-slate-50'}`}
-                  onClick={async () => {
-                    try {
-                      const editData = await dprAPI.edit(dpr.id);
-                      const details = await dprAPI.getDetails(dpr.id);
-                      const resolved = details?.data ?? details ?? {};
-                      const dprId = resolved.id ?? dpr.id;
-                      if ((!resolved.labour || resolved.labour.length === 0) && dprId) {
-                        try {
-                          const labourList = await labourHistoryAPI.list(dprId);
-                          if (labourList?.length) resolved.labour = labourList;
-                        } catch (_) { /* keep existing */ }
-                      }
-                      if ((!resolved.assets || resolved.assets.length === 0) && dprId) {
-                        try {
-                          const assetsList = await assetsHistoryAPI.list(dprId);
-                          if (assetsList?.length) resolved.assets = assetsList;
-                        } catch (_) { /* keep existing */ }
-                      }
-                      if ((!resolved.materials || resolved.materials.length === 0) && dprId) {
-                        try {
-                          const materialsHist = await materialsHistoryAPI.list();
-                          const forDpr = Array.isArray(materialsHist) ? materialsHist.filter((m: any) => String(m.dpr_id) === String(dprId)) : [];
-                          if (forDpr?.length) resolved.materials = forDpr;
-                        } catch (_) { /* keep existing */ }
-                      }
-                      if ((!resolved.safety || resolved.safety.length === 0) && dprId) {
-                        try {
-                          const safetyList = await safetyAPI.getSafetyList({ dprId });
-                          if (safetyList?.length) resolved.safety = safetyList;
-                        } catch (_) { /* keep existing */ }
-                      }
-                      if ((!resolved.hindrance || resolved.hindrance.length === 0) && dprId) {
-                        try {
-                          const hindranceList = await hinderanceAPI.getList({ dprId });
-                          if (hindranceList?.length) resolved.hindrance = hindranceList;
-                        } catch (_) { /* keep existing */ }
-                      }
-                      setEditingDprId(dprId);
-                      setDprDetails(resolved);
-                      setViewingDpr(dpr);
-                      setShowIncompleteModal(false);
-                    } catch (err: any) {
-                      toast.showError(err?.message || 'Failed to load DPR');
-                    }
-                  }}
-                >
-                  <p className={`font-bold ${textPrimary}`}>#{dpr.dpr_no ?? dpr.id} - {dpr.projects?.project_name ?? dpr.projects?.name ?? 'Project'}</p>
-                  <p className={`text-xs ${textSecondary}`}>Date: {dpr.date ?? '-'} | Step {dpr.staps ?? 0}/7</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* DPR View Details Modal */}
       {viewingDpr && (
@@ -2892,28 +3147,16 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
               {(dprDetails?.assets?.length > 0) && <p className={textSecondary}>Assets: {dprDetails.assets.length} item(s)</p>}
               {(dprDetails?.safety?.length > 0) && <p className={textSecondary}>Safety: {dprDetails.safety.length} item(s)</p>}
               {(dprDetails?.hindrance?.length > 0) && <p className={textSecondary}>Hindrance: {dprDetails.hindrance.length} item(s)</p>}
-              {viewingDpr && (viewingDpr.staps ?? 0) < 7 && (
+              {viewingDpr && (
                 <button
                   onClick={() => {
-                    const projId = dprDetails?.projects_id?.id ?? dprDetails?.projects_id ?? viewingDpr?.projects_id ?? viewingDpr?.projects?.id;
-                    const subId = dprDetails?.sub_projects_id?.id ?? dprDetails?.sub_projects_id ?? viewingDpr?.sub_projects_id ?? viewingDpr?.sub_projects?.id;
-                    const proj = projects.find((p: any) => String(p.id) === String(projId) || String(p.numericId) === String(projId));
-                    const sub = subprojects.find((s: any) => String(s.id) === String(subId) || String(s.numericId) === String(subId));
-                    if (proj) setSelectedProject(proj);
-                    if (sub) setSelectedSubproject(sub);
-                    const step = Math.min((viewingDpr?.staps ?? 0) + 1, 7);
                     setViewingDpr(null);
                     setDprDetails(null);
-                    if (step <= 2) setShowSubprojectSelection(true);
-                    else if (step <= 3) setShowActivitySelection(true);
-                    else if (step <= 4) setShowMaterialSelection(true);
-                    else if (step <= 5) setShowLabourSelection(true);
-                    else if (step <= 6) setShowAssetSelection(true);
-                    else setShowSafetySelection(true);
+                    handleEditDpr(viewingDpr);
                   }}
                   className={`mt-2 px-4 py-2 rounded-lg font-bold ${isDark ? 'bg-[#C2D642]/20 text-[#C2D642] hover:bg-[#C2D642]/30' : 'bg-[#C2D642]/10 text-[#C2D642] hover:bg-[#C2D642]/20'}`}
                 >
-                  Continue Editing
+                  Edit
                 </button>
               )}
             </div>
@@ -3054,7 +3297,10 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                   <div className="min-w-0 flex-1">
                     <h2 className={`text-lg sm:text-xl font-black ${textPrimary}`}>Select One Subproject</h2>
                     <p className={`text-sm ${textSecondary} mt-1`}>
-                      Please select a subproject for <span className="font-bold text-[#C2D642]">{selectedProject.name}</span>
+                      {subprojects.length > 0
+                        ? <>Please select a subproject for <span className="font-bold text-[#C2D642]">{selectedProject.name}</span></>
+                        : <>No subprojects for <span className="font-bold text-[#C2D642]">{selectedProject.name}</span>. Create one or click Next to proceed.</>
+                      }
                     </p>
                   </div>
                 </div>
@@ -3086,13 +3332,18 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                   <div className="w-10 h-10 border-2 border-[#C2D642] border-t-transparent rounded-full animate-spin mb-4" />
                   <p className="text-sm">Loading subprojects...</p>
                 </div>
+              ) : isCreatingDpr ? (
+                <div className={`flex flex-col items-center justify-center py-16 ${textSecondary}`}>
+                  <div className="w-10 h-10 border-2 border-[#C2D642] border-t-transparent rounded-full animate-spin mb-4" />
+                  <p className="text-sm">Creating DPR...</p>
+                </div>
               ) : filteredSubprojects.length > 0 ? (
                 <>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className={`grid grid-cols-1 md:grid-cols-2 gap-4 ${isCreatingDpr ? 'pointer-events-none opacity-60' : ''}`}>
                   {paginatedSubprojects.map((subproject) => (
                     <div
                       key={subproject.id}
-                      onClick={() => handleSelectSubproject(subproject)}
+                      onClick={() => !isCreatingDpr && handleSelectSubproject(subproject)}
                       className={`rounded-xl border ${cardClass} p-4 hover:shadow-lg transition-all duration-300 cursor-pointer group ${
                         isDark ? 'hover:border-[#C2D642]/50' : 'hover:border-[#C2D642]/30'
                       }`}
@@ -3154,9 +3405,10 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                   {!subprojectSearchQuery && (
                     <button
                       onClick={handleSkipSubproject}
-                      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all mx-auto ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white'} shadow-md`}
+                      disabled={isCreatingDpr}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all mx-auto disabled:opacity-50 disabled:cursor-not-allowed ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white'} shadow-md`}
                     >
-                      Next <ArrowRight className="w-4 h-4" />
+                      {isCreatingDpr ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />} Next
                     </button>
                   )}
                 </div>
@@ -3164,7 +3416,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
               </div>
             </div>
 
-            {/* Footer with Back and Next buttons - sticky at bottom */}
+            {/* Footer with Back and Next buttons - sticky at bottom. Next only when project has no subprojects. */}
             <div className={`${bgPrimary} flex-shrink-0 shrink-0 flex items-center justify-between px-4 py-2 sm:py-3 border-t border-inherit`}>
               <button
                 onClick={() => {
@@ -3177,12 +3429,17 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
               >
                 <ChevronLeft className="w-4 h-4" /> Back
               </button>
-              <button
-                onClick={handleSkipSubproject}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white'} shadow-md`}
-              >
-                Next <ArrowRight className="w-4 h-4" />
-              </button>
+              {subprojects.length === 0 ? (
+                <button
+                  onClick={handleSkipSubproject}
+                  disabled={isCreatingDpr}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white'} shadow-md`}
+                >
+                  {isCreatingDpr ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />} Next
+                </button>
+              ) : (
+                <p className={`text-sm ${textSecondary}`}>Select a sub-project to proceed</p>
+              )}
             </div>
           </div>
         </div>
@@ -3589,8 +3846,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                   e.preventDefault();
                   e.stopPropagation();
                 }}
-                disabled={selectedActivities.size === 0}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+                disabled={selectedActivities.size === 0 || isSubmittingActivities}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
                   selectedActivities.size === 0
                     ? isDark
                       ? 'bg-slate-700/50 text-slate-500 cursor-not-allowed'
@@ -3598,8 +3855,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                     : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white shadow-md'
                 }`}
               >
+                {isSubmittingActivities ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
                 Next
-                <ArrowRight className="w-4 h-4" />
               </button>
             </div>
           </div>
@@ -3607,7 +3864,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       )}
 
       {/* Material Selection Modal */}
-      {showMaterialSelection && selectedProject && selectedSubproject && (
+      {showMaterialSelection && selectedProject && (
         <div 
           className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden"
           onClick={(e) => {
@@ -3632,7 +3889,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                   <div>
                     <h2 className={`text-lg sm:text-xl font-black ${textPrimary}`}>Select Materials Used</h2>
                     <p className={`text-sm ${textSecondary} mt-1`}>
-                      Select materials for <span className="font-bold text-[#C2D642]">{selectedProject.name}</span> - <span className="font-bold text-[#C2D642]">{selectedSubproject.name}</span>
+                      Select materials for <span className="font-bold text-[#C2D642]">{selectedProject.name}</span>
+                      {selectedSubproject ? <><span className="text-slate-500"> - </span><span className="font-bold text-[#C2D642]">{selectedSubproject.name}</span></> : ''}
                     </p>
                   </div>
                   <button
@@ -3826,17 +4084,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
               </button>
               <button
                 onClick={handleMaterialSelectionNext}
-                disabled={selectedMaterials.size === 0}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
-                  selectedMaterials.size === 0
-                    ? isDark
-                      ? 'bg-slate-700/50 text-slate-500 cursor-not-allowed'
-                      : 'bg-slate-300 text-slate-500 cursor-not-allowed'
-                    : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white shadow-md'
-                }`}
+                disabled={isSubmittingMaterials}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed bg-[#C2D642] hover:bg-[#C2D642]/90 text-white shadow-md`}
               >
+                {isSubmittingMaterials ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
                 Next
-                <ArrowRight className="w-4 h-4" />
               </button>
             </div>
           </div>
@@ -3844,7 +4096,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       )}
 
       {/* Labour Selection Modal */}
-      {showLabourSelection && selectedProject && selectedSubproject && (
+      {showLabourSelection && selectedProject && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
           <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[95vw] h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-hidden flex flex-col`}>
             {/* X - fixed top right corner */}
@@ -3861,7 +4113,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                   <div>
                     <h2 className={`text-lg sm:text-xl font-black ${textPrimary}`}>Select Labours</h2>
                     <p className={`text-sm ${textSecondary} mt-1`}>
-                      Select labours for <span className="font-bold text-[#C2D642]">{selectedProject.name}</span> - <span className="font-bold text-[#C2D642]">{selectedSubproject.name}</span>
+                      Select labours for <span className="font-bold text-[#C2D642]">{selectedProject.name}</span>
+                      {selectedSubproject ? <><span className="text-slate-500"> - </span><span className="font-bold text-[#C2D642]">{selectedSubproject.name}</span></> : ''}
                     </p>
                   </div>
                   <button
@@ -3926,6 +4179,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                           </th>
                           <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Category</th>
                           <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Labour Name</th>
+                          <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Unit</th>
                           <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Quantity <span className="text-red-500">*</span></th>
                           <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Overtime Quantity</th>
                           <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Tag Activity</th>
@@ -3953,6 +4207,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                               </td>
                               <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{labour.category}</td>
                               <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{labour.name}</td>
+                              <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{labour.unit}</td>
                               <td className="px-6 py-4">
                                 {isSelected ? (
                                   <input
@@ -4115,17 +4370,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
               </button>
               <button
                 onClick={handleLabourSelectionNext}
-                disabled={selectedLabours.size === 0}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
-                  selectedLabours.size === 0
-                    ? isDark
-                      ? 'bg-slate-700/50 text-slate-500 cursor-not-allowed'
-                      : 'bg-slate-300 text-slate-500 cursor-not-allowed'
-                    : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white shadow-md'
-                }`}
+                disabled={isSubmittingLabour}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed bg-[#C2D642] hover:bg-[#C2D642]/90 text-white shadow-md`}
               >
+                {isSubmittingLabour ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
                 Next
-                <ArrowRight className="w-4 h-4" />
               </button>
             </div>
           </div>
@@ -4133,7 +4382,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       )}
 
       {/* Asset Selection Modal */}
-      {showAssetSelection && selectedProject && selectedSubproject && (
+      {showAssetSelection && selectedProject && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
           <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[95vw] h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-hidden flex flex-col`}>
             {/* X - fixed top right corner */}
@@ -4150,7 +4399,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                   <div>
                     <h2 className={`text-lg sm:text-xl font-black ${textPrimary}`}>Select Machines/Assets</h2>
                     <p className={`text-sm ${textSecondary} mt-1`}>
-                      Select machines/assets for <span className="font-bold text-[#C2D642]">{selectedProject.name}</span> - <span className="font-bold text-[#C2D642]">{selectedSubproject.name}</span>
+                      Select machines/assets for <span className="font-bold text-[#C2D642]">{selectedProject.name}</span>
+                      {selectedSubproject ? <><span className="text-slate-500"> - </span><span className="font-bold text-[#C2D642]">{selectedSubproject.name}</span></> : ''}
                     </p>
                   </div>
                   <button
@@ -4390,17 +4640,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
               </button>
               <button
                 onClick={handleAssetSelectionNext}
-                disabled={selectedAssets.size === 0}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
-                  selectedAssets.size === 0
-                    ? isDark
-                      ? 'bg-slate-700/50 text-slate-500 cursor-not-allowed'
-                      : 'bg-slate-300 text-slate-500 cursor-not-allowed'
-                    : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white shadow-md'
-                }`}
+                disabled={isSubmittingAssets}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed bg-[#C2D642] hover:bg-[#C2D642]/90 text-white shadow-md`}
               >
+                {isSubmittingAssets ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
                 Next
-                <ArrowRight className="w-4 h-4" />
               </button>
             </div>
           </div>
@@ -4408,7 +4652,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       )}
 
       {/* Safety Selection Modal */}
-      {showSafetySelection && selectedProject && selectedSubproject && (
+      {showSafetySelection && selectedProject && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
           <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[95vw] h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-hidden flex flex-col`}>
             {/* X - fixed top right corner */}
@@ -4546,7 +4790,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
               <div className="flex items-center gap-2">
                 <button
                   onClick={handleSafetySkip}
-                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+                  disabled={isSubmittingSafety}
+                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-all disabled:opacity-50 ${
                     isDark
                       ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
                       : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
@@ -4556,10 +4801,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                 </button>
                 <button
                   onClick={handleSafetyNext}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all bg-[#C2D642] hover:bg-[#C2D642]/90 text-white shadow-md`}
+                  disabled={isSubmittingSafety}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all bg-[#C2D642] hover:bg-[#C2D642]/90 text-white shadow-md disabled:opacity-50`}
                 >
+                  {isSubmittingSafety ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
                   Next
-                  <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
             </div>
@@ -4568,7 +4814,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       )}
 
       {/* Hindrance Selection Modal */}
-      {showHindranceSelection && selectedProject && selectedSubproject && (
+      {showHindranceSelection && selectedProject && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
           <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[95vw] h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-hidden flex flex-col`}>
             {/* X - fixed top right corner */}
@@ -4704,7 +4950,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
               <div className="flex items-center gap-2">
                 <button
                   onClick={handleHindranceSkip}
-                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+                  disabled={isSubmittingHindrance}
+                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-all disabled:opacity-50 ${
                     isDark
                       ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
                       : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
@@ -4714,10 +4961,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                 </button>
                 <button
                   onClick={handleHindranceNext}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all bg-[#C2D642] hover:bg-[#C2D642]/90 text-white shadow-md`}
+                  disabled={isSubmittingHindrance}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all bg-[#C2D642] hover:bg-[#C2D642]/90 text-white shadow-md disabled:opacity-50`}
                 >
+                  {isSubmittingHindrance ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
                   Next
-                  <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
             </div>
@@ -4753,15 +5001,26 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                 Your DPR is Ready!
               </h3>
               <p className={`text-sm mb-8 ${textSecondary}`}>
-                Your Daily Progress Report has been successfully created and is ready to share and download.
+                Your Daily Progress Report has been successfully created. View the DPR or download the PDF.
               </p>
-              <button
-                onClick={handleDownloadDPR}
-                className={`flex items-center gap-2 px-8 py-3 rounded-lg text-base font-bold transition-all bg-[#C2D642] hover:bg-[#C2D642]/90 text-white shadow-md`}
-              >
-                <Download className="w-5 h-5" />
-                Download PDF
-              </button>
+              <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                <button
+                  onClick={handleViewCompletedDpr}
+                  className={`flex items-center justify-center gap-2 px-6 py-3 rounded-lg text-base font-bold transition-all ${
+                    isDark ? 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 border border-blue-500/40' : 'bg-blue-100 text-blue-700 hover:bg-blue-200 border border-blue-300'
+                  }`}
+                >
+                  <Eye className="w-5 h-5" />
+                  View DPR
+                </button>
+                <button
+                  onClick={handleDownloadDPR}
+                  className={`flex items-center justify-center gap-2 px-6 py-3 rounded-lg text-base font-bold transition-all bg-[#C2D642] hover:bg-[#C2D642]/90 text-white shadow-md`}
+                >
+                  <Download className="w-5 h-5" />
+                  Download
+                </button>
+              </div>
             </div>
 
             {/* Modal Footer */}
@@ -4816,9 +5075,28 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         theme={theme}
         isOpen={showCreateLabourModal}
         onClose={() => setShowCreateLabourModal(false)}
-        onSuccess={() => {
+        onSuccess={(createdLabour?: any) => {
           setShowCreateLabourModal(false);
           setLaboursRefreshKey(prev => prev + 1);
+          if (createdLabour && (createdLabour.id != null || createdLabour.uuid)) {
+            const cat = (createdLabour.category || '').toLowerCase();
+            const categoryMap: Record<string, string> = { skilled: 'Skilled', semiskilled: 'Semi Skilled', unskilled: 'Unskilled' };
+            const category = categoryMap[cat] || createdLabour.category || 'Skilled';
+            const unitLabel = createdLabour.unit?.unit || createdLabour.unit || 'Nos';
+            setLabours(prev => {
+              const id = createdLabour.uuid || String(createdLabour.id);
+              if (prev.some(l => l.id === id || String(l.numericId) === String(createdLabour.id))) return prev;
+              return [{
+                id,
+                numericId: Number(createdLabour.id),
+                name: createdLabour.name || '',
+                type: createdLabour.name || '',
+                category,
+                unit: unitLabel,
+                createdAt: createdLabour.created_at
+              }, ...prev];
+            });
+          }
         }}
       />
 
@@ -4831,6 +5109,19 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           setShowCreateAssetModal(false);
           setAssetsRefreshKey(prev => prev + 1);
         }}
+      />
+
+      {/* Create Project Modal - stays in DPR, refreshes project list on success */}
+      <CreateProjectModal
+        theme={theme}
+        isOpen={showCreateProjectModal}
+        onClose={() => setShowCreateProjectModal(false)}
+        onSuccess={() => {
+          setShowCreateProjectModal(false);
+          setProjectRefreshKey(k => k + 1);
+        }}
+        defaultProjects={[]}
+        userProjects={[]}
       />
 
       {/* Create Subproject Modal - fetches user projects via API (uses auth token) */}

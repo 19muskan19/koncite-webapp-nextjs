@@ -107,7 +107,7 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
       try {
         const fetched = await masterDataAPI.getUnits();
         setUnits((fetched || []).map((u: any) => ({ id: u.id, unit: (u.unit || u.name || '').toString().trim() })));
-      } catch {
+      } catch (e) {
         setUnits([]);
       }
     };

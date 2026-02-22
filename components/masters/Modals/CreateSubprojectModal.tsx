@@ -5,6 +5,7 @@ import { ThemeType } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
 import { X, Loader2 } from 'lucide-react';
 import { masterDataAPI } from '@/services/api';
+import DatePickerInput from '@/components/ui/DatePickerInput';
 
 interface Project {
   id: number | string;
@@ -96,7 +97,7 @@ const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
             }));
           }
         }
-      } catch {
+      } catch (e) {
         toast.showError('Failed to load projects');
         setProjects([]);
       } finally {
@@ -126,10 +127,14 @@ const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
   }, [isOpen, defaultProjectId]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
+    const { name, value } = e.target;
+    const updates: Record<string, string> = { [name]: value };
+    if (name === 'plannedStartDate' && value && formData.plannedEndDate) {
+      if (new Date(value) > new Date(formData.plannedEndDate)) {
+        updates.plannedEndDate = value;
+      }
+    }
+    setFormData({ ...formData, ...updates });
   };
 
   const handleCreateSubproject = async () => {
@@ -265,17 +270,17 @@ const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
               Plan Start Date <span className="text-red-500">*</span>
             </label>
-            <input
-              type="date"
+            <DatePickerInput
               name="plannedStartDate"
               value={formData.plannedStartDate}
               onChange={handleInputChange}
               disabled={isSubmitting}
-              className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+              iconClassName={textSecondary}
+              className={`${
                 isDark
                   ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]'
                   : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+              } border disabled:opacity-50`}
             />
           </div>
 
@@ -283,18 +288,18 @@ const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
               Plan End Date <span className="text-red-500">*</span>
             </label>
-            <input
-              type="date"
+            <DatePickerInput
               name="plannedEndDate"
               value={formData.plannedEndDate}
               onChange={handleInputChange}
               min={formData.plannedStartDate}
               disabled={isSubmitting}
-              className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+              iconClassName={textSecondary}
+              className={`${
                 isDark
                   ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]'
                   : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+              } border disabled:opacity-50`}
             />
           </div>
 

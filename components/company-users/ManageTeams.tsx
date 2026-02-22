@@ -177,7 +177,7 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
         if (savedUsers) {
           try {
             setUsers(JSON.parse(savedUsers));
-          } catch {
+          } catch (e) {
             setUsers([]);
           }
         } else {
@@ -206,7 +206,7 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
         if (savedUsers) {
           try {
             setUsers(JSON.parse(savedUsers));
-          } catch {
+          } catch (e) {
             setUsers([]);
           }
         } else {
@@ -236,7 +236,7 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
         try {
           const parsed = JSON.parse(savedRoles);
           userRoles = parsed.map((r: { id?: string; name: string }) => ({ id: String(r.id ?? r.name), name: r.name }));
-        } catch {
+        } catch (e) {
           userRoles = [];
         }
       }

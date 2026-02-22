@@ -5,11 +5,11 @@ import { Toast, ToastType, ToastContainer } from '../components/Toast';
 
 interface ToastContextType {
   toasts: Toast[];
-  showToast: (message: string, type?: ToastType, duration?: number) => void;
-  showSuccess: (message: string, duration?: number) => void;
-  showError: (message: string, duration?: number) => void;
-  showInfo: (message: string, duration?: number) => void;
-  showWarning: (message: string, duration?: number) => void;
+  showToast: (message: string | { message?: unknown }, type?: ToastType, duration?: number) => void;
+  showSuccess: (message: string | { message?: unknown }, duration?: number) => void;
+  showError: (message: string | { message?: unknown }, duration?: number) => void;
+  showInfo: (message: string | { message?: unknown }, duration?: number) => void;
+  showWarning: (message: string | { message?: unknown }, duration?: number) => void;
   removeToast: (id: string) => void;
 }
 
@@ -22,13 +22,22 @@ export const ToastProvider: React.FC<{ children: React.ReactNode; isDark?: boole
     setToasts((prev) => prev.filter((toast) => toast.id !== id));
   }, []);
 
+  const toMessage = useCallback((msg: unknown): string => {
+    if (typeof msg === 'string') return msg;
+    if (msg && typeof msg === 'object' && 'message' in msg) {
+      const m = (msg as { message?: unknown }).message;
+      return typeof m === 'string' ? m : String(m ?? 'An error occurred');
+    }
+    return String(msg ?? 'An error occurred');
+  }, []);
+
   const showToast = useCallback(
-    (message: string, type: ToastType = 'info', duration: number = 3000) => {
+    (message: string | { message?: string }, type: ToastType = 'info', duration: number = 3000) => {
       const id = Date.now().toString() + Math.random().toString(36).substr(2, 9);
-      const newToast: Toast = { id, message, type, duration };
+      const newToast: Toast = { id, message: toMessage(message), type, duration };
       setToasts((prev) => [...prev, newToast]);
     },
-    []
+    [toMessage]
   );
 
   const showSuccess = useCallback(

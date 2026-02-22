@@ -5,7 +5,6 @@ import { ThemeType } from '../types';
 import { 
   Briefcase,
   Search,
-  Calendar,
   Copy,
   FileText,
   Download,
@@ -16,6 +15,7 @@ import {
   ChevronLeft,
   ChevronRight
 } from 'lucide-react';
+import DatePickerInput from './ui/DatePickerInput';
 import { useToast } from '../contexts/ToastContext';
 
 interface WorkContractorActivity {
@@ -485,29 +485,28 @@ const WorkContractor: React.FC<WorkContractorProps> = ({ theme }) => {
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
               Select From Date:
             </label>
-            <div className="relative">
-              <input
-                type="date"
-                value={fromDate}
-                onChange={(e) => setFromDate(e.target.value)}
-                className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-              />
-              <Calendar className={`absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} pointer-events-none`} />
-            </div>
+            <DatePickerInput
+              value={fromDate}
+              onChange={(e) => {
+                const v = e.target.value;
+                setFromDate(v);
+                if (v && toDate && new Date(v) > new Date(toDate)) setToDate(v);
+              }}
+              iconClassName={textSecondary}
+              className={`py-2 ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20`}
+            />
           </div>
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
               Select To Date:
             </label>
-            <div className="relative">
-              <input
-                type="date"
-                value={toDate}
-                onChange={(e) => setToDate(e.target.value)}
-                className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-              />
-              <Calendar className={`absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} pointer-events-none`} />
-            </div>
+            <DatePickerInput
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+              min={fromDate || undefined}
+              iconClassName={textSecondary}
+              className={`py-2 ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20`}
+            />
           </div>
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>

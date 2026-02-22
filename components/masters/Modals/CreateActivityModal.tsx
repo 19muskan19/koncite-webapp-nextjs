@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { ThemeType } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
 import { X, Loader2 } from 'lucide-react';
+import DatePickerInput from '@/components/ui/DatePickerInput';
 import { masterDataAPI } from '@/services/api';
 
 interface ActivityItem {
@@ -368,6 +369,11 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
 
     // If type is 'activites', heading and unit_id are required
     if (formData.type === 'activites') {
+      const hasHeadings = activityHierarchy.some((item) => item.depth === 0 || item.type === 'heading');
+      if (!hasHeadings) {
+        toast.showWarning('No headings found. Please add a heading first, then add activities.');
+        return false;
+      }
       if (!formData.heading) {
         toast.showWarning('Required field "Heading (Parent Activity)" is empty. Please fill it before submitting.');
         return false;
@@ -603,6 +609,10 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
                     <Loader2 className="w-4 h-4 animate-spin" />
                     Loading activities hierarchy...
                   </div>
+                ) : !activityHierarchy.some((item) => item.depth === 0 || item.type === 'heading') ? (
+                  <div className={`w-full px-4 py-3 rounded-lg text-sm font-bold border ${isDark ? 'bg-amber-500/10 border-amber-500/50 text-amber-600' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+                    No headings found. Please add a heading first, then add activities.
+                  </div>
                 ) : (
                   <select
                     name="heading"
@@ -721,34 +731,34 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
                   <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
                     Start Date (Optional)
                   </label>
-                  <input
-                    type="date"
+                  <DatePickerInput
                     name="start_date"
                     value={formData.start_date}
                     onChange={handleInputChange}
                     disabled={isSubmitting}
-                    className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                    iconClassName={textSecondary}
+                    className={`${
                       isDark 
                         ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
                         : 'bg-white border-slate-200 text-slate-900'
-                    } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+                    } border focus:ring-2 focus:ring-[#C2D642]/20 disabled:opacity-50`}
                   />
                 </div>
                 <div>
                   <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
                     End Date (Optional)
                   </label>
-                  <input
-                    type="date"
+                  <DatePickerInput
                     name="end_date"
                     value={formData.end_date}
                     onChange={handleInputChange}
                     disabled={isSubmitting}
-                    className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                    iconClassName={textSecondary}
+                    className={`${
                       isDark 
                         ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
                         : 'bg-white border-slate-200 text-slate-900'
-                    } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+                    } border focus:ring-2 focus:ring-[#C2D642]/20 disabled:opacity-50`}
                   />
                 </div>
               </div>
@@ -771,7 +781,7 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
           </button>
           <button
             onClick={handleSubmit}
-            disabled={isSubmitting || isLoadingUnits || isLoadingHeadings}
+            disabled={isSubmitting || isLoadingUnits || isLoadingHeadings || (formData.type === 'activites' && !activityHierarchy.some((item) => item.depth === 0 || item.type === 'heading'))}
             className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642]/90 text-white transition-all shadow-md disabled:opacity-50 flex items-center gap-2"
           >
             {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}

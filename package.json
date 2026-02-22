@@ -3,8 +3,8 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "dev": "cross-env NEXT_TELEMETRY_DISABLED=1 next dev --turbo",
-    "dev:standard": "cross-env NEXT_TELEMETRY_DISABLED=1 next dev",
+    "dev": "cross-env NEXT_TELEMETRY_DISABLED=1 next dev",
+    "dev:turbo": "cross-env NEXT_TELEMETRY_DISABLED=1 next dev --turbo",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",

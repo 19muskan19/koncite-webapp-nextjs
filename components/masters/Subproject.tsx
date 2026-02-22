@@ -21,6 +21,7 @@ import {
   Trash2,
   RefreshCw
 } from 'lucide-react';
+import DatePickerInput from '../ui/DatePickerInput';
 
 interface Subproject {
   id: string;
@@ -125,10 +126,14 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
   }, [selectedProject]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
+    const { name, value } = e.target;
+    const updates: Record<string, string> = { [name]: value };
+    if (name === 'plannedStartDate' && value && formData.plannedEndDate) {
+      if (new Date(value) > new Date(formData.plannedEndDate)) {
+        updates.plannedEndDate = value;
+      }
+    }
+    setFormData({ ...formData, ...updates });
   };
 
   const handleCloseModal = () => {
@@ -961,16 +966,16 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                 <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
                   Planned Start Date <span className="text-red-500">*</span>
                 </label>
-                <input
-                  type="date"
+                <DatePickerInput
                   name="plannedStartDate"
                   value={formData.plannedStartDate}
                   onChange={handleInputChange}
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                  iconClassName={textSecondary}
+                  className={`${
                     isDark 
                       ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
                       : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                  } border`}
                 />
               </div>
 
@@ -979,17 +984,17 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                 <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
                   Planned End Date <span className="text-red-500">*</span>
                 </label>
-                <input
-                  type="date"
+                <DatePickerInput
                   name="plannedEndDate"
                   value={formData.plannedEndDate}
                   onChange={handleInputChange}
                   min={formData.plannedStartDate}
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                  iconClassName={textSecondary}
+                  className={`${
                     isDark 
                       ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
                       : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                  } border`}
                 />
               </div>
             </div>
