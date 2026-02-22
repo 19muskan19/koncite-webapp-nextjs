@@ -79,6 +79,9 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
                 alt="Logo" 
                 className="w-8 h-8 sm:w-9 sm:h-9 object-contain"
               />
+              <span className={`font-black text-lg sm:text-xl tracking-tight ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>
+                KONCITE
+              </span>
             </Link>
             {/* Mobile Hamburger Menu Button */}
             <button

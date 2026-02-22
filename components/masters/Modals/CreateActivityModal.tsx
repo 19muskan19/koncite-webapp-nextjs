@@ -355,7 +355,6 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
   const validateForm = (): boolean => {
     const missingFields: string[] = [];
     if (!formData.project) missingFields.push('Project');
-    if (!formData.subproject) missingFields.push('Subproject');
     if (!formData.type || !['heading', 'activites'].includes(formData.type)) missingFields.push('Type');
     if (!formData.activities.trim()) missingFields.push(formData.type === 'heading' ? 'Heading Name' : 'Activity Name');
 
@@ -520,7 +519,7 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
           {/* Subproject */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Subproject <span className="text-red-500">*</span>
+              Subproject
             </label>
             {isLoadingSubprojects ? (
               <div className={`w-full px-4 py-3 rounded-lg text-sm ${textSecondary} flex items-center gap-2`}>

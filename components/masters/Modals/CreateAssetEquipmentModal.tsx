@@ -39,7 +39,7 @@ const CreateAssetEquipmentModal: React.FC<CreateAssetEquipmentModalProps> = ({
   const toast = useToast();
   const [formData, setFormData] = useState({
     name: '', // Required: asset name
-    specification: '', // Required: asset specifications/details
+    specification: '', // Optional: asset specifications/details
     unit_id: '' // Required: ID of measurement unit
   });
   const [units, setUnits] = useState<Array<{ id: number; unit: string; uuid?: string }>>([]);
@@ -151,9 +151,10 @@ const CreateAssetEquipmentModal: React.FC<CreateAssetEquipmentModalProps> = ({
     try {
       const payload: any = {
         name: formData.name.trim(),
-        unit_id: Number(formData.unit_id),
-        specification: formData.specification.trim() || null // Optional - send null when empty for nullable backend validation
+        unit_id: Number(formData.unit_id)
       };
+      const specVal = formData.specification.trim();
+      if (specVal) payload.specification = specVal;
 
       if (isEditing && editingAssetId) {
         // Update existing asset - use UUID for update API
@@ -177,10 +178,11 @@ const CreateAssetEquipmentModal: React.FC<CreateAssetEquipmentModalProps> = ({
       const msg = data?.message ?? error?.message ?? '';
       const specErr = Array.isArray(data?.errors?.specification) ? data.errors.specification[0] : data?.errors?.specification;
       const specMsg = String(specErr ?? '');
-      // Don't show toast when server says specification required - avoid contradicting "(Optional)" label
-      const isSpecRequired = /specification.*required|required.*specification/i.test(msg) || /specification.*required|required.*specification/i.test(specMsg);
-      if (isSpecRequired) {
-        if (specMsg || msg) console.warn('Asset save (specification required by server):', specMsg || msg);
+      // Don't show toast when error is about specification - UI shows it as (Optional), so suppress to avoid contradicting
+      const combinedErr = `${msg} ${specMsg}`;
+      const isSpecError = /specification.*(required|enter|empty|must|provide)|(required|enter|empty|must|provide).*specification|specification\s+field/i.test(combinedErr);
+      if (specMsg || isSpecError) {
+        if (specMsg || msg) console.warn('Asset save (specification-related server error suppressed):', specMsg || msg);
         return;
       }
       console.error('Failed to save asset:', error);
