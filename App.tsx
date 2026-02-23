@@ -99,6 +99,7 @@ const AppContent: React.FC = () => {
     // Authentication is handled in LoginModal via API
     // This callback is called after successful login
     setIsAuthenticated(true);
+    setShowLoginModal(false); // Close modal
     // User data will be fetched by UserContext automatically
   };
 

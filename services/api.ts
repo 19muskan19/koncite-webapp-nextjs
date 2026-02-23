@@ -336,6 +336,36 @@ export const authAPI = {
   },
 
   /**
+   * Verify 2FA OTP after sign-in (when two_factor_status is on)
+   * POST /api/sign-in-verify-otp
+   */
+  signInVerifyOtp: async (email: string, otp: string): Promise<OtpVerificationResponse> => {
+    try {
+      const response = await apiClient.post('/sign-in-verify-otp', { email, otp });
+      const data = response.data;
+
+      if (data.status && data.data?.token) {
+        setCookie('auth_token', data.data.token, 30);
+        setCookie('isAuthenticated', 'true', 30);
+        localStorage.setItem('auth_token', data.data.token);
+        localStorage.setItem('isAuthenticated', 'true');
+
+        const user = data.data?.user || data.user;
+        if (user && user.name && typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('userLoggedIn', { detail: { user } }));
+        }
+      }
+
+      return data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Invalid or expired OTP. Please try again.',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
    * Resend OTP
    * POST /api/resend-otp-verification
    */

@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
-import { X, UserPlus, Mail, Lock, Phone, Building, Loader2, ChevronDown, Search } from 'lucide-react';
+import { X, UserPlus, Mail, Lock, Phone, Building, Loader2, ChevronDown, Search, Eye, EyeOff } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from '../contexts/ToastContext';
 import { authAPI, commonAPI } from '../services/api';
@@ -28,17 +28,17 @@ interface SignupModalProps {
 }
 
 interface CountryFromAPI {
-  id: number | string; // Backend numeric ID (required for signup validation)
+  id: number | string;
   name: string;
-  code?: string; // ISO code (e.g. IN, US)
-  phone_code?: string; // Dial code (e.g. 91, 1)
+  code?: string;
+  phone_code?: string;
 }
 
 interface SignupData {
   name: string;
   email: string;
   phone: string;
-  country: number | string; // Country ID or ISO code
+  country: string; // Backend country ID - set from country code selection
   countryCode: string; // Country code for user phone (e.g., '91', '971')
   password: string;
   confirmPassword: string;
@@ -54,8 +54,8 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
     name: '',
     email: '',
     phone: '',
-    country: '', // Country ID - will be set based on country selection
-    countryCode: '91', // Default to India
+    country: '', // Backend country ID - set from country code selection
+    countryCode: '', // Select or search to choose
     password: '',
     confirmPassword: '',
     companyName: '',
@@ -64,152 +64,55 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
   });
   const [errors, setErrors] = useState<Partial<SignupData>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [countries, setCountries] = useState<CountryFromAPI[]>([]);
-  const [isLoadingCountries, setIsLoadingCountries] = useState(false);
   const [showTermsModal, setShowTermsModal] = useState(false);
+  const [countries, setCountries] = useState<CountryFromAPI[]>([]);
   const [countryCodes, setCountryCodes] = useState<CountryCode[]>([]);
+  const [isLoadingCountries, setIsLoadingCountries] = useState(false);
   const [isLoadingCountryCodes, setIsLoadingCountryCodes] = useState(false);
   const [isCountryDropdownOpen, setIsCountryDropdownOpen] = useState(false);
   const [countrySearchQuery, setCountrySearchQuery] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  // Priority mapping for dial codes to preferred country ISO codes
-  // This ensures correct country selection when multiple countries share the same dial code
-  const dialCodeToCountryMapping: Record<string, string> = {
-    '91': 'IN', // India (not British Indian Territory)
-    '1': 'US', // United States
-    '44': 'GB', // United Kingdom
-    '971': 'AE', // United Arab Emirates
-    '86': 'CN', // China
-    '81': 'JP', // Japan
-    '49': 'DE', // Germany
-    '33': 'FR', // France
-    '39': 'IT', // Italy
-    '34': 'ES', // Spain
-    '61': 'AU', // Australia
-    '7': 'RU', // Russia
-    '82': 'KR', // South Korea
-    '65': 'SG', // Singapore
-    '60': 'MY', // Malaysia
-    '66': 'TH', // Thailand
+  // Find matching country from get-country by RestCountries selection
+  const findBackendCountry = (countryCodeObj: CountryCode | undefined): CountryFromAPI | null => {
+    if (!countryCodeObj || countries.length === 0) return null;
+    const dialCodeStr = String(countryCodeObj.dialCode).replace(/^\+/, '');
+    const matchByIso = countries.find((c) => c.code?.toLowerCase() === countryCodeObj.code.toLowerCase());
+    if (matchByIso) return matchByIso;
+    const matchByPhone = countries.find((c) => {
+      const pc = String(c.phone_code || '').replace(/^\+/, '');
+      return pc === dialCodeStr;
+    });
+    if (matchByPhone) return matchByPhone;
+    const nameLower = (countryCodeObj.name || '').toLowerCase().trim();
+    const matchByName = countries.find((c) => {
+      const cName = (c.name || '').toLowerCase().trim();
+      return cName === nameLower || cName.includes(nameLower) || nameLower.includes(cName);
+    });
+    return matchByName || null;
   };
 
-  // Helper function to find matching country
-  const findMatchingCountry = (dialCode: string, countryCodeObj: CountryCode | undefined, countriesList: CountryFromAPI[]) => {
-    if (!countryCodeObj || countriesList.length === 0) return null;
-    
-    const dialCodeStr = String(dialCode).replace(/^\+/, '');
-    
-    // First, try to find by preferred mapping (for common dial codes)
-    const preferredCountryCode = dialCodeToCountryMapping[dialCodeStr];
-    if (preferredCountryCode) {
-      const preferredCountry = countriesList.find((country) => 
-        country.code && country.code.toLowerCase() === preferredCountryCode.toLowerCase()
-      );
-      if (preferredCountry) {
-        return preferredCountry;
-      }
+  // Update country (backend ID) when country code selection changes
+  useEffect(() => {
+    if (formData.countryCode && countryCodes.length > 0 && countries.length > 0) {
+      const selected = countryCodes.find((c) => c.dialCode === formData.countryCode);
+      const backendCountry = findBackendCountry(selected);
+      setFormData((prev) => ({
+        ...prev,
+        country: backendCountry ? String(backendCountry.id) : '',
+      }));
     }
-    
-    // Try matching by ISO code from countryCodeObj (most reliable)
-    const matchByIso = countriesList.find((country) => {
-      if (country.code && country.code.toLowerCase() === countryCodeObj.code.toLowerCase()) {
-        return true;
-      }
-      return false;
-    });
-    if (matchByIso) {
-      return matchByIso;
-    }
-    
-    // Try matching by phone_code, but prefer main countries over territories
-    const matchesByPhone = countriesList.filter((country) => {
-      if (country.phone_code) {
-        const phoneCodeStr = String(country.phone_code).replace(/^\+/, '');
-        return phoneCodeStr === dialCodeStr;
-      }
-      return false;
-    });
-    
-    if (matchesByPhone.length > 0) {
-      // If we have a preferred mapping, use it
-      if (preferredCountryCode) {
-        const preferred = matchesByPhone.find(c => c.code?.toLowerCase() === preferredCountryCode.toLowerCase());
-        if (preferred) return preferred;
-      }
-      // Otherwise, prefer countries that match the countryCodeObj name
-      const nameMatch = matchesByPhone.find((country) => {
-        if (country.name && countryCodeObj.name) {
-          const countryName = country.name.toLowerCase().trim();
-          const codeName = countryCodeObj.name.toLowerCase().trim();
-          return countryName === codeName;
-        }
-        return false;
-      });
-      if (nameMatch) return nameMatch;
-      
-      // Filter out territories and use the first main country
-      const mainCountries = matchesByPhone.filter(c => 
-        !c.name.toLowerCase().includes('territory') &&
-        !c.name.toLowerCase().includes('dependency') &&
-        !c.name.toLowerCase().includes('island')
-      );
-      if (mainCountries.length > 0) {
-        return mainCountries[0];
-      }
-      
-      // Fallback to first match
-      return matchesByPhone[0];
-    }
-    
-    // Try matching by country name (case-insensitive) as final fallback
-    if (countryCodeObj.name) {
-      const nameMatch = countriesList.find((country) => {
-        if (country.name) {
-          const countryName = country.name.toLowerCase().trim();
-          const codeName = countryCodeObj.name.toLowerCase().trim();
-          return countryName === codeName || 
-                 countryName.includes(codeName) || 
-                 codeName.includes(countryName);
-        }
-        return false;
-      });
-      if (nameMatch) return nameMatch;
-    }
-    
-    return null;
-  };
+  }, [formData.countryCode, countryCodes, countries]);
 
-  // Fetch countries on mount - using API
+  // Fetch countries from get-country API (backend requires country ID)
   useEffect(() => {
     if (isOpen && countries.length === 0 && !isLoadingCountries) {
       fetchCountries();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
-  // Auto-select country when country code is selected and countries are loaded
-  useEffect(() => {
-    if (formData.countryCode && countries.length > 0 && countryCodes.length > 0) {
-      // Find the selected country code object
-      const selectedCountryCode = countryCodes.find(c => c.dialCode === formData.countryCode);
-      
-      if (selectedCountryCode) {
-        // Find matching country using helper function
-        const matchingCountry = findMatchingCountry(formData.countryCode, selectedCountryCode, countries);
-        
-        // Update if we found a match and it's different from current selection
-        if (matchingCountry && formData.country !== matchingCountry.id) {
-          setFormData(prev => {
-            console.log('Auto-selecting country via useEffect:', matchingCountry.name, 'for dial code:', formData.countryCode);
-            return { ...prev, country: matchingCountry.id };
-          });
-        }
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formData.countryCode, countries, countryCodes]);
-
-  // Fetch country codes from API when modal opens
+  // Fetch country codes from RestCountries API when modal opens
   useEffect(() => {
     if (isOpen && countryCodes.length === 0 && !isLoadingCountryCodes) {
       fetchCountryCodes();
@@ -217,29 +120,19 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
-  // Fetch countries from backend API (GET /get-country) - backend expects numeric country ID for signup
   const fetchCountries = async () => {
     setIsLoadingCountries(true);
     try {
-      const fetchedCountries = await commonAPI.getCountries();
-      // Backend returns { id: number, name, code?, phone_code? } - id is required for signup validation
-      const transformedCountries: CountryFromAPI[] = (fetchedCountries || []).map((c: any) => ({
-        id: c.id, // Numeric ID - required by backend signup validation
+      const fetched = await commonAPI.getCountries();
+      const transformed: CountryFromAPI[] = (fetched || []).map((c: any) => ({
+        id: c.id,
         name: c.name || c.country_name || '',
         code: c.code || c.iso_code || c.country_code,
-        phone_code: c.phone_code || c.dial_code ? String(c.phone_code || c.dial_code).replace(/^\+/, '') : undefined
+        phone_code: c.phone_code || c.dial_code ? String(c.phone_code || c.dial_code).replace(/^\+/, '') : undefined,
       })).filter((c) => c.id != null && c.name);
-
-      // Sort: India first if present, then alphabetically
-      transformedCountries.sort((a, b) => {
-        if (a.code === 'IN' || a.phone_code === '91') return -1;
-        if (b.code === 'IN' || b.phone_code === '91') return 1;
-        return String(a.name).localeCompare(String(b.name));
-      });
-
-      setCountries(transformedCountries);
+      transformed.sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+      setCountries(transformed);
     } catch (error) {
-      console.error('Failed to fetch countries:', error);
       toast.showError('Failed to load countries. Please refresh the page.');
       setCountries([]);
     } finally {
@@ -247,30 +140,16 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
     }
   };
 
-  // Same logic as CreateVendorModal: USA/Canada use root only (+1); area codes (3+ chars) excluded
   const parseDialCode = (c: any): string => {
     const root = (c.idd?.root || '').replace(/\+/g, '');
     const suffixes = c.idd?.suffixes || [];
-    const firstSuffix = suffixes[0];
-    // USA/Canada: root is "+1", suffixes are area codes (e.g. "201") - use root only
+    const first = suffixes[0];
     if (root === '1' || (c.cca2 === 'US' || c.cca2 === 'CA')) return '1';
-    // When suffix is 3+ chars, it's likely an area code - use root only
-    if (firstSuffix && String(firstSuffix).length >= 3) return root;
-    // Otherwise: root + first suffix (e.g. IN: "9"+"1"=91, AE: "9"+"71"=971)
-    if (firstSuffix) return root + String(firstSuffix);
+    if (root === '7') return '7'; // Russia, Kazakhstan - suffixes are area codes
+    if (first && String(first).length >= 3) return root;
+    if (first) return root + String(first);
     return root;
   };
-
-  const PRIORITY_COUNTRIES: CountryCode[] = [
-    { code: 'US', dialCode: '1', name: 'United States', flag: getFlagUrl('US') },
-    { code: 'IN', dialCode: '91', name: 'India', flag: getFlagUrl('IN') },
-    { code: 'AE', dialCode: '971', name: 'United Arab Emirates', flag: getFlagUrl('AE') },
-    { code: 'SA', dialCode: '966', name: 'Saudi Arabia', flag: getFlagUrl('SA') },
-    { code: 'QA', dialCode: '974', name: 'Qatar', flag: getFlagUrl('QA') },
-    { code: 'KW', dialCode: '965', name: 'Kuwait', flag: getFlagUrl('KW') },
-    { code: 'BH', dialCode: '973', name: 'Bahrain', flag: getFlagUrl('BH') },
-    { code: 'OM', dialCode: '968', name: 'Oman', flag: getFlagUrl('OM') },
-  ];
 
   const fetchCountryCodes = async () => {
     setIsLoadingCountryCodes(true);
@@ -293,8 +172,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
         .filter((c: CountryCode) => c.dialCode);
 
       const byCode = new Map<string, CountryCode>();
-      PRIORITY_COUNTRIES.forEach((p) => byCode.set(p.code, p));
-      fromApi.forEach((c) => { if (!byCode.has(c.code)) byCode.set(c.code, c); });
+      fromApi.forEach((c) => byCode.set(c.code, c));
       const merged = Array.from(byCode.values()).sort((a, b) => {
         const nA = parseInt(a.dialCode) || 0;
         const nB = parseInt(b.dialCode) || 0;
@@ -304,7 +182,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
       setCountryCodes(merged);
     } catch (error) {
       console.error('Error fetching country codes:', error);
-      setCountryCodes(PRIORITY_COUNTRIES);
+      setCountryCodes([]);
     } finally {
       setIsLoadingCountryCodes(false);
     }
@@ -411,7 +289,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
     }
 
     if (!formData.countryCode.trim()) {
-      newErrors.countryCode = 'Country code is required';
+      newErrors.countryCode = 'Please select a country code';
     }
 
     if (!formData.phone.trim()) {
@@ -441,11 +319,13 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
 
 
     if (!formData.countryCode.trim()) {
-      newErrors.countryCode = 'Country code is required';
+      newErrors.countryCode = 'Please select a country code';
     }
 
     if (!formData.country) {
-      newErrors.country = 'Please select a country';
+      newErrors.country = formData.countryCode
+        ? 'Selected country is not available. Please choose a different country.'
+        : 'Select a country code in the phone number field';
     }
 
     if (!formData.agreedToTerms) {
@@ -484,7 +364,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
       formDataToSend.append('password', formData.password);
       formDataToSend.append('password_confirmation', formData.confirmPassword);
       formDataToSend.append('phone', formData.phone.trim());
-      formDataToSend.append('country', String(formData.country)); // Country ID (integer)
+      formDataToSend.append('country', formData.country); // Backend country ID (required)
       formDataToSend.append('country_code', formData.countryCode);
       
       // Required company fields
@@ -560,31 +440,29 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
       
       // Store email for OTP verification
       localStorage.setItem('pendingVerificationEmail', formData.email);
-      
-      // Call the onSignup callback if provided
-      if (onSignup) {
-        onSignup(formData);
-      }
 
-      // Reset form
-      setFormData({
-        name: '',
-        email: '',
-        phone: '',
-        country: '',
-        countryCode: '91',
-        password: '',
-        confirmPassword: '',
-        companyName: '',
-        profileImage: null,
-        agreedToTerms: false
-      });
-      setErrors({});
-      
-      // Close modal and trigger OTP verification modal
-      onClose();
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('openOtpModal', { detail: { email: formData.email } }));
+      if (onSignup) {
+        // Parent handles navigation (e.g. to /verify-otp) - don't close or open modal
+        onSignup(formData);
+      } else {
+        // Modal flow: close and open OTP verification modal
+        setFormData({
+          name: '',
+          email: '',
+          phone: '',
+          country: '',
+          countryCode: '',
+          password: '',
+          confirmPassword: '',
+          companyName: '',
+          profileImage: null,
+          agreedToTerms: false
+        });
+        setErrors({});
+        onClose();
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('openOtpModal', { detail: { email: formData.email } }));
+        }
       }
     } catch (error: any) {
       // Log full error for debugging
@@ -718,22 +596,29 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
                       onClick={() => setIsCountryDropdownOpen(!isCountryDropdownOpen)}
                       className={`flex items-center gap-2 px-3 py-3 border ${errors.countryCode ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none min-w-[120px] hover:bg-opacity-80 transition-colors`}
                     >
-                      {countryCodes.length > 0 ? (
-                        <>
-                          <img 
-                            src={(countryCodes.find(c => c.dialCode === formData.countryCode) || countryCodes.find(c => c.dialCode === '91') || countryCodes[0])?.flag || getFlagUrl('IN')} 
-                            alt="Flag"
-                            className="w-5 h-4 object-cover rounded border border-slate-300"
-                            loading="lazy"
-                            onError={(e) => {
-                              const target = e.target as HTMLImageElement;
-                              target.src = getFlagUrl((countryCodes.find(c => c.dialCode === formData.countryCode) || countryCodes.find(c => c.dialCode === '91') || countryCodes[0])?.code || 'IN');
-                            }}
-                          />
-                          <span className="text-sm font-medium">+{formData.countryCode}</span>
-                        </>
+                      {formData.countryCode && countryCodes.length > 0 ? (
+                        (() => {
+                          const sel = countryCodes.find((c) => c.dialCode === formData.countryCode);
+                          return sel ? (
+                            <>
+                              <img
+                                src={sel.flag || getFlagUrl(sel.code)}
+                                alt=""
+                                className="w-5 h-4 object-cover rounded border border-slate-300"
+                                loading="lazy"
+                                onError={(e) => {
+                                  const target = e.target as HTMLImageElement;
+                                  target.src = getFlagUrl(sel.code);
+                                }}
+                              />
+                              <span className="text-sm font-medium">+{sel.dialCode}</span>
+                            </>
+                          ) : (
+                            <span className={`text-sm ${textSecondary}`}>Select code</span>
+                          );
+                        })()
                       ) : (
-                        <span className="text-sm font-medium">+91</span>
+                        <span className={`text-sm ${textSecondary}`}>Select code</span>
                       )}
                       <ChevronDown className={`w-4 h-4 transition-transform ${isCountryDropdownOpen ? 'rotate-180' : ''}`} />
                     </button>
@@ -783,29 +668,12 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
                                   key={`${countryCode.code}-${countryCode.dialCode}`}
                                   type="button"
                                   onClick={() => {
-                                    // Find matching country using helper function
-                                    const matchingCountry = findMatchingCountry(countryCode.dialCode, countryCode, countries);
-                                    
-                                    // Update form data with country code and matching country
-                                    setFormData(prev => {
-                                      const updated = {
-                                        ...prev,
-                                        countryCode: countryCode.dialCode
-                                      };
-                                      
-                                      // Auto-select matching country if found
-                                      if (matchingCountry) {
-                                        updated.country = matchingCountry.id; // Using ISO code as ID
-                                        console.log('Auto-selected country:', matchingCountry.name, 'for dial code:', countryCode.dialCode);
-                                      } else {
-                                        console.warn('No matching country found for dial code:', countryCode.dialCode, 'Country name:', countryCode.name);
-                                        // Clear country selection if no match found
-                                        updated.country = '';
-                                      }
-                                      
-                                      return updated;
-                                    });
-                                    
+                                    const backendCountry = findBackendCountry(countryCode);
+                                    setFormData((prev) => ({
+                                      ...prev,
+                                      countryCode: countryCode.dialCode,
+                                      country: backendCountry ? String(backendCountry.id) : '',
+                                    }));
                                     setIsCountryDropdownOpen(false);
                                     setCountrySearchQuery('');
                                   }}
@@ -878,30 +746,23 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
             {errors.countryCode && <p className="text-red-500 text-xs mt-1">{typeof errors.countryCode === 'string' ? errors.countryCode : 'Invalid country code'}</p>}
           </div>
 
-          {/* Country Dropdown */}
+          {/* Country - auto-filled from phone country code */}
           <div>
             <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>
               Country <span className="text-red-500">*</span>
             </label>
+            <p className={`text-xs mb-2 ${textSecondary}`}>Auto-filled from phone country code</p>
             <div className="relative">
               <Building className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 z-10" />
-              <select
-                name="country"
-                value={formData.country}
-                onChange={(e) => setFormData(prev => ({ ...prev, country: e.target.value }))}
-                disabled={isLoadingCountries}
-                className={`w-full pl-10 pr-4 py-3 border ${errors.country ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none disabled:opacity-50 disabled:cursor-not-allowed`}
-                required
+              <div
+                className={`w-full pl-10 pr-4 py-3 border ${errors.country ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} min-h-[46px] flex items-center`}
               >
-                <option value="">{isLoadingCountries ? 'Loading countries...' : 'Select a country'}</option>
-                {countries.map((country) => (
-                  <option key={country.id} value={country.id}>
-                    {country.name}
-                  </option>
-                ))}
-              </select>
+                {formData.countryCode && countryCodes.length > 0
+                  ? (countryCodes.find((c) => c.dialCode === formData.countryCode)?.name || 'Select a country code above')
+                  : 'Select a country code in phone number above'}
+              </div>
             </div>
-            {errors.country && <p className="text-red-500 text-xs mt-1">{typeof errors.country === 'string' ? errors.country : 'Please select a country'}</p>}
+            {errors.country && <p className="text-red-500 text-xs mt-1">{errors.country}</p>}
           </div>
 
           {/* Password */}
@@ -912,14 +773,23 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
             <div className="relative">
               <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
               <input
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 name="password"
                 value={formData.password}
                 onChange={handleInputChange}
-                className={`w-full pl-10 pr-4 py-3 border ${errors.password ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
+                className={`w-full pl-10 pr-12 py-3 border ${errors.password ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
                 placeholder="Create a password"
                 required
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword((prev) => !prev)}
+                className={`absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-md ${isDark ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-200 text-slate-500'}`}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                tabIndex={-1}
+              >
+                {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              </button>
             </div>
             {errors.password && <p className="text-red-500 text-xs mt-1">{typeof errors.password === 'string' ? errors.password : 'Invalid password'}</p>}
           </div>
@@ -932,14 +802,23 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
             <div className="relative">
               <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
               <input
-                type="password"
+                type={showConfirmPassword ? 'text' : 'password'}
                 name="confirmPassword"
                 value={formData.confirmPassword}
                 onChange={handleInputChange}
-                className={`w-full pl-10 pr-4 py-3 border ${errors.confirmPassword ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
+                className={`w-full pl-10 pr-12 py-3 border ${errors.confirmPassword ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
                 placeholder="Confirm your password"
                 required
               />
+              <button
+                type="button"
+                onClick={() => setShowConfirmPassword((prev) => !prev)}
+                className={`absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-md ${isDark ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-200 text-slate-500'}`}
+                aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+                tabIndex={-1}
+              >
+                {showConfirmPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              </button>
             </div>
             {errors.confirmPassword && <p className="text-red-500 text-xs mt-1">{typeof errors.confirmPassword === 'string' ? errors.confirmPassword : 'Passwords do not match'}</p>}
           </div>

@@ -80,8 +80,9 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // The user data is directly in response.data (not nested in data.user)
         const userData = response.data || response.user;
         
-        if (userData && userData.name) {
-          console.log('UserContext: Setting user from profile:', userData.name);
+        // Accept user data when we have id or email (name can be null and will show fallback in UI)
+        if (userData && (userData.id || userData.email)) {
+          console.log('UserContext: Setting user from profile:', userData.name || userData.email);
           console.log('UserContext: User company_id:', userData.company_id);
           setUser(userData);
           // Company from profile: nested company or company_name (entered at signup)
@@ -95,8 +96,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             setCompany({ name: userData.company_name, logo: userData.company_logo || null });
           }
         } else {
-          console.warn('UserContext: Profile fetched but no user data or name found:', response);
-          console.warn('UserContext: Response structure:', JSON.stringify(response, null, 2));
+          console.warn('UserContext: Profile fetched but no valid user data (id/email):', response);
           setUser(null);
         }
       } catch (profileErr: any) {

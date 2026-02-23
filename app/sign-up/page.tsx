@@ -8,8 +8,8 @@ export default function SignUpPage() {
   usePageTitle('Sign Up');
   const router = useRouter();
 
-  const handleSignup = () => {
-    router.push('/login');
+  const handleSignup = (data: { email: string }) => {
+    router.push(`/verify-otp?email=${encodeURIComponent(data.email)}`);
   };
 
   return (

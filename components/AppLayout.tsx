@@ -1,16 +1,18 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { 
   Bell,
+  ChevronDown,
   Menu,
   Moon,
   Sun,
-  LogOut
+  LogOut,
+  User
 } from 'lucide-react';
-import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
+import { useTheme } from '@/contexts/ThemeContext';
 import { useUser } from '@/contexts/UserContext';
 import { authAPI } from '@/services/api';
 import Sidebar from './Sidebar';
@@ -18,6 +20,18 @@ import Sidebar from './Sidebar';
 const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { theme, toggleTheme } = useTheme();
   const { user } = useUser();
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
   const pathname = usePathname();
   const router = useRouter();
   
@@ -103,9 +117,29 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
               <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border border-[#1e293b]"></span>
             </button>
 
-            <div className="flex items-center gap-3 pl-4 border-l border-white/10">
-              <div className="text-right hidden md:block">
-                <p className="text-sm font-black leading-none">{user?.name || 'User'}</p>
+            <div className="flex items-center gap-3 pl-4 border-l border-white/10" ref={userMenuRef}>
+              <div className="relative">
+                <button
+                  onClick={() => setUserMenuOpen(!userMenuOpen)}
+                  className="flex items-center gap-1.5 px-2 py-1.5 hover:bg-white/10 rounded-lg transition-colors border border-transparent hover:border-white/5"
+                >
+                  <p className="text-sm font-black leading-none truncate max-w-[120px] sm:max-w-none">{user?.name || user?.email || 'User'}</p>
+                  <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform ${userMenuOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {userMenuOpen && (
+                  <div className={`absolute top-full right-0 mt-1 w-56 rounded-lg shadow-xl border z-50 overflow-hidden ${theme === 'dark' ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}>
+                    <div className="py-1">
+                      <Link
+                        href="/user-profile"
+                        onClick={() => setUserMenuOpen(false)}
+                        className={`w-full flex items-center gap-2 px-4 py-2.5 hover:bg-white/10 transition-colors text-left ${theme === 'dark' ? 'text-slate-100 hover:bg-slate-700' : 'text-slate-900 hover:bg-slate-100'}`}
+                      >
+                        <User className="w-4 h-4" />
+                        <span className="text-sm font-semibold">User Profile</span>
+                      </Link>
+                    </div>
+                  </div>
+                )}
               </div>
               <button
                 onClick={handleLogout}
@@ -127,6 +161,7 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
           </div>
         </div>
       </div>
+
     </div>
   );
 };

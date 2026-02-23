@@ -204,6 +204,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
       label: 'Settings', 
       icon: Settings, 
       children: [
+        { label: 'User Profile', id: 'PROFILE', path: '/user-profile' },
         { label: 'Subscriptions and Billing', id: ViewType.SUBSCRIPTION, path: '/subscription' },
         { label: 'Logout', id: 'LOGOUT', path: '#' }
       ] 
@@ -416,16 +417,29 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
                             key={child.id}
                             onClick={(e) => {
                               e.stopPropagation();
-                              // Close sidebar on mobile after logout
-                              if (window.innerWidth < 1024) {
-                                setSidebarOpen(false);
-                              }
+                              if (window.innerWidth < 1024) setSidebarOpen(false);
                               handleLogout();
                             }}
                             className={`w-full text-left text-sm font-bold py-1 px-2 rounded-md cursor-pointer transition-colors block opacity-40 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}
                           >
                             {child.label}
                           </button>
+                        );
+                      }
+                      // User Profile - navigate to /user-profile (modal page)
+                      if (child.id === 'PROFILE') {
+                        return (
+                          <Link
+                            key={child.id}
+                            href="/user-profile"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (window.innerWidth < 1024) setSidebarOpen(false);
+                            }}
+                            className={`w-full text-left text-sm font-bold py-1 px-2 rounded-md cursor-pointer transition-colors block touch-manipulation truncate opacity-40 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}
+                          >
+                            {child.label}
+                          </Link>
                         );
                       }
                       // Handle nested children (like Work Progress Reports and Inventory Reports)

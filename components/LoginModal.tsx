@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { X, LogIn, Mail, Lock, Loader2 } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from '../contexts/ToastContext';
@@ -12,9 +13,11 @@ interface LoginModalProps {
   onClose: () => void;
   onLogin: (email: string, password: string) => void;
   signUpHref?: string;
+  onRequiresOtp?: (email: string) => void;
 }
 
-const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin, signUpHref }) => {
+const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin, signUpHref, onRequiresOtp }) => {
+  const router = useRouter();
   const { isDark } = useTheme();
   const toast = useToast();
   const [email, setEmail] = useState('');
@@ -39,22 +42,26 @@ const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin, signU
       // Call Laravel API (fcm_token can be added later if needed)
       const response = await authAPI.login(email, password);
 
-      // Token is already stored in the API function
-      // User data is dispatched via userLoggedIn event
-      console.log('LoginModal: Login response:', response);
-      console.log('LoginModal: User data in response:', response.data?.user || response.user);
+      const requiresOtp = response?.data?.requires_otp_verification === true || response?.requires_otp_verification === true;
+      const otpEmail = response?.data?.email || response?.email || email;
+
+      if (requiresOtp && otpEmail) {
+        toast.showSuccess(response.message || 'OTP sent to your email. Please verify to complete login.');
+        if (onRequiresOtp) {
+          onRequiresOtp(otpEmail);
+        } else {
+          router.push(`/verify-otp?email=${encodeURIComponent(otpEmail)}&flow=signin`);
+        }
+        setEmail('');
+        setPassword('');
+        setIsLoading(false);
+        return;
+      }
 
       toast.showSuccess(response.message || 'Login successful!');
-      
-      // Call the onLogin callback - this will trigger userName refresh
       onLogin(email, password);
-      
-      // Reset form
       setEmail('');
       setPassword('');
-      
-      // Close modal
-      onClose();
     } catch (error: any) {
       // Handle API errors - skip email verification check
       const errorMessage = error.message || 'Login failed. Please check your credentials and try again.';
