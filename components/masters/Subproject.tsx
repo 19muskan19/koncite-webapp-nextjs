@@ -23,6 +23,8 @@ import {
 } from 'lucide-react';
 import DatePickerInput from '../ui/DatePickerInput';
 
+type SortFilterType = 'none' | 'recent_created' | 'oldest_created' | 'recent_updated' | 'oldest_updated';
+
 interface Subproject {
   id: string;
   numericId?: number | string; // Store numeric ID from database for API calls
@@ -36,6 +38,7 @@ interface Subproject {
   startDate: string;
   endDate: string;
   createdAt?: string;
+  updatedAt?: string;
 }
 
 interface SubprojectProps {
@@ -49,7 +52,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
   const [selectedProjectId, setSelectedProjectId] = useState<number | string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isSearching, setIsSearching] = useState<boolean>(false);
-  const [sortFilter, setSortFilter] = useState<'recent' | 'oldest' | 'none'>('none');
+  const [sortFilter, setSortFilter] = useState<SortFilterType>('none');
   const [showFilterDropdown, setShowFilterDropdown] = useState<boolean>(false);
   const [showSubprojectModal, setShowSubprojectModal] = useState<boolean>(false);
   const [editingSubprojectId, setEditingSubprojectId] = useState<string | null>(null);
@@ -178,6 +181,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
         startDate: sub.start_date || sub.planned_start_date || sub.startDate || '',
         endDate: sub.end_date || sub.planned_end_date || sub.endDate || '',
         createdAt: sub.created_at || sub.createdAt,
+        updatedAt: sub.updated_at || sub.updatedAt,
       }));
       console.log('✅ Transformed subprojects:', transformedSubprojects);
       setSubprojects(transformedSubprojects);
@@ -401,6 +405,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
         startDate: sub.start_date || sub.planned_start_date || sub.startDate || '',
         endDate: sub.end_date || sub.planned_end_date || sub.endDate || '',
         createdAt: sub.created_at || sub.createdAt,
+        updatedAt: sub.updated_at || sub.updatedAt,
       }));
       console.log('✅ Transformed search results:', transformedSubprojects);
       setSubprojects(transformedSubprojects);
@@ -425,32 +430,67 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
     return () => clearTimeout(timeoutId);
   }, [searchQuery]);
 
-  // Memoize filtered and sorted subprojects
+  // Memoize filtered and sorted subprojects - recent (created/updated) appear on top
   const filteredAndSortedSubprojects = useMemo(() => {
     if (!selectedProjectId) return [];
-    
+
+    const parseDate = (val: string | undefined, fallback: number): number => {
+      if (!val) return fallback;
+      const ts = new Date(String(val).trim()).getTime();
+      return Number.isNaN(ts) ? fallback : ts;
+    };
+    const getIdAsNumber = (s: Subproject): number => {
+      const n = s.numericId ?? s.id;
+      if (n == null) return 0;
+      const num = typeof n === 'number' ? n : parseInt(String(n), 10);
+      return Number.isNaN(num) ? 0 : num;
+    };
+    const getCreatedAt = (s: Subproject) => (s as any).created_at ?? s.createdAt;
+    const getUpdatedAt = (s: Subproject) => (s as any).updated_at ?? s.updatedAt;
+
     let filtered = [...subprojects];
 
-    // Client-side filtering is optional since we're using API search
-    // But keep it for sorting
     if (searchQuery.trim() && !isSearching) {
       filtered = filtered.filter(subproject =>
         subproject.name.toLowerCase().includes(searchQuery.toLowerCase())
       );
     }
 
-    // Apply sort filter
-    if (sortFilter === 'recent') {
+    if (sortFilter === 'recent_created') {
       filtered = [...filtered].sort((a, b) => {
-        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return dateB - dateA; // Most recent first
+        const dateA = parseDate(getCreatedAt(a), -1);
+        const dateB = parseDate(getCreatedAt(b), -1);
+        if (dateA >= 0 && dateB >= 0) return dateB - dateA;
+        if (dateA >= 0) return -1;
+        if (dateB >= 0) return 1;
+        return getIdAsNumber(b) - getIdAsNumber(a);
       });
-    } else if (sortFilter === 'oldest') {
+    } else if (sortFilter === 'oldest_created') {
       filtered = [...filtered].sort((a, b) => {
-        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return dateA - dateB; // Oldest first
+        const dateA = parseDate(getCreatedAt(a), Infinity);
+        const dateB = parseDate(getCreatedAt(b), Infinity);
+        if (dateA < Infinity && dateB < Infinity) return dateA - dateB;
+        if (dateA < Infinity) return -1;
+        if (dateB < Infinity) return 1;
+        return getIdAsNumber(a) - getIdAsNumber(b);
+      });
+    } else if (sortFilter === 'recent_updated') {
+      filtered = [...filtered].sort((a, b) => {
+        const dateA = parseDate(getUpdatedAt(a), -1);
+        const dateB = parseDate(getUpdatedAt(b), -1);
+        if (dateA >= 0 && dateB >= 0) return dateB - dateA;
+        if (dateA >= 0) return -1;
+        if (dateB >= 0) return 1;
+        return getIdAsNumber(b) - getIdAsNumber(a);
+      });
+    } else if (sortFilter === 'oldest_updated') {
+      filtered = [...filtered].sort((a, b) => {
+        const dateA = parseDate(getUpdatedAt(a), Infinity);
+        const dateB = parseDate(getUpdatedAt(b), Infinity);
+        if (dateA < Infinity && dateB < Infinity) return dateA - dateB;
+        if (dateA < Infinity) return -1;
+        if (dateB < Infinity) return 1;
+        return getIdAsNumber(a) - getIdAsNumber(b);
       });
     }
 
@@ -631,51 +671,65 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                 Filter
                 {sortFilter !== 'none' && (
                   <span className={`ml-1 px-1.5 py-0.5 rounded text-xs ${isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'}`}>
-                    {sortFilter === 'recent' ? 'Recent' : 'Oldest'}
+                    {sortFilter === 'recent_created' && 'Recent (Created)'}
+                    {sortFilter === 'oldest_created' && 'Oldest (Created)'}
+                    {sortFilter === 'recent_updated' && 'Recent (Updated)'}
+                    {sortFilter === 'oldest_updated' && 'Oldest (Updated)'}
                   </span>
                 )}
               </button>
               {showFilterDropdown && (
-                <div className={`absolute right-0 top-full mt-2 w-48 rounded-lg border shadow-lg z-20 filter-dropdown ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                <div className={`absolute right-0 top-full mt-2 w-52 rounded-lg border shadow-lg z-20 filter-dropdown ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                   <div className="py-1">
                     <button
-                      onClick={() => {
-                        setSortFilter('none');
-                        setShowFilterDropdown(false);
-                      }}
+                      type="button"
+                      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setSortFilter('none'); setShowFilterDropdown(false); }}
                       className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
-                        sortFilter === 'none'
-                          ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
+                        sortFilter === 'none' ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
                           : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                       }`}
                     >
                       None
                     </button>
                     <button
-                      onClick={() => {
-                        setSortFilter('recent');
-                        setShowFilterDropdown(false);
-                      }}
+                      type="button"
+                      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setSortFilter('recent_created'); setShowFilterDropdown(false); }}
                       className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
-                        sortFilter === 'recent'
-                          ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
+                        sortFilter === 'recent_created' ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
                           : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                       }`}
                     >
-                      Recent
+                      Recent (by Created)
                     </button>
                     <button
-                      onClick={() => {
-                        setSortFilter('oldest');
-                        setShowFilterDropdown(false);
-                      }}
+                      type="button"
+                      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setSortFilter('oldest_created'); setShowFilterDropdown(false); }}
                       className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
-                        sortFilter === 'oldest'
-                          ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
+                        sortFilter === 'oldest_created' ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
                           : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                       }`}
                     >
-                      Oldest
+                      Oldest (by Created)
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setSortFilter('recent_updated'); setShowFilterDropdown(false); }}
+                      className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
+                        sortFilter === 'recent_updated' ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
+                          : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
+                      }`}
+                    >
+                      Recent (by Updated)
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setSortFilter('oldest_updated'); setShowFilterDropdown(false); }}
+                      className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
+                        sortFilter === 'oldest_updated' ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
+                          : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
+                      }`}
+                    >
+                      Oldest (by Updated)
                     </button>
                   </div>
                 </div>
@@ -969,7 +1023,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                 <DatePickerInput
                   name="plannedStartDate"
                   value={formData.plannedStartDate}
-                  onChange={handleInputChange}
+                  onChange={(e) => handleInputChange(e as React.ChangeEvent<HTMLInputElement>)}
                   iconClassName={textSecondary}
                   className={`${
                     isDark 
@@ -987,7 +1041,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                 <DatePickerInput
                   name="plannedEndDate"
                   value={formData.plannedEndDate}
-                  onChange={handleInputChange}
+                  onChange={(e) => handleInputChange(e as React.ChangeEvent<HTMLInputElement>)}
                   min={formData.plannedStartDate}
                   iconClassName={textSecondary}
                   className={`${

@@ -734,7 +734,7 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
                   <DatePickerInput
                     name="start_date"
                     value={formData.start_date}
-                    onChange={handleInputChange}
+                    onChange={(e) => handleInputChange(e as React.ChangeEvent<HTMLInputElement>)}
                     disabled={isSubmitting}
                     iconClassName={textSecondary}
                     className={`${
@@ -751,7 +751,7 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
                   <DatePickerInput
                     name="end_date"
                     value={formData.end_date}
-                    onChange={handleInputChange}
+                    onChange={(e) => handleInputChange(e as React.ChangeEvent<HTMLInputElement>)}
                     disabled={isSubmitting}
                     iconClassName={textSecondary}
                     className={`${

@@ -74,8 +74,45 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
   const [openingStockFormStores, setOpeningStockFormStores] = useState<Array<{ id: number; uuid: string; name: string }>>([]);
   const [isLoadingOpeningStockData, setIsLoadingOpeningStockData] = useState(false);
   const [isLoadingOpeningStockStores, setIsLoadingOpeningStockStores] = useState(false);
+  const [isImportingOpeningStock, setIsImportingOpeningStock] = useState(false);
 
   const availableProjects = openingStockProjects;
+
+  const handleImportMaterialsOpeningStock = async () => {
+    if (!openingStockForm.file) {
+      toast.showWarning('Please select a file to upload');
+      return;
+    }
+    if (!openingStockForm.project) {
+      toast.showWarning('Please select a project');
+      return;
+    }
+    if (!openingStockForm.storeWarehouse) {
+      toast.showWarning('Please select a store/warehouse');
+      return;
+    }
+    setIsImportingOpeningStock(true);
+    try {
+      const result = await masterDataAPI.importMaterialsOpeningStock({
+        file: openingStockForm.file,
+        project: openingStockForm.project,
+        warehouses: openingStockForm.storeWarehouse,
+        opeing_stock_date: openingStockForm.openingDate,
+      });
+      const data = result?.data ?? result;
+      const msg = data?.message ?? result?.message ?? 'Opening stock imported successfully';
+      const created = data?.created ?? 0;
+      const updated = data?.updated ?? 0;
+      const total = data?.total_rows ?? (created + updated);
+      const detail = total > 0 ? ` (${created} created, ${updated} updated)` : '';
+      toast.showSuccess(msg + detail);
+      setOpeningStockForm((prev) => ({ ...prev, file: null }));
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to import opening stock');
+    } finally {
+      setIsImportingOpeningStock(false);
+    }
+  };
 
   // Fetch materials from API (GET /materials-list)
   const fetchMaterials = async () => {
@@ -174,12 +211,10 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
   }, [activeTab, openingStockSubTab, openingStockForm.project, isAuthenticated]);
 
 
-  // Filter materials (client-side filtering is optional since we're using API search)
+  // Filter materials and sort by code (ascending, empty codes last)
   const filteredMaterials = useMemo(() => {
     let filtered = [...materials];
-    
-    // Client-side filtering is optional since we're using API search
-    // But keep it for additional filtering if needed
+
     if (searchQuery.trim() && !isSearching) {
       filtered = filtered.filter(material =>
         material.class.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -189,7 +224,17 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
         (material.unit && material.unit.toLowerCase().includes(searchQuery.toLowerCase()))
       );
     }
-    
+
+    // Sort by code: non-empty codes first (asc), empty codes last
+    filtered.sort((a, b) => {
+      const aCode = (a.code || '').toString().trim();
+      const bCode = (b.code || '').toString().trim();
+      if (!aCode && !bCode) return 0;
+      if (!aCode) return 1;
+      if (!bCode) return -1;
+      return aCode.localeCompare(bCode, undefined, { numeric: true });
+    });
+
     return filtered;
   }, [materials, searchQuery, isSearching]);
 
@@ -244,14 +289,14 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
   }, [openDropdownId]);
 
   const handleExportMasterData = () => {
-    const headers = ['SR No', 'Class', 'Code', 'Name', 'Specification', 'Unit'];
-    const rows = materials.map((m, idx) => [
-      idx + 1,
+    const headers = ['class', 'code', 'name', 'specification', 'unit', 'uuid'];
+    const rows = filteredMaterials.map((m) => [
       m.class,
-      m.code,
+      m.code || '',
       m.name,
       m.specification || '',
-      m.unit || ''
+      m.unit || '',
+      m.uuid || ''
     ]);
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
     const wb = XLSX.utils.book_new();
@@ -270,8 +315,13 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
   };
 
   const handleDownloadBulkUploadTemplate = () => {
-    const headers = ['class', 'code', 'name', 'specification', 'unit'];
-    const ws = XLSX.utils.aoa_to_sheet([headers]);
+    const headers = ['class', 'code', 'name', 'specification', 'unit', 'uuid'];
+    const sampleRows = [
+      ['A', 'M211600', 'Cement', 'OPC 53 Grade', 'Packet', ''],
+      ['A', 'M211601', 'Steel', 'TMT 500D', 'MT', ''],
+      ['B', '', 'Sand', '', 'Cum', ''],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleRows]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Template');
     const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
@@ -288,14 +338,14 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
   };
 
   const handleDownloadExcel = () => {
-    const headers = ['SR No', 'Class', 'Code', 'Name', 'Specification', 'Unit'];
+    const headers = ['SR No', 'Code', 'Class', 'Name', 'Specification', 'Unit'];
     const rows = filteredMaterials.map((material, idx) => [
       idx + 1,
+      material.code || '',
       material.class,
-      material.code,
       material.name,
       material.specification || '',
-      material.unit
+      material.unit || ''
     ]);
 
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
@@ -492,13 +542,13 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
                     <div className="flex items-center gap-2">
                       <ArrowUpDown className="w-3 h-3" />
-                      Class
+                      Code
                     </div>
                   </th>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
                     <div className="flex items-center gap-2">
                       <ArrowUpDown className="w-3 h-3" />
-                      Code
+                      Class
                     </div>
                   </th>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
@@ -526,8 +576,8 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                 {paginatedMaterials.map((row, idx) => (
                   <tr key={row.id} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{(listCurrentPage - 1) * listEntriesPerPage + idx + 1}</td>
+                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.code || '-'}</td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.class}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.code}</td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.name || '-'}</td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.specification || '-'}</td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{row.unit || '-'}</td>
@@ -671,7 +721,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
       {activeTab === 'bulkUpload' && (
         <div className={`rounded-xl border p-4 sm:p-8 ${cardClass}`}>
           <p className={`text-sm ${textSecondary} mb-4 text-center`}>
-            Use columns: <strong className={textPrimary}>class</strong>, <strong className={textPrimary}>code</strong>, <strong className={textPrimary}>name</strong>, <strong className={textPrimary}>specification</strong>, <strong className={textPrimary}>unit</strong>
+            Use columns: <strong className={textPrimary}>class</strong>, <strong className={textPrimary}>code</strong>, <strong className={textPrimary}>name</strong>, <strong className={textPrimary}>specification</strong>, <strong className={textPrimary}>unit</strong>, <strong className={textPrimary}>uuid</strong> (optional for updates)
           </p>
           <div className="space-y-3 sm:space-y-4 max-w-md mx-auto">
             <button
@@ -683,7 +733,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
               } shadow-sm`}
             >
               <Download className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
-              <span className="text-center">Download Template (class, code, name, specification, unit)</span>
+              <span className="text-center">Download Template (class, code, name, specification, unit, uuid)</span>
             </button>
             <button
               onClick={() => setShowBulkUploadModal(true)}
@@ -705,7 +755,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
               } shadow-sm`}
             >
               <FileSpreadsheet className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
-              <span className="text-center">Export Master Data</span>
+              <span className="text-center">Export Master Data (Bulk Upload Format)</span>
             </button>
           </div>
         </div>
@@ -834,17 +884,17 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                     />
                   </div>
 
-                  {/* File Upload */}
+                  {/* File Upload - columns: code, opening_qty */}
                   <div>
                     <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                      Upload File
+                      Upload File (xlsx, xls, csv — columns: code, opening_qty)
                     </label>
                     <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-4">
                       <label className={`flex-1 px-4 py-3 rounded-lg text-sm font-bold transition-all cursor-pointer ${
                         isDark
                           ? 'bg-slate-800/50 border-slate-700 text-slate-100 border'
                           : 'bg-white border-slate-200 text-slate-900 border'
-                      } focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}>
+                      } focus:ring-2 focus:ring-[#C2D642]/20 outline-none flex items-center justify-center`}>
                         <input
                           type="file"
                           accept=".xlsx,.xls,.csv"
@@ -855,9 +905,20 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                       </label>
                       <button
                         type="button"
-                        className={`px-4 py-3 rounded-lg text-sm font-bold ${isDark ? 'bg-[#C2D642] text-white' : 'bg-[#C2D642] text-white'} shadow-md`}
+                        onClick={handleImportMaterialsOpeningStock}
+                        disabled={!openingStockForm.file || !openingStockForm.project || !openingStockForm.storeWarehouse || isImportingOpeningStock}
+                        className={`px-4 py-3 rounded-lg text-sm font-bold flex items-center justify-center gap-2 min-w-[120px] ${
+                          isDark ? 'bg-[#C2D642] text-white' : 'bg-[#C2D642] text-white'
+                        } shadow-md disabled:opacity-50 disabled:cursor-not-allowed`}
                       >
-                        Upload
+                        {isImportingOpeningStock ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Importing...
+                          </>
+                        ) : (
+                          'Import'
+                        )}
                       </button>
                     </div>
                   </div>

@@ -6,8 +6,8 @@ import { Calendar } from 'lucide-react';
 interface DatePickerInputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type' | 'value' | 'onChange'> {
   /** Value in YYYY-MM-DD format (for form state/API) */
   value?: string;
-  /** Called with YYYY-MM-DD when date changes */
-  onChange?: (e: { target: { value: string; name?: string } }) => void;
+  /** Called with YYYY-MM-DD when date changes. Accepts synthetic target shape for compatibility with form handlers. */
+  onChange?: (e: React.ChangeEvent<HTMLInputElement> | { target: { value: string; name?: string } }) => void;
   /** CSS classes for dark/light mode - pass textSecondary for icon */
   iconClassName?: string;
   /** Container className */
@@ -89,13 +89,19 @@ export default function DatePickerInput({
     setDisplay(formatted);
     let parsed = toValue(formatted);
 
-    if (parsed && min && min.length >= 10) {
-      const minDate = min.slice(0, 10);
-      if (parsed < minDate) parsed = minDate;
+    if (parsed && min) {
+      const minStr = String(min);
+      if (minStr.length >= 10) {
+        const minDate = minStr.slice(0, 10);
+        if (parsed < minDate) parsed = minDate;
+      }
     }
-    if (parsed && max && max.length >= 10) {
-      const maxDate = max.slice(0, 10);
-      if (parsed > maxDate) parsed = maxDate;
+    if (parsed && max) {
+      const maxStr = String(max);
+      if (maxStr.length >= 10) {
+        const maxDate = maxStr.slice(0, 10);
+        if (parsed > maxDate) parsed = maxDate;
+      }
     }
 
     if (onChange) {
@@ -116,7 +122,8 @@ export default function DatePickerInput({
   const handleIconClick = () => {
     const hidden = hiddenRef.current;
     if (!hidden) return;
-    const current = value && value.length >= 10 ? value.slice(0, 10) : '';
+    const valStr = value != null ? String(value) : '';
+    const current = valStr.length >= 10 ? valStr.slice(0, 10) : '';
     hidden.value = current || new Date().toISOString().slice(0, 10);
     hidden.focus();
     if (typeof (hidden as HTMLInputElement & { showPicker?: () => void }).showPicker === 'function') {
@@ -126,13 +133,19 @@ export default function DatePickerInput({
 
   const handleHiddenChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let v = e.target.value;
-    if (min && min.length >= 10 && v) {
-      const minDate = min.slice(0, 10);
-      if (v < minDate) v = minDate;
+    if (min && v) {
+      const minStr = String(min);
+      if (minStr.length >= 10) {
+        const minDate = minStr.slice(0, 10);
+        if (v < minDate) v = minDate;
+      }
     }
-    if (max && max.length >= 10 && v) {
-      const maxDate = max.slice(0, 10);
-      if (v > maxDate) v = maxDate;
+    if (max && v) {
+      const maxStr = String(max);
+      if (maxStr.length >= 10) {
+        const maxDate = maxStr.slice(0, 10);
+        if (v > maxDate) v = maxDate;
+      }
     }
     if (v && onChange) onChange({ target: { value: v, name } });
     setDisplay(toDisplay(v));

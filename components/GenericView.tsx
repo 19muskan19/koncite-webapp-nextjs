@@ -468,7 +468,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
     try {
       const projectId = prSelectedProject.numericId ?? prSelectedProject.id;
       const subprojectId = prSelectedSubproject ? (prSelectedSubproject.numericId ?? prSelectedSubproject.id) : undefined;
-      const headerData: Record<string, any> = { projects_id: projectId };
+      const headerData: { projects_id: string | number; sub_projects_id?: string | number; id?: string | number; request_id?: string } = { projects_id: projectId };
       if (subprojectId) headerData.sub_projects_id = subprojectId;
       if (prEditingId) {
         headerData.id = prEditingId;

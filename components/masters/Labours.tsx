@@ -47,6 +47,7 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
   const [laboursError, setLaboursError] = useState<string | null>(null);
   const [togglingLabourId, setTogglingLabourId] = useState<string | null>(null); // Track which labour is being toggled
   const [showBulkUploadModal, setShowBulkUploadModal] = useState<boolean>(false);
+  const [isDeletingAll, setIsDeletingAll] = useState<boolean>(false);
   const [entriesPerPage, setEntriesPerPage] = useState<number>(25);
   const [currentPage, setCurrentPage] = useState<number>(1);
   
@@ -66,7 +67,7 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
     setIsLoadingLabours(true);
     setLaboursError(null);
     try {
-      const fetchedLabours = await masterDataAPI.getLabours();
+      const fetchedLabours = await masterDataAPI.getLabours({ per_page: 9999 });
       // Transform API response to match Labour interface
       const transformedLabours: Labour[] = fetchedLabours.map((labour: any) => {
         const numericId = labour.id; // Numeric ID from database
@@ -243,23 +244,18 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
 
   const handleEditLabour = async (labour: Labour) => {
     try {
-      // Backend labour-edit/{uuid} likely uses where('id', $uuid) - pass numeric ID
-      const labourIdForApi = labour.numericId ?? labour.id;
-      if (labourIdForApi == null || labourIdForApi === '') {
+      // Controller edit() uses where('id', $uuid) - pass numeric ID for labour-edit and labour-add updateId
+      const numericId = labour.numericId ?? labour.id;
+      if (numericId == null || numericId === '') {
         toast.showError('Invalid labour ID. Cannot edit labour.');
         return;
       }
-      
-      console.log('📝 Editing labour:', { idForApi: labourIdForApi, numericId: labour.numericId });
-      
-      // Fetch full labour details - GET /labour-edit/{id}
-      const labourDetails = await masterDataAPI.getLabour(String(labourIdForApi));
-      console.log('✅ Labour details fetched:', labourDetails);
-      
-      setEditingLabourId(String(labourIdForApi)); // Pass ID for API (modal uses for getLabour/updateLabour)
-      setEditingLabourNumericId(labour.numericId ?? labour.id);
-      
-      // Open modal with labour data - CreateLabourModal will handle this
+
+      await masterDataAPI.getLabour(String(numericId));
+
+      setEditingLabourId(String(numericId));
+      setEditingLabourNumericId(numericId);
+
       setShowCreateModal(true);
     } catch (error: any) {
       console.error('❌ Failed to fetch labour details:', error);
@@ -268,8 +264,8 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
   };
 
   const handleDeleteLabour = async (labourId: string) => {
-    const labour = labours.find(l => l.id === labourId);
-    // Backend labour-delete/{uuid} likely uses where('id', $uuid) - pass numeric ID
+    const labour = labours.find(l => l.id === labourId || l.numericId === labourId);
+    // Controller delete() uses where('id', $uuid) - pass numeric ID
     const deleteId = labour?.numericId ?? labourId;
     
     if (window.confirm('Are you sure you want to delete this labour?')) {
@@ -285,57 +281,58 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
     }
   };
 
-  const handleToggleStatus = async (labour: Labour) => {
-    console.log('🔄 handleToggleStatus called with labour:', {
-      id: labour.id,
-      name: labour.name,
-      status: labour.status,
-      is_active: labour.is_active,
-      togglingLabourId: togglingLabourId,
-      isLoadingLabours: isLoadingLabours
-    });
-    
-    // Prevent multiple simultaneous toggles
-    if (togglingLabourId === labour.id) {
-      console.log('⏳ Toggle already in progress for this labour');
+  const handleDeleteAllLabours = async () => {
+    if (labours.length === 0) {
+      toast.showWarning('No labours to delete.');
       return;
     }
+    const confirmed = window.confirm(
+      `Are you sure you want to delete ALL ${labours.length} labours? This cannot be undone.`
+    );
+    if (!confirmed) return;
+    setIsDeletingAll(true);
+    let deleted = 0;
+    let failed = 0;
+    try {
+      for (const labour of labours) {
+        const deleteId = labour.numericId ?? labour.id;
+        try {
+          await masterDataAPI.deleteLabour(String(deleteId));
+          deleted++;
+        } catch (err) {
+          failed++;
+          console.error('Failed to delete labour:', labour.name, err);
+        }
+      }
+      await fetchLabours();
+      if (deleted > 0) {
+        toast.showSuccess(`Deleted ${deleted} labour${deleted !== 1 ? 's' : ''}.`);
+      }
+      if (failed > 0) {
+        toast.showError(`Failed to delete ${failed} labour${failed !== 1 ? 's' : ''}.`);
+      }
+    } finally {
+      setIsDeletingAll(false);
+    }
+  };
 
-    if (isLoadingLabours) {
-      console.log('⏳ Labours are loading, cannot toggle');
-      return;
-    }
+  const handleToggleStatus = async (labour: Labour) => {
+    if (togglingLabourId === labour.id) return;
+    if (isLoadingLabours) return;
 
     try {
       setTogglingLabourId(labour.id);
-      
-      // Determine current status
+
       const currentStatus = labour.status || (labour.is_active === 1 ? 'Active' : 'Inactive');
       const newStatus = currentStatus === 'Active' ? 'Inactive' : 'Active';
       const isActive = newStatus === 'Active' ? 1 : 0;
-      
-      console.log('🔄 Status toggle calculation:', {
-        currentStatus: currentStatus,
-        currentIsActive: labour.is_active,
-        newStatus: newStatus,
-        newIsActive: isActive
-      });
-      
-      // labour-status/{uuid} expects UUID - backend converts via uuidtoid()
+
+      // Controller updateStatus($uuid) uses uuidtoid() - must pass UUID
       const labourUuid = labour.uuid || labour.id;
       if (!labourUuid) {
         toast.showError('Labour identifier not found');
         return;
       }
-
-      console.log('🔄 Toggling labour status:', {
-        labourId: labour.id,
-        labourUuid,
-        currentStatus: labour.status,
-        currentIsActive: labour.is_active,
-        newStatus: newStatus,
-        newIsActive: isActive
-      });
 
       // Optimistically update UI immediately
       setLabours(prevLabours => 
@@ -351,7 +348,6 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
         setOpenDropdownId(prev => prev === labour.id ? null : prev);
       }
 
-      // Update labour status using labour-status/{uuid} API
       await masterDataAPI.updateLabourStatus(labourUuid, isActive as 0 | 1);
 
       // Keep optimistic update - don't call fetchLabours() which can overwrite with stale data
@@ -359,13 +355,6 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
       toast.showSuccess(`Labour ${newStatus.toLowerCase()} successfully`);
       
     } catch (error: any) {
-      console.error('❌ Failed to toggle labour status:', error);
-      console.error('❌ Error details:', {
-        message: error.message,
-        status: error.status,
-        response: error.response?.data
-      });
-      
       // Revert optimistic update on error
       setLabours(prevLabours => 
         prevLabours.map(l => 
@@ -383,11 +372,10 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
 
   const handleLabourCreated = async (createdLabour?: any, updatedLabour?: { labourId: string; unit_id: number; unit: { id: number; unit: string } }) => {
     if (createdLabour) {
-      // Use the created labour from labour-add response (includes code e.g. "L415190")
+      // Controller addLabour returns created labour (may omit code/is_active if not in create)
       const numericId = createdLabour.id;
       const uuid = createdLabour.uuid;
       const code = createdLabour.code || '';
-      const isActive = createdLabour.is_active === 1 || createdLabour.is_active === '1' || createdLabour.is_active === true;
       const newLabour: Labour = {
         id: uuid || String(numericId),
         numericId: numericId,
@@ -397,8 +385,8 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
         category: (createdLabour.category || 'skilled') as 'skilled' | 'semiskilled' | 'unskilled',
         unit_id: createdLabour.unit_id ?? createdLabour.unit?.id,
         unit: createdLabour.unit,
-        status: isActive ? 'Active' : 'Inactive',
-        is_active: isActive ? 1 : 0,
+        status: 'Active',
+        is_active: 1,
       };
       setLabours(prev => [newLabour, ...prev]);
       return;
@@ -435,13 +423,13 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
   }, [openDropdownId]);
 
   const handleDownloadExcel = () => {
-    const headers = ['SR No', 'Name', 'Category', 'Units', 'Status'];
-    const rows = filteredLabours.map((labour, idx) => [
-      idx + 1,
-      labour.name,
-      labour.category,
+    const headers = ['Code', 'Name', 'Category', 'Unit', 'uuid'];
+    const rows = filteredLabours.map((labour) => [
+      labour.code || '',
+      labour.name || '',
+      (labour.category || '').toLowerCase(),
       labour.unit?.unit || 'Nos',
-      labour.status
+      labour.uuid || ''
     ]);
 
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
@@ -452,7 +440,7 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `labours_${new Date().toISOString().split('T')[0]}.xlsx`);
+    link.setAttribute('download', `labours_bulk_upload_${new Date().toISOString().split('T')[0]}.xlsx`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
@@ -482,7 +470,7 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
                 ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' 
                 : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
             } shadow-sm`}
-            title="Download as Excel"
+            title="Download as Excel (bulk upload format – can re-upload)"
           >
             <Download className="w-4 h-4" />
           </button>
@@ -509,6 +497,17 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
             title="Bulk Upload Labours"
           >
             <Upload className="w-4 h-4" /> <span className="hidden sm:inline">Bulk Upload</span><span className="sm:hidden">Bulk</span>
+          </button>
+          <button 
+            onClick={handleDeleteAllLabours}
+            disabled={labours.length === 0 || isDeletingAll}
+            className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${
+              isDark ? 'bg-red-900/50 hover:bg-red-800/50 text-red-200 border border-red-700' : 'bg-red-50 hover:bg-red-100 text-red-700 border border-red-200'
+            } shadow-sm disabled:opacity-50 disabled:cursor-not-allowed`}
+            title="Delete all labours"
+          >
+            {isDeletingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+            <span className="hidden sm:inline">{isDeletingAll ? 'Deleting...' : 'Delete All'}</span>
           </button>
           <button 
             onClick={() => setShowCreateModal(true)}
@@ -581,9 +580,10 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
               <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
                 <tr>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Sr No</th>
+                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Code</th>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Name</th>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Category</th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Units</th>
+                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Unit</th>
                   <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Status</th>
                   <th className={`px-6 py-4 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>Action</th>
                 </tr>
@@ -606,16 +606,19 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
                       {startIndex + index + 1}
                     </td>
                     <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
-                      {row.name}
+                      {row.code || '—'}
+                    </td>
+                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
+                      {row.name || '—'}
                       {row.status === 'Inactive' && (
                         <span className="ml-2 text-xs text-red-500">(Disabled)</span>
                       )}
                     </td>
                     <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
-                      {row.category === 'skilled' ? 'Skilled' : 
-                       row.category === 'semiskilled' ? 'Semi Skilled' : 
-                       row.category === 'unskilled' ? 'Unskilled' : 
-                       row.category}
+{(row.category === 'skilled' ? 'Skilled' :
+                       row.category === 'semiskilled' ? 'Semi Skilled' :
+                       row.category === 'unskilled' ? 'Unskilled' :
+                       row.category) || '—'}
                     </td>
                     <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
                       {row.unit?.unit || 'Nos'}
@@ -780,6 +783,7 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
                 <option value={50}>50</option>
                 <option value={100}>100</option>
                 <option value={500}>500</option>
+                <option value={99999}>All</option>
               </select>
             </div>
             <span className={`text-sm ${textSecondary}`}>
@@ -819,7 +823,7 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
         theme={theme}
         isOpen={showBulkUploadModal}
         onClose={() => setShowBulkUploadModal(false)}
-        onSuccess={() => { setShowBulkUploadModal(false); fetchLabours(); }}
+        onSuccess={() => { setSearchQuery(''); setCurrentPage(1); fetchLabours(); }}
       />
     </div>
   );

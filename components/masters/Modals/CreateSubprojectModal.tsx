@@ -273,7 +273,7 @@ const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
             <DatePickerInput
               name="plannedStartDate"
               value={formData.plannedStartDate}
-              onChange={handleInputChange}
+              onChange={(e) => handleInputChange(e as React.ChangeEvent<HTMLInputElement>)}
               disabled={isSubmitting}
               iconClassName={textSecondary}
               className={`${
@@ -291,7 +291,7 @@ const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
             <DatePickerInput
               name="plannedEndDate"
               value={formData.plannedEndDate}
-              onChange={handleInputChange}
+              onChange={(e) => handleInputChange(e as React.ChangeEvent<HTMLInputElement>)}
               min={formData.plannedStartDate}
               disabled={isSubmitting}
               iconClassName={textSecondary}

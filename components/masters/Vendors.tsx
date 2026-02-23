@@ -289,15 +289,17 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
   }, [openDropdownId]);
 
   const handleDownloadExcel = () => {
-    const headers = ['SR No', 'Name', 'Address', 'Type', 'Contact Person Name', 'Phone', 'Email'];
-    const rows = filteredVendors.map((vendor, idx) => [
-      idx + 1,
+    // Bulk upload format – edit and re-upload via Bulk Upload
+    const headers = ['Name', 'Type', 'Gst No', 'Address', 'Contact Person Name', 'Contact Person Phone', 'Contact Person Email', 'UUID'];
+    const rows = filteredVendors.map((vendor) => [
       vendor.name,
-      vendor.address,
-      vendor.type,
-      vendor.contactPersonName,
-      vendor.phone,
-      vendor.email,
+      vendor.type || '',
+      vendor.gstNo || vendor.gst_no || '',
+      vendor.address || '',
+      vendor.contactPersonName || vendor.contact_person_name || '',
+      vendor.phone || '',
+      vendor.email || '',
+      vendor.uuid || '',
     ]);
 
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
@@ -308,12 +310,13 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `vendors_${new Date().toISOString().split('T')[0]}.xlsx`);
+    link.setAttribute('download', `vendors_list_${new Date().toISOString().split('T')[0]}.xlsx`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+    toast.showSuccess('List downloaded. Edit and re-upload via Bulk Upload.');
   };
 
   return (
@@ -338,9 +341,10 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
                 ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' 
                 : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
             } shadow-sm`}
-            title="Download as Excel"
+            title="Download list (bulk upload format – edit and re-upload)"
           >
             <Download className="w-4 h-4" />
+            <span className="hidden sm:inline">Download List</span>
           </button>
           <button 
             onClick={() => {
@@ -384,6 +388,13 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
           <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
           <p className={`text-2xl font-black text-[#C2D642]`}>{filteredVendors.filter(v => v.status === 'Active').length}</p>
         </div>
+      </div>
+
+      {/* Download + Bulk Upload hint */}
+      <div className={`rounded-xl border p-3 sm:p-4 ${cardClass} ${isDark ? 'bg-slate-800/30 border-slate-700' : 'bg-slate-50/50 border-slate-200'}`}>
+        <p className={`text-xs sm:text-sm ${textSecondary}`}>
+          <span className="font-bold text-[#C2D642]">Download List</span> exports vendors in bulk upload format. Edit the file and <span className="font-bold text-[#C2D642]">Bulk Upload</span> to add or update vendors in one go.
+        </p>
       </div>
 
       {/* Search Bar */}

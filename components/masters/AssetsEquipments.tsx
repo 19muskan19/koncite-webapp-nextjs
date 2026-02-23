@@ -52,16 +52,21 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
   const [assetsError, setAssetsError] = useState<string | null>(null);
   const [togglingAssetId, setTogglingAssetId] = useState<string | null>(null); // Track which asset is being toggled
   const [openingStockForm, setOpeningStockForm] = useState({
-    project: 'Demo Data',
-    storeWarehouse: 'Main Store',
-    openingDate: '2026-01-08',
+    project: '',
+    storeWarehouse: '',
+    openingDate: new Date().toISOString().split('T')[0],
     file: null as File | null
   });
+  const [openingStockProjects, setOpeningStockProjects] = useState<Array<{ id: number; uuid: string; project_name: string }>>([]);
+  const [openingStockFormStores, setOpeningStockFormStores] = useState<Array<{ id: number; uuid: string; name: string }>>([]);
+  const [isLoadingOpeningStockData, setIsLoadingOpeningStockData] = useState(false);
+  const [isLoadingOpeningStockStores, setIsLoadingOpeningStockStores] = useState(false);
+  const [isImportingOpeningStock, setIsImportingOpeningStock] = useState(false);
   const [availableStockFilters, setAvailableStockFilters] = useState({
     project: '',
     storeWarehouse: ''
   });
-  const [availableStockSearch, setAvailableStockSearch] = useState<string>('');
+  const [availableStockStores, setAvailableStockStores] = useState<Array<{ id: number; uuid: string; name: string }>>([]);
   const [entriesPerPage, setEntriesPerPage] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [listEntriesPerPage, setListEntriesPerPage] = useState<number>(25);
@@ -98,18 +103,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
     'Bulk', 'Bundles', 'MT', 'Cft', 'Sft', 'Rft', 'Kgs', 'Ltr', 'Hrs', 'Day'
   ];
 
-  const availableProjects = [
-    { name: 'Residential Complex A', code: 'PRJ001' },
-    { name: 'Commercial Tower B', code: 'PRJ002' },
-    { name: 'Highway Infrastructure Project', code: 'PRJ003' },
-    { name: 'Shopping Mall Development', code: 'PRJ004' },
-  ];
-
-  const availableWarehouses = [
-    { name: 'Main Store', code: 'WH001' },
-    { name: 'Main Warehouse', code: 'WH002' },
-    { name: 'Storage Facility B', code: 'WH003' },
-  ];
+  const availableProjects = openingStockProjects;
 
   // Fetch assets from API
   const fetchAssets = async () => {
@@ -170,6 +164,63 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
     fetchAssets();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated]);
+
+  // Fetch projects for Opening Stock tab when active
+  useEffect(() => {
+    if (activeTab === 'openingStock' && isAuthenticated) {
+      const load = async () => {
+        setIsLoadingOpeningStockData(true);
+        try {
+          const projs = await masterDataAPI.getProjects();
+          setOpeningStockProjects(Array.isArray(projs) ? projs.map((p: any) => ({
+            id: p.id,
+            uuid: p.uuid || String(p.id),
+            project_name: p.project_name || p.name || ''
+          })) : []);
+        } catch {
+          setOpeningStockProjects([]);
+        } finally {
+          setIsLoadingOpeningStockData(false);
+        }
+      };
+      load();
+    }
+  }, [activeTab, isAuthenticated]);
+
+  // Fetch stores for Available Opening Stock filters when project selected
+  useEffect(() => {
+    if (activeTab === 'openingStock' && availableStockFilters.project && isAuthenticated) {
+      masterDataAPI.getProjectWiseWarehouses(availableStockFilters.project)
+        .then((stores: any) => setAvailableStockStores(Array.isArray(stores) ? stores.map((s: any) => ({
+          id: s.id,
+          uuid: s.uuid || String(s.id),
+          name: s.name || s.store_name || ''
+        })) : []))
+        .catch(() => setAvailableStockStores([]));
+    } else {
+      setAvailableStockStores([]);
+    }
+  }, [activeTab, availableStockFilters.project, isAuthenticated]);
+
+  // Fetch stores for Bulk Upload Opening Stock form when project selected
+  useEffect(() => {
+    if (activeTab === 'openingStock' && openingStockSubTab === 'bulkUpload' && openingStockForm.project && isAuthenticated) {
+      setIsLoadingOpeningStockStores(true);
+      masterDataAPI.getProjectWiseWarehouses(openingStockForm.project)
+        .then((stores: any) => {
+          setOpeningStockFormStores(Array.isArray(stores) ? stores.map((s: any) => ({
+            id: s.id,
+            uuid: s.uuid || String(s.id),
+            name: s.name || s.store_name || ''
+          })) : []);
+        })
+        .catch(() => setOpeningStockFormStores([]))
+        .finally(() => setIsLoadingOpeningStockStores(false));
+    } else {
+      setOpeningStockFormStores([]);
+      if (!openingStockForm.project) setOpeningStockForm(prev => ({ ...prev, storeWarehouse: '' }));
+    }
+  }, [activeTab, openingStockSubTab, openingStockForm.project, isAuthenticated]);
 
   // Search assets using API
   const handleSearch = async (query: string) => {
@@ -400,14 +451,12 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
   }, [openDropdownId]);
 
   const handleDownloadExcel = () => {
-    const headers = ['SR No', 'Name', 'Specification', 'Unit', 'Code', 'Status'];
-    const rows = filteredAssets.map((asset, idx) => [
-      idx + 1,
-      asset.name,
-      asset.specification,
-      asset.unit,
-      asset.code,
-      asset.status || 'Active'
+    const headers = ['Asset/Equipments/Machinery', 'Specification', 'Unit', 'UUID'];
+    const rows = filteredAssets.map((asset) => [
+      asset.name || '',
+      asset.specification || '',
+      asset.unit || 'Nos',
+      asset.uuid || ''
     ]);
 
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
@@ -418,7 +467,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `assets_equipments_${new Date().toISOString().split('T')[0]}.xlsx`);
+    link.setAttribute('download', `assets_bulk_upload_${new Date().toISOString().split('T')[0]}.xlsx`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
@@ -454,23 +503,88 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
     toast.showSuccess('Master data exported successfully');
   };
 
-  const handleDownloadBulkUploadTemplate = () => {
-    const headers = ['name', 'specification', 'unit', 'code'];
-    const ws = XLSX.utils.aoa_to_sheet([headers]);
+  const handleDownloadOpeningStockTemplate = () => {
+    const headers = ['Code', 'Opening Qty'];
+    const sampleRows = assets.slice(0, 5).map(a => [a.code || '', '0']) as [string, string][];
+    if (sampleRows.length === 0) {
+      sampleRows.push(['A000001', '5'], ['A000002', '10']);
+    }
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleRows]);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Template');
+    XLSX.utils.book_append_sheet(wb, ws, 'Opening Stock');
     const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
     const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
     link.setAttribute('href', url);
-    link.setAttribute('download', `assets_upload_template_${new Date().toISOString().split('T')[0]}.xlsx`);
+    link.setAttribute('download', `assets_opening_stock_${new Date().toISOString().split('T')[0]}.xlsx`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    toast.showSuccess('Template downloaded. Fill name, specification, unit, code and upload.');
+    toast.showSuccess('Opening stock template downloaded. Use Code and Opening Qty columns.');
+  };
+
+  const handleImportAssetsOpeningStock = async () => {
+    if (!openingStockForm.file) {
+      toast.showWarning('Please select a file to upload');
+      return;
+    }
+    if (!openingStockForm.project) {
+      toast.showWarning('Please select a project');
+      return;
+    }
+    if (!openingStockForm.storeWarehouse) {
+      toast.showWarning('Please select a store/warehouse');
+      return;
+    }
+    setIsImportingOpeningStock(true);
+    try {
+      const result = await masterDataAPI.importAssetsOpeningStock({
+        file: openingStockForm.file,
+        project: openingStockForm.project,
+        warehouses: openingStockForm.storeWarehouse,
+        opening_stock_date: openingStockForm.openingDate || undefined,
+      });
+      const data = result?.data ?? result;
+      const msg = data?.message ?? result?.message ?? 'Opening stock imported successfully';
+      const created = data?.created ?? 0;
+      const updated = data?.updated ?? 0;
+      const failed = data?.failed ?? 0;
+      const total = data?.total_rows ?? (created + updated + failed);
+      const detail = total > 0 ? ` (${created} created, ${updated} updated, ${failed} failed)` : '';
+      toast.showSuccess(msg + detail);
+      setOpeningStockForm(prev => ({ ...prev, file: null }));
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to import opening stock');
+    } finally {
+      setIsImportingOpeningStock(false);
+    }
+  };
+
+  const handleDownloadBulkUploadTemplate = () => {
+    const headers = ['Asset/Equipments/Machinery', 'Specification', 'Unit', 'UUID'];
+    const sampleRows = [
+      ['Excavator', '20 Ton', 'Nos', ''],
+      ['Crane', '50 Ton', 'Nos', ''],
+      ['Concrete Mixer', '', 'Nos', ''],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleRows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Assets');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `assets_bulk_upload_template_${new Date().toISOString().split('T')[0]}.xlsx`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    toast.showSuccess('Template downloaded. Edit and upload to add assets.');
   };
 
   return (
@@ -642,10 +756,10 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
               <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
                 <tr>
                   <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Sr No</th>
+                  <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Code</th>
                   <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Name</th>
                   <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Specification</th>
                   <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Unit</th>
-                  <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Code</th>
                   <th className={`px-3 sm:px-6 py-3 sm:py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Status</th>
                   <th className={`px-3 sm:px-6 py-3 sm:py-4 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>Actions</th>
                 </tr>
@@ -665,15 +779,15 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                     } transition-colors`}
                   >
                     <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{listStartIndex + idx + 1}</td>
+                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.code || '—'}</td>
                     <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
-                      {row.name}
+                      {row.name || '—'}
                       {row.status === 'Inactive' && (
                         <span className="ml-2 text-xs text-red-500">(Disabled)</span>
                       )}
                     </td>
-                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.specification || '-'}</td>
-                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.unit || '-'}</td>
-                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.code || '-'}</td>
+                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.specification || '—'}</td>
+                    <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.unit || '—'}</td>
                     <td className={`px-3 sm:px-6 py-3 sm:py-4`}>
                       <button
                         onClick={(e) => {
@@ -846,7 +960,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
       {activeTab === 'bulkUpload' && (
         <div className={`rounded-xl border p-4 sm:p-8 ${cardClass}`}>
           <p className={`text-sm ${textSecondary} mb-4 text-center`}>
-            Use columns: <strong className={textPrimary}>name</strong>, <strong className={textPrimary}>specification</strong>, <strong className={textPrimary}>unit</strong>, <strong className={textPrimary}>code</strong> (optional)
+            Use columns: <strong className={textPrimary}>Asset/Equipments/Machinery</strong>, <strong className={textPrimary}>Specification</strong>, <strong className={textPrimary}>Unit</strong>. Optional: <strong className={textPrimary}>UUID</strong> or <strong className={textPrimary}>ID</strong> for updates
           </p>
           <div className="space-y-3 sm:space-y-4 max-w-md mx-auto">
             <button
@@ -920,41 +1034,63 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
 
           {openingStockSubTab === 'bulkUpload' && (
             <div className="space-y-4 sm:space-y-6">
-              {/* Export Button */}
+              {/* Export & Template Buttons */}
               <div className={`rounded-xl border p-4 sm:p-8 ${cardClass}`}>
-                <button
-                  onClick={handleExportMasterData}
-                  className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
-                    isDark
-                      ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
-                      : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
-                  } shadow-md`}
-                >
-                  <FileSpreadsheet className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
-                  <span className="text-center">Export Asset/Equipments/Machinery Data</span>
-                </button>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <button
+                    onClick={handleExportMasterData}
+                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                      isDark ? 'bg-[#C2D642] text-white' : 'bg-[#C2D642] text-white'
+                    } shadow-md`}
+                  >
+                    <FileSpreadsheet className="w-4 h-4 flex-shrink-0" />
+                    Export Asset/Equipments/Machinery Data
+                  </button>
+                  <button
+                    onClick={handleDownloadOpeningStockTemplate}
+                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                      isDark
+                        ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600'
+                        : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
+                    } shadow-sm`}
+                  >
+                    <Download className="w-4 h-4 flex-shrink-0" />
+                    Download Opening Stock Template (Code, Opening Qty)
+                  </button>
+                </div>
               </div>
 
               {/* Bulk Upload Form */}
               <div className={`rounded-xl border ${cardClass}`}>
                 <div className="p-4 sm:p-6 space-y-4 sm:space-y-6">
                   <h3 className={`text-base sm:text-lg font-black ${textPrimary} mb-3 sm:mb-4`}>Bulk Upload Opening Stock</h3>
-                  
+
                   {/* Project */}
                   <div>
                     <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
                       Project
                     </label>
-                    <input
-                      type="text"
-                      value={openingStockForm.project}
-                      onChange={(e) => setOpeningStockForm({ ...openingStockForm, project: e.target.value })}
-                      className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                        isDark 
-                          ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
-                          : 'bg-white border-slate-200 text-slate-900'
-                      } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                    />
+                    {isLoadingOpeningStockData ? (
+                      <div className={`w-full px-4 py-3 rounded-lg text-sm ${textSecondary} flex items-center gap-2`}>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Loading projects...
+                      </div>
+                    ) : (
+                      <select
+                        value={openingStockForm.project}
+                        onChange={(e) => setOpeningStockForm({ ...openingStockForm, project: e.target.value, storeWarehouse: '' })}
+                        className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+                          isDark
+                            ? 'bg-slate-800/50 border-slate-700 text-slate-100'
+                            : 'bg-white border-slate-200 text-slate-900'
+                        } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                      >
+                        <option value="">----Select Project----</option>
+                        {openingStockProjects.map((p: any) => (
+                          <option key={p.id} value={String(p.id)}>{p.project_name || p.name}</option>
+                        ))}
+                      </select>
+                    )}
                   </div>
 
                   {/* Store/Warehouses */}
@@ -962,16 +1098,28 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                     <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
                       Store/Warehouses
                     </label>
-                    <input
-                      type="text"
-                      value={openingStockForm.storeWarehouse}
-                      onChange={(e) => setOpeningStockForm({ ...openingStockForm, storeWarehouse: e.target.value })}
-                      className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                        isDark 
-                          ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
-                          : 'bg-white border-slate-200 text-slate-900'
-                      } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                    />
+                    {isLoadingOpeningStockStores ? (
+                      <div className={`w-full px-4 py-3 rounded-lg text-sm ${textSecondary} flex items-center gap-2`}>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Loading stores...
+                      </div>
+                    ) : (
+                      <select
+                        value={openingStockForm.storeWarehouse}
+                        onChange={(e) => setOpeningStockForm({ ...openingStockForm, storeWarehouse: e.target.value })}
+                        disabled={!openingStockForm.project}
+                        className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+                          isDark
+                            ? 'bg-slate-800/50 border-slate-700 text-slate-100'
+                            : 'bg-white border-slate-200 text-slate-900'
+                        } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+                      >
+                        <option value="">----Select Store/Warehouses----</option>
+                        {openingStockFormStores.map((s: any) => (
+                          <option key={s.id} value={String(s.id)}>{s.name || s.store_name || '-'}</option>
+                        ))}
+                      </select>
+                    )}
                   </div>
 
                   {/* Opening Date */}
@@ -991,25 +1139,23 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                     />
                   </div>
 
-                  {/* File Upload */}
+                  {/* File Upload - Excel/CSV: Code | Opening Qty */}
                   <div>
                     <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                      Upload File
+                      Upload File (xlsx, xls, csv — columns: Code, Opening Qty)
                     </label>
                     <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-4">
                       <label className={`flex-1 px-4 py-3 rounded-lg text-sm font-bold transition-all cursor-pointer ${
-                        isDark 
-                          ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
-                          : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                      } border flex items-center justify-center`}>
+                        isDark
+                          ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800 border'
+                          : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50 border'
+                      } flex items-center justify-center`}>
                         <input
                           type="file"
                           accept=".csv,.xlsx,.xls"
                           onChange={(e) => {
                             const file = e.target.files?.[0];
-                            if (file) {
-                              setOpeningStockForm({ ...openingStockForm, file });
-                            }
+                            setOpeningStockForm(prev => ({ ...prev, file: file ?? null }));
                           }}
                           className="hidden"
                         />
@@ -1024,20 +1170,20 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                   {/* Import Data Button */}
                   <div className="pt-4">
                     <button
-                      onClick={() => {
-                        if (!openingStockForm.file) {
-                          toast.showWarning('Please select a file to upload');
-                          return;
-                        }
-                        toast.showSuccess('Opening stock data imported successfully');
-                      }}
+                      onClick={handleImportAssetsOpeningStock}
+                      disabled={isImportingOpeningStock}
                       className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-lg text-sm font-bold transition-all ${
-                        isDark
-                          ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
-                          : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
-                      } shadow-md`}
+                        isDark ? 'bg-[#C2D642] text-white' : 'bg-[#C2D642] text-white'
+                      } shadow-md disabled:opacity-50 disabled:cursor-not-allowed`}
                     >
-                      Import Data
+                      {isImportingOpeningStock ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Importing...
+                        </>
+                      ) : (
+                        'Import Data'
+                      )}
                     </button>
                   </div>
                 </div>
@@ -1057,7 +1203,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                     <select
                       value={availableStockFilters.project}
                       onChange={(e) => {
-                        setAvailableStockFilters({ ...availableStockFilters, project: e.target.value });
+                        setAvailableStockFilters({ ...availableStockFilters, project: e.target.value, storeWarehouse: '' });
                         setCurrentPage(1);
                       }}
                       className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
@@ -1067,10 +1213,8 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                       } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                     >
                       <option value="">----Select Project----</option>
-                      {availableProjects.map((project, idx) => (
-                        <option key={idx} value={project.name}>
-                          {project.name} ({project.code})
-                        </option>
+                      {availableProjects.map((p: any) => (
+                        <option key={p.id} value={String(p.id)}>{p.project_name || p.name}</option>
                       ))}
                     </select>
                   </div>
@@ -1084,17 +1228,16 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                         setAvailableStockFilters({ ...availableStockFilters, storeWarehouse: e.target.value });
                         setCurrentPage(1);
                       }}
+                      disabled={!availableStockFilters.project}
                       className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
-                        isDark 
-                          ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
+                        isDark
+                          ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800'
                           : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                      } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                      } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
                     >
                       <option value="">----Select Store/Warehouses----</option>
-                      {availableWarehouses.map((warehouse, idx) => (
-                        <option key={idx} value={warehouse.name}>
-                          {warehouse.name} ({warehouse.code})
-                        </option>
+                      {availableStockStores.map((s: any) => (
+                        <option key={s.id} value={String(s.id)}>{s.name || s.store_name || '-'}</option>
                       ))}
                     </select>
                   </div>
@@ -1105,213 +1248,14 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
               <div className={`rounded-xl border ${cardClass}`}>
                 <div className="p-4 sm:p-6">
                   <h3 className={`text-base sm:text-lg font-black ${textPrimary} mb-4`}>LIST ASSET/MACHINERY OPENING DETAILS</h3>
-                  
-                  {/* Table Controls */}
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
-                    <div className="flex items-center gap-2">
-                      <span className={`text-xs sm:text-sm ${textSecondary}`}>Show</span>
-                      <select
-                        value={entriesPerPage}
-                        onChange={(e) => {
-                          setEntriesPerPage(Number(e.target.value));
-                          setCurrentPage(1);
-                        }}
-                        className={`px-2 sm:px-3 py-1 rounded text-xs sm:text-sm font-bold ${
-                          isDark 
-                            ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
-                            : 'bg-white border-slate-200 text-slate-900'
-                        } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                      >
-                        <option value={10}>10</option>
-                        <option value={25}>25</option>
-                        <option value={50}>50</option>
-                        <option value={100}>100</option>
-                      </select>
-                      <span className={`text-xs sm:text-sm ${textSecondary}`}>entries</span>
-                    </div>
-                    <div className="flex items-center gap-2 w-full sm:w-auto">
-                      <span className={`text-xs sm:text-sm ${textSecondary}`}>Search:</span>
-                      <input
-                        type="text"
-                        value={availableStockSearch}
-                        onChange={(e) => {
-                          setAvailableStockSearch(e.target.value);
-                          setCurrentPage(1);
-                        }}
-                        className={`flex-1 sm:w-auto px-3 py-1 rounded text-xs sm:text-sm font-bold ${
-                          isDark 
-                            ? 'bg-slate-800/50 border-slate-700 text-slate-100' 
-                            : 'bg-white border-slate-200 text-slate-900'
-                        } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                        placeholder="Search..."
-                      />
-                    </div>
+                  {/* Opening stock list: Backend assets-opening-stock-list not yet available */}
+                  <div className={`p-8 sm:p-12 text-center ${cardClass}`}>
+                    <p className={`text-sm sm:text-base ${textSecondary}`}>
+                      {!availableStockFilters.project || !availableStockFilters.storeWarehouse
+                        ? 'Select project and store above to view opening stock.'
+                        : 'Backend POST /api/assets-opening-stock-list is not yet available. Use Bulk Upload to import opening stock. The list will appear here once the backend implements this endpoint.'}
+                    </p>
                   </div>
-
-                  {/* Sample Data - In real app, this would come from state/API */}
-                  {(() => {
-                    const sampleData = [
-                      { id: 1, project: 'Demo Data', store: 'Main Store', name: 'Machinery Hire', code: 'AST001', specification: 'Heavy Machinery', unit: 'Hrs', openingQty: 10, openingDate: '2025-11-01' },
-                      { id: 2, project: 'Demo Data', store: 'Main Store', name: 'Excavator Hire', code: 'AST002', specification: 'Excavator Equipment', unit: 'Hrs', openingQty: 5, openingDate: '2025-11-01' },
-                    ];
-
-                    const filteredData = sampleData.filter((item) => {
-                      if (availableStockFilters.project && item.project !== availableStockFilters.project) return false;
-                      if (availableStockFilters.storeWarehouse && item.store !== availableStockFilters.storeWarehouse) return false;
-                      if (availableStockSearch) {
-                        const searchLower = availableStockSearch.toLowerCase();
-                        return (
-                          item.name.toLowerCase().includes(searchLower) ||
-                          item.code.toLowerCase().includes(searchLower) ||
-                          item.specification.toLowerCase().includes(searchLower)
-                        );
-                      }
-                      return true;
-                    });
-
-                    const totalPages = Math.ceil(filteredData.length / entriesPerPage);
-                    const startIndex = (currentPage - 1) * entriesPerPage;
-                    const endIndex = startIndex + entriesPerPage;
-                    const paginatedData = filteredData.slice(startIndex, endIndex);
-
-                    return (
-                      <>
-                        {filteredData.length === 0 ? (
-                          <div className={`p-8 sm:p-12 text-center ${cardClass}`}>
-                            <p className={`text-sm sm:text-base ${textSecondary}`}>!No Data Found</p>
-                          </div>
-                        ) : (
-                          <>
-                            {/* Table */}
-                            <div className="overflow-x-auto">
-                              <table className="w-full min-w-[800px]">
-                                <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
-                                  <tr>
-                                    <th className={`px-3 sm:px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
-                                      <div className="flex items-center gap-2">
-                                        <ArrowUpDown className="w-3 h-3" />
-                                        #
-                                      </div>
-                                    </th>
-                                    <th className={`px-3 sm:px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
-                                      <div className="flex items-center gap-2">
-                                        <ArrowUpDown className="w-3 h-3" />
-                                        Project Name
-                                      </div>
-                                    </th>
-                                    <th className={`px-3 sm:px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
-                                      <div className="flex items-center gap-2">
-                                        <ArrowUpDown className="w-3 h-3" />
-                                        Store/ Warehouse
-                                      </div>
-                                    </th>
-                                    <th className={`px-3 sm:px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
-                                      <div className="flex items-center gap-2">
-                                        <ArrowUpDown className="w-3 h-3" />
-                                        Name
-                                      </div>
-                                    </th>
-                                    <th className={`px-3 sm:px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
-                                      <div className="flex items-center gap-2">
-                                        <ArrowUpDown className="w-3 h-3" />
-                                        Code
-                                      </div>
-                                    </th>
-                                    <th className={`px-3 sm:px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
-                                      <div className="flex items-center gap-2">
-                                        <ArrowUpDown className="w-3 h-3" />
-                                        Specification
-                                      </div>
-                                    </th>
-                                    <th className={`px-3 sm:px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
-                                      <div className="flex items-center gap-2">
-                                        <ArrowUpDown className="w-3 h-3" />
-                                        Unit
-                                      </div>
-                                    </th>
-                                    <th className={`px-3 sm:px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
-                                      <div className="flex items-center gap-2">
-                                        <ArrowUpDown className="w-3 h-3" />
-                                        Opening QTY
-                                      </div>
-                                    </th>
-                                    <th className={`px-3 sm:px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
-                                      <div className="flex items-center gap-2">
-                                        <ArrowUpDown className="w-3 h-3" />
-                                        Opening Date
-                                      </div>
-                                    </th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-inherit">
-                                  {paginatedData.length > 0 ? (
-                                    paginatedData.map((row, index) => (
-                                      <tr key={row.id} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
-                                        <td className={`px-3 sm:px-4 py-3 text-xs sm:text-sm font-bold ${textPrimary}`}>{startIndex + index + 1}</td>
-                                        <td className={`px-3 sm:px-4 py-3 text-xs sm:text-sm font-bold ${textPrimary}`}>{row.project}</td>
-                                        <td className={`px-3 sm:px-4 py-3 text-xs sm:text-sm font-bold ${textPrimary}`}>{row.store}</td>
-                                        <td className={`px-3 sm:px-4 py-3 text-xs sm:text-sm font-bold ${textPrimary}`}>{row.name}</td>
-                                        <td className={`px-3 sm:px-4 py-3 text-xs sm:text-sm font-bold ${textPrimary}`}>{row.code}</td>
-                                        <td className={`px-3 sm:px-4 py-3 text-xs sm:text-sm font-bold ${textPrimary}`}>{row.specification}</td>
-                                        <td className={`px-3 sm:px-4 py-3 text-xs sm:text-sm font-bold ${textPrimary}`}>{row.unit}</td>
-                                        <td className={`px-3 sm:px-4 py-3 text-xs sm:text-sm font-bold ${textPrimary}`}>{row.openingQty}</td>
-                                        <td className={`px-3 sm:px-4 py-3 text-xs sm:text-sm font-bold ${textPrimary}`}>{row.openingDate}</td>
-                                      </tr>
-                                    ))
-                                  ) : (
-                                    <tr>
-                                      <td colSpan={9} className={`px-4 py-8 text-center ${textSecondary}`}>
-                                        No data available in table
-                                      </td>
-                                    </tr>
-                                  )}
-                                </tbody>
-                              </table>
-                            </div>
-
-                            {/* Table Footer */}
-                            <div className={`flex flex-col sm:flex-row items-center justify-between gap-4 mt-4 pt-4 border-t ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
-                              <div className={`text-xs sm:text-sm ${textSecondary}`}>
-                                Showing {filteredData.length > 0 ? startIndex + 1 : 0} to {Math.min(endIndex, filteredData.length)} of {filteredData.length} entries
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <button
-                                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                                  disabled={currentPage === 1}
-                                  className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded text-xs sm:text-sm font-bold transition-all ${
-                                    currentPage === 1
-                                      ? isDark
-                                        ? 'bg-slate-800/30 text-slate-500 cursor-not-allowed'
-                                        : 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                                      : isDark
-                                        ? 'bg-slate-700 hover:bg-slate-600 text-slate-100'
-                                        : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-                                  }`}
-                                >
-                                  Previous
-                                </button>
-                                <button
-                                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                                  disabled={currentPage === totalPages || totalPages === 0}
-                                  className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded text-xs sm:text-sm font-bold transition-all ${
-                                    currentPage === totalPages || totalPages === 0
-                                      ? isDark
-                                        ? 'bg-slate-800/30 text-slate-500 cursor-not-allowed'
-                                        : 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                                      : isDark
-                                        ? 'bg-slate-700 hover:bg-slate-600 text-slate-100'
-                                        : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-                                  }`}
-                                >
-                                  Next
-                                </button>
-                              </div>
-                            </div>
-                          </>
-                        )}
-                      </>
-                    );
-                  })()}
                 </div>
               </div>
             </div>

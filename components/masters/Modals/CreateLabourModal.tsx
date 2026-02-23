@@ -9,6 +9,7 @@ import { masterDataAPI } from '@/services/api';
 
 interface Labour {
   id: string;
+  numericId?: number | string;
   uuid?: string;
   name: string;
   code?: string;
@@ -179,6 +180,25 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
       return false;
     }
 
+    // Duplicate check: same name + unit + category not allowed for manual entries
+    const nameNorm = formData.name.trim().toLowerCase();
+    const unitId = Number(formData.unit_id);
+    const categoryNorm = formData.category;
+    const isDuplicate = labours.some((l) => {
+      // When editing, exclude the current labour (controller uses numeric id for edit)
+      if (isEditing && (String(l.numericId ?? l.id) === String(editingLabourId ?? editingLabourNumericId))) {
+        return false;
+      }
+      const lName = (l.name || '').trim().toLowerCase();
+      const lUnitId = l.unit_id ?? l.unit?.id;
+      const lCategory = (l.category || '').toLowerCase();
+      return lName === nameNorm && Number(lUnitId) === unitId && lCategory === categoryNorm;
+    });
+    if (isDuplicate) {
+      toast.showWarning('Duplicate entries cannot be done for manual entries.');
+      return false;
+    }
+
     return true;
   };
 
@@ -198,7 +218,7 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
       };
 
       if (isEditing && editingLabourId) {
-        // Update existing labour - use UUID for update API
+        // Update: controller addLabour expects updateId (numeric id) for Labour::find()
         await masterDataAPI.updateLabour(editingLabourId, payload);
         toast.showSuccess('Labour updated successfully!');
         // Pass updated unit so table reflects the change immediately
@@ -217,11 +237,10 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
           return;
         }
       } else {
-        // Create new labour - set is_active to 1 (active) by default
+        // Create: controller addLabour expects name, category, unit_id (optionally is_active)
         const createPayload = { ...payload, is_active: 1 };
         const response = await masterDataAPI.createLabour(createPayload);
         toast.showSuccess('Labour created successfully!');
-        // Extract created labour with code from labour-add response (returns code e.g. "L415190")
         const createdLabour = response?.data ?? response;
         if (onSuccess && createdLabour && (createdLabour.id != null || createdLabour.uuid)) {
           onSuccess(createdLabour);

@@ -422,12 +422,13 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
   }, [searchQuery, entriesPerPage]);
 
   const handleDownloadExcel = () => {
-    const headers = ['SR No', 'Unit', 'Unit Conversion', 'Unit Conversion Factor', 'Status'];
+    const headers = ['SR No', 'Code', 'Unit', 'Unit Conversion', 'Unit Conversion Factor', 'Status'];
     const rows = filteredUnits.map((unit, idx) => [
       idx + 1,
-      unit.name,
-      unit.conversion,
-      unit.factor,
+      unit.code || '',
+      unit.name || unit.unit || '',
+      unit.conversion || '',
+      unit.factor || '',
       unit.status
     ]);
 
@@ -564,42 +565,13 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
             <table className="w-full">
               <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
                 <tr>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
-                    <div className="flex items-center gap-2">
-                      <ArrowUpDown className="w-3 h-3" />
-                      Sr No
-                    </div>
-                  </th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
-                    <div className="flex items-center gap-2">
-                      <ArrowUpDown className="w-3 h-3" />
-                      Unit
-                    </div>
-                  </th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
-                    <div className="flex items-center gap-2">
-                      <ArrowUpDown className="w-3 h-3" />
-                      Unit Conversion
-                    </div>
-                  </th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
-                    <div className="flex items-center gap-2">
-                      <ArrowUpDown className="w-3 h-3" />
-                      Unit Conversion Factor
-                    </div>
-                  </th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
-                    <div className="flex items-center gap-2">
-                      <ArrowUpDown className="w-3 h-3" />
-                      Status
-                    </div>
-                  </th>
-                  <th className={`px-6 py-4 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>
-                    <div className="flex items-center justify-end gap-2">
-                      <ArrowUpDown className="w-3 h-3" />
-                      Action
-                    </div>
-                  </th>
+                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Sr No</th>
+                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Code</th>
+                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Unit</th>
+                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Unit Conversion</th>
+                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Unit Conversion Factor</th>
+                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Status</th>
+                  <th className={`px-6 py-4 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-inherit">
@@ -620,12 +592,15 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
                       {(currentPage - 1) * entriesPerPage + rowIdx + 1}
                     </td>
                     <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
-                      {row.name || row.unit || ''}
+                      {row.code || '—'}
+                    </td>
+                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
+                      {row.name || row.unit || '—'}
                       {row.status === 'Inactive' && (
                         <span className="ml-2 text-xs text-red-500">(Disabled)</span>
                       )}
                     </td>
-                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.conversion || row.unit_coversion || '-'}</td>
+                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.conversion || row.unit_coversion || '—'}</td>
                     <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.factor || row.unit_coversion_factor || '-'}</td>
                     <td className={`px-6 py-4`}>
                       <button

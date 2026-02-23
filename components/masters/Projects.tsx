@@ -27,6 +27,8 @@ import {
 } from 'lucide-react';
 import CreateProjectModal from './Modals/CreateProjectModal';
 
+type SortFilterType = 'none' | 'recent_created' | 'oldest_created' | 'recent_updated' | 'oldest_updated';
+
 interface Project {
   id: string; // For display/UI purposes (can be uuid or id)
   numericId?: number | string; // Original numeric ID from database for API calls
@@ -45,6 +47,7 @@ interface Project {
   logo: string;
   teamSize?: number;
   createdAt?: string;
+  updatedAt?: string;
   isContractor?: boolean;
   projectManager?: string;
   azure_folder_path?: string; // Azure Blob Storage folder path for documents
@@ -59,7 +62,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
   const { isAuthenticated } = useUser();
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isSearching, setIsSearching] = useState<boolean>(false);
-  const [sortFilter, setSortFilter] = useState<'recent' | 'oldest' | 'none'>('none');
+  const [sortFilter, setSortFilter] = useState<SortFilterType>('none');
   const [showFilterDropdown, setShowFilterDropdown] = useState<boolean>(false);
   const [openStatusDropdownId, setOpenStatusDropdownId] = useState<string | null>(null);
   const [showProjectModal, setShowProjectModal] = useState<boolean>(false);
@@ -151,6 +154,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
           logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name || p.name || '')}&background=6366f1&color=fff&size=128`,
           teamSize: p.team_size || p.teamSize,
           createdAt: p.created_at || p.createdAt,
+          updatedAt: p.updated_at || p.updatedAt,
           isContractor: p.own_project_or_contractor === 'yes' || p.is_contractor || p.isContractor,
           projectManager: p.project_manager || p.projectManager,
           azure_folder_path: p.azure_folder_path || p.azureFolderPath, // Store Azure folder path for document management
@@ -273,6 +277,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
           logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name || p.name || '')}&background=6366f1&color=fff&size=128`,
           teamSize: p.team_size || p.teamSize,
           createdAt: p.created_at || p.createdAt,
+          updatedAt: p.updated_at || p.updatedAt,
           isContractor: p.own_project_or_contractor === 'yes' || p.is_contractor || p.isContractor,
           projectManager: p.project_manager || p.projectManager,
         };
@@ -585,44 +590,68 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
     };
   }, []);
 
-  // Memoize filtered and sorted projects
+  // Memoize filtered and sorted projects - recent (created/updated) appear on top
   const filteredAndSortedProjects = useMemo(() => {
-    console.log('🔍 filteredAndSortedProjects useMemo');
-    console.log('allProjects:', allProjects);
-    console.log('searchQuery:', searchQuery);
-    console.log('isSearching:', isSearching);
-    console.log('sortFilter:', sortFilter);
-    
-    let filtered = [...allProjects];
-    console.log('Initial filtered count:', filtered.length);
+    const parseDate = (val: string | undefined, fallback: number): number => {
+      if (!val) return fallback;
+      const ts = new Date(String(val).trim()).getTime();
+      return Number.isNaN(ts) ? fallback : ts;
+    };
+    const getIdAsNumber = (p: Project): number => {
+      const n = p.numericId ?? p.id;
+      if (n == null) return 0;
+      const num = typeof n === 'number' ? n : parseInt(String(n), 10);
+      return Number.isNaN(num) ? 0 : num;
+    };
+    const getCreatedAt = (p: Project) => (p as any).created_at ?? p.createdAt;
+    const getUpdatedAt = (p: Project) => (p as any).updated_at ?? p.updatedAt;
 
-    // Client-side filtering is now optional since we're using API search
-    // But keep it for default projects
+    let filtered = [...allProjects];
+
     if (searchQuery.trim() && !isSearching) {
       filtered = filtered.filter(project =>
         project.name.toLowerCase().includes(searchQuery.toLowerCase())
       );
-      console.log('After search filter:', filtered.length);
     }
 
-    // Apply sort filter
-    if (sortFilter === 'recent') {
+    if (sortFilter === 'recent_created') {
       filtered = [...filtered].sort((a, b) => {
-        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return dateB - dateA; // Most recent first
+        const dateA = parseDate(getCreatedAt(a), -1);
+        const dateB = parseDate(getCreatedAt(b), -1);
+        if (dateA >= 0 && dateB >= 0) return dateB - dateA;
+        if (dateA >= 0) return -1;
+        if (dateB >= 0) return 1;
+        return getIdAsNumber(b) - getIdAsNumber(a);
       });
-      console.log('Sorted by recent');
-    } else if (sortFilter === 'oldest') {
+    } else if (sortFilter === 'oldest_created') {
       filtered = [...filtered].sort((a, b) => {
-        const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return dateA - dateB; // Oldest first
+        const dateA = parseDate(getCreatedAt(a), Infinity);
+        const dateB = parseDate(getCreatedAt(b), Infinity);
+        if (dateA < Infinity && dateB < Infinity) return dateA - dateB;
+        if (dateA < Infinity) return -1;
+        if (dateB < Infinity) return 1;
+        return getIdAsNumber(a) - getIdAsNumber(b);
       });
-      console.log('Sorted by oldest');
+    } else if (sortFilter === 'recent_updated') {
+      filtered = [...filtered].sort((a, b) => {
+        const dateA = parseDate(getUpdatedAt(a), -1);
+        const dateB = parseDate(getUpdatedAt(b), -1);
+        if (dateA >= 0 && dateB >= 0) return dateB - dateA;
+        if (dateA >= 0) return -1;
+        if (dateB >= 0) return 1;
+        return getIdAsNumber(b) - getIdAsNumber(a);
+      });
+    } else if (sortFilter === 'oldest_updated') {
+      filtered = [...filtered].sort((a, b) => {
+        const dateA = parseDate(getUpdatedAt(a), Infinity);
+        const dateB = parseDate(getUpdatedAt(b), Infinity);
+        if (dateA < Infinity && dateB < Infinity) return dateA - dateB;
+        if (dateA < Infinity) return -1;
+        if (dateB < Infinity) return 1;
+        return getIdAsNumber(a) - getIdAsNumber(b);
+      });
     }
 
-    console.log('Final filteredAndSortedProjects count:', filtered.length);
     return filtered;
   }, [searchQuery, sortFilter, allProjects, isSearching]);
 
@@ -753,51 +782,65 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
             Filter
             {sortFilter !== 'none' && (
               <span className={`ml-1 px-1.5 py-0.5 rounded text-xs ${isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'}`}>
-                {sortFilter === 'recent' ? 'Recent' : 'Oldest'}
+                {sortFilter === 'recent_created' && 'Recent (Created)'}
+                {sortFilter === 'oldest_created' && 'Oldest (Created)'}
+                {sortFilter === 'recent_updated' && 'Recent (Updated)'}
+                {sortFilter === 'oldest_updated' && 'Oldest (Updated)'}
               </span>
             )}
           </button>
           {showFilterDropdown && (
-            <div className={`absolute right-0 top-full mt-2 w-48 rounded-lg border shadow-lg z-20 filter-dropdown ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+            <div className={`absolute right-0 top-full mt-2 w-52 rounded-lg border shadow-lg z-20 filter-dropdown ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
               <div className="py-1">
                 <button
-                  onClick={() => {
-                    setSortFilter('none');
-                    setShowFilterDropdown(false);
-                  }}
+                  type="button"
+                  onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setSortFilter('none'); setShowFilterDropdown(false); }}
                   className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
-                    sortFilter === 'none'
-                      ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
+                    sortFilter === 'none' ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
                       : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                   }`}
                 >
                   None
                 </button>
                 <button
-                  onClick={() => {
-                    setSortFilter('recent');
-                    setShowFilterDropdown(false);
-                  }}
+                  type="button"
+                  onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setSortFilter('recent_created'); setShowFilterDropdown(false); }}
                   className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
-                    sortFilter === 'recent'
-                      ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
+                    sortFilter === 'recent_created' ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
                       : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                   }`}
                 >
-                  Recent
+                  Recent (by Created)
                 </button>
                 <button
-                  onClick={() => {
-                    setSortFilter('oldest');
-                    setShowFilterDropdown(false);
-                  }}
+                  type="button"
+                  onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setSortFilter('oldest_created'); setShowFilterDropdown(false); }}
                   className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
-                    sortFilter === 'oldest'
-                      ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
+                    sortFilter === 'oldest_created' ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
                       : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                   }`}
                 >
-                  Oldest
+                  Oldest (by Created)
+                </button>
+                <button
+                  type="button"
+                  onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setSortFilter('recent_updated'); setShowFilterDropdown(false); }}
+                  className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
+                    sortFilter === 'recent_updated' ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
+                      : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
+                  }`}
+                >
+                  Recent (by Updated)
+                </button>
+                <button
+                  type="button"
+                  onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setSortFilter('oldest_updated'); setShowFilterDropdown(false); }}
+                  className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
+                    sortFilter === 'oldest_updated' ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
+                      : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
+                  }`}
+                >
+                  Oldest (by Updated)
                 </button>
               </div>
             </div>

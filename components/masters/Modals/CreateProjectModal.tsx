@@ -931,7 +931,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
             <DatePickerInput
               name="planned_start_date"
               value={formData.planned_start_date}
-              onChange={handleInputChange}
+              onChange={(e) => handleInputChange(e as React.ChangeEvent<HTMLInputElement>)}
               iconClassName={textSecondary}
               className={`${
                 isDark 
@@ -949,7 +949,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
             <DatePickerInput
               name="planned_end_date"
               value={formData.planned_end_date}
-              onChange={handleInputChange}
+              onChange={(e) => handleInputChange(e as React.ChangeEvent<HTMLInputElement>)}
               min={formData.planned_start_date}
               iconClassName={textSecondary}
               className={`${

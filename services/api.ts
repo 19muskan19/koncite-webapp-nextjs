@@ -42,8 +42,12 @@ export interface LoginRequest {
 export interface LoginResponse {
   status?: boolean;
   message?: string;
+  requires_otp_verification?: boolean;
+  email?: string;
   data?: {
     token?: string;
+    requires_otp_verification?: boolean;
+    email?: string;
     user?: {
       id: number;
       name: string;
@@ -1314,6 +1318,62 @@ export const masterDataAPI = {
       } as ApiError;
     }
   },
+  /**
+   * Bulk import materials from Excel/CSV
+   * POST /api/materials-import
+   * FormData: file only (xlsx, xls, csv; max 10MB)
+   * Columns: name, class, unit, specification
+   */
+  importMaterials: async (file: File): Promise<any> => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await apiClient.post('/materials-import', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return response.data;
+    } catch (error: any) {
+      const status = error.response?.status;
+      const msg = error.response?.data?.message || error.message || 'Failed to import materials';
+      const hint = status === 404 ? ' Backend endpoint /materials-import may not exist.' : '';
+      throw {
+        message: msg + hint,
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /**
+   * Bulk import materials opening stock from Excel/CSV
+   * POST /api/materials-import-opening-stock (or materials-opening-stock-import)
+   * FormData: file, project, warehouses, opeing_stock_date
+   * Columns: code, opening_qty
+   */
+  importMaterialsOpeningStock: async (params: {
+    file: File;
+    project: number | string;
+    warehouses: number | string;
+    opeing_stock_date: string;
+  }): Promise<any> => {
+    try {
+      const formData = new FormData();
+      formData.append('file', params.file);
+      formData.append('project', String(params.project));
+      formData.append('warehouses', String(params.warehouses));
+      formData.append('opeing_stock_date', params.opeing_stock_date);
+      const response = await apiClient.post('/materials-import-opening-stock', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return response.data;
+    } catch (error: any) {
+      const status = error.response?.status;
+      const msg = error.response?.data?.message || error.message || 'Failed to import materials opening stock';
+      const hint = status === 404 ? ' Backend endpoint /materials-import-opening-stock may not exist.' : '';
+      throw {
+        message: msg + hint,
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
 
   // Materials History - Opening stock, history
   getMaterialsHistoryList: async (): Promise<any[]> => {
@@ -1379,10 +1439,12 @@ export const masterDataAPI = {
   },
 
   // Labours - Matching Laravel routes
-  getLabours: async (): Promise<any[]> => {
+  getLabours: async (params?: { per_page?: number }): Promise<any[]> => {
     try {
-      const response = await apiClient.get('/labour-list');
-      return response.data.data || response.data || [];
+      const config = params?.per_page ? { params: { per_page: params.per_page } } : {};
+      const response = await apiClient.get('/labour-list', config);
+      const raw = response.data?.data ?? response.data;
+      return Array.isArray(raw) ? raw : [];
     } catch (error: any) {
       throw {
         message: error.response?.data?.message || 'Failed to fetch labours',
@@ -1444,11 +1506,10 @@ export const masterDataAPI = {
       } as ApiError;
     }
   },
-  updateLabour: async (uuid: string, data: Record<string, any>): Promise<any> => {
+  updateLabour: async (idOrUuid: string, data: Record<string, any>): Promise<any> => {
     try {
-      // POST /api/labour-add is used for both create and update
-      // Include updateId in data for updates
-      const updateData = { ...data, updateId: uuid };
+      // Controller addLabour: Labour::find($request->updateId) - expects numeric id
+      const updateData = { ...data, updateId: idOrUuid };
       const response = await apiClient.post('/labour-add', updateData);
       return response.data;
     } catch (error: any) {
@@ -1465,6 +1526,26 @@ export const masterDataAPI = {
     } catch (error: any) {
       throw {
         message: error.response?.data?.message || 'Failed to delete labour',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /**
+   * Labour bulk import: POST /api/labour-import
+   * File-based bulk upload (Excel/CSV). Max 10MB.
+   * Format: Row 1 headers - Code, Name, Category, Unit. Optional: uuid for updates.
+   */
+  importLabour: async (file: File): Promise<{ status: boolean; data?: { imported?: boolean; total_rows?: number; created?: number; updated?: number; skipped?: number; message?: string } }> => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await apiClient.post('/labour-import', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to import labours',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
@@ -1550,6 +1631,30 @@ export const masterDataAPI = {
     } catch (error: any) {
       throw {
         message: error.response?.data?.message || 'Failed to delete vendor',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /**
+   * Bulk import vendors from Excel/CSV
+   * POST /api/vendor-import
+   * FormData: file only (xlsx, xls, csv; max 10MB)
+   * Columns: Name, Type, Gst No, Address, Contact Person Name, Contact Person Phone, Contact Person Email; optional UUID for updates
+   */
+  importVendor: async (file: File): Promise<any> => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const response = await apiClient.post('/vendor-import', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return response.data;
+    } catch (error: any) {
+      const status = error.response?.status;
+      const msg = error.response?.data?.message || error.message || 'Failed to import vendors';
+      const hint = status === 404 ? ' Backend endpoint /vendor-import may not exist.' : '';
+      throw {
+        message: msg + hint,
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
@@ -1652,6 +1757,31 @@ export const masterDataAPI = {
     } catch (error: any) {
       throw {
         message: error.response?.data?.message || 'Failed to delete activity',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /**
+   * Bulk import activities from Excel/CSV
+   * POST /api/activities-import
+   * FormData: file, project (ID), subproject (ID)
+   */
+  importActivities: async (file: File, projectId: number | string, subprojectId: number | string): Promise<any> => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('project', String(projectId));
+      formData.append('subproject', String(subprojectId));
+      const response = await apiClient.post('/activities-import', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return response.data;
+    } catch (error: any) {
+      const status = error.response?.status;
+      const msg = error.response?.data?.message || error.message || 'Failed to import activities';
+      const hint = status === 404 ? ' Backend endpoint /activities-import may not exist.' : '';
+      throw {
+        message: msg + hint,
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
@@ -1794,7 +1924,7 @@ export const masterDataAPI = {
    * POST /fetch-project-subproject - DPR project/subproject (returns 404 if not implemented)
    * DPR uses getProjects + getSubprojects instead - /project-list and /sub-project-list
    */
-  fetchProjectSubproject: async (data?: Record<string, any>): Promise<any> => {
+  async fetchProjectSubproject(data?: Record<string, any>): Promise<any> {
     const payload = data || {};
     const projectId = payload.project_id ?? payload.projectId;
     try {
@@ -1806,14 +1936,18 @@ export const masterDataAPI = {
       if (res?.subProject !== undefined) return res.subProject;
       if (res?.subprojects !== undefined) return res.subprojects;
       return res ?? [];
-    } catch (error: any) {
-      if (error?.response?.status === 404) {
-        return projectId ? this.getSubprojects(projectId) : this.getProjects();
+    } catch (error: unknown) {
+      const err = error as { response?: { status?: number; data?: { message?: string; errors?: Record<string, string[]> } } } | undefined;
+      if (err?.response?.status === 404) {
+        if (projectId != null && projectId !== '') {
+          return this.getSubprojects(projectId);
+        }
+        return this.getProjects();
       }
-      throw {
-        message: error.response?.data?.message || 'Failed to fetch project/subproject',
-        errors: error.response?.data?.errors || {},
-      } as ApiError;
+      const responseData = err?.response?.data;
+      const message = (responseData && responseData.message) ? responseData.message : 'Failed to fetch project/subproject';
+      const errors = (responseData && responseData.errors) ? responseData.errors : {};
+      throw { message, errors } as ApiError;
     }
   },
   projectWiseSubprojectSearch: async (data: Record<string, any>): Promise<any[]> => {
@@ -2231,6 +2365,80 @@ export const masterDataAPI = {
     } catch (error: any) {
       throw {
         message: error.response?.data?.message || 'Failed to delete asset/equipment',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  importAssetEquipment: async (file: File, project?: string, warehouses?: string): Promise<any> => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      if (project) formData.append('project', project);
+      if (warehouses) formData.append('warehouses', warehouses);
+      const response = await apiClient.post('/assets-import', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to import assets',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /**
+   * Bulk import assets opening stock via Excel/CSV
+   * POST /api/assets-opening-stock-import
+   * FormData: file, project (ID), warehouses (store ID), opening_stock_date
+   * Excel format: Code | Opening Qty
+   */
+  importAssetsOpeningStock: async (params: {
+    file: File;
+    project: number | string;
+    warehouses: number | string;
+    opening_stock_date?: string;
+  }): Promise<any> => {
+    try {
+      const formData = new FormData();
+      formData.append('file', params.file);
+      formData.append('project', String(params.project));
+      formData.append('warehouses', String(params.warehouses));
+      if (params.opening_stock_date) {
+        formData.append('opening_stock_date', params.opening_stock_date);
+        formData.append('opeing_stock_date', params.opening_stock_date); // API accepts both spellings
+      }
+      const response = await apiClient.post('/assets-opening-stock-import', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      return response.data;
+    } catch (error: any) {
+      const status = error.response?.status;
+      const msg = error.response?.data?.message || error.message || 'Failed to import assets opening stock';
+      const hint = status === 404 ? ' Backend endpoint /assets-opening-stock-import may not exist.' : '';
+      throw {
+        message: msg + hint,
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /**
+   * List assets opening stock by project and store
+   * POST /api/assets-opening-stock-list
+   * Payload: projectId, storeId (matches materials-opening-list pattern)
+   * Returns [] when endpoint not yet implemented (404)
+   */
+  getAssetsOpeningStockList: async (projectId?: number | string, storeId?: number | string): Promise<any[]> => {
+    try {
+      const payload: Record<string, any> = {};
+      if (projectId != null && projectId !== '') payload.projectId = projectId;
+      if (storeId != null && storeId !== '') payload.storeId = storeId;
+      const response = await apiClient.post('/assets-opening-stock-list', payload);
+      const data = response.data?.data ?? response.data ?? [];
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      if (error.response?.status === 404) return [];
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch assets opening stock list',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }

@@ -5,6 +5,7 @@ import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
 import { Activity, Download, Plus, Trash2, Loader2, Edit, Search, RefreshCw, Upload, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import CreateActivityModal from './Modals/CreateActivityModal';
+import ActivityBulkUploadModal from './Modals/ActivityBulkUploadModal';
 import { masterDataAPI } from '../../services/api';
 import { useUser } from '../../contexts/UserContext';
 import * as XLSX from 'xlsx';
@@ -80,6 +81,7 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
+  const [showBulkUploadModal, setShowBulkUploadModal] = useState<boolean>(false);
   const [editingActivityId, setEditingActivityId] = useState<string | null>(null);
   const [addUnderHeadingId, setAddUnderHeadingId] = useState<string | null>(null);
   const [entriesPerPage, setEntriesPerPage] = useState<number>(25);
@@ -538,11 +540,13 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
             </button>
           )}
           <button 
-            disabled
-            className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all opacity-50 cursor-not-allowed ${
-              isDark ? 'bg-slate-700 text-slate-100 border border-slate-600' : 'bg-white text-slate-900 border border-slate-200'
+            onClick={() => setShowBulkUploadModal(true)}
+            className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${
+              isDark 
+                ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' 
+                : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
             } shadow-sm`}
-            title="Bulk Upload"
+            title="Bulk Upload Activities"
           >
             <Upload className="w-4 h-4" /> <span className="hidden sm:inline">Bulk Upload</span><span className="sm:hidden">Bulk</span>
           </button>
@@ -916,9 +920,9 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
           {selectedProjectId && !searchQuery.trim() && (
             <div className="flex flex-wrap justify-center gap-3">
               <button
-                disabled
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all opacity-50 cursor-not-allowed ${
-                  isDark ? 'bg-slate-700 text-slate-100' : 'bg-slate-200 text-slate-900'
+                onClick={() => setShowBulkUploadModal(true)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+                  isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100' : 'bg-slate-200 hover:bg-slate-300 text-slate-900'
                 }`}
                 title="Bulk Upload"
               >
@@ -934,6 +938,18 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
           )}
         </div>
       ) : null}
+
+      {/* Bulk Upload Modal */}
+      <ActivityBulkUploadModal
+        theme={theme}
+        isOpen={showBulkUploadModal}
+        onClose={() => setShowBulkUploadModal(false)}
+        onSuccess={() => {
+          setShowBulkUploadModal(false);
+          fetchActivities();
+        }}
+        projects={projects}
+      />
 
       {/* Create Activity Modal */}
       <CreateActivityModal

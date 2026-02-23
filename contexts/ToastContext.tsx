@@ -5,11 +5,11 @@ import { Toast, ToastType, ToastContainer } from '../components/Toast';
 
 interface ToastContextType {
   toasts: Toast[];
-  showToast: (message: string | { message?: unknown }, type?: ToastType, duration?: number) => void;
-  showSuccess: (message: string | { message?: unknown }, duration?: number) => void;
-  showError: (message: string | { message?: unknown }, duration?: number) => void;
-  showInfo: (message: string | { message?: unknown }, duration?: number) => void;
-  showWarning: (message: string | { message?: unknown }, duration?: number) => void;
+  showToast: (message: string | { message?: string }, type?: ToastType, duration?: number) => void;
+  showSuccess: (message: string | { message?: string }, duration?: number) => void;
+  showError: (message: string | { message?: string }, duration?: number) => void;
+  showInfo: (message: string | { message?: string }, duration?: number) => void;
+  showWarning: (message: string | { message?: string }, duration?: number) => void;
   removeToast: (id: string) => void;
 }
 
@@ -41,28 +41,28 @@ export const ToastProvider: React.FC<{ children: React.ReactNode; isDark?: boole
   );
 
   const showSuccess = useCallback(
-    (message: string, duration?: number) => {
+    (message: string | { message?: string }, duration?: number) => {
       showToast(message, 'success', duration);
     },
     [showToast]
   );
 
   const showError = useCallback(
-    (message: string, duration?: number) => {
+    (message: string | { message?: string }, duration?: number) => {
       showToast(message, 'error', duration);
     },
     [showToast]
   );
 
   const showInfo = useCallback(
-    (message: string, duration?: number) => {
+    (message: string | { message?: string }, duration?: number) => {
       showToast(message, 'info', duration);
     },
     [showToast]
   );
 
   const showWarning = useCallback(
-    (message: string, duration?: number) => {
+    (message: string | { message?: string }, duration?: number) => {
       showToast(message, 'warning', duration);
     },
     [showToast]
