@@ -79,7 +79,7 @@ export default function ForgotPasswordPage() {
       
       // Redirect to login after a short delay
       setTimeout(() => {
-        window.location.href = '/';
+        window.location.href = '/login';
       }, 2000);
     } catch (error: any) {
       const errorMessage = error.message || 'Failed to update password. Please try again.';
@@ -96,7 +96,7 @@ export default function ForgotPasswordPage() {
         {step === 'email' && (
           <div className={`${cardClass} ${isDark ? 'bg-slate-800' : 'bg-white'} rounded-xl shadow-2xl w-full max-w-md p-6 md:p-8 relative border ${borderClass}`}>
             <Link
-              href="/"
+              href="/login"
               className={`absolute top-4 left-4 p-2 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'} rounded-lg transition-colors flex items-center gap-2 ${textSecondary} hover:${textPrimary}`}
             >
               <ArrowLeft className="w-5 h-5" />
@@ -158,7 +158,7 @@ export default function ForgotPasswordPage() {
 
               <div className="text-center mt-4">
                 <Link
-                  href="/"
+                  href="/login"
                   className={`text-sm ${textSecondary} hover:text-[#C2D642] transition-colors`}
                 >
                   Back to Login
@@ -171,7 +171,7 @@ export default function ForgotPasswordPage() {
         {step === 'password' && (
           <div className={`${cardClass} ${isDark ? 'bg-slate-800' : 'bg-white'} rounded-xl shadow-2xl w-full max-w-md p-6 md:p-8 relative border ${borderClass}`}>
             <Link
-              href="/"
+              href="/login"
               className={`absolute top-4 left-4 p-2 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'} rounded-lg transition-colors flex items-center gap-2 ${textSecondary} hover:${textPrimary}`}
             >
               <ArrowLeft className="w-5 h-5" />
@@ -253,7 +253,7 @@ export default function ForgotPasswordPage() {
 
               <div className="text-center mt-4">
                 <Link
-                  href="/"
+                  href="/login"
                   className={`text-sm ${textSecondary} hover:text-[#C2D642] transition-colors`}
                 >
                   Back to Login

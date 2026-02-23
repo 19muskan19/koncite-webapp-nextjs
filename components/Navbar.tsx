@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
+import Link from 'next/link';
 import { Menu, X, Moon, Sun } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 
 interface NavbarProps {
-  onLoginClick: () => void;
+  onLoginClick?: () => void;
   onNavigateToAbout?: () => void;
   scrollToSection: (id: string) => void;
   onContactClick?: () => void;
@@ -117,18 +118,36 @@ const Navbar: React.FC<NavbarProps> = ({ onLoginClick, onNavigateToAbout, scroll
             >
               {isDark ? <Sun className="w-5 h-5 text-[#C2D642]" /> : <Moon className="w-5 h-5 text-[#C2D642]" />}
             </button>
-            <button
-              onClick={onLoginClick}
-              className={`hidden sm:block text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors`}
-            >
-              Log In
-            </button>
-            <button
-              onClick={onLoginClick}
-              className="hidden sm:block px-4 py-2 border-2 border-[#C2D642] hover:bg-[#C2D642] text-[#C2D642] hover:text-white rounded-lg text-sm font-semibold transition-all shadow-md hover:shadow-lg"
-            >
-              Book a Demo
-            </button>
+            {onLoginClick ? (
+              <button
+                onClick={onLoginClick}
+                className={`hidden sm:block text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors`}
+              >
+                Log In
+              </button>
+            ) : (
+              <Link
+                href="/login"
+                className={`hidden sm:block text-sm font-semibold ${textSecondary} hover:text-[#C2D642] transition-colors`}
+              >
+                Log In
+              </Link>
+            )}
+            {onLoginClick ? (
+              <button
+                onClick={onLoginClick}
+                className="hidden sm:block px-4 py-2 border-2 border-[#C2D642] hover:bg-[#C2D642] text-[#C2D642] hover:text-white rounded-lg text-sm font-semibold transition-all shadow-md hover:shadow-lg"
+              >
+                Book a Demo
+              </button>
+            ) : (
+              <Link
+                href="/login"
+                className="hidden sm:block px-4 py-2 border-2 border-[#C2D642] hover:bg-[#C2D642] text-[#C2D642] hover:text-white rounded-lg text-sm font-semibold transition-all shadow-md hover:shadow-lg"
+              >
+                Book a Demo
+              </Link>
+            )}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               className={`md:hidden p-2 ${textSecondary} hover:text-[#C2D642] transition-colors`}
@@ -200,24 +219,20 @@ const Navbar: React.FC<NavbarProps> = ({ onLoginClick, onNavigateToAbout, scroll
                 )}
               </button>
               <div className={`flex flex-col gap-3 pt-4 border-t ${borderClass}`}>
-                <button
-                  onClick={() => {
-                    onLoginClick();
-                    setMobileMenuOpen(false);
-                  }}
+                <Link
+                  href="/login"
+                  onClick={() => setMobileMenuOpen(false)}
                   className="px-4 py-2.5 bg-[#C2D642] hover:bg-[#A8B838] text-white rounded-lg text-sm font-semibold transition-all w-full text-center shadow-md hover:shadow-lg"
                 >
                   Log In
-                </button>
-                <button
-                  onClick={() => {
-                    onLoginClick();
-                    setMobileMenuOpen(false);
-                  }}
+                </Link>
+                <Link
+                  href="/login"
+                  onClick={() => setMobileMenuOpen(false)}
                   className="px-4 py-2.5 border-2 border-[#C2D642] hover:bg-[#C2D642] text-[#C2D642] hover:text-white rounded-lg text-sm font-semibold transition-all w-full text-center"
                 >
                   Book a Demo
-                </button>
+                </Link>
               </div>
             </nav>
           </div>

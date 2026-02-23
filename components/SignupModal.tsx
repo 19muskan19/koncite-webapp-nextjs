@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
+import Link from 'next/link';
 import { X, UserPlus, Mail, Lock, Phone, Building, Loader2, ChevronDown, Search } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from '../contexts/ToastContext';
@@ -23,6 +24,7 @@ interface SignupModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSignup?: (data: SignupData) => void;
+  loginHref?: string;
 }
 
 interface CountryFromAPI {
@@ -45,7 +47,7 @@ interface SignupData {
   agreedToTerms: boolean;
 }
 
-const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) => {
+const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, loginHref }) => {
   const { isDark } = useTheme();
   const toast = useToast();
   const [formData, setFormData] = useState<SignupData>({
@@ -1040,13 +1042,19 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
         <div className={`mt-6 pt-6 border-t ${borderClass}`}>
           <p className={`text-sm text-center ${textSecondary}`}>
             Already have an account?{' '}
-            <button
-              type="button"
-              onClick={onClose}
-              className="text-[#C2D642] hover:underline font-semibold"
-            >
-              Sign In
-            </button>
+            {loginHref ? (
+              <Link href={loginHref} className="text-[#C2D642] hover:underline font-semibold">
+                Sign In
+              </Link>
+            ) : (
+              <button
+                type="button"
+                onClick={onClose}
+                className="text-[#C2D642] hover:underline font-semibold"
+              >
+                Sign In
+              </button>
+            )}
           </p>
         </div>
       </div>

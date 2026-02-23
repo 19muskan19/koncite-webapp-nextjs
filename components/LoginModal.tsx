@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import Link from 'next/link';
 import { X, LogIn, Mail, Lock, Loader2 } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from '../contexts/ToastContext';
@@ -10,9 +11,10 @@ interface LoginModalProps {
   isOpen: boolean;
   onClose: () => void;
   onLogin: (email: string, password: string) => void;
+  signUpHref?: string;
 }
 
-const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin }) => {
+const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin, signUpHref }) => {
   const { isDark } = useTheme();
   const toast = useToast();
   const [email, setEmail] = useState('');
@@ -160,19 +162,24 @@ const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin }) => 
         <div className={`mt-6 pt-6 border-t ${borderClass}`}>
           <p className={`text-sm text-center ${textSecondary}`}>
             Don't have an account?{' '}
-            <button
-              type="button"
-              onClick={() => {
-                onClose();
-                // Trigger signup modal - this will be handled by parent component
-                if (typeof window !== 'undefined') {
-                  window.dispatchEvent(new CustomEvent('openSignupModal'));
-                }
-              }}
-              className="text-[#C2D642] hover:underline font-semibold"
-            >
-              Sign Up
-            </button>
+            {signUpHref ? (
+              <Link href={signUpHref} className="text-[#C2D642] hover:underline font-semibold">
+                Sign Up
+              </Link>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('openSignupModal'));
+                  }
+                }}
+                className="text-[#C2D642] hover:underline font-semibold"
+              >
+                Sign Up
+              </button>
+            )}
           </p>
         </div>
       </div>

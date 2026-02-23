@@ -326,8 +326,7 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
       <div className={`min-h-screen flex flex-col transition-colors duration-500 ${bgClass} relative`}>
         <ConstructionBackground />
         <div className="relative z-20">
-        <Navbar 
-        onLoginClick={onLoginClick}
+        <Navbar
         onNavigateToAbout={onNavigateToAbout}
         scrollToSection={scrollToSection}
         onContactClick={() => setShowContactModal(true)}
