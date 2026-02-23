@@ -95,7 +95,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
       label: 'Operations', 
       icon: ClipboardList,
       children: [
-        { label: 'Daily work progress', id: ViewType.DPR, path: '/work-progress-reports/dpr' },
+        { label: 'Daily work progress', id: ViewType.DPR, path: '/work-progress-reports' },
         { label: 'Labours', id: ViewType.LABOUR_MANAGEMENT, path: '/operations/labour' },
         { label: 'Staff', id: ViewType.COMPANY_USERS, path: '/company-users/manage-teams' }
       ] 
@@ -137,7 +137,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
           id: ViewType.WORK_PROGRESS_REPORTS, 
           children: [
             { label: 'Work Progress Details', id: ViewType.WORK_PROGRESS_DETAILS, path: '/work-progress-reports/work-progress-details' },
-            { label: 'DPR', id: ViewType.DPR, path: '/work-progress-reports/dpr' },
+            { label: 'DPR', id: ViewType.DPR, path: '/work-progress-reports' },
             { label: 'Resources Usage from DPR', id: ViewType.RESOURCES_USAGE_FROM_DPR, path: '/work-progress-reports/resources-usage-from-dpr' },
             { label: 'Material Used vs Store Issue', id: ViewType.MATERIAL_USED_VS_STORE_ISSUE, path: '/work-progress-reports/material-used-vs-store-issue' }
           ]

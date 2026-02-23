@@ -2654,6 +2654,12 @@ export const dprAPI = {
       } as ApiError;
     }
   },
+  /** Fetch PDF blob from dpr-pdf URL. Flow: GET /api/dpr-pdf/{token}?file={base64(filename)} returns file with Content-Disposition: inline */
+  downloadPdfBlob: async (pdfUrl: string): Promise<Blob> => {
+    const url = pdfUrl.startsWith('http') ? pdfUrl : `${API_BASE_URL.replace(/\/$/, '')}${pdfUrl.startsWith('/') ? pdfUrl : `/${pdfUrl}`}`;
+    const response = await apiClient.get(url, { responseType: 'blob' });
+    return response.data as Blob;
+  },
   bulkAdd: async (formData: FormData): Promise<any> => {
     try {
       const response = await apiClient.post('/dpr-bulk-add', formData, {

@@ -22,7 +22,7 @@ const routes = [
   { viewType: 'PR', path: 'app/pr-management/pr', component: 'GenericView' },
   
   // Work Progress Reports
-  { viewType: 'DPR', path: 'app/work-progress-reports/dpr', component: 'GenericView' },
+  { viewType: 'DPR', path: 'app/work-progress-reports/(dpr)', component: 'GenericView' },
   { viewType: 'RESOURCES_USAGE_FROM_DPR', path: 'app/work-progress-reports/resources-usage-from-dpr', component: 'GenericView' },
   { viewType: 'MATERIAL_USED_VS_STORE_ISSUE', path: 'app/work-progress-reports/material-used-vs-store-issue', component: 'GenericView' },
   

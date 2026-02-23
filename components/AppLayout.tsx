@@ -72,18 +72,7 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
       <div className="flex-1 flex flex-col min-w-0 lg:ml-0">
         <header className={`h-14 flex items-center justify-between px-4 sm:px-6 z-30 transition-all duration-500 ${getThemeClass('header')}`}>
           <div className="flex items-center gap-3 sm:gap-4 flex-1 min-w-0">
-            {/* Logo - always visible, leftmost, above page title row */}
-            <Link href="/dashboard" className="flex-shrink-0 flex items-center gap-2">
-              <img 
-                src="/logo.png" 
-                alt="Logo" 
-                className="w-8 h-8 sm:w-9 sm:h-9 object-contain"
-              />
-              <span className={`font-black text-lg sm:text-xl tracking-tight ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>
-                KONCITE
-              </span>
-            </Link>
-            {/* Mobile Hamburger Menu Button */}
+            {/* Mobile: Hamburger leftmost, then logo, then KONCITE */}
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
               className="lg:hidden p-2 hover:bg-white/10 rounded-lg transition-colors border border-white/5 flex-shrink-0"
@@ -91,6 +80,16 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
             >
               <Menu className="w-5 h-5" />
             </button>
+            <Link href="/dashboard" className="flex-shrink-0 flex items-center gap-2">
+              <img 
+                src="/logo.png" 
+                alt="Logo" 
+                className="w-8 h-8 sm:w-9 sm:h-9 object-contain"
+              />
+              <span className={`font-black text-lg sm:text-xl tracking-tight pt-1 ${theme === 'dark' ? 'text-white' : 'text-slate-800'}`}>
+                KONCITE
+              </span>
+            </Link>
           </div>
 
           <div className="flex items-center gap-2 sm:gap-4 flex-shrink-0">

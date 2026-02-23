@@ -37,7 +37,7 @@ const routeTitles: Record<string, string> = {
   '/inventory-reports/issue-return': 'Issue Return - KONCITE',
   '/inventory-reports/global-stock-details': 'Global Stock Details - KONCITE',
   '/inventory-reports/project-stock-statement': 'Project Stock Statement - KONCITE',
-  '/work-progress-reports/dpr': 'DPR - KONCITE',
+  '/work-progress-reports': 'DPR - KONCITE',
   '/work-progress-reports/work-progress-details': 'Work Progress Details - KONCITE',
   '/work-progress-reports/material-used-vs-store-issue': 'Material Used vs Store Issue - KONCITE',
   '/work-progress-reports/resources-usage-from-dpr': 'Resources Usage from DPR - KONCITE',

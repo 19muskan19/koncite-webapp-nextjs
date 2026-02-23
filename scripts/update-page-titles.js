@@ -25,7 +25,7 @@ const pagesToUpdate = [
   'app/inventory-reports/issue-return/page.tsx',
   'app/inventory-reports/global-stock-details/page.tsx',
   'app/inventory-reports/project-stock-statement/page.tsx',
-  'app/work-progress-reports/dpr/page.tsx',
+  'app/work-progress-reports/(dpr)/page.tsx',
   'app/work-progress-reports/work-progress-details/page.tsx',
   'app/work-progress-reports/material-used-vs-store-issue/page.tsx',
   'app/work-progress-reports/resources-usage-from-dpr/page.tsx',
