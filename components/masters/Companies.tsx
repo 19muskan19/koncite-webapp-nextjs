@@ -16,7 +16,8 @@ import {
   X,
   Upload,
   Download,
-  RefreshCw
+  RefreshCw,
+  ChevronDown
 } from 'lucide-react';
 import CreateCompanyModal from './Modals/CreateCompanyModal';
 import { masterDataAPI } from '../../services/api';
@@ -60,6 +61,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [sortFilter, setSortFilter] = useState<'recent' | 'oldest' | 'none'>('none');
   const [showFilterDropdown, setShowFilterDropdown] = useState<boolean>(false);
+  const [openStatusDropdownId, setOpenStatusDropdownId] = useState<string | null>(null);
   const [allProjects, setAllProjects] = useState<any[]>([]);
   const [isLoadingProjects, setIsLoadingProjects] = useState<boolean>(false);
   const [formData, setFormData] = useState({
@@ -161,7 +163,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
           logo: logoUrl || defaultLogo,
           contact: company.phone || company.contact || '',
           email: company.email || '',
-          status: company.is_active === 1 || company.is_active === true ? 'Active' : 'Inactive',
+          status: company.status || (company.is_active === 1 || company.is_active === true ? 'Pending' : 'Closed'),
           projects: company.projects_count || company.projects || 0,
           employees: company.employees_count || company.employees || 0,
           createdAt: company.created_at || company.createdAt,
@@ -430,6 +432,33 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
     setShowCompanyModal(true);
   };
 
+  const handleCompanyStatusChange = async (companyId: string, newStatus: string) => {
+    const company = companies.find(c => c.id === companyId);
+    if (!company) return;
+    const previousStatus = company.status;
+    setCompanies(prev =>
+      prev.map(c => c.id === companyId ? { ...c, status: newStatus } : c)
+    );
+    try {
+      const updateId = company.numericId ?? company.id;
+      if (!updateId) return;
+      const isActive = newStatus === 'Closed' ? 0 : 1;
+      await masterDataAPI.updateCompany(String(updateId), {
+        registration_name: company.name || '',
+        registered_address: company.address || '',
+        company_registration_no: company.registrationNo || '',
+        is_active: isActive,
+        status: newStatus,
+      });
+      toast.showSuccess('Company status updated');
+    } catch (error: any) {
+      setCompanies(prev =>
+        prev.map(c => c.id === companyId ? { ...c, status: previousStatus } : c)
+      );
+      toast.showError(error.message || 'Failed to update company status');
+    }
+  };
+
   const handleUpdateCompany = async () => {
     const missingFields: string[] = [];
     
@@ -621,6 +650,9 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
       if (!target.closest('.filter-dropdown') && !target.closest('.filter-trigger')) {
         setShowFilterDropdown(false);
       }
+      if (!target.closest('.status-dropdown') && !target.closest('.status-trigger')) {
+        setOpenStatusDropdownId(null);
+      }
     };
 
     document.addEventListener('mousedown', handleClickOutside);
@@ -653,7 +685,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
         logo: company.logo || company.logo_url || '',
         contact: company.phone || company.contact || '',
         email: company.email || '',
-        status: company.is_active === 1 || company.is_active === true ? 'Active' : 'Inactive',
+        status: company.status || (company.is_active === 1 || company.is_active === true ? 'Pending' : 'Closed'),
         projects: company.projects_count || company.projects || 0,
         employees: company.employees_count || company.employees || 0,
         createdAt: company.created_at || company.createdAt,
@@ -847,7 +879,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
         </div>
         <div className={`p-4 rounded-xl border ${cardClass}`}>
           <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
-          <p className={`text-2xl font-black text-[#C2D642]`}>{sortedCompanies.filter(c => c.status === 'Active').length}</p>
+          <p className={`text-2xl font-black text-[#C2D642]`}>{sortedCompanies.filter(c => c.status !== 'Closed').length}</p>
         </div>
         <div className={`p-4 rounded-xl border ${cardClass}`}>
           <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>
@@ -962,7 +994,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                 isDark ? 'hover:border-[#C2D642]/30' : 'hover:border-[#C2D642]/20'
               }`}
             >
-              <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between">
                 <div className="flex items-center gap-4 flex-1 min-w-0">
                   <span className={`text-xs font-bold ${textSecondary} flex-shrink-0 w-6`}>{idx + 1}</span>
                   <div className="w-12 h-12 rounded-lg overflow-hidden border-2 border-[#C2D642]/20 flex-shrink-0">
@@ -977,6 +1009,46 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                     />
                   </div>
                   <h3 className={`text-base font-black ${textPrimary} truncate`}>{company.name}</h3>
+                </div>
+                <div className="relative status-dropdown ml-auto">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpenStatusDropdownId(openStatusDropdownId === company.id ? null : company.id);
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className={`status-trigger flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold flex-shrink-0 cursor-pointer border-0 focus:ring-2 focus:ring-[#C2D642]/50 outline-none ${
+                      isDark ? 'bg-slate-700/80 text-slate-100' : 'bg-slate-200/80 text-slate-900'
+                    }`}
+                  >
+                    {company.status || 'Pending'}
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  </button>
+                  {openStatusDropdownId === company.id && (
+                    <div className={`absolute right-0 top-full mt-1 w-32 rounded-lg border shadow-lg z-20 py-1 status-dropdown ${
+                      isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'
+                    }`}>
+                      {['Closed', 'Pending', 'Completed', 'Ongoing'].map((opt) => (
+                        <button
+                          key={opt}
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleCompanyStatusChange(company.id, opt);
+                            setOpenStatusDropdownId(null);
+                          }}
+                          className={`w-full flex items-center px-4 py-2 text-sm font-bold transition-colors text-left ${
+                            (company.status || 'Pending').toLowerCase() === opt.toLowerCase()
+                              ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
+                              : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
+                          }`}
+                        >
+                          {opt}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -1126,19 +1198,6 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                       </label>
                       <p className={`text-xl font-black ${textPrimary}`}>{viewingCompany.employees || 0}</p>
                     </div>
-                  </div>
-
-                  <div>
-                    <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>
-                      Status
-                    </label>
-                    <span className={`inline-block px-3 py-1 rounded-full text-xs font-black uppercase ${
-                      viewingCompany.status === 'Active' 
-                        ? 'bg-[#C2D642]/20 text-[#C2D642]' 
-                        : 'bg-slate-500/20 text-slate-500'
-                    }`}>
-                      {viewingCompany.status}
-                    </span>
                   </div>
                 </div>
               </div>

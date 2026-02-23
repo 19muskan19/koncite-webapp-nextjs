@@ -565,15 +565,6 @@ const Warehouses: React.FC<WarehousesProps> = ({ theme }) => {
                     <p className={`text-xs font-bold ${textSecondary} uppercase tracking-wider`}>{warehouse.code}</p>
                   </div>
                 </div>
-                {warehouse.status && (
-                  <span className={`px-2 py-1 rounded-full text-xs font-bold ${
-                    warehouse.status === 'Active'
-                      ? 'bg-[#C2D642]/20 text-[#C2D642]'
-                      : 'bg-slate-500/20 text-slate-500'
-                  }`}>
-                    {warehouse.status}
-                  </span>
-                )}
               </div>
 
               <div className="space-y-3 mb-4">

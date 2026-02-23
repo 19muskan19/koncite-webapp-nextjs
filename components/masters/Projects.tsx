@@ -22,7 +22,8 @@ import {
   Loader2,
   Edit,
   Trash2,
-  RefreshCw
+  RefreshCw,
+  ChevronDown
 } from 'lucide-react';
 import CreateProjectModal from './Modals/CreateProjectModal';
 
@@ -60,6 +61,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [sortFilter, setSortFilter] = useState<'recent' | 'oldest' | 'none'>('none');
   const [showFilterDropdown, setShowFilterDropdown] = useState<boolean>(false);
+  const [openStatusDropdownId, setOpenStatusDropdownId] = useState<string | null>(null);
   const [showProjectModal, setShowProjectModal] = useState<boolean>(false);
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [viewingProjectId, setViewingProjectId] = useState<string | null>(null);
@@ -136,7 +138,13 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
           companyLogo: companyLogo || `https://ui-avatars.com/api/?name=${encodeURIComponent(companyName)}&background=6366f1&color=fff&size=64`,
           startDate: p.planned_start_date || p.start_date || p.startDate || '',
           endDate: p.planned_end_date || p.end_date || p.endDate || '',
-          status: p.status || 'Planning',
+          status: (() => {
+            const s = (p.status || 'Pending').toString();
+            if (['Closed', 'Pending', 'Completed', 'Ongoing'].includes(s)) return s;
+            if (s === 'Planning' || s === 'planning') return 'Pending';
+            if (s === 'In Progress' || s === 'in progress') return 'Ongoing';
+            return s || 'Pending';
+          })(),
           progress: p.progress || 0,
           budget: p.budget,
           location: p.address || p.location || '',
@@ -252,7 +260,13 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
           companyLogo: companyLogo || `https://ui-avatars.com/api/?name=${encodeURIComponent(companyName)}&background=6366f1&color=fff&size=64`,
           startDate: p.planned_start_date || p.start_date || p.startDate || '',
           endDate: p.planned_end_date || p.end_date || p.endDate || '',
-          status: p.status || 'Planning',
+          status: (() => {
+            const s = (p.status || 'Pending').toString();
+            if (['Closed', 'Pending', 'Completed', 'Ongoing'].includes(s)) return s;
+            if (s === 'Planning' || s === 'planning') return 'Pending';
+            if (s === 'In Progress' || s === 'in progress') return 'Ongoing';
+            return s || 'Pending';
+          })(),
           progress: p.progress || 0,
           budget: p.budget,
           location: p.address || p.location || '',
@@ -284,6 +298,35 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
 
     return () => clearTimeout(timeoutId);
   }, [searchQuery]);
+
+  const handleProjectStatusChange = async (projectId: string, newStatus: string) => {
+    const proj = projects.find(p => p.id === projectId);
+    if (!proj) return;
+    const previousStatus = proj.status;
+    setProjects(prev =>
+      prev.map(p => p.id === projectId ? { ...p, status: newStatus } : p)
+    );
+    try {
+      const updateId = proj.numericId ?? proj.id;
+      if (!updateId) return;
+      const formData = new FormData();
+      formData.append('projectUpdateId', String(updateId));
+      formData.append('project_name', proj.name || '');
+      formData.append('address', proj.location || '');
+      formData.append('planned_start_date', proj.startDate || '');
+      formData.append('planned_end_date', proj.endDate || '');
+      formData.append('companies_id', (proj as any).companyId || (proj as any).companies_id || '');
+      formData.append('own_project_or_contractor', proj.isContractor ? 'yes' : 'no');
+      formData.append('status', newStatus);
+      await masterDataAPI.updateProject(String(updateId), formData);
+      toast.showSuccess('Project status updated');
+    } catch (error: any) {
+      setProjects(prev =>
+        prev.map(p => p.id === projectId ? { ...p, status: previousStatus } : p)
+      );
+      toast.showError(error.message || 'Failed to update project status');
+    }
+  };
 
   const handleViewProject = (project: Project) => {
     setViewingProjectId(project.id);
@@ -353,7 +396,13 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
         logo: projectData.logo || project.logo || '',
         // Preserve all other fields from API response
         code: projectData.code || project.code || '',
-        status: projectData.status || project.status || 'Planning',
+        status: (() => {
+          const s = (projectData.status || project.status || 'Pending').toString();
+          if (['Closed', 'Pending', 'Completed', 'Ongoing'].includes(s)) return s;
+          if (s === 'Planning' || s === 'planning') return 'Pending';
+          if (s === 'In Progress' || s === 'in progress') return 'Ongoing';
+          return s || 'Pending';
+        })(),
         progress: projectData.progress || project.progress || 0,
         projectManager: projectData.project_manager || project.projectManager || ''
       });
@@ -525,6 +574,9 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
       if (!target.closest('.filter-dropdown') && !target.closest('.filter-trigger')) {
         setShowFilterDropdown(false);
       }
+      if (!target.closest('.status-dropdown') && !target.closest('.status-trigger')) {
+        setOpenStatusDropdownId(null);
+      }
     };
 
     document.addEventListener('mousedown', handleClickOutside);
@@ -666,7 +718,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
         </div>
         <div className={`p-4 rounded-xl border ${cardClass}`}>
           <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
-          <p className={`text-2xl font-black text-[#C2D642]`}>{filteredAndSortedProjects.filter(p => p.status === 'In Progress').length}</p>
+          <p className={`text-2xl font-black text-[#C2D642]`}>{filteredAndSortedProjects.filter(p => p.status !== 'Closed').length}</p>
         </div>
         <div className={`p-4 rounded-xl border ${cardClass}`}>
           <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>
@@ -804,6 +856,46 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                   </div>
                   <h3 className={`text-base font-black ${textPrimary} truncate`}>{project.name}</h3>
                 </div>
+                <div className="relative status-dropdown ml-auto">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpenStatusDropdownId(openStatusDropdownId === project.id ? null : project.id);
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className={`status-trigger flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold flex-shrink-0 cursor-pointer border-0 focus:ring-2 focus:ring-[#C2D642]/50 outline-none ${
+                      isDark ? 'bg-slate-700/80 text-slate-100' : 'bg-slate-200/80 text-slate-900'
+                    }`}
+                  >
+                    {project.status || 'Pending'}
+                    <ChevronDown className="w-3.5 h-3.5" />
+                  </button>
+                  {openStatusDropdownId === project.id && (
+                    <div className={`absolute right-0 top-full mt-1 w-32 rounded-lg border shadow-lg z-20 py-1 status-dropdown ${
+                      isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'
+                    }`}>
+                      {['Closed', 'Pending', 'Completed', 'Ongoing'].map((opt) => (
+                        <button
+                          key={opt}
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleProjectStatusChange(project.id, opt);
+                            setOpenStatusDropdownId(null);
+                          }}
+                          className={`w-full flex items-center px-4 py-2 text-sm font-bold transition-colors text-left ${
+                            (project.status || 'Pending').toLowerCase() === opt.toLowerCase()
+                              ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
+                              : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
+                          }`}
+                        >
+                          {opt}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           ))}
@@ -841,7 +933,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
           companyLogo: editingProjectData.company_logo || '',
           startDate: editingProjectData.planned_start_date || editingProjectData.start_date || '',
           endDate: editingProjectData.planned_end_date || editingProjectData.end_date || '',
-          status: editingProjectData.status || 'Planning',
+          status: editingProjectData.status || 'Pending',
           progress: editingProjectData.progress || 0,
           location: editingProjectData.address || editingProjectData.location || '',
           logo: editingProjectData.logo || '',
@@ -1128,24 +1220,6 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                         <p className={`text-sm font-bold ${textPrimary}`}>{viewingProject.projectManager}</p>
                       </div>
                     )}
-
-                    {/* Status */}
-                    <div>
-                      <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>
-                        Status
-                      </label>
-                      <span className={`inline-block px-3 py-1 rounded-full text-xs font-black uppercase ${
-                        viewingProject.status === 'In Progress' 
-                          ? 'bg-[#C2D642]/20 text-[#C2D642]'
-                          : viewingProject.status === 'Planning'
-                          ? 'bg-amber-500/20 text-amber-500'
-                          : viewingProject.status === 'Completed'
-                          ? 'bg-[#C2D642]/20 text-[#C2D642]'
-                          : 'bg-slate-500/20 text-slate-500'
-                      }`}>
-                        {viewingProject.status}
-                      </span>
-                    </div>
                   </div>
                 </div>
               );

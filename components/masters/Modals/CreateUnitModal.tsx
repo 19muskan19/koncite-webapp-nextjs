@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { ThemeType } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
-import { X, Loader2 } from 'lucide-react';
+import { X, Loader2, Plus, Trash2 } from 'lucide-react';
 import { masterDataAPI } from '@/services/api';
 
 interface Unit {
@@ -39,11 +39,13 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
   existingUnits = []
 }) => {
   const toast = useToast();
-  const [formData, setFormData] = useState({
-    unit: '', // Required: unit name
-    unit_coversion: '', // Optional: conversion unit name
-    unit_coversion_factor: '' // Required if unit_coversion is provided
+  type UnitRow = { unit: string; unit_coversion: string; unit_coversion_factor: string };
+  const [formData, setFormData] = useState<UnitRow>({
+    unit: '',
+    unit_coversion: '',
+    unit_coversion_factor: ''
   });
+  const [rows, setRows] = useState<UnitRow[]>([{ unit: '', unit_coversion: '', unit_coversion_factor: '' }]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const isDark = theme === 'dark';
@@ -72,99 +74,140 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
       };
       loadUnitData();
     } else if (isOpen && !editingUnitId) {
-      // Reset form for new unit
-      setFormData({
-        unit: '',
-        unit_coversion: '',
-        unit_coversion_factor: ''
-      });
+      setFormData({ unit: '', unit_coversion: '', unit_coversion_factor: '' });
+      setRows([{ unit: '', unit_coversion: '', unit_coversion_factor: '' }]);
     }
   }, [isOpen, editingUnitId]);
 
   // Reset form when modal closes
   useEffect(() => {
     if (!isOpen) {
-      setFormData({
-        unit: '',
-        unit_coversion: '',
-        unit_coversion_factor: ''
-      });
+      setFormData({ unit: '', unit_coversion: '', unit_coversion_factor: '' });
+      setRows([{ unit: '', unit_coversion: '', unit_coversion_factor: '' }]);
       setIsSubmitting(false);
     }
   }, [isOpen]);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
-    setFormData({
-      ...formData,
-      [name]: value
-    });
+    setFormData({ ...formData, [name]: value });
   };
 
-  const validateForm = (): boolean => {
-    if (!formData.unit.trim()) {
-      toast.showWarning('Required field "Unit Name" is empty. Please fill it before submitting.');
+  const handleRowChange = (index: number, field: keyof UnitRow, value: string) => {
+    setRows(prev => prev.map((r, i) => i === index ? { ...r, [field]: value } : r));
+  };
+
+  const handleAddRow = () => {
+    setRows(prev => [...prev, { unit: '', unit_coversion: '', unit_coversion_factor: '' }]);
+  };
+
+  const handleRemoveRow = (index: number) => {
+    setRows(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const validateRow = (row: UnitRow, rowIndex: number): boolean => {
+    if (!row.unit.trim()) {
+      toast.showWarning(`Row ${rowIndex + 1}: Unit Name is required.`);
       return false;
     }
-
-    const unitTrim = formData.unit.trim().toLowerCase();
-    const convTrim = (formData.unit_coversion || '').trim().toLowerCase();
-    const factorTrim = (formData.unit_coversion_factor || '').trim();
-
+    if (row.unit_coversion?.trim() && !(row.unit_coversion_factor ?? '').trim()) {
+      toast.showWarning(`Row ${rowIndex + 1}: Unit Conversion Factor is required when Unit Conversion is provided.`);
+      return false;
+    }
+    const unitTrim = row.unit.trim().toLowerCase();
+    const convTrim = (row.unit_coversion || '').trim().toLowerCase();
+    const factorTrim = (row.unit_coversion_factor || '').trim();
     const isDuplicate = existingUnits.some((u) => {
-      if (isEditing && (u.id === editingUnitId || u.uuid === editingUnitId || String(u.numericId ?? u.id) === String(editingUnitNumericId))) return false;
       const uUnit = (u.unit || u.name || '').trim().toLowerCase();
       const uConv = (u.unit_coversion || u.conversion || '').trim().toLowerCase();
       const uFactor = (u.unit_coversion_factor || u.factor || '').trim();
       return uUnit === unitTrim && uConv === convTrim && uFactor === factorTrim;
     });
     if (isDuplicate) {
-      toast.showWarning('A unit with the same name, conversion, and factor already exists. Change unit conversion or conversion factor to add.');
+      toast.showWarning(`Row ${rowIndex + 1}: A unit with the same name, conversion, and factor already exists.`);
       return false;
     }
+    return true;
+  };
 
+  const validateForm = (): boolean => {
+    if (isEditing) {
+      if (!formData.unit.trim()) {
+        toast.showWarning('Required field "Unit Name" is empty.');
+        return false;
+      }
+      if (formData.unit_coversion?.trim() && !(formData.unit_coversion_factor ?? '').trim()) {
+        toast.showWarning('Unit Conversion Factor is required when Unit Conversion is provided.');
+        return false;
+      }
+      const unitTrim = formData.unit.trim().toLowerCase();
+      const convTrim = (formData.unit_coversion || '').trim().toLowerCase();
+      const factorTrim = (formData.unit_coversion_factor || '').trim();
+      const isDuplicate = existingUnits.some((u) => {
+        if (String(u.numericId ?? u.id) === String(editingUnitNumericId)) return false;
+        const uUnit = (u.unit || u.name || '').trim().toLowerCase();
+        const uConv = (u.unit_coversion || u.conversion || '').trim().toLowerCase();
+        const uFactor = (u.unit_coversion_factor || u.factor || '').trim();
+        return uUnit === unitTrim && uConv === convTrim && uFactor === factorTrim;
+      });
+      if (isDuplicate) {
+        toast.showWarning('A unit with the same name, conversion, and factor already exists.');
+        return false;
+      }
+      return true;
+    }
+    const validRows = rows.filter(r => r.unit.trim());
+    if (validRows.length === 0) {
+      toast.showWarning('Add at least one unit with a name.');
+      return false;
+    }
+    const seen = new Set<string>();
+    for (let i = 0; i < validRows.length; i++) {
+      const idx = rows.findIndex(r => r === validRows[i]);
+      const key = `${validRows[i].unit.trim().toLowerCase()}|${(validRows[i].unit_coversion || '').trim().toLowerCase()}|${(validRows[i].unit_coversion_factor || '').trim()}`;
+      if (seen.has(key)) {
+        toast.showWarning(`Row ${idx + 1}: Duplicate unit (same name, conversion, and factor as another row).`);
+        return false;
+      }
+      seen.add(key);
+      if (!validateRow(validRows[i], idx)) return false;
+    }
     return true;
   };
 
   const handleSubmit = async () => {
-    if (!validateForm()) {
-      return;
-    }
+    if (!validateForm()) return;
 
     setIsSubmitting(true);
     try {
-      const payload: any = {
-        unit: formData.unit.trim()
-      };
-
-      // Add optional fields if provided
-      if (formData.unit_coversion.trim()) {
-        payload.unit_coversion = formData.unit_coversion.trim();
-        payload.unit_coversion_factor = formData.unit_coversion_factor.trim();
-      }
-
       if (isEditing && editingUnitNumericId) {
-        // Update existing unit
-        // Backend POST /unit-add with updateId expects numeric ID (where('id', $updateId))
-        // Note: When editing via modal, preserve existing is_active status (don't override)
-        console.log('📝 Updating unit with numeric ID:', editingUnitNumericId);
-        const updateResponse = await masterDataAPI.updateUnit(String(editingUnitNumericId), payload);
-        console.log('✅ Unit update response:', updateResponse);
+        const payload: any = { unit: formData.unit.trim() };
+        if (formData.unit_coversion.trim()) {
+          payload.unit_coversion = formData.unit_coversion.trim();
+          payload.unit_coversion_factor = formData.unit_coversion_factor.trim();
+        }
+        await masterDataAPI.updateUnit(String(editingUnitNumericId), payload);
         toast.showSuccess('Unit updated successfully!');
+        onSuccess?.();
+        onClose();
       } else {
-        // Create new unit - set is_active to 1 (active) by default
-        payload.is_active = 1;
-        console.log('📦 Creating new unit with is_active = 1 (active by default)');
-        const createResponse = await masterDataAPI.createUnit(payload);
-        console.log('✅ Unit create response:', createResponse);
-        toast.showSuccess('Unit created successfully!');
+        const validRows = rows.filter(r => r.unit.trim());
+        const bulkItems = validRows.map(row => {
+          const item: { unit: string; unit_coversion?: string; unit_coversion_factor?: string } = { unit: row.unit.trim() };
+          if (row.unit_coversion?.trim()) {
+            item.unit_coversion = row.unit_coversion.trim();
+            item.unit_coversion_factor = (row.unit_coversion_factor?.trim() ?? '') || '';
+          }
+          return item;
+        });
+        const result = await masterDataAPI.createUnitsBulk(bulkItems);
+        const msg = result?.message ?? (result?.data?.created?.length === validRows.length
+          ? `${validRows.length} unit(s) created successfully!`
+          : `${result?.data?.created?.length ?? 0} created. ${result?.data?.already_present?.length ?? 0} already present.`);
+        toast.showSuccess(msg);
+        onSuccess?.();
+        onClose();
       }
-
-      if (onSuccess) {
-        onSuccess();
-      }
-
-      onClose();
     } catch (error: any) {
       console.error('Failed to save unit:', error);
       toast.showError(error.message || 'Failed to save unit');
@@ -198,72 +241,103 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 space-y-6">
-          {/* Unit Name */}
-          <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Unit Name <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="text"
-              name="unit"
-              value={formData.unit}
-              onChange={handleInputChange}
-              placeholder="Enter unit name (e.g., Bags, Nos, MT, Kgs, Cft, Sft, Hrs, Day)"
-              disabled={isSubmitting}
-              className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                isDark 
-                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
-                  : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
-            />
-          </div>
-
-          {/* Unit Conversion (Optional) */}
-          <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Unit Conversion <span className="text-xs text-slate-500">(Optional)</span>
-            </label>
-            <select
-              name="unit_coversion"
-              value={formData.unit_coversion}
-              onChange={(e) => setFormData({ ...formData, unit_coversion: e.target.value })}
-              disabled={isSubmitting}
-              className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
-                isDark
-                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]'
-                  : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50 pr-10`}
-            >
-              <option value="">-- Select Unit --</option>
-              {['Bags', 'MT', 'Cft', 'Sft', 'Rft', 'Kgs', 'Ltr', 'Hrs', 'Day', 'Nos', 'Cum', 'Sqm', 'Rmt', 'Brass', 'Yard', 'Packet', 'LS', 'Bulk', 'Bundles'].map((u) => (
-                <option key={u} value={u}>{u}</option>
+        <div className="p-6">
+          {isEditing ? (
+            /* Single-row form for Edit */
+            <div className="space-y-6">
+              <div>
+                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Unit Name <span className="text-red-500">*</span></label>
+                <input type="text" name="unit" value={formData.unit} onChange={handleInputChange} placeholder="Enter unit name" disabled={isSubmitting}
+                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`} />
+              </div>
+              <div>
+                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Unit Conversion <span className="text-xs text-slate-500">(Optional)</span></label>
+                <select name="unit_coversion" value={formData.unit_coversion} onChange={(e) => setFormData({ ...formData, unit_coversion: e.target.value })} disabled={isSubmitting}
+                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold border appearance-none cursor-pointer pr-10 ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}>
+                  <option value="">-- Select Unit --</option>
+                  {['Bags', 'MT', 'Cft', 'Sft', 'Rft', 'Kgs', 'Ltr', 'Hrs', 'Day', 'Nos', 'Cum', 'Sqm', 'Rmt', 'Brass', 'Yard', 'Packet', 'LS', 'Bulk', 'Bundles'].map((u) => <option key={u} value={u}>{u}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Unit Conversion Factor <span className="text-xs text-slate-500">(Optional)</span></label>
+                <input type="text" name="unit_coversion_factor" value={formData.unit_coversion_factor} onChange={handleInputChange} placeholder="Enter conversion factor" disabled={isSubmitting}
+                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`} />
+              </div>
+            </div>
+          ) : (
+            /* Multi-row form for Create - add multiple units at once */
+            <div className="space-y-4">
+              {rows.length > 0 && (
+                <div className="grid grid-cols-12 gap-3 text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
+                  <div className="col-span-4">Unit Name <span className="text-red-500">*</span></div>
+                  <div className="col-span-3">Unit Conversion <span className="text-xs normal-case font-normal">(Optional)</span></div>
+                  <div className="col-span-3">Unit Conversion Factor <span className="text-xs normal-case font-normal">(Optional)</span></div>
+                  <div className="col-span-2" />
+                </div>
+              )}
+              {rows.length === 0 && (
+                <p className={`text-sm ${textSecondary} py-2`}>No units added. Click &quot;Add Unit&quot; below to add one.</p>
+              )}
+              {rows.map((row, idx) => (
+                <div key={idx} className="grid grid-cols-12 gap-3 items-start">
+                  <div className="col-span-4">
+                    <input
+                      type="text"
+                      value={row.unit}
+                      onChange={(e) => handleRowChange(idx, 'unit', e.target.value)}
+                      placeholder="Enter unit name"
+                      disabled={isSubmitting}
+                      className={`w-full px-4 py-2.5 rounded-lg text-sm font-bold border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+                    />
+                  </div>
+                  <div className="col-span-3">
+                    <select
+                      value={row.unit_coversion}
+                      onChange={(e) => handleRowChange(idx, 'unit_coversion', e.target.value)}
+                      disabled={isSubmitting}
+                      className={`w-full px-4 py-2.5 rounded-lg text-sm font-bold border appearance-none cursor-pointer pr-8 ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+                    >
+                      <option value="">-- Select Unit --</option>
+                      {['Bags', 'MT', 'Cft', 'Sft', 'Rft', 'Kgs', 'Ltr', 'Hrs', 'Day', 'Nos', 'Cum', 'Sqm', 'Rmt', 'Brass', 'Yard', 'Packet', 'LS', 'Bulk', 'Bundles'].map((u) => <option key={u} value={u}>{u}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-span-3">
+                    <input
+                      type="text"
+                      value={row.unit_coversion_factor}
+                      onChange={(e) => handleRowChange(idx, 'unit_coversion_factor', e.target.value)}
+                      placeholder="Enter conversion factor"
+                      disabled={isSubmitting}
+                      className={`w-full px-4 py-2.5 rounded-lg text-sm font-bold border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
+                    />
+                  </div>
+                  <div className="col-span-2 flex justify-end">
+                    {rows.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveRow(idx)}
+                        disabled={isSubmitting}
+                        className={`flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-bold transition-all ${isDark ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' : 'bg-red-100 text-red-600 hover:bg-red-200'} disabled:opacity-50`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" /> Delete
+                      </button>
+                    )}
+                  </div>
+                </div>
               ))}
-            </select>
-            <p className={`text-xs mt-1 ${textSecondary}`}>
-              If provided, conversion factor is required
-            </p>
-          </div>
-
-          {/* Unit Conversion Factor (Optional) */}
-          <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Unit Conversion Factor <span className="text-xs text-slate-500">(Optional)</span>
-            </label>
-            <input
-              type="text"
-              name="unit_coversion_factor"
-              value={formData.unit_coversion_factor}
-              onChange={handleInputChange}
-              placeholder="Enter conversion factor (e.g., 1, 0.9144, 100, 1000)"
-              disabled={isSubmitting}
-              className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                isDark 
-                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
-                  : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
-            />
-          </div>
+              {/* + Add button at constant place */}
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={handleAddRow}
+                  disabled={isSubmitting}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 border border-blue-500/40' : 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200'} disabled:opacity-50`}
+                >
+                  <Plus className="w-4 h-4" /> Add Unit
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Modal Footer */}

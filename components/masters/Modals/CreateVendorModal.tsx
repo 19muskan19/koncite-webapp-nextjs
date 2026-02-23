@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ThemeType } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
-import { X, Loader2, ChevronDown } from 'lucide-react';
+import { X, Loader2, ChevronDown, Search } from 'lucide-react';
 import { masterDataAPI } from '@/services/api';
 import { getExactErrorMessage } from '@/utils/errorUtils';
 
@@ -65,6 +65,7 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
   const [countryCodes, setCountryCodes] = useState<CountryCode[]>([]);
   const [isLoadingCountryCodes, setIsLoadingCountryCodes] = useState(false);
   const [isCountryDropdownOpen, setIsCountryDropdownOpen] = useState(false);
+  const [countrySearchQuery, setCountrySearchQuery] = useState('');
   const countryDropdownRef = useRef<HTMLDivElement>(null);
 
   const isDark = theme === 'dark';
@@ -77,6 +78,31 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
 
   const isEditing = !!editingVendorId;
 
+  // Priority countries (USA, GCC, India) - always included, used as fallback and to ensure correct dial codes
+  const PRIORITY_COUNTRIES: CountryCode[] = [
+    { code: 'US', dialCode: '1', name: 'United States', flag: getFlagUrl('US') },
+    { code: 'IN', dialCode: '91', name: 'India', flag: getFlagUrl('IN') },
+    { code: 'AE', dialCode: '971', name: 'United Arab Emirates', flag: getFlagUrl('AE') },
+    { code: 'SA', dialCode: '966', name: 'Saudi Arabia', flag: getFlagUrl('SA') },
+    { code: 'QA', dialCode: '974', name: 'Qatar', flag: getFlagUrl('QA') },
+    { code: 'KW', dialCode: '965', name: 'Kuwait', flag: getFlagUrl('KW') },
+    { code: 'BH', dialCode: '973', name: 'Bahrain', flag: getFlagUrl('BH') },
+    { code: 'OM', dialCode: '968', name: 'Oman', flag: getFlagUrl('OM') },
+  ];
+
+  const parseDialCode = (c: any): string => {
+    const root = (c.idd?.root || '').replace(/\+/g, '');
+    const suffixes = c.idd?.suffixes || [];
+    const firstSuffix = suffixes[0];
+    // USA/Canada: root is "+1", suffixes are area codes (e.g. "201") - use root only
+    if (root === '1' || (c.cca2 === 'US' || c.cca2 === 'CA')) return '1';
+    // When suffix is 3+ chars, it's likely an area code - use root only
+    if (firstSuffix && String(firstSuffix).length >= 3) return root;
+    // Otherwise: root + first suffix (e.g. IN: "9"+"1"=91, AE: "9"+"71"=971)
+    if (firstSuffix) return root + String(firstSuffix);
+    return root;
+  };
+
   // Fetch country codes from REST Countries API (third-party)
   useEffect(() => {
     if (isOpen && countryCodes.length === 0 && !isLoadingCountryCodes) {
@@ -84,34 +110,32 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
       fetch('https://restcountries.com/v3.1/all?fields=name,cca2,idd,flags')
         .then((res) => res.ok ? res.json() : Promise.reject(new Error('Failed to fetch')))
         .then((data: any[]) => {
-          const transformed: CountryCode[] = data
+          const priorityCodes = new Set(PRIORITY_COUNTRIES.map((p) => p.code));
+          const fromApi: CountryCode[] = data
             .filter((c: any) => c.idd?.root && c.cca2)
             .map((c: any) => {
-              const root = c.idd.root || '';
-              const suffixes = c.idd.suffixes || [''];
-              const dialCode = suffixes.length > 0 && suffixes[0]
-                ? `${root}${suffixes[0]}`.replace(/\+/g, '')
-                : root.replace(/\+/g, '');
+              const dialCode = parseDialCode(c);
               return {
                 code: c.cca2,
-                dialCode: dialCode || '',
+                dialCode,
                 name: c.name?.common || c.name?.official || '',
                 flag: c.flags?.png || getFlagUrl(c.cca2)
               };
             })
-            .filter((c: CountryCode) => c.dialCode)
-            .sort((a, b) => {
-              const nA = parseInt(a.dialCode) || 0;
-              const nB = parseInt(b.dialCode) || 0;
-              return nA !== nB ? nA - nB : a.name.localeCompare(b.name);
-            });
-          setCountryCodes(transformed);
+            .filter((c: CountryCode) => c.dialCode);
+          // Merge: priority first, then API (dedupe by code), ensuring USA + GCC always present
+          const byCode = new Map<string, CountryCode>();
+          PRIORITY_COUNTRIES.forEach((p) => byCode.set(p.code, p));
+          fromApi.forEach((c) => { if (!byCode.has(c.code)) byCode.set(c.code, c); });
+          const merged = Array.from(byCode.values()).sort((a, b) => {
+            const nA = parseInt(a.dialCode) || 0;
+            const nB = parseInt(b.dialCode) || 0;
+            return nA !== nB ? nA - nB : a.name.localeCompare(b.name);
+          });
+          setCountryCodes(merged);
         })
         .catch(() => {
-          setCountryCodes([
-            { code: 'IN', dialCode: '91', name: 'India', flag: getFlagUrl('IN') },
-            { code: 'AE', dialCode: '971', name: 'United Arab Emirates', flag: getFlagUrl('AE') },
-          ]);
+          setCountryCodes(PRIORITY_COUNTRIES);
         })
         .finally(() => setIsLoadingCountryCodes(false));
     }
@@ -122,6 +146,7 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
     const handler = (e: MouseEvent) => {
       if (countryDropdownRef.current && !countryDropdownRef.current.contains(e.target as Node)) {
         setIsCountryDropdownOpen(false);
+        setCountrySearchQuery('');
       }
     };
     document.addEventListener('mousedown', handler);
@@ -430,16 +455,47 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
                         </button>
                         {isCountryDropdownOpen && (
                           <>
-                            <div className="fixed inset-0 z-40" onClick={() => setIsCountryDropdownOpen(false)} />
-                            <div className={`absolute top-full left-0 mt-1 z-[60] w-72 max-h-60 overflow-y-auto ${inputBg} border ${borderClass} rounded-lg shadow-xl`}>
-                              <div className="p-2">
-                                {countryCodes.map((cc) => (
+                            <div className="fixed inset-0 z-40" onClick={() => { setIsCountryDropdownOpen(false); setCountrySearchQuery(''); }} />
+                            <div className={`absolute top-full left-0 mt-1 z-[60] w-72 max-h-72 overflow-hidden ${inputBg} border ${borderClass} rounded-lg shadow-xl flex flex-col`}>
+                              <div className="p-2 border-b border-inherit flex-shrink-0">
+                                <div className="relative">
+                                  <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
+                                  <input
+                                    type="text"
+                                    value={countrySearchQuery}
+                                    onChange={(e) => setCountrySearchQuery(e.target.value)}
+                                    placeholder="Search country or code..."
+                                    className={`w-full pl-9 pr-3 py-2 rounded-lg text-sm border ${borderClass} ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                                    autoFocus
+                                  />
+                                </div>
+                              </div>
+                              <div className="overflow-y-auto max-h-52 p-2">
+                                {(() => {
+                                  const filtered = countryCodes.filter((cc) => {
+                                    const q = countrySearchQuery.trim().toLowerCase();
+                                    if (!q) return true;
+                                    return (
+                                      cc.name.toLowerCase().includes(q) ||
+                                      cc.code.toLowerCase().includes(q) ||
+                                      cc.dialCode.includes(q)
+                                    );
+                                  });
+                                  if (filtered.length === 0) {
+                                    return (
+                                      <div className={`p-4 text-center text-sm ${textSecondary}`}>
+                                        No countries found
+                                      </div>
+                                    );
+                                  }
+                                  return filtered.map((cc) => (
                                   <button
                                     key={`${cc.code}-${cc.dialCode}`}
                                     type="button"
                                     onClick={() => {
                                       setFormData({ ...formData, country_code: cc.dialCode });
                                       setIsCountryDropdownOpen(false);
+                                      setCountrySearchQuery('');
                                     }}
                                     className={`w-full flex items-center gap-3 px-3 py-2 rounded-md text-left ${
                                       formData.country_code === cc.dialCode
@@ -456,7 +512,8 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
                                     <span className={`flex-1 text-sm font-bold ${textPrimary}`}>{cc.name}</span>
                                     <span className={`text-sm ${textSecondary}`}>+{cc.dialCode}</span>
                                   </button>
-                                ))}
+                                ));
+                                })()}
                               </div>
                             </div>
                           </>

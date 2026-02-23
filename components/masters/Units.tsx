@@ -131,11 +131,30 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
     }
   };
 
-  // Load units from API on mount and when auth changes
+  // Load units from API on mount and when auth changes (single source for initial load)
   useEffect(() => {
+    if (!isAuthenticated) return;
     fetchUnits();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated]);
+
+  // Debounced search - only runs when user types, NOT on initial mount (avoids duplicate fetch)
+  const isInitialMount = React.useRef(true);
+  useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return; // Skip on mount - auth effect already fetches
+    }
+    const timeoutId = setTimeout(() => {
+      if (searchQuery.trim()) {
+        handleSearch(searchQuery);
+      } else {
+        fetchUnits(); // User cleared search - refetch all
+      }
+    }, 500);
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery]);
 
   // Search units using API
   const handleSearch = async (query: string) => {
@@ -155,21 +174,18 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
         const uuid = unit.uuid; // UUID if available
         
         // Handle is_active: can be 1, "1", true, or undefined/null
-        // IMPORTANT: Only default to Active if is_active is truly undefined/null
-        // If API explicitly returns 0 or false, respect that (unit is inactive)
-        // If API returns 1, "1", true, or "true", unit is active
         const isActiveValue = unit.is_active;
         const isActive = isActiveValue === 1 || 
                         isActiveValue === '1' || 
                         isActiveValue === true || 
                         isActiveValue === 'true' ||
-                        isActiveValue === undefined || // Default new units to active
-                        isActiveValue === null; // Default new units to active
+                        isActiveValue === undefined ||
+                        isActiveValue === null;
         
         return {
-          id: uuid || String(numericId), // Use UUID for display if available
-          numericId: numericId, // Store original numeric ID for API calls
-          uuid: uuid, // Store UUID if available
+          id: uuid || String(numericId),
+          numericId: numericId,
+          uuid: uuid,
           name: unit.unit || unit.name || '',
           unit: unit.unit || unit.name || '',
           code: unit.code || unit.unit || unit.name || '',
@@ -189,19 +205,6 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
       setIsSearching(false);
     }
   };
-
-  // Debounced search
-  useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      if (searchQuery.trim()) {
-        handleSearch(searchQuery);
-      } else {
-        fetchUnits();
-      }
-    }, 500);
-
-    return () => clearTimeout(timeoutId);
-  }, [searchQuery]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -326,35 +329,21 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
         newIsActive: isActive
       });
       
-      // Backend unit-edit/{uuid} uses where('id', $uuid) - expects numeric ID
-      const unitIdForApi = unit.numericId ?? unit.id;
-      const numericId = unit.numericId ?? unit.id;
-      
+      // unit-status/{uuid} expects UUID - backend converts via uuidtoid()
+      const unitUuid = unit.uuid || unit.id;
+      if (!unitUuid) {
+        toast.showError('Unit identifier not found');
+        return;
+      }
+
       console.log('🔄 Toggling unit status:', {
         unitId: unit.id,
-        numericId,
+        unitUuid,
         currentStatus: unit.status,
         currentIsActive: unit.is_active,
         newStatus: newStatus,
         newIsActive: isActive
       });
-
-      // First, fetch current unit data - GET /unit-edit/{id} (backend queries by numeric id)
-      let currentUnitData;
-      try {
-        console.log('📖 Fetching current unit data via unit-edit');
-        currentUnitData = await masterDataAPI.getUnit(String(unitIdForApi));
-        console.log('✅ Current unit data:', currentUnitData);
-      } catch (fetchError: any) {
-        console.warn('⚠️ Failed to fetch unit data, using existing data:', fetchError);
-        // Fallback to existing unit data if fetch fails
-        currentUnitData = {
-          unit: unit.unit || unit.name,
-          unit_coversion: unit.unit_coversion || unit.conversion || '',
-          unit_coversion_factor: unit.unit_coversion_factor || unit.factor || '',
-          is_active: unit.is_active
-        };
-      }
 
       // Optimistically update UI immediately
       setUnits(prevUnits => 
@@ -365,34 +354,16 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
         )
       );
 
-      // Update unit status using updateUnit API
-      // Backend POST /unit-add with updateId expects numeric ID (where('id', $updateId))
-      // Include is_active in the update payload to persist status change
-      const updatePayload = {
-        unit: currentUnitData.unit || unit.unit || unit.name,
-        unit_coversion: currentUnitData.unit_coversion || unit.unit_coversion || unit.conversion || '',
-        unit_coversion_factor: currentUnitData.unit_coversion_factor || unit.unit_coversion_factor || unit.factor || '',
-        is_active: isActive // Explicitly set the new status (1 = Active, 0 = Inactive/Disabled)
-      };
+      // Close dropdown if unit was deactivated (row will be disabled)
+      if (newStatus === 'Inactive') {
+        setOpenDropdownId(prev => prev === unit.id ? null : prev);
+      }
 
-      console.log('📝 Updating unit status:', {
-        unitName: unit.name || unit.unit,
-        currentStatus: unit.status,
-        currentIsActive: unit.is_active,
-        newStatus: newStatus,
-        newIsActive: isActive,
-        payload: updatePayload
-      });
-      console.log('📝 Full update payload:', JSON.stringify(updatePayload, null, 2));
-      
-      const response = await masterDataAPI.updateUnit(String(numericId), updatePayload);
+      // Update unit status using unit-status/{uuid} API
+      await masterDataAPI.updateUnitStatus(unitUuid, isActive as 0 | 1);
 
-      console.log('✅ Unit status update response:', response);
-      console.log('✅ Full response:', JSON.stringify(response, null, 2));
-
-      // Refresh the units list to get the latest data from database
-      console.log('🔄 Refreshing units list to sync with database...');
-      await fetchUnits();
+      // Keep optimistic update - don't call fetchUnits() which can overwrite with stale
+      // data if unit-list doesn't return updated is_active
 
       toast.showSuccess(`Unit ${newStatus === 'Active' ? 'activated' : 'deactivated'} successfully`);
     } catch (error: any) {
@@ -690,17 +661,19 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
                       <div className="relative">
                         <button 
                           onClick={(e) => {
+                            if (row.status === 'Inactive') return; // Disabled when deactivated
                             e.preventDefault();
                             e.stopPropagation();
                             console.log('📋 Dropdown button clicked for unit:', row.id);
                             setOpenDropdownId(openDropdownId === row.id ? null : row.id);
                           }}
-                          className={`dropdown-trigger p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors cursor-pointer`}
-                          title="Actions"
+                          disabled={row.status === 'Inactive'}
+                          className={`dropdown-trigger p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors ${row.status === 'Inactive' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                          title={row.status === 'Inactive' ? 'Activate unit to enable actions' : 'Actions'}
                         >
                           <MoreVertical className={`w-4 h-4 ${textSecondary}`} />
                         </button>
-                        {openDropdownId === row.id && (
+                        {openDropdownId === row.id && row.status !== 'Inactive' && (
                           <div className={`dropdown-menu absolute right-0 top-full mt-1 w-32 rounded-lg border shadow-lg z-20 ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                             <div className="py-1">
                               <button

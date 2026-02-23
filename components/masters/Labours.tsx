@@ -321,34 +321,21 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
         newIsActive: isActive
       });
       
-      // Backend labour-edit/{uuid} likely uses where('id', $uuid) - pass numeric ID
-      const labourIdForApi = labour.numericId ?? labour.id;
-      
+      // labour-status/{uuid} expects UUID - backend converts via uuidtoid()
+      const labourUuid = labour.uuid || labour.id;
+      if (!labourUuid) {
+        toast.showError('Labour identifier not found');
+        return;
+      }
+
       console.log('🔄 Toggling labour status:', {
         labourId: labour.id,
-        idForApi: labourIdForApi,
+        labourUuid,
         currentStatus: labour.status,
         currentIsActive: labour.is_active,
         newStatus: newStatus,
         newIsActive: isActive
       });
-
-      // First, fetch current labour data using labour-edit/{uuid} API to ensure we have latest data
-      let currentLabourData;
-      try {
-        console.log('📖 Fetching current labour data via labour-edit/{uuid}');
-        currentLabourData = await masterDataAPI.getLabour(String(labourIdForApi));
-        console.log('✅ Current labour data:', currentLabourData);
-      } catch (fetchError: any) {
-        console.warn('⚠️ Failed to fetch labour data, using existing data:', fetchError);
-        // Fallback to existing labour data if fetch fails
-        currentLabourData = {
-          name: labour.name,
-          category: labour.category,
-          unit_id: labour.unit_id,
-          is_active: labour.is_active
-        };
-      }
 
       // Optimistically update UI immediately
       setLabours(prevLabours => 
@@ -359,33 +346,17 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
         )
       );
 
-      // Update labour status using updateLabour API
-      // Ensure unit_id is always numeric - API may return unit as object
-      let unitId = currentLabourData.unit_id ?? labour.unit_id ?? labour.unit?.id;
-      if (typeof unitId === 'object' && unitId !== null && (unitId as any).id != null) {
-        unitId = (unitId as any).id;
+      // Close dropdown if labour was deactivated (row will be disabled)
+      if (newStatus === 'Inactive') {
+        setOpenDropdownId(prev => prev === labour.id ? null : prev);
       }
-      const numUnitId = unitId != null && !isNaN(Number(unitId)) ? Number(unitId) : undefined;
-      const updatePayload: Record<string, any> = {
-        name: currentLabourData.name || labour.name,
-        category: currentLabourData.category || labour.category,
-        is_active: isActive
-      };
-      if (numUnitId != null) {
-        updatePayload.unit_id = numUnitId;
-      }
-      
-      console.log('📝 Updating labour with payload:', {
-        idForApi: labourIdForApi,
-        updatePayload: updatePayload
-      });
-      
-      await masterDataAPI.updateLabour(String(labourIdForApi), updatePayload);
-      
+
+      // Update labour status using labour-status/{uuid} API
+      await masterDataAPI.updateLabourStatus(labourUuid, isActive as 0 | 1);
+
+      // Keep optimistic update - don't call fetchLabours() which can overwrite with stale data
+
       toast.showSuccess(`Labour ${newStatus.toLowerCase()} successfully`);
-      
-      // Refresh labours list to ensure UI reflects database state
-      await fetchLabours();
       
     } catch (error: any) {
       console.error('❌ Failed to toggle labour status:', error);
@@ -682,13 +653,17 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
                     <td className="px-6 py-4 text-right">
                       <div className="relative">
                         <button 
-                          onClick={() => setOpenDropdownId(openDropdownId === row.id ? null : row.id)}
-                          className={`dropdown-trigger p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
-                          title="Actions"
+                          onClick={(e) => {
+                            if (row.status === 'Inactive') return;
+                            setOpenDropdownId(openDropdownId === row.id ? null : row.id);
+                          }}
+                          disabled={row.status === 'Inactive'}
+                          className={`dropdown-trigger p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors ${row.status === 'Inactive' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          title={row.status === 'Inactive' ? 'Activate labour to enable actions' : 'Actions'}
                         >
                           <MoreVertical className={`w-4 h-4 ${textSecondary}`} />
                         </button>
-                        {openDropdownId === row.id && (
+                        {openDropdownId === row.id && row.status !== 'Inactive' && (
                           <div className={`dropdown-menu absolute right-0 top-full mt-1 w-32 rounded-lg border shadow-lg z-20 ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                             <div className="py-1">
                               <button

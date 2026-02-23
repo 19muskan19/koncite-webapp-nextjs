@@ -1394,6 +1394,26 @@ export const masterDataAPI = {
       } as ApiError;
     }
   },
+  updateLabourStatus: async (uuid: string, is_active: 0 | 1): Promise<any> => {
+    try {
+      const idParam = String(uuid).trim();
+      console.log('🔄 Updating labour status - PATCH /labour-status/' + idParam, { is_active });
+      const response = await apiClient.request({
+        method: 'patch',
+        url: `/labour-status/${encodeURIComponent(idParam)}`,
+        data: { is_active },
+      });
+      console.log('✅ Labour status update response:', response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Labour status update error:', error);
+      console.error('❌ Error response:', error.response?.data);
+      throw {
+        message: error.response?.data?.message || 'Failed to update labour status',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
   updateLabour: async (uuid: string, data: Record<string, any>): Promise<any> => {
     try {
       // POST /api/labour-add is used for both create and update
@@ -1834,6 +1854,23 @@ export const masterDataAPI = {
       } as ApiError;
     }
   },
+  createUnitsBulk: async (items: Array<{ unit: string; unit_coversion?: string; unit_coversion_factor?: string }>): Promise<any> => {
+    try {
+      const payload = { f: items };
+      console.log('📦 Creating units (bulk) - POST /unit-add');
+      console.log('📦 Payload:', payload);
+      const response = await apiClient.post('/unit-add', payload);
+      console.log('✅ Unit bulk create API response:', response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Unit bulk create error:', error);
+      console.error('❌ Error response:', error.response?.data);
+      throw {
+        message: error.response?.data?.message || 'Failed to create units',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
   createUnit: async (data: Record<string, any>): Promise<any> => {
     try {
       console.log('📦 Creating unit - POST /unit-add');
@@ -1894,6 +1931,26 @@ export const masterDataAPI = {
       console.error('❌ Error response:', error.response?.data);
       throw {
         message: error.response?.data?.message || 'Failed to fetch unit',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  updateUnitStatus: async (uuid: string, is_active: 0 | 1): Promise<any> => {
+    try {
+      const idParam = String(uuid).trim();
+      console.log('🔄 Updating unit status - PATCH /unit-status/' + idParam, { is_active });
+      const response = await apiClient.request({
+        method: 'patch',
+        url: `/unit-status/${encodeURIComponent(idParam)}`,
+        data: { is_active },
+      });
+      console.log('✅ Unit status update response:', response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Unit status update error:', error);
+      console.error('❌ Error response:', error.response?.data);
+      throw {
+        message: error.response?.data?.message || 'Failed to update unit status',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { X, UserPlus, Mail, Lock, Phone, Building, Loader2, ChevronDown } from 'lucide-react';
+import { X, UserPlus, Mail, Lock, Phone, Building, Loader2, ChevronDown, Search } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from '../contexts/ToastContext';
 import { authAPI, commonAPI } from '../services/api';
@@ -68,6 +68,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
   const [countryCodes, setCountryCodes] = useState<CountryCode[]>([]);
   const [isLoadingCountryCodes, setIsLoadingCountryCodes] = useState(false);
   const [isCountryDropdownOpen, setIsCountryDropdownOpen] = useState(false);
+  const [countrySearchQuery, setCountrySearchQuery] = useState('');
 
   // Priority mapping for dial codes to preferred country ISO codes
   // This ensures correct country selection when multiple countries share the same dial code
@@ -244,61 +245,64 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
     }
   };
 
+  // Same logic as CreateVendorModal: USA/Canada use root only (+1); area codes (3+ chars) excluded
+  const parseDialCode = (c: any): string => {
+    const root = (c.idd?.root || '').replace(/\+/g, '');
+    const suffixes = c.idd?.suffixes || [];
+    const firstSuffix = suffixes[0];
+    // USA/Canada: root is "+1", suffixes are area codes (e.g. "201") - use root only
+    if (root === '1' || (c.cca2 === 'US' || c.cca2 === 'CA')) return '1';
+    // When suffix is 3+ chars, it's likely an area code - use root only
+    if (firstSuffix && String(firstSuffix).length >= 3) return root;
+    // Otherwise: root + first suffix (e.g. IN: "9"+"1"=91, AE: "9"+"71"=971)
+    if (firstSuffix) return root + String(firstSuffix);
+    return root;
+  };
+
+  const PRIORITY_COUNTRIES: CountryCode[] = [
+    { code: 'US', dialCode: '1', name: 'United States', flag: getFlagUrl('US') },
+    { code: 'IN', dialCode: '91', name: 'India', flag: getFlagUrl('IN') },
+    { code: 'AE', dialCode: '971', name: 'United Arab Emirates', flag: getFlagUrl('AE') },
+    { code: 'SA', dialCode: '966', name: 'Saudi Arabia', flag: getFlagUrl('SA') },
+    { code: 'QA', dialCode: '974', name: 'Qatar', flag: getFlagUrl('QA') },
+    { code: 'KW', dialCode: '965', name: 'Kuwait', flag: getFlagUrl('KW') },
+    { code: 'BH', dialCode: '973', name: 'Bahrain', flag: getFlagUrl('BH') },
+    { code: 'OM', dialCode: '968', name: 'Oman', flag: getFlagUrl('OM') },
+  ];
+
   const fetchCountryCodes = async () => {
     setIsLoadingCountryCodes(true);
     try {
-      // Using REST Countries API v3.1
       const response = await fetch('https://restcountries.com/v3.1/all?fields=name,cca2,idd,flags');
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch countries');
-      }
-
+      if (!response.ok) throw new Error('Failed to fetch countries');
       const data = await response.json();
-      
-      // Transform API data to our format
-      const transformedCountries: CountryCode[] = data
-        .filter((country: any) => {
-          // Only include countries with calling codes
-          return country.idd && country.idd.root && country.cca2;
-        })
-        .map((country: any) => {
-          // Extract dial code (remove + and root)
-          const root = country.idd.root || '';
-          const suffixes = country.idd.suffixes || [''];
-          // Use first suffix if available, otherwise just root
-          const dialCode = suffixes.length > 0 && suffixes[0] 
-            ? `${root}${suffixes[0]}`.replace(/\+/g, '')
-            : root.replace(/\+/g, '');
-          
+
+      const fromApi: CountryCode[] = data
+        .filter((c: any) => c.idd?.root && c.cca2)
+        .map((c: any) => {
+          const dialCode = parseDialCode(c);
           return {
-            code: country.cca2, // ISO 3166-1 alpha-2 code
-            dialCode: dialCode || '',
-            name: country.name.common || country.name.official,
-            flag: country.flags?.png || getFlagUrl(country.cca2)
+            code: c.cca2,
+            dialCode,
+            name: c.name?.common || c.name?.official || '',
+            flag: c.flags?.png || getFlagUrl(c.cca2),
           };
         })
-        .filter((country: CountryCode) => country.dialCode) // Remove entries without dial codes
-        .sort((a: CountryCode, b: CountryCode) => {
-          // Sort by dial code (as number) then by name
-          const dialA = parseInt(a.dialCode) || 0;
-          const dialB = parseInt(b.dialCode) || 0;
-          if (dialA !== dialB) {
-            return dialA - dialB;
-          }
-          return a.name.localeCompare(b.name);
-        });
+        .filter((c: CountryCode) => c.dialCode);
 
-      setCountryCodes(transformedCountries);
+      const byCode = new Map<string, CountryCode>();
+      PRIORITY_COUNTRIES.forEach((p) => byCode.set(p.code, p));
+      fromApi.forEach((c) => { if (!byCode.has(c.code)) byCode.set(c.code, c); });
+      const merged = Array.from(byCode.values()).sort((a, b) => {
+        const nA = parseInt(a.dialCode) || 0;
+        const nB = parseInt(b.dialCode) || 0;
+        return nA !== nB ? nA - nB : a.name.localeCompare(b.name);
+      });
+
+      setCountryCodes(merged);
     } catch (error) {
       console.error('Error fetching country codes:', error);
-      // Fallback to a few common countries
-      setCountryCodes([
-        { code: 'IN', dialCode: '91', name: 'India', flag: getFlagUrl('IN') },
-        { code: 'US', dialCode: '1', name: 'United States', flag: getFlagUrl('US') },
-        { code: 'GB', dialCode: '44', name: 'United Kingdom', flag: getFlagUrl('GB') },
-        { code: 'AE', dialCode: '971', name: 'United Arab Emirates', flag: getFlagUrl('AE') },
-      ]);
+      setCountryCodes(PRIORITY_COUNTRIES);
     } finally {
       setIsLoadingCountryCodes(false);
     }
@@ -736,12 +740,43 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
                       <>
                         <div 
                           className="fixed inset-0 z-40" 
-                          onClick={() => setIsCountryDropdownOpen(false)}
+                          onClick={() => { setIsCountryDropdownOpen(false); setCountrySearchQuery(''); }}
                         />
-                        <div className={`absolute top-full left-0 mt-1 z-[60] w-64 max-h-60 overflow-y-auto ${inputBg} border ${borderClass} rounded-lg shadow-xl`}>
+                        <div className={`absolute top-full left-0 mt-1 z-[60] w-72 max-h-72 overflow-hidden ${inputBg} border ${borderClass} rounded-lg shadow-xl flex flex-col`}>
                           {countryCodes.length > 0 ? (
-                            <div className="p-2">
-                              {countryCodes.map((countryCode) => (
+                            <>
+                              <div className="p-2 border-b border-inherit flex-shrink-0">
+                                <div className="relative">
+                                  <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
+                                  <input
+                                    type="text"
+                                    value={countrySearchQuery}
+                                    onChange={(e) => setCountrySearchQuery(e.target.value)}
+                                    placeholder="Search country or code..."
+                                    className={`w-full pl-9 pr-3 py-2 rounded-lg text-sm border ${borderClass} ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                                    autoFocus
+                                  />
+                                </div>
+                              </div>
+                              <div className="overflow-y-auto max-h-52 p-2">
+                                {(() => {
+                                  const filtered = countryCodes.filter((cc) => {
+                                    const q = countrySearchQuery.trim().toLowerCase();
+                                    if (!q) return true;
+                                    return (
+                                      cc.name.toLowerCase().includes(q) ||
+                                      cc.code.toLowerCase().includes(q) ||
+                                      cc.dialCode.includes(q)
+                                    );
+                                  });
+                                  if (filtered.length === 0) {
+                                    return (
+                                      <div className={`p-4 text-center text-sm ${textSecondary}`}>
+                                        No countries found
+                                      </div>
+                                    );
+                                  }
+                                  return filtered.map((countryCode) => (
                                 <button
                                   key={`${countryCode.code}-${countryCode.dialCode}`}
                                   type="button"
@@ -770,6 +805,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
                                     });
                                     
                                     setIsCountryDropdownOpen(false);
+                                    setCountrySearchQuery('');
                                   }}
                                   className={`w-full flex items-center gap-3 px-3 py-2 rounded-md hover:bg-opacity-80 transition-colors ${
                                     formData.countryCode === countryCode.dialCode 
@@ -790,8 +826,10 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup }) 
                                   <span className={`flex-1 text-left text-sm ${textPrimary}`}>{countryCode.name}</span>
                                   <span className={`text-sm ${textSecondary}`}>+{countryCode.dialCode}</span>
                                 </button>
-                              ))}
-                            </div>
+                                  ));
+                                })()}
+                              </div>
+                            </>
                           ) : (
                             <div className="p-4">
                               <p className={`text-sm ${textSecondary}`}>Loading countries...</p>
