@@ -2,7 +2,6 @@
 const nextConfig = {
   reactStrictMode: true,
   eslint: { ignoreDuringBuilds: true },
-  distDir: '.next-build',
   images: {
     domains: ['ui-avatars.com', 'picsum.photos'],
   },
