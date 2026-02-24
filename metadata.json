@@ -1,0 +1,8 @@
+{
+  "name": "Koncite",
+  "description": "An AI-powered construction management platform providing document management, labour management, daily progress reports, and intelligent project assistance.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
