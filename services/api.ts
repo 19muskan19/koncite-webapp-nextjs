@@ -3317,8 +3317,8 @@ export const documentAPI = {
    */
   moveToTrash: async (uuids: string[]): Promise<any> => {
     try {
-      const response = await apiClient.post('/documents/move-to-trash', { uuids });
-      return response.data;
+      const response = await apiClient.post('/documents/move-to-trash', { item_uuids: uuids });
+     return response.data;
     } catch (error: any) {
       throw {
         message: error.response?.data?.message || 'Failed to move to trash',
@@ -3333,7 +3333,7 @@ export const documentAPI = {
    */
   restore: async (uuids: string[]): Promise<any> => {
     try {
-      const response = await apiClient.post('/documents/restore', { uuids });
+      const response = await apiClient.post('/documents/restore', { item_uuids: uuids });
       return response.data;
     } catch (error: any) {
       throw {
@@ -3345,11 +3345,11 @@ export const documentAPI = {
 
   /**
    * Permanently delete items from trash
-   * DELETE /api/documents/permanent-delete or POST
+   * DELETE /api/documents/permanent-delete
    */
   permanentDelete: async (uuids: string[]): Promise<any> => {
     try {
-      const response = await apiClient.post('/documents/permanent-delete', { uuids });
+      const response = await apiClient.delete('/documents/permanent-delete', { data: { item_uuids: uuids } });
       return response.data;
     } catch (error: any) {
       throw {

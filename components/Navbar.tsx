@@ -45,8 +45,8 @@ const Navbar: React.FC<NavbarProps> = ({ onLoginClick, onNavigateToAbout, scroll
         <div className="flex items-center justify-between h-16">
           <div className="flex items-center gap-2">
             <img src="/logo.png" alt="Koncite Logo" className="w-12 h-12 object-contain" />
-            <span className={`font-black text-2xl tracking-tight ${textPrimary} mt-1`}>
-              Koncite
+            <span className={`font-black text-2xl tracking-tight text-[#C2D642] mt-1`}>
+              KONCITE
             </span>
           </div>
 

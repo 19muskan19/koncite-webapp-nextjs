@@ -83,9 +83,10 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
             <Link href="/dashboard" className="flex-shrink-0 flex items-center gap-2">
               <img 
                 src="/logo.png" 
-                alt="Logo" 
+                alt="Koncite Logo" 
                 className="w-8 h-8 sm:w-9 sm:h-9 object-contain"
               />
+              <span className="text-base sm:text-lg font-black tracking-tight text-[#C2D642] hidden sm:inline">KONCITE</span>
             </Link>
             {/* Mobile Hamburger Menu Button */}
             <button

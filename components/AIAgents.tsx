@@ -2,6 +2,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { ThemeType } from '../types';
+import ChatMarkdownViewer from './ChatMarkdownViewer';
 import { useToast } from '../contexts/ToastContext';
 import { 
   Bot, 
@@ -556,7 +557,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
         </div>
 
         {/* Messages Area */}
-        <div className="flex-1 overflow-y-auto p-3 md:p-4 lg:p-6 space-y-3 md:space-y-4 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto p-3 md:p-4 lg:p-6 pb-8 md:pb-10 lg:pb-6 space-y-3 md:space-y-4 custom-scrollbar">
           {messages.map((message) => (
             <div
               key={message.id}
@@ -569,16 +570,19 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
               )}
               <div className={`max-w-[85%] sm:max-w-[75%] md:max-w-[70%] ${message.role === 'user' ? 'order-2' : ''}`}>
                 <div className={`rounded-xl p-3 md:p-4 ${message.role === 'user' ? 'bg-[#C2D642] text-white' : isDark ? 'bg-[#2d2d2d] text-slate-100' : 'bg-white text-slate-900'} border ${message.role === 'user' ? 'border-[#C2D642]' : isDark ? 'border-[#404040]' : 'border-gray-200'}`}>
-                  <p className={`text-xs md:text-sm font-bold break-words ${message.role === 'user' ? 'text-white font-chat-user' : `${textPrimary} font-chat-ai`}`}>
-                    {message.content}
-                  </p>
+                  <ChatMarkdownViewer
+                    content={message.content}
+                    isDark={isDark}
+                    role={message.role}
+                    className={`text-xs md:text-sm font-bold ${message.role === 'user' ? 'text-white font-chat-user' : `${textPrimary} font-chat-ai`}`}
+                  />
                 </div>
                 <p className={`text-[9px] md:text-[10px] font-bold mt-1 ${textSecondary} ${message.role === 'user' ? 'text-right' : 'text-left'}`}>
                   {message.timestamp}
                 </p>
               </div>
               {message.role === 'user' && (
-                <div className="w-7 h-7 md:w-8 md:h-8 rounded-full bg-[#C2D642] flex items-center justify-center flex-shrink-0">
+                <div className={`w-7 h-7 md:w-8 md:h-8 rounded-full bg-[#C2D642] flex items-center justify-center flex-shrink-0 border-2 ${isDark ? 'border-[#C2D642]/60' : 'border-[#A8B838]/50'}`}>
                   <span className="text-white text-[10px] md:text-xs font-bold">NV</span>
                 </div>
               )}

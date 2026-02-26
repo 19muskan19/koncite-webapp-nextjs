@@ -38,6 +38,7 @@ const Footer: React.FC<FooterProps> = ({ scrollToSection, onContactClick, onNavi
             <div>
               <div className="flex items-center gap-2 mb-4">
                 <img src="/logo.png" alt="Koncite Logo" className="w-14 h-14 object-contain" />
+                <span className="text-xl font-black tracking-tight text-[#C2D642]">KONCITE</span>
               </div>
               <p className="text-sm text-slate-300 mb-6">
                 Koncite connects businesses and users through seamless digital experiences built on trust, transparency, and innovation.

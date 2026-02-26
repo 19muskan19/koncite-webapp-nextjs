@@ -11,6 +11,7 @@ import {
   sendMessage as sendDmsAiMessage,
   getSessionIdFromResponse,
 } from '../services/dmsAiService';
+import ChatMarkdownViewer from './ChatMarkdownViewer';
 import {
   Folder,
   Briefcase,
@@ -253,15 +254,9 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
     return currentPath.join('/');
   };
 
-  // Fetch trash count for sidebar badge (0 = don't show badge)
+  // Trash count disabled - badge not shown
   const loadTrashCount = async () => {
-    try {
-      const res = await documentAPI.getTrash();
-      const count = Array.isArray(res?.data) ? res.data.length : 0;
-      setTrashCount(count);
-    } catch {
-      setTrashCount(0);
-    }
+    setTrashCount(0);
   };
 
   // DMS Step 2: GET /api/documents (office/shared) or GET /api/documents?category=project&project_id=<id> (when a project is selected). Do NOT call documents API when only "Project" menu is selected – only project-list is called then.
@@ -2554,7 +2549,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
             <div className="min-w-0">
               <h1 className={`text-lg sm:text-xl font-black tracking-tight truncate ${textPrimary}`}>Document Management</h1>
               <p className={`text-[10px] sm:text-[11px] font-bold uppercase tracking-widest ${textSecondary}`}>
-                Files, folders & documents
+                Manage and organize your files
               </p>
             </div>
           </div>
@@ -2716,7 +2711,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
         </div>
 
         {/* Content Area */}
-        <div className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6 pb-8 sm:pb-10 md:pb-6 custom-scrollbar">
           {/* Image Gallery Filters */}
           {currentPath[0] === 'image-gallery' && (
             <div className={`mb-6 p-4 sm:p-6 rounded-xl border ${cardClass}`}>
@@ -2797,25 +2792,21 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
             </div>
           )}
 
-          {/* Current Directory & Tip */}
+          {/* Current Directory */}
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
             <div className="flex items-center gap-2">
               <span className={`px-3 sm:px-4 py-1 sm:py-1.5 rounded-full text-xs sm:text-sm font-bold ${isDark ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-700'}`}>
                 {getCurrentFolderLabel()}
               </span>
             </div>
-            <div className="flex items-center gap-2 hidden lg:flex">
-              <Info className={`w-4 h-4 ${textSecondary}`} />
-              <p className={`text-xs font-bold ${textSecondary}`}>
-                Tip: Hold <strong>Ctrl</strong> to select multiple items, <strong>Shift</strong> for range, or press <strong>Ctrl+A</strong> to select all
-              </p>
-            </div>
           </div>
 
           {/* DMS Step 2: Loading / Error for GET /api/documents (Office content) */}
           {currentPath[0] !== 'image-gallery' && documentsLoading && (
             <div className={`flex flex-col items-center justify-center py-12 sm:py-16 rounded-xl border ${cardClass}`}>
-              <RefreshCw className={`w-10 h-10 sm:w-12 sm:h-12 animate-spin mb-4 ${textSecondary}`} />
+              <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center mb-4 border-2 ${isDark ? 'border-[#C2D642]/50' : 'border-[#C2D642]/40'}`}>
+                <RefreshCw className={`w-10 h-10 sm:w-12 sm:h-12 animate-spin ${textSecondary}`} />
+              </div>
               <p className={`text-sm font-bold ${textSecondary}`}>Loading folders and files...</p>
             </div>
           )}
@@ -2959,6 +2950,11 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
           )}
 
           {filteredFiles.length === 0 && (
+            currentPath[0] === 'trash' ? (
+              <div className={`p-6 sm:p-8 rounded-lg text-center ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                <p className="text-sm font-bold">Trash is empty</p>
+              </div>
+            ) : (
             <div
               ref={dropZoneRef}
               onDragEnter={currentPath[0] !== 'shared' && currentPath[0] !== 'image-gallery' ? handleDragEnter : undefined}
@@ -3024,6 +3020,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                 </button>
               )}
             </div>
+            )
           )}
           </>
           )}
@@ -3442,7 +3439,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
           <div className={`p-3 sm:p-4 border-b ${isDark ? 'border-slate-700' : 'border-slate-200'} flex items-center justify-between gap-2`}>
             <div className="flex items-center gap-2 min-w-0">
               <div className="relative flex-shrink-0">
-                <Bot className={`w-4 h-4 sm:w-5 sm:h-5 ${isDark ? 'text-[#C2D642]' : 'text-[#C2D642]'}`} />
+                <Bot className={`w-5 h-5 sm:w-6 sm:h-6 ${isDark ? 'text-[#C2D642]' : 'text-[#C2D642]'}`} />
                 <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 sm:w-2 sm:h-2 bg-red-500 rounded-full border-2 border-white"></span>
               </div>
               <h3 className={`text-xs sm:text-sm font-black truncate ${textPrimary}`}>AI Assistant</h3>
@@ -3452,31 +3449,31 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                 onClick={handleNewChatSession}
                 disabled={chatCreatingSession}
                 title="New chat session"
-                className={`p-1.5 rounded-lg border border-[#C2D642]/60 bg-transparent transition-colors flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed`}
+                className={`p-1.5 rounded-lg border border-[#C2D642]/60 bg-transparent hover:bg-[#C2D642]/10 transition-colors flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed`}
               >
                 <Plus className={`w-4 h-4 ${textSecondary}`} />
-                <span className="text-[10px] sm:text-xs font-bold hidden sm:inline">New</span>
+                <span className="text-[10px] sm:text-xs font-bold hidden sm:inline">New Chat</span>
               </button>
               <button
                 onClick={() => setShowAIAssistant(false)}
-                className={`p-1 rounded-lg transition-colors ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}
+                className={`p-1.5 rounded-lg transition-colors ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}
                 title="Close"
               >
-                <X className={`w-4 h-4 ${textSecondary}`} />
+                <X className={`w-5 h-5 sm:w-6 sm:h-6 ${textSecondary}`} />
               </button>
             </div>
           </div>
 
           {/* Chat Messages */}
-          <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 custom-scrollbar">
+          <div className="flex-1 overflow-y-auto p-3 sm:p-4 pb-8 sm:pb-10 space-y-3 sm:space-y-4 custom-scrollbar">
             {chatMessages.map((message) => (
               <div
                 key={message.id}
                 className={`flex gap-2 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 {message.role === 'assistant' && (
-                  <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/10'}`}>
-                    <Bot className={`w-4 h-4 sm:w-5 sm:h-5 ${isDark ? 'text-[#C2D642]' : 'text-[#C2D642]'}`} />
+                  <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/10'}`}>
+                    <Bot className={`w-5 h-5 sm:w-6 sm:h-6 ${isDark ? 'text-[#C2D642]' : 'text-[#C2D642]'}`} />
                   </div>
                 )}
                 <div className={`max-w-[75%] sm:max-w-[80%] ${message.role === 'user' ? 'order-2' : ''}`}>
@@ -3485,13 +3482,16 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                       ? isDark ? 'bg-[#C2D642] text-white' : 'bg-[#C2D642] text-white'
                       : isDark ? 'bg-slate-700 text-slate-100' : 'bg-slate-100 text-slate-900'
                   }`}>
-                    <p className={`text-xs sm:text-sm font-bold break-words ${message.role === 'user' ? 'text-white font-chat-user' : `${textPrimary} font-chat-ai`}`}>
-                      {message.content}
-                    </p>
+                    <ChatMarkdownViewer
+                      content={message.content}
+                      isDark={isDark}
+                      role={message.role as 'assistant' | 'user'}
+                      className={`text-[10px] sm:text-xs font-bold ${message.role === 'user' ? 'text-white font-chat-user' : `${textPrimary} font-chat-ai`}`}
+                    />
                   </div>
                 </div>
                 {message.role === 'user' && (
-                  <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-[#C2D642] flex items-center justify-center flex-shrink-0">
+                  <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-[#C2D642] flex items-center justify-center flex-shrink-0 border-2 ${isDark ? 'border-[#C2D642]/60' : 'border-[#A8B838]/50'}`}>
                     <span className="text-white text-[10px] sm:text-xs font-bold">U</span>
                   </div>
                 )}
