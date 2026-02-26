@@ -158,12 +158,22 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
   };
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Use requestAnimationFrame to ensure DOM has updated before scrolling
+    requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    });
   };
 
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Auto-scroll when AI response arrives (aiState goes from thinking to ready)
+  useEffect(() => {
+    if (aiState === 'ready') {
+      scrollToBottom();
+    }
+  }, [aiState]);
 
   const handleSendMessage = () => {
     const messageContent = inputMessage.trim();
@@ -559,7 +569,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
               )}
               <div className={`max-w-[85%] sm:max-w-[75%] md:max-w-[70%] ${message.role === 'user' ? 'order-2' : ''}`}>
                 <div className={`rounded-xl p-3 md:p-4 ${message.role === 'user' ? 'bg-[#C2D642] text-white' : isDark ? 'bg-[#2d2d2d] text-slate-100' : 'bg-white text-slate-900'} border ${message.role === 'user' ? 'border-[#C2D642]' : isDark ? 'border-[#404040]' : 'border-gray-200'}`}>
-                  <p className={`text-xs md:text-sm font-bold break-words ${message.role === 'user' ? 'text-white' : textPrimary}`}>
+                  <p className={`text-xs md:text-sm font-bold break-words ${message.role === 'user' ? 'text-white font-chat-user' : `${textPrimary} font-chat-ai`}`}>
                     {message.content}
                   </p>
                 </div>

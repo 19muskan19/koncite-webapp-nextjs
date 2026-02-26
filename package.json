@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "dev": "cross-env NEXT_TELEMETRY_DISABLED=1 next dev",
+    "dev": "cross-env NODE_ENV=development NEXT_TELEMETRY_DISABLED=1 node server.js",
     "dev:turbo": "cross-env NEXT_TELEMETRY_DISABLED=1 next dev --turbo",
     "build": "next build",
     "start": "next start",

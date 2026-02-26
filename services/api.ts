@@ -3296,6 +3296,90 @@ export const documentAPI = {
   },
 
   /**
+   * Get trash items
+   * GET /api/documents/trash
+   */
+  getTrash: async (): Promise<any> => {
+    try {
+      const response = await apiClient.get('/documents/trash');
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch trash',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Move items to trash
+   * POST /api/documents/trash or /api/documents/move-to-trash
+   */
+  moveToTrash: async (uuids: string[]): Promise<any> => {
+    try {
+      const response = await apiClient.post('/documents/move-to-trash', { uuids });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to move to trash',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Restore items from trash
+   * POST /api/documents/restore
+   */
+  restore: async (uuids: string[]): Promise<any> => {
+    try {
+      const response = await apiClient.post('/documents/restore', { uuids });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to restore',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Permanently delete items from trash
+   * DELETE /api/documents/permanent-delete or POST
+   */
+  permanentDelete: async (uuids: string[]): Promise<any> => {
+    try {
+      const response = await apiClient.post('/documents/permanent-delete', { uuids });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to permanently delete',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Download document by UUID
+   * POST /api/documents/download-by-uuid or similar - returns blob
+   */
+  downloadDocumentByUuid: async (uuid: string, original_name?: string): Promise<Blob> => {
+    try {
+      const response = await apiClient.post(
+        '/documents/download-by-uuid',
+        { uuid, original_name },
+        { responseType: 'blob' }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to download document',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
    * Get gallery images
    * GET /api/documents/gallery
    */
