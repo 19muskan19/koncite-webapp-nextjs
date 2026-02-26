@@ -3623,7 +3623,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
 
           {/* Chat Input */}
           <div className={`p-2 sm:p-3 md:p-4 border-t min-w-0 overflow-hidden ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
-            <div className={`flex items-end gap-1 sm:gap-1.5 md:gap-2 p-1.5 sm:p-2 rounded-lg border min-w-0 w-full overflow-hidden ${isDark ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
+            <div className={`flex items-center gap-1 sm:gap-1.5 md:gap-2 p-1.5 sm:p-2 rounded-lg border min-w-0 w-full overflow-hidden ${isDark ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -3667,7 +3667,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
                 onKeyDown={handleKeyPress}
                 placeholder="Ask about documents..."
                 rows={2}
-                className={`flex-1 min-w-0 max-h-24 resize-none overflow-y-auto overflow-x-hidden bg-transparent outline-none text-xs sm:text-sm font-bold py-1.5 sm:py-2 break-words ${textPrimary} placeholder:${textSecondary}`}
+                className={`flex-1 min-w-0 max-h-24 resize-none overflow-y-auto overflow-x-hidden bg-transparent outline-none text-xs sm:text-sm font-bold py-1.5 sm:py-2 break-words leading-relaxed ${textPrimary} placeholder:${textSecondary}`}
               />
               <button
                 onClick={handleSendChatMessage}
