@@ -40,7 +40,7 @@ import TeamMembersDropdown from './TeamMembersDropdown';
 import { useUser } from '../../contexts/UserContext';
 import { useToast } from '../../contexts/ToastContext';
 import { useSidebar } from '../../contexts/SidebarContext';
-import { masterDataAPI, teamsAPI, safetyAPI, hinderanceAPI, dprAPI, activitiesHistoryAPI } from '../../services/api';
+import { masterDataAPI, teamsAPI, safetyAPI, hinderanceAPI, dprAPI, activitiesHistoryAPI, labourHistoryAPI, materialsHistoryAPI, assetsHistoryAPI } from '../../services/api';
 
 interface Project {
   id: string;
@@ -236,6 +236,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const subprojectModalHeaderRef = useRef<HTMLDivElement>(null);
   const activityModalScrollRef = useRef<HTMLDivElement>(null);
   const activityModalHeaderRef = useRef<HTMLDivElement>(null);
+  const editModeActivityRecordsRef = useRef<any[]>([]);
   const materialModalScrollRef = useRef<HTMLDivElement>(null);
   const materialModalHeaderRef = useRef<HTMLDivElement>(null);
   const labourModalScrollRef = useRef<HTMLDivElement>(null);
@@ -1001,6 +1002,234 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     };
   }, [showActivitySelection, selectedProject, selectedSubproject, activitiesRefreshKey, activitySearchQuery]);
+
+  // Edit mode: fetch-dpr-history-edit returns full records (selected activities + qty, remarks, contractor, etc). Map to selectedActivities for pre-fill.
+  const mapActivityRecordsToSelected = (records: any[], activitiesList: ActivityItem[]): Map<string, SelectedActivity> => {
+    const getContractor = (v: any) => {
+      if (!v) return '';
+      if (typeof v === 'string') return v;
+      return v?.name ?? v?.registration_name ?? v?.contractor_name ?? '';
+    };
+    const getActivityName = (actId: string | number) => {
+      const a = activitiesList.find((x) => String(x.id) === String(actId) || String(x.numericId) === String(actId));
+      return a?.name ?? 'Activity';
+    };
+    const parseImages = (r: any): string[] => {
+      const img = r?.img ?? r?.activities_history_img ?? r?.image;
+      if (Array.isArray(img)) return img.filter(Boolean);
+      if (img && typeof img === 'string') return [img];
+      const imgs = r?.images;
+      if (Array.isArray(imgs)) return imgs.filter(Boolean);
+      return [];
+    };
+    const map = new Map<string, SelectedActivity>();
+    for (const r of records) {
+      if (r == null) continue;
+      const actId = r?.activities_id ?? r?.activities_history_activities_id ?? r?.activity_id ?? r?.id ?? (typeof r === 'number' ? r : null);
+      const act = r?.activities ?? r?.activites;
+      const id = String(actId ?? (typeof r === 'string' && /^\d+$/.test(r) ? r : ''));
+      if (!id || (typeof r === 'string' && r.length > 20)) continue;
+      const name = act?.activities ?? act?.name ?? r?.activity_name ?? r?.activities_name ?? getActivityName(id);
+      const qty = r?.qty ?? r?.activities_history_qty ?? r?.quantity ?? r?.activities_history_quantity ?? 0;
+      const remarks = r?.remarkes ?? r?.activities_history_remarkes ?? r?.remarks ?? '';
+      const contractor = getContractor(r?.vendors ?? r?.vendor ?? r?.vendors_id ?? r?.vendors ?? r?.contractor);
+      map.set(id, {
+        id,
+        numericId: Number(actId) || undefined,
+        name: String(name || 'Activity'),
+        unit: r?.unit ?? act?.unit ?? '',
+        quantity: Number(qty) || 0,
+        contractor: contractor || undefined,
+        remarks: remarks || undefined,
+        images: parseImages(r)
+      });
+    }
+    return map;
+  };
+
+  useEffect(() => {
+    if (!showActivitySelection || !editingDprId || !selectedProject) return;
+    let cancelled = false;
+    const load = async () => {
+      let records = editModeActivityRecordsRef.current;
+      if (records.length === 0) {
+        try {
+          const res = await dprAPI.dprHistoryEdit({ type: 'activites', dprId: Number(editingDprId) });
+          let data = res?.data ?? res;
+          if (data && !Array.isArray(data)) {
+            data = data?.activites ?? data?.activities ?? (Array.isArray(data?.data) ? data.data : []);
+          }
+          records = Array.isArray(data) ? data : [];
+          if (!cancelled) editModeActivityRecordsRef.current = records;
+        } catch {
+          records = [];
+        }
+      }
+      if (cancelled) return;
+      const map = mapActivityRecordsToSelected(records, activities);
+      setSelectedActivities(map);
+      if (records.length === 0 && !cancelled) toast.showWarning('Could not load previous activities—you can add them manually');
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [showActivitySelection, editingDprId, selectedProject, activities]);
+
+  // Edit mode: Step 1 fetch-dpr-history-edit (IDs) → Step 2 materials-history-edit (full records). Fallback to fetch data if edit fails.
+  useEffect(() => {
+    if (!showMaterialSelection || !editingDprId || !selectedProject) return;
+    let cancelled = false;
+    const load = async () => {
+      let records: any[] = [];
+      try {
+        const res = await dprAPI.dprHistoryEdit({ type: 'material', dprId: Number(editingDprId) });
+        let data = res?.data ?? res ?? [];
+        if (data && !Array.isArray(data)) data = data?.materials ?? data?.material ?? [];
+        const arr = Array.isArray(data) ? data : [];
+        const ids = arr.map((e: any) => e?.materials_id ?? e?.materials_history_materials_id ?? e?.id).filter(Boolean);
+        if (ids.length > 0) {
+          try {
+            records = await materialsHistoryAPI.edit(editingDprId, ids);
+          } catch {
+            records = arr;
+          }
+        }
+      } catch {
+        records = [];
+      }
+      if (cancelled) return;
+      const map = new Map<string, SelectedMaterial>();
+      for (const r of records) {
+        const matId = r?.materials_id ?? r?.materials_history_materials_id ?? r?.id;
+        const mat = r?.materials ?? r?.material;
+        const id = String(matId ?? r?.id ?? '');
+        if (!id) continue;
+        const cls = (mat?.class ?? r?.class ?? 'B') as 'A' | 'B' | 'C';
+        map.set(id, {
+          id,
+          numericId: Number(matId) || undefined,
+          class: ['A', 'B', 'C'].includes(cls) ? cls : 'B',
+          code: mat?.code ?? r?.code ?? '',
+          name: mat?.name ?? r?.material_name ?? r?.materials_name ?? '',
+          specification: mat?.specification ?? r?.specification ?? '',
+          unit: mat?.unit ?? r?.unit ?? '',
+          quantity: Number(r?.qty ?? r?.quantity ?? 0),
+          activity: r?.activities?.activities ?? r?.activities?.name ?? r?.activity_name ?? '',
+          remarks: r?.remarkes ?? r?.remarks ?? ''
+        });
+      }
+      setSelectedMaterials(map);
+      if (records.length === 0 && !cancelled) toast.showWarning('Could not load previous materials—you can add them manually');
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [showMaterialSelection, editingDprId, selectedProject]);
+
+  // Edit mode: Step 1 fetch-dpr-history-edit (IDs) → Step 2 labour-history-edit (full records). Fallback to fetch data if edit fails.
+  useEffect(() => {
+    if (!showLabourSelection || !editingDprId || !selectedProject) return;
+    let cancelled = false;
+    const load = async () => {
+      let records: any[] = [];
+      try {
+        const res = await dprAPI.dprHistoryEdit({ type: 'labour', dprId: Number(editingDprId) });
+        let data = res?.data ?? res ?? [];
+        if (data && !Array.isArray(data)) data = data?.labour ?? data?.labours ?? [];
+        const arr = Array.isArray(data) ? data : [];
+        const ids = arr.map((e: any) => e?.labours_id ?? e?.labour_id ?? e?.id).filter(Boolean);
+        if (ids.length > 0) {
+          try {
+            records = await labourHistoryAPI.edit(editingDprId, ids);
+          } catch {
+            records = arr;
+          }
+        }
+      } catch {
+        records = [];
+      }
+      if (cancelled) return;
+      const getContractor = (v: any) => {
+        if (!v) return '';
+        if (typeof v === 'string') return v;
+        return v?.name ?? v?.registration_name ?? '';
+      };
+      const map = new Map<string, SelectedLabour>();
+      for (const r of records) {
+        const labId = r?.labours_id ?? r?.labour_id ?? r?.id;
+        const lab = r?.labours ?? r?.labour;
+        const id = String(labId ?? r?.id ?? '');
+        if (!id) continue;
+        map.set(id, {
+          id,
+          numericId: Number(labId) || undefined,
+          type: lab?.type ?? r?.type ?? '',
+          category: lab?.category ?? r?.category ?? '',
+          quantity: Number(r?.qty ?? r?.quantity ?? 0),
+          overtimeQuantity: Number(r?.ot_qty ?? r?.overtime_qty ?? 0),
+          activity: r?.activities?.activities ?? r?.activities?.name ?? r?.activity_name ?? '',
+          contractor: getContractor(r?.vendors ?? r?.vendor ?? r?.vendors_id ?? r?.contractor),
+          ratePerUnit: Number(r?.rate_per_unit ?? r?.rate ?? 0),
+          remarks: r?.remarkes ?? r?.remarks ?? ''
+        });
+      }
+      setSelectedLabours(map);
+      if (records.length === 0 && !cancelled) toast.showWarning('Could not load previous labour—you can add them manually');
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [showLabourSelection, editingDprId, selectedProject]);
+
+  // Edit mode: Step 1 fetch-dpr-history-edit (IDs) → Step 2 assets-history-edit (full records). Fallback to fetch data if edit fails.
+  useEffect(() => {
+    if (!showAssetSelection || !editingDprId || !selectedProject) return;
+    let cancelled = false;
+    const load = async () => {
+      let records: any[] = [];
+      try {
+        const res = await dprAPI.dprHistoryEdit({ type: 'assets', dprId: Number(editingDprId) });
+        let data = res?.data ?? res ?? [];
+        if (data && !Array.isArray(data)) data = data?.assets ?? data?.asset ?? [];
+        const arr = Array.isArray(data) ? data : [];
+        const ids = arr.map((e: any) => e?.assets_id ?? e?.assets_history_assets_id ?? e?.id).filter(Boolean);
+        if (ids.length > 0) {
+          try {
+            records = await assetsHistoryAPI.edit(editingDprId, ids);
+          } catch {
+            records = arr;
+          }
+        }
+      } catch {
+        records = [];
+      }
+      if (cancelled) return;
+      const getContractor = (v: any) => {
+        if (!v) return '';
+        if (typeof v === 'string') return v;
+        return v?.name ?? v?.registration_name ?? '';
+      };
+      const map = new Map<string, SelectedAsset>();
+      for (const r of records) {
+        const assetId = r?.assets_id ?? r?.assets_history_assets_id ?? r?.id;
+        const asset = r?.assets ?? r?.asset;
+        const id = String(assetId ?? r?.id ?? '');
+        if (!id) continue;
+        map.set(id, {
+          id,
+          numericId: Number(assetId) || undefined,
+          code: asset?.code ?? r?.code ?? '',
+          name: asset?.name ?? r?.asset_name ?? '',
+          quantity: Number(r?.qty ?? r?.quantity ?? 0),
+          activity: r?.activities?.activities ?? r?.activities?.name ?? r?.activity_name ?? '',
+          contractor: getContractor(r?.vendors ?? r?.vendor ?? r?.vendors_id ?? r?.contractor),
+          ratePerUnit: Number(r?.rate_per_unit ?? r?.rate ?? 0),
+          remarks: r?.remarkes ?? r?.remarks ?? ''
+        });
+      }
+      setSelectedAssets(map);
+      if (records.length === 0 && !cancelled) toast.showWarning('Could not load previous assets—you can add them manually');
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [showAssetSelection, editingDprId, selectedProject]);
 
   // Build hierarchical tree like Masters > Activities (headings first, then children, srNo: 1, 1.1, 1.2, 1.3, 1.3.1)
   type ActivityTreeNode = { item: ActivityItem; srNo: string };
@@ -2938,8 +3167,6 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   };
 
   const handleEditDpr = (dpr: any) => {
-    // Skip getDetails - backend dpr-details has a bug (activities on collection). Use list data instead.
-    // fetch-dpr-history-edit will load activities, materials, labour, assets when each modal opens.
     const dprId = dpr.id;
     const projId = dpr.projects_id?.id ?? dpr.projects_id ?? dpr.projects?.id;
     const projName = dpr.projects_id?.project_name ?? dpr.projects_id?.name ?? dpr.projects?.project_name ?? dpr.projects?.name ?? 'Project';
@@ -2953,6 +3180,12 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setSelectedSubproject(selectedSub);
     setEditingDprId(dprId);
     setDprIdRes(null);
+    editModeActivityRecordsRef.current = [];
+    // Clear selections so fetch-dpr-history-edit populates them when each modal opens
+    setSelectedActivities(new Map());
+    setSelectedMaterials(new Map());
+    setSelectedLabours(new Map());
+    setSelectedAssets(new Map());
     setShowActivitySelection(true);
   };
 

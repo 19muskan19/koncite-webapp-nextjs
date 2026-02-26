@@ -2650,9 +2650,10 @@ export const activitiesHistoryAPI = {
   /** Load activity data for editing. Returns activities filtered by DPR ID and activity IDs. */
   edit: async (dprId: number | string, activityIds: (number | string)[]): Promise<any[]> => {
     try {
+      const ids = activityIds.map((id) => (typeof id === 'number' ? id : parseInt(String(id), 10))).filter((n) => !isNaN(n));
       const response = await apiClient.post('/activities-history-edit/', {
-        dprId,
-        getActivites: activityIds,
+        dprId: Number(dprId),
+        getActivites: ids,
       });
       const data = response.data?.data ?? response.data?.response ?? response.data ?? [];
       return Array.isArray(data) ? data : [];

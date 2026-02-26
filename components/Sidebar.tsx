@@ -212,6 +212,28 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
 
   const isActive = (path?: string) => path && pathname === path;
 
+  // Get first navigable path from item (for collapsed sidebar icon clicks)
+  const getFirstPath = (item: NavItem): string | undefined => {
+    if (item.path) return item.path;
+    if (!item.children?.length) return undefined;
+    const findPath = (child: NavItemChild): string | undefined => {
+      if (child.id === 'LOGOUT') return undefined;
+      if (child.path) return child.path;
+      if (child.children?.length) {
+        for (const c of child.children) {
+          const p = findPath(c);
+          if (p) return p;
+        }
+      }
+      return undefined;
+    };
+    for (const child of item.children) {
+      const p = findPath(child);
+      if (p) return p;
+    }
+    return undefined;
+  };
+
   const toggleDropdown = (itemId: string, e?: React.MouseEvent) => {
     if (e) {
       e.stopPropagation();
@@ -396,16 +418,28 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
               <div key={item.id} className="mb-3">
                 {hasChildren ? (
                   <>
-                    <div 
-                      className={`flex items-center justify-between p-3 sm:p-2.5 rounded-lg transition-all cursor-pointer touch-manipulation ${active ? (isDark ? 'text-slate-300 bg-slate-700/50 font-bold' : 'text-slate-700 bg-slate-100 font-bold') : 'opacity-60 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10'}`}
-                      onClick={(e) => toggleDropdown(item.id.toString(), e)}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <item.icon className={`flex-shrink-0 ${sidebarOpen ? 'w-4 h-4' : 'w-5 h-5 lg:w-6 lg:h-6'} ${active ? (isDark ? 'text-slate-300' : 'text-slate-700') : ''}`} />
-                        {sidebarOpen && <span className="text-sm font-extrabold tracking-tight truncate">{item.label}</span>}
+                    {!sidebarOpen && getFirstPath(item) ? (
+                      <Link
+                        href={getFirstPath(item)!}
+                        onClick={() => window.innerWidth < 1024 && setSidebarOpen(false)}
+                        className={`flex items-center justify-between p-3 sm:p-2.5 rounded-lg transition-all cursor-pointer touch-manipulation ${active ? (isDark ? 'text-slate-300 bg-slate-700/50 font-bold' : 'text-slate-700 bg-slate-100 font-bold') : 'opacity-60 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10'}`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <item.icon className={`flex-shrink-0 w-5 h-5 lg:w-6 lg:h-6 ${active ? (isDark ? 'text-slate-300' : 'text-slate-700') : ''}`} />
+                        </div>
+                      </Link>
+                    ) : (
+                      <div 
+                        className={`flex items-center justify-between p-3 sm:p-2.5 rounded-lg transition-all cursor-pointer touch-manipulation ${active ? (isDark ? 'text-slate-300 bg-slate-700/50 font-bold' : 'text-slate-700 bg-slate-100 font-bold') : 'opacity-60 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10'}`}
+                        onClick={(e) => toggleDropdown(item.id.toString(), e)}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <item.icon className={`flex-shrink-0 ${sidebarOpen ? 'w-4 h-4' : 'w-5 h-5 lg:w-6 lg:h-6'} ${active ? (isDark ? 'text-slate-300' : 'text-slate-700') : ''}`} />
+                          {sidebarOpen && <span className="text-sm font-extrabold tracking-tight truncate">{item.label}</span>}
+                        </div>
+                        {sidebarOpen && <ChevronDown className={`w-3.5 h-3.5 flex-shrink-0 opacity-80 transition-transform duration-200 ${isDropdownOpen ? 'rotate-180' : ''} ${active ? (isDark ? 'text-slate-300' : 'text-slate-700') : isDark ? 'text-slate-400' : 'text-slate-500'}`} />}
                       </div>
-                      {sidebarOpen && <ChevronDown className={`w-3.5 h-3.5 flex-shrink-0 opacity-80 transition-transform duration-200 ${isDropdownOpen ? 'rotate-180' : ''} ${active ? (isDark ? 'text-slate-300' : 'text-slate-700') : isDark ? 'text-slate-400' : 'text-slate-500'}`} />}
-                    </div>
+                    )}
                 {sidebarOpen && isDropdownOpen && item.children && (
                   <div className="ml-4 sm:ml-7 mt-1 border-l border-inherit pl-3 space-y-1 sm:space-y-1.5 py-1">
                     {item.children.map((child) => {

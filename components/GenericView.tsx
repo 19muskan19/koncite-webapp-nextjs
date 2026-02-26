@@ -1125,7 +1125,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
       {/* Inventory PR - Project & Subproject Selection Modal (multi-step) */}
       {currentView === ViewType.INVENTORY_PR && showProjectSelection && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
-          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-y-auto overflow-x-hidden`}>
+          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-hidden flex flex-col`}>
             <button
               onClick={handlePRCloseModal}
               className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
@@ -1133,7 +1133,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
             >
               <X className={`w-5 h-5 ${textSecondary}`} />
             </button>
-
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
             {/* Step 1: Project Selection */}
             {prStep === 'project' && (
               <>
@@ -1561,6 +1561,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                 </div>
               </>
             )}
+            </div>
           </div>
         </div>
       )}
