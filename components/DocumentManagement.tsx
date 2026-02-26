@@ -86,6 +86,7 @@ interface Project {
 
 interface DocumentManagementProps {
   theme: ThemeType;
+  initialPathFromUrl?: string[];
 }
 
 interface ChatMessage {
@@ -95,11 +96,67 @@ interface ChatMessage {
   timestamp: string;
 }
 
-const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
+/** Create URL-safe slug from project name */
+function slugify(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '') || 'project';
+}
+
+/** Check if string is a UUID */
+function isUuid(s: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+}
+
+/** Convert URL segments to currentPath (internal state). projects needed to resolve slug to ID. */
+function urlSegmentsToPath(segments: string[], projects?: Project[]): string[] {
+  if (segments.length === 0) return ['office'];
+  if (segments[0] === 'project' && segments.length >= 2) {
+    const slugOrId = segments[1];
+    const rest = segments.slice(2);
+    let projectId = slugOrId;
+    if (!isUuid(slugOrId)) {
+      if (projects?.length) {
+        const project = projects.find(
+          p => slugify(p.name) === slugOrId || slugify(p.code || '') === slugOrId
+        );
+        projectId = project ? String(project.id) : slugOrId;
+      } else {
+        return ['projects'];
+      }
+    }
+    return ['projects', `project_${projectId}`, ...rest];
+  }
+  return segments;
+}
+
+/** Convert currentPath to URL segments. projects needed to use project name slug. */
+function pathToUrlSegments(path: string[], projects?: Project[]): string[] {
+  if (path.length === 0) return ['office'];
+  if (path[0] === 'projects' && path.length >= 2 && path[1].startsWith('project_')) {
+    const id = path[1].replace('project_', '');
+    const rest = path.slice(2);
+    let slug = id;
+    if (projects?.length) {
+      const project = projects.find(p => String(p.id) === id || String(p.numericId) === id);
+      if (project?.name) slug = slugify(project.name);
+    }
+    return ['project', slug, ...rest];
+  }
+  return path;
+}
+
+const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialPathFromUrl = [] }) => {
   const toast = useToast();
   const { isAuthenticated, isLoading } = useUser();
   const [selectedFolder, setSelectedFolder] = useState<string>('office');
-  const [currentPath, setCurrentPath] = useState<string[]>(['office']); // Track navigation path
+  const [currentPath, setCurrentPath] = useState<string[]>(() =>
+    urlSegmentsToPath(initialPathFromUrl, [])
+  );
   const [folderDisplayNames, setFolderDisplayNames] = useState<Record<string, string>>({}); // uuid/path -> display name for breadcrumbs
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
@@ -607,6 +664,49 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPath, isLoading, selectedProjectFilter]);
+
+  // Load projects when opening a project URL (needed to resolve slug to ID)
+  useEffect(() => {
+    if (initialPathFromUrl[0] === 'project' && projects.length === 0 && !projectsLoading) {
+      loadProjects();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPathFromUrl[0]]);
+
+  // Sync from URL when it changes (browser back/forward, direct load)
+  const initialPathKey = initialPathFromUrl.join('/');
+  useEffect(() => {
+    const pathFromUrl = urlSegmentsToPath(initialPathFromUrl, projects);
+    setCurrentPath(pathFromUrl);
+    const firstSegment = pathFromUrl[0];
+    const folder = firstSegment === 'projects' && pathFromUrl[1] ? pathFromUrl[1] : firstSegment;
+    setSelectedFolder(folder);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPathKey, projects]);
+
+  // Update URL when currentPath changes (without triggering navigation/refresh)
+  useEffect(() => {
+    const segments = pathToUrlSegments(currentPath, projects);
+    const targetPath = segments.length > 0 ? segments.join('/') : 'office';
+    const targetUrl = `/document-management/${targetPath}`;
+    if (typeof window !== 'undefined' && window.location.pathname !== targetUrl) {
+      window.history.pushState({ documentPath: targetPath }, '', targetUrl);
+    }
+  }, [currentPath, projects]);
+
+  // Handle browser back/forward
+  useEffect(() => {
+    const handlePopState = () => {
+      const pathSegments = window.location.pathname.replace('/document-management', '').replace(/^\//, '').split('/').filter(Boolean);
+      const pathFromUrl = urlSegmentsToPath(pathSegments, projects);
+      setCurrentPath(pathFromUrl);
+      const firstSegment = pathFromUrl[0];
+      const folder = firstSegment === 'projects' && pathFromUrl[1] ? pathFromUrl[1] : firstSegment;
+      setSelectedFolder(folder);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [projects]);
 
   // Sync currentPath when sidebar folder changes. Keep 'projects' prefix when a project is selected so loadDocuments calls category=project&project_id=, not office.
   useEffect(() => {
@@ -1715,7 +1815,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
     setAttachedFiles(prev => prev.filter((_, i) => i !== index));
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !isRecording) {
       e.preventDefault();
       handleSendChatMessage();
@@ -3522,8 +3622,8 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
           )}
 
           {/* Chat Input */}
-          <div className={`p-2 sm:p-3 md:p-4 border-t min-w-0 ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
-            <div className={`flex items-center gap-1 sm:gap-1.5 md:gap-2 p-1.5 sm:p-2 rounded-lg border min-w-0 w-full ${isDark ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
+          <div className={`p-2 sm:p-3 md:p-4 border-t min-w-0 overflow-hidden ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
+            <div className={`flex items-end gap-1 sm:gap-1.5 md:gap-2 p-1.5 sm:p-2 rounded-lg border min-w-0 w-full overflow-hidden ${isDark ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -3561,13 +3661,13 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                   <Mic className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${textSecondary}`} />
                 </button>
               )}
-              <input
-                type="text"
+              <textarea
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
-                onKeyPress={handleKeyPress}
+                onKeyDown={handleKeyPress}
                 placeholder="Ask about documents..."
-                className={`flex-1 min-w-0 bg-transparent outline-none text-xs sm:text-sm font-bold ${textPrimary} placeholder:${textSecondary}`}
+                rows={2}
+                className={`flex-1 min-w-0 max-h-24 resize-none overflow-y-auto overflow-x-hidden bg-transparent outline-none text-xs sm:text-sm font-bold py-1.5 sm:py-2 break-words ${textPrimary} placeholder:${textSecondary}`}
               />
               <button
                 onClick={handleSendChatMessage}

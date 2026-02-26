@@ -39,7 +39,7 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
 
   // Auto-minimize sidebar when Document Management page is opened (sidebar only reopens via hamburger)
   useEffect(() => {
-    if (pathname === '/document-management') {
+    if (pathname?.startsWith('/document-management')) {
       setSidebarOpen(false);
     }
   }, [pathname]);
@@ -127,7 +127,7 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
 
         <div className={`flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar ${getThemeClass('theme')} p-3 sm:p-4`}>
           <div className={`${
-            pathname === '/ai-agents' || pathname === '/document-management' ? 'max-w-full h-full' : 'max-w-[1400px] mx-auto fade-in-premium'
+            pathname === '/ai-agents' || pathname?.startsWith('/document-management') ? 'max-w-full h-full' : 'max-w-[1400px] mx-auto fade-in-premium'
           }`}>
             {children}
           </div>
