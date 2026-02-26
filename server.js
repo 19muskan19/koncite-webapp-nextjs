@@ -34,17 +34,27 @@ fs.createWriteStream = function(filePath, options) {
 const originalOpenSync = fs.openSync;
 fs.openSync = function(filePath, flags, mode) {
   if (filePath && filePath.toString().includes('trace')) {
-    // Return a dummy file descriptor
     return 999;
   }
   try {
     return originalOpenSync.call(this, filePath, flags, mode);
   } catch (err) {
     if (err.code === 'EPERM' && filePath && filePath.toString().includes('trace')) {
-      return 999; // Dummy FD
+      return 999;
     }
     throw err;
   }
+};
+
+// Patch fs.open (async) - used by WriteStream
+const originalOpen = fs.open;
+fs.open = function(...args) {
+  const filePath = args[0];
+  const callback = args[args.length - 1];
+  if (filePath && filePath.toString().includes('trace') && typeof callback === 'function') {
+    return process.nextTick(() => callback(null, 999));
+  }
+  return originalOpen.apply(this, args);
 };
 
 const { createServer } = require('http');

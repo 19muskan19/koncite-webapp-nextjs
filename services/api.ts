@@ -2650,9 +2650,10 @@ export const activitiesHistoryAPI = {
   /** Load activity data for editing. Returns activities filtered by DPR ID and activity IDs. */
   edit: async (dprId: number | string, activityIds: (number | string)[]): Promise<any[]> => {
     try {
+      const ids = activityIds.map((id) => (typeof id === 'number' ? id : parseInt(String(id), 10))).filter((n) => !isNaN(n));
       const response = await apiClient.post('/activities-history-edit/', {
-        dprId,
-        getActivites: activityIds,
+        dprId: Number(dprId),
+        getActivites: ids,
       });
       const data = response.data?.data ?? response.data?.response ?? response.data ?? [];
       return Array.isArray(data) ? data : [];
@@ -3289,6 +3290,90 @@ export const documentAPI = {
     } catch (error: any) {
       throw {
         message: error.response?.data?.message || 'Failed to fetch team members',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Get trash items
+   * GET /api/documents/trash
+   */
+  getTrash: async (): Promise<any> => {
+    try {
+      const response = await apiClient.get('/documents/trash');
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch trash',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Move items to trash
+   * POST /api/documents/trash or /api/documents/move-to-trash
+   */
+  moveToTrash: async (uuids: string[]): Promise<any> => {
+    try {
+      const response = await apiClient.post('/documents/move-to-trash', { item_uuids: uuids });
+     return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to move to trash',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Restore items from trash
+   * POST /api/documents/restore
+   */
+  restore: async (uuids: string[]): Promise<any> => {
+    try {
+      const response = await apiClient.post('/documents/restore', { item_uuids: uuids });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to restore',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Permanently delete items from trash
+   * DELETE /api/documents/permanent-delete
+   */
+  permanentDelete: async (uuids: string[]): Promise<any> => {
+    try {
+      const response = await apiClient.delete('/documents/permanent-delete', { data: { item_uuids: uuids } });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to permanently delete',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Download document by UUID
+   * POST /api/documents/download-by-uuid or similar - returns blob
+   */
+  downloadDocumentByUuid: async (uuid: string, original_name?: string): Promise<Blob> => {
+    try {
+      const response = await apiClient.post(
+        '/documents/download-by-uuid',
+        { uuid, original_name },
+        { responseType: 'blob' }
+      );
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to download document',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }

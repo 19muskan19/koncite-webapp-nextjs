@@ -20,6 +20,9 @@ module.exports = {
     extend: {
       fontFamily: {
         sans: ['var(--font-inter)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        // User chat: Inter (via sans). AI chat: Georgia for distinct, readable serif.
+        'chat-user': ['var(--font-inter)', 'Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        'chat-ai': ['Georgia', 'Cambria', 'Times New Roman', 'Times', 'serif'],
       },
     },
   },

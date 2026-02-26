@@ -448,7 +448,7 @@ const UserRolesPermissions: React.FC<UserRolesPermissionsProps> = ({ theme }) =>
       {/* Add Role Modal */}
       {showRoleModal && !editingRoleId && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-md`}>
+          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-lg`}>
             <div className="p-6">
               <h2 className={`text-xl font-black mb-4 ${textPrimary}`}>
                 Add New Role
@@ -494,7 +494,7 @@ const UserRolesPermissions: React.FC<UserRolesPermissionsProps> = ({ theme }) =>
       {/* Edit Role Modal */}
       {showRoleModal && editingRoleId && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-md`}>
+          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-lg`}>
             <div className="p-6">
               <h2 className={`text-xl font-black mb-4 ${textPrimary}`}>
                 Edit Role
@@ -540,7 +540,7 @@ const UserRolesPermissions: React.FC<UserRolesPermissionsProps> = ({ theme }) =>
       {/* Delete Confirmation Modal */}
       {deleteConfirmId && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-md`}>
+          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-lg`}>
             <div className="p-6">
               <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>Confirm Delete</h3>
               <p className={`text-sm ${textSecondary} mb-6`}>

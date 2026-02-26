@@ -124,7 +124,9 @@ export default function DatePickerInput({
     if (!hidden) return;
     const valStr = value != null ? String(value) : '';
     const current = valStr.length >= 10 ? valStr.slice(0, 10) : '';
-    hidden.value = current || new Date().toISOString().slice(0, 10);
+    // Use current value only - do NOT default to today when empty, otherwise selecting today
+    // won't fire onChange (value unchanged) and the field remains empty
+    hidden.value = current;
     hidden.focus();
     if (typeof (hidden as HTMLInputElement & { showPicker?: () => void }).showPicker === 'function') {
       (hidden as HTMLInputElement & { showPicker: () => void }).showPicker();

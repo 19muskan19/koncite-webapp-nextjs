@@ -25,13 +25,15 @@ const TermsAndPrivacyModal: React.FC<TermsAndPrivacyModalProps> = ({ isOpen, onC
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className={`${cardClass} rounded-xl shadow-2xl w-full max-w-4xl mx-4 p-6 md:p-8 relative border ${borderClass} max-h-[90vh] overflow-y-auto`}>
+      <div className={`${cardClass} rounded-xl shadow-2xl w-full max-w-[min(92vw,1100px)] mx-4 relative border ${borderClass} max-h-[90vh] overflow-hidden flex flex-col`}>
         <button
           onClick={handleClose}
-          className={`absolute top-4 right-4 p-2 ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'} rounded-lg transition-colors z-10`}
+          className={`absolute top-3 right-3 z-10 p-2 ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'} rounded-lg transition-colors`}
+          title="Close"
         >
           <X className={`w-5 h-5 ${textSecondary}`} />
         </button>
+        <div className="flex-1 min-h-0 overflow-y-auto p-6 md:p-8 pr-14">
 
         <div className="mb-6">
           <div className={`inline-flex items-center justify-center w-16 h-16 ${isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/10'} rounded-full mb-4`}>
@@ -250,6 +252,7 @@ const TermsAndPrivacyModal: React.FC<TermsAndPrivacyModalProps> = ({ isOpen, onC
           >
             I Understand
           </button>
+        </div>
         </div>
       </div>
     </div>

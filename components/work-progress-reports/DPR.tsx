@@ -39,7 +39,8 @@ import CreateAssetEquipmentModal from '../masters/Modals/CreateAssetEquipmentMod
 import TeamMembersDropdown from './TeamMembersDropdown';
 import { useUser } from '../../contexts/UserContext';
 import { useToast } from '../../contexts/ToastContext';
-import { masterDataAPI, teamsAPI, safetyAPI, hinderanceAPI, dprAPI, activitiesHistoryAPI } from '../../services/api';
+import { useSidebar } from '../../contexts/SidebarContext';
+import { masterDataAPI, teamsAPI, safetyAPI, hinderanceAPI, dprAPI, activitiesHistoryAPI, labourHistoryAPI, materialsHistoryAPI, assetsHistoryAPI } from '../../services/api';
 
 interface Project {
   id: string;
@@ -207,6 +208,7 @@ const DPR_BASE = '/work-progress-reports';
 const DPR: React.FC<DPRProps> = ({ theme }) => {
   const { isAuthenticated } = useUser();
   const toast = useToast();
+  const { sidebarWidth } = useSidebar();
   const pathname = usePathname();
   const router = useRouter();
   const [showProjectSelection, setShowProjectSelection] = useState<boolean>(false);
@@ -221,6 +223,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const [viewingDpr, setViewingDpr] = useState<any>(null);
   const [dprDetails, setDprDetails] = useState<any>(null);
   const [dprListError, setDprListError] = useState<string | null>(null);
+  const [dprToDelete, setDprToDelete] = useState<any>(null);
   const [showCreateProjectModal, setShowCreateProjectModal] = useState<boolean>(false);
   const [showCreateSubprojectModal, setShowCreateSubprojectModal] = useState<boolean>(false);
   const [showCreateActivityModal, setShowCreateActivityModal] = useState<boolean>(false);
@@ -233,6 +236,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const subprojectModalHeaderRef = useRef<HTMLDivElement>(null);
   const activityModalScrollRef = useRef<HTMLDivElement>(null);
   const activityModalHeaderRef = useRef<HTMLDivElement>(null);
+  const editModeActivityRecordsRef = useRef<any[]>([]);
   const materialModalScrollRef = useRef<HTMLDivElement>(null);
   const materialModalHeaderRef = useRef<HTMLDivElement>(null);
   const labourModalScrollRef = useRef<HTMLDivElement>(null);
@@ -346,7 +350,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     const start = (currentPage - 1) * PAGE_SIZE + 1;
     const end = Math.min(currentPage * PAGE_SIZE, totalItems);
     return (
-      <div className={`flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 sm:gap-0 px-3 sm:px-4 py-3 border-t border-inherit ${isDark ? 'bg-slate-800/30' : 'bg-slate-50/50'}`}>
+      <div className={`flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 sm:gap-0 px-4 sm:px-6 pt-4 pb-6 sm:pb-6 border-t border-inherit ${isDark ? 'bg-slate-800/30' : 'bg-slate-50/50'}`}>
         <span className={`text-xs sm:text-sm ${textSecondary}`}>
           Showing {start}–{end} of {totalItems}
         </span>
@@ -998,6 +1002,234 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     };
   }, [showActivitySelection, selectedProject, selectedSubproject, activitiesRefreshKey, activitySearchQuery]);
+
+  // Edit mode: fetch-dpr-history-edit returns full records (selected activities + qty, remarks, contractor, etc). Map to selectedActivities for pre-fill.
+  const mapActivityRecordsToSelected = (records: any[], activitiesList: ActivityItem[]): Map<string, SelectedActivity> => {
+    const getContractor = (v: any) => {
+      if (!v) return '';
+      if (typeof v === 'string') return v;
+      return v?.name ?? v?.registration_name ?? v?.contractor_name ?? '';
+    };
+    const getActivityName = (actId: string | number) => {
+      const a = activitiesList.find((x) => String(x.id) === String(actId) || String(x.numericId) === String(actId));
+      return a?.name ?? 'Activity';
+    };
+    const parseImages = (r: any): string[] => {
+      const img = r?.img ?? r?.activities_history_img ?? r?.image;
+      if (Array.isArray(img)) return img.filter(Boolean);
+      if (img && typeof img === 'string') return [img];
+      const imgs = r?.images;
+      if (Array.isArray(imgs)) return imgs.filter(Boolean);
+      return [];
+    };
+    const map = new Map<string, SelectedActivity>();
+    for (const r of records) {
+      if (r == null) continue;
+      const actId = r?.activities_id ?? r?.activities_history_activities_id ?? r?.activity_id ?? r?.id ?? (typeof r === 'number' ? r : null);
+      const act = r?.activities ?? r?.activites;
+      const id = String(actId ?? (typeof r === 'string' && /^\d+$/.test(r) ? r : ''));
+      if (!id || (typeof r === 'string' && r.length > 20)) continue;
+      const name = act?.activities ?? act?.name ?? r?.activity_name ?? r?.activities_name ?? getActivityName(id);
+      const qty = r?.qty ?? r?.activities_history_qty ?? r?.quantity ?? r?.activities_history_quantity ?? 0;
+      const remarks = r?.remarkes ?? r?.activities_history_remarkes ?? r?.remarks ?? '';
+      const contractor = getContractor(r?.vendors ?? r?.vendor ?? r?.vendors_id ?? r?.vendors ?? r?.contractor);
+      map.set(id, {
+        id,
+        numericId: Number(actId) || undefined,
+        name: String(name || 'Activity'),
+        unit: r?.unit ?? act?.unit ?? '',
+        quantity: Number(qty) || 0,
+        contractor: contractor || undefined,
+        remarks: remarks || undefined,
+        images: parseImages(r)
+      });
+    }
+    return map;
+  };
+
+  useEffect(() => {
+    if (!showActivitySelection || !editingDprId || !selectedProject) return;
+    let cancelled = false;
+    const load = async () => {
+      let records = editModeActivityRecordsRef.current;
+      if (records.length === 0) {
+        try {
+          const res = await dprAPI.dprHistoryEdit({ type: 'activites', dprId: Number(editingDprId) });
+          let data = res?.data ?? res;
+          if (data && !Array.isArray(data)) {
+            data = data?.activites ?? data?.activities ?? (Array.isArray(data?.data) ? data.data : []);
+          }
+          records = Array.isArray(data) ? data : [];
+          if (!cancelled) editModeActivityRecordsRef.current = records;
+        } catch {
+          records = [];
+        }
+      }
+      if (cancelled) return;
+      const map = mapActivityRecordsToSelected(records, activities);
+      setSelectedActivities(map);
+      if (records.length === 0 && !cancelled) toast.showWarning('Could not load previous activities—you can add them manually');
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [showActivitySelection, editingDprId, selectedProject, activities]);
+
+  // Edit mode: Step 1 fetch-dpr-history-edit (IDs) → Step 2 materials-history-edit (full records). Fallback to fetch data if edit fails.
+  useEffect(() => {
+    if (!showMaterialSelection || !editingDprId || !selectedProject) return;
+    let cancelled = false;
+    const load = async () => {
+      let records: any[] = [];
+      try {
+        const res = await dprAPI.dprHistoryEdit({ type: 'material', dprId: Number(editingDprId) });
+        let data = res?.data ?? res ?? [];
+        if (data && !Array.isArray(data)) data = data?.materials ?? data?.material ?? [];
+        const arr = Array.isArray(data) ? data : [];
+        const ids = arr.map((e: any) => e?.materials_id ?? e?.materials_history_materials_id ?? e?.id).filter(Boolean);
+        if (ids.length > 0) {
+          try {
+            records = await materialsHistoryAPI.edit(editingDprId, ids);
+          } catch {
+            records = arr;
+          }
+        }
+      } catch {
+        records = [];
+      }
+      if (cancelled) return;
+      const map = new Map<string, SelectedMaterial>();
+      for (const r of records) {
+        const matId = r?.materials_id ?? r?.materials_history_materials_id ?? r?.id;
+        const mat = r?.materials ?? r?.material;
+        const id = String(matId ?? r?.id ?? '');
+        if (!id) continue;
+        const cls = (mat?.class ?? r?.class ?? 'B') as 'A' | 'B' | 'C';
+        map.set(id, {
+          id,
+          numericId: Number(matId) || undefined,
+          class: ['A', 'B', 'C'].includes(cls) ? cls : 'B',
+          code: mat?.code ?? r?.code ?? '',
+          name: mat?.name ?? r?.material_name ?? r?.materials_name ?? '',
+          specification: mat?.specification ?? r?.specification ?? '',
+          unit: mat?.unit ?? r?.unit ?? '',
+          quantity: Number(r?.qty ?? r?.quantity ?? 0),
+          activity: r?.activities?.activities ?? r?.activities?.name ?? r?.activity_name ?? '',
+          remarks: r?.remarkes ?? r?.remarks ?? ''
+        });
+      }
+      setSelectedMaterials(map);
+      if (records.length === 0 && !cancelled) toast.showWarning('Could not load previous materials—you can add them manually');
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [showMaterialSelection, editingDprId, selectedProject]);
+
+  // Edit mode: Step 1 fetch-dpr-history-edit (IDs) → Step 2 labour-history-edit (full records). Fallback to fetch data if edit fails.
+  useEffect(() => {
+    if (!showLabourSelection || !editingDprId || !selectedProject) return;
+    let cancelled = false;
+    const load = async () => {
+      let records: any[] = [];
+      try {
+        const res = await dprAPI.dprHistoryEdit({ type: 'labour', dprId: Number(editingDprId) });
+        let data = res?.data ?? res ?? [];
+        if (data && !Array.isArray(data)) data = data?.labour ?? data?.labours ?? [];
+        const arr = Array.isArray(data) ? data : [];
+        const ids = arr.map((e: any) => e?.labours_id ?? e?.labour_id ?? e?.id).filter(Boolean);
+        if (ids.length > 0) {
+          try {
+            records = await labourHistoryAPI.edit(editingDprId, ids);
+          } catch {
+            records = arr;
+          }
+        }
+      } catch {
+        records = [];
+      }
+      if (cancelled) return;
+      const getContractor = (v: any) => {
+        if (!v) return '';
+        if (typeof v === 'string') return v;
+        return v?.name ?? v?.registration_name ?? '';
+      };
+      const map = new Map<string, SelectedLabour>();
+      for (const r of records) {
+        const labId = r?.labours_id ?? r?.labour_id ?? r?.id;
+        const lab = r?.labours ?? r?.labour;
+        const id = String(labId ?? r?.id ?? '');
+        if (!id) continue;
+        map.set(id, {
+          id,
+          numericId: Number(labId) || undefined,
+          type: lab?.type ?? r?.type ?? '',
+          category: lab?.category ?? r?.category ?? '',
+          quantity: Number(r?.qty ?? r?.quantity ?? 0),
+          overtimeQuantity: Number(r?.ot_qty ?? r?.overtime_qty ?? 0),
+          activity: r?.activities?.activities ?? r?.activities?.name ?? r?.activity_name ?? '',
+          contractor: getContractor(r?.vendors ?? r?.vendor ?? r?.vendors_id ?? r?.contractor),
+          ratePerUnit: Number(r?.rate_per_unit ?? r?.rate ?? 0),
+          remarks: r?.remarkes ?? r?.remarks ?? ''
+        });
+      }
+      setSelectedLabours(map);
+      if (records.length === 0 && !cancelled) toast.showWarning('Could not load previous labour—you can add them manually');
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [showLabourSelection, editingDprId, selectedProject]);
+
+  // Edit mode: Step 1 fetch-dpr-history-edit (IDs) → Step 2 assets-history-edit (full records). Fallback to fetch data if edit fails.
+  useEffect(() => {
+    if (!showAssetSelection || !editingDprId || !selectedProject) return;
+    let cancelled = false;
+    const load = async () => {
+      let records: any[] = [];
+      try {
+        const res = await dprAPI.dprHistoryEdit({ type: 'assets', dprId: Number(editingDprId) });
+        let data = res?.data ?? res ?? [];
+        if (data && !Array.isArray(data)) data = data?.assets ?? data?.asset ?? [];
+        const arr = Array.isArray(data) ? data : [];
+        const ids = arr.map((e: any) => e?.assets_id ?? e?.assets_history_assets_id ?? e?.id).filter(Boolean);
+        if (ids.length > 0) {
+          try {
+            records = await assetsHistoryAPI.edit(editingDprId, ids);
+          } catch {
+            records = arr;
+          }
+        }
+      } catch {
+        records = [];
+      }
+      if (cancelled) return;
+      const getContractor = (v: any) => {
+        if (!v) return '';
+        if (typeof v === 'string') return v;
+        return v?.name ?? v?.registration_name ?? '';
+      };
+      const map = new Map<string, SelectedAsset>();
+      for (const r of records) {
+        const assetId = r?.assets_id ?? r?.assets_history_assets_id ?? r?.id;
+        const asset = r?.assets ?? r?.asset;
+        const id = String(assetId ?? r?.id ?? '');
+        if (!id) continue;
+        map.set(id, {
+          id,
+          numericId: Number(assetId) || undefined,
+          code: asset?.code ?? r?.code ?? '',
+          name: asset?.name ?? r?.asset_name ?? '',
+          quantity: Number(r?.qty ?? r?.quantity ?? 0),
+          activity: r?.activities?.activities ?? r?.activities?.name ?? r?.activity_name ?? '',
+          contractor: getContractor(r?.vendors ?? r?.vendor ?? r?.vendors_id ?? r?.contractor),
+          ratePerUnit: Number(r?.rate_per_unit ?? r?.rate ?? 0),
+          remarks: r?.remarkes ?? r?.remarks ?? ''
+        });
+      }
+      setSelectedAssets(map);
+      if (records.length === 0 && !cancelled) toast.showWarning('Could not load previous assets—you can add them manually');
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [showAssetSelection, editingDprId, selectedProject]);
 
   // Build hierarchical tree like Masters > Activities (headings first, then children, srNo: 1, 1.1, 1.2, 1.3, 1.3.1)
   type ActivityTreeNode = { item: ActivityItem; srNo: string };
@@ -1807,7 +2039,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setIsLoadingDprList(true);
     setDprListError(null);
     try {
-      const list = await dprAPI.getList({ project: selectedProject?.numericId ?? selectedProject?.id, subproject: selectedSubproject?.numericId ?? selectedSubproject?.id });
+      // Fetch all DPRs (no project/subproject filter) - avoid refreshing list on every project/subproject selection
+      const list = await dprAPI.getList({});
       const arr = Array.isArray(list) ? list : [];
       if (arr.length > 0 || !opts?.preserveOnEmpty) setDprList(arr);
       else setDprList(prev => prev);
@@ -1820,7 +2053,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       setIsLoadingDprList(false);
       lastFetchDprListAt.current = Date.now();
     }
-  }, [toast, selectedProject, selectedSubproject]);
+  }, [toast]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -2892,6 +3125,25 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setMaterialsRefreshKey(k => k + 1); // Refetch materials from Masters API
   };
 
+  const handleDeleteDpr = async () => {
+    if (!dprToDelete) return;
+    const deletedId = dprToDelete.id;
+    setDprToDelete(null);
+    try {
+      await dprAPI.delete(deletedId);
+      toast.showSuccess('DPR deleted.');
+      setDprList(prev => prev.filter((d: any) => String(d.id) !== String(deletedId)));
+    } catch (err: any) {
+      const msg = err?.message ?? '';
+      if (msg.includes('company_id')) {
+        toast.showSuccess('DPR removed.');
+        setDprList(prev => prev.filter((d: any) => String(d.id) !== String(deletedId)));
+      } else {
+        toast.showError(msg || 'Failed to delete DPR');
+      }
+    }
+  };
+
   const handleCreateNewProject = () => {
     router.push(`${DPR_BASE}/add-project`);
   };
@@ -2915,8 +3167,6 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   };
 
   const handleEditDpr = (dpr: any) => {
-    // Skip getDetails - backend dpr-details has a bug (activities on collection). Use list data instead.
-    // fetch-dpr-history-edit will load activities, materials, labour, assets when each modal opens.
     const dprId = dpr.id;
     const projId = dpr.projects_id?.id ?? dpr.projects_id ?? dpr.projects?.id;
     const projName = dpr.projects_id?.project_name ?? dpr.projects_id?.name ?? dpr.projects?.project_name ?? dpr.projects?.name ?? 'Project';
@@ -2930,6 +3180,12 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setSelectedSubproject(selectedSub);
     setEditingDprId(dprId);
     setDprIdRes(null);
+    editModeActivityRecordsRef.current = [];
+    // Clear selections so fetch-dpr-history-edit populates them when each modal opens
+    setSelectedActivities(new Map());
+    setSelectedMaterials(new Map());
+    setSelectedLabours(new Map());
+    setSelectedAssets(new Map());
     setShowActivitySelection(true);
   };
 
@@ -3086,23 +3342,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                           <Download className="w-3.5 h-3.5" />
                         </button>
                         <button
-                          onClick={async () => {
-                            if (!confirm('Delete this DPR?')) return;
-                            const deletedId = dpr.id;
-                            try {
-                              await dprAPI.delete(deletedId);
-                              toast.showSuccess('DPR deleted.');
-                              setDprList(prev => prev.filter((d: any) => String(d.id) !== String(deletedId)));
-                            } catch (err: any) {
-                              const msg = err?.message ?? '';
-                              if (msg.includes('company_id')) {
-                                toast.showSuccess('DPR removed.');
-                                setDprList(prev => prev.filter((d: any) => String(d.id) !== String(deletedId)));
-                              } else {
-                                toast.showError(msg || 'Failed to delete DPR');
-                              }
-                            }
-                          }}
+                          onClick={() => setDprToDelete(dpr)}
                           className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-bold ${isDark ? 'bg-red-500/20 text-red-400 hover:bg-red-500/30' : 'bg-red-100 text-red-700 hover:bg-red-200'}`}
                           title="Delete"
                         >
@@ -3118,15 +3358,57 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         </div>
       </div>
 
+      {/* Delete DPR Confirmation Modal */}
+      {dprToDelete && (
+        <div className="fixed top-0 right-0 bottom-0 bg-black/50 z-[60] flex items-center justify-center p-4" style={{ left: sidebarWidth }} onClick={() => setDprToDelete(null)}>
+          <div
+            className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-lg p-6 shadow-xl`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className={`p-2 rounded-full flex-shrink-0 ${isDark ? 'bg-red-500/20' : 'bg-red-100'}`}>
+                <Trash2 className={`w-5 h-5 ${isDark ? 'text-red-400' : 'text-red-600'}`} />
+              </div>
+              <div>
+                <h2 className={`text-lg font-black ${textPrimary}`}>Delete DPR?</h2>
+                <p className={`text-sm ${textSecondary} mt-2`}>
+                  Are you sure you want to delete DPR #{dprToDelete?.dpr_no ?? dprToDelete?.dpr_number ?? dprToDelete?.id}? This action cannot be undone.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setDprToDelete(null)}
+                className={`px-4 py-2 rounded-lg text-sm font-bold ${isDark ? 'bg-slate-700 text-slate-200 hover:bg-slate-600' : 'bg-slate-200 text-slate-800 hover:bg-slate-300'}`}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteDpr}
+                className="px-4 py-2 rounded-lg text-sm font-bold bg-red-600 text-white hover:bg-red-700"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* DPR View Details Modal */}
       {viewingDpr && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={() => setViewingDpr(null)}>
-          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-2xl max-h-[90vh] overflow-y-auto`} onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-4 border-b border-inherit">
+        <div className="fixed top-0 right-0 bottom-0 bg-black/50 z-[60] flex items-center justify-center p-4 sm:p-6" style={{ left: sidebarWidth }} onClick={() => setViewingDpr(null)}>
+          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] max-h-[85vh] overflow-hidden flex flex-col`} onClick={e => e.stopPropagation()}>
+            {/* X - sticky at top right */}
+            <button
+              onClick={() => { setViewingDpr(null); setDprDetails(null); setEditingDprId(null); }}
+              className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+              title="Close"
+            >
+              <X className={`w-5 h-5 ${textSecondary}`} />
+            </button>
+            <div className="flex-1 min-h-0 overflow-y-auto">
+            <div className="flex items-center justify-between p-4 pr-14 border-b border-inherit">
               <h2 className={`text-lg font-black ${textPrimary}`}>DPR #{dprDetails?.dpr_no ?? viewingDpr?.dpr_no ?? '-'} - Details</h2>
-              <button onClick={() => { setViewingDpr(null); setDprDetails(null); setEditingDprId(null); }} className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'}`}>
-                <X className="w-5 h-5" />
-              </button>
             </div>
             <div className="p-4 space-y-3">
               <p className={textSecondary}>Date: {formatDprListDate(dprDetails)}</p>
@@ -3151,18 +3433,16 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                 </button>
               )}
             </div>
+            </div>
           </div>
         </div>
       )}
 
       {/* Project Selection Modal */}
       {showProjectSelection && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
-          <div
-            ref={projectModalScrollRef}
-            className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-4xl h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-y-auto overflow-x-hidden`}
-          >
-            {/* X - fixed top right corner */}
+        <div className="fixed top-0 right-0 bottom-0 bg-black/50 z-[60] flex items-center justify-center p-4 sm:p-6 md:p-8 overflow-hidden" style={{ left: sidebarWidth }}>
+          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] h-[calc(100vh-5rem)] max-h-[85vh] my-auto overflow-hidden flex flex-col`}>
+            {/* X - sticky at top right, stays visible while scrolling */}
             <button
               onClick={() => { setProjectSearchQuery(''); router.push(DPR_BASE); }}
               className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
@@ -3170,6 +3450,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             >
               <X className={`w-5 h-5 ${textSecondary}`} />
             </button>
+            <div ref={projectModalScrollRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
             {/* Header + Search - scrolls up with content, user scrolls to see */}
             <div ref={projectModalHeaderRef} className={`${bgPrimary} flex-shrink-0`}>
               {/* Modal Header */}
@@ -3201,10 +3482,10 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             </div>
 
             {/* Projects Grid - starts from top, takes full space */}
-            <div className="p-4 sm:p-6 flex flex-col min-h-0">
+            <div className="px-4 sm:px-6 pt-4 sm:pt-6 pb-8 sm:pb-10 flex flex-col min-h-0">
               {filteredProjects.length > 0 ? (
                 <>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
                   {paginatedProjects.map((project) => (
                     <div
                       key={project.id}
@@ -3254,14 +3535,15 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                 </div>
               )}
             </div>
+            </div>
           </div>
         </div>
       )}
 
       {/* Subproject Selection Modal */}
       {showSubprojectSelection && selectedProject && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
-          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-4xl h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-hidden flex flex-col`}>
+        <div className="fixed top-0 right-0 bottom-0 bg-black/50 z-[60] flex items-center justify-center p-4 sm:p-6 md:p-8 overflow-hidden" style={{ left: sidebarWidth }}>
+          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] h-[calc(100vh-5rem)] max-h-[85vh] my-auto overflow-hidden flex flex-col`}>
             {/* X - fixed top right corner */}
             <button
               onClick={() => { setSubprojectSearchQuery(''); setSelectedProject(null); setEditingDprId(null); setDprIdRes(null); router.push(`${DPR_BASE}/projects`); }}
@@ -3310,7 +3592,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
               </div>
 
               {/* Subprojects List - starts from top, takes full space */}
-              <div className="p-4 sm:p-6 flex flex-col min-h-0">
+              <div className="px-4 sm:px-6 pt-4 sm:pt-6 pb-8 sm:pb-10 flex flex-col min-h-0">
               {isLoadingSubprojects ? (
                 <div className={`flex flex-col items-center justify-center py-16 ${textSecondary}`}>
                   <div className="w-10 h-10 border-2 border-[#C2D642] border-t-transparent rounded-full animate-spin mb-4" />
@@ -3323,7 +3605,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                 </div>
               ) : filteredSubprojects.length > 0 ? (
                 <>
-                <div className={`grid grid-cols-1 md:grid-cols-2 gap-4 ${isCreatingDpr ? 'pointer-events-none opacity-60' : ''}`}>
+                <div className={`grid grid-cols-1 md:grid-cols-2 gap-4 mb-6 ${isCreatingDpr ? 'pointer-events-none opacity-60' : ''}`}>
                   {paginatedSubprojects.map((subproject) => (
                     <div
                       key={subproject.id}
@@ -3401,12 +3683,12 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             </div>
 
             {/* Footer with Back and Next buttons - sticky at bottom. Next only when project has no subprojects. */}
-            <div className={`${bgPrimary} flex-shrink-0 shrink-0 flex items-center justify-between px-4 py-2 sm:py-3 border-t border-inherit`}>
+            <div className={`${bgPrimary} flex-shrink-0 shrink-0 flex items-center justify-between px-4 sm:px-6 py-4 sm:py-4 border-t border-inherit`}>
               <button
                 onClick={() => { setSubprojectSearchQuery(''); setSelectedProject(null); setEditingDprId(null); setDprIdRes(null); router.push(`${DPR_BASE}/projects`); }}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-colors ${isDark ? 'hover:bg-slate-800/50 text-slate-300' : 'hover:bg-slate-100 text-slate-700'}`}
               >
-                <ChevronLeft className="w-4 h-4" /> Back
+                {'<'} Back
               </button>
               {subprojects.length === 0 ? (
                 <button
@@ -3427,7 +3709,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       {/* Activity Selection Modal */}
       {showActivitySelection && selectedProject && (
         <div 
-          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden"
+          className="fixed top-0 right-0 bottom-0 bg-black/50 z-[60] flex items-center justify-center p-2 sm:p-4 md:p-6 overflow-hidden"
+          style={{ left: sidebarWidth }}
           onClick={(e) => {
             // Prevent closing modal when clicking backdrop
             if (e.target === e.currentTarget) {
@@ -3437,7 +3720,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           }}
         >
           <div 
-            className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[95vw] h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-hidden flex flex-col`}
+            className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full min-w-[320px] max-w-[min(92vw,1100px)] h-[calc(100vh-5rem)] max-h-[85vh] my-auto overflow-hidden flex flex-col`}
             onClick={(e) => e.stopPropagation()}
           >
             {/* X - fixed top right corner */}
@@ -3455,116 +3738,39 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             >
               {/* Header - scrolls up with content, scroll up to see */}
               <div ref={activityModalHeaderRef} className={`${bgPrimary} flex-shrink-0`}>
-                <div className="flex flex-row items-center justify-between gap-3 p-4 sm:p-6 pr-16 sm:pr-20 border-b border-inherit">
+                <div className="flex flex-row items-center justify-between gap-3 p-4 sm:p-6 lg:p-8 pr-14 sm:pr-16 lg:pr-20 border-b border-inherit">
                   <div className="min-w-0 flex-1">
                     <h2 className={`text-lg sm:text-xl font-black ${textPrimary}`}>Select Activities</h2>
                     <p className={`text-sm ${textSecondary} mt-1`}>
-                      Select project and subproject to load activities (like Masters &gt; Activities)
+                      Activities for <span className="font-bold text-[#C2D642]">{selectedProject?.name}</span>
+                      {selectedSubproject ? <><span className="text-slate-500"> – </span><span className="font-bold text-[#C2D642]">{selectedSubproject.name}</span></> : ''}
                     </p>
                   </div>
-                  <button
-                    onClick={() => router.push(DPR_BASE + '/add-activity')}
-                    className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap flex-shrink-0 w-fit ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white'} shadow-md`}
-                  >
-                    <Plus className="w-4 h-4 flex-shrink-0" /> Create New
-                  </button>
                 </div>
-                {/* Project and Subproject selectors - like Masters > Activities */}
-                <div className="px-4 sm:px-6 pt-4 pb-4 sm:pt-6 sm:pb-6">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 sm:gap-6">
-                    <div>
-                      <label className={`block text-sm font-bold mb-3 ${textPrimary}`}>
-                        Select Project <span className="text-red-500">*</span>
-                      </label>
-                      <select
-                        value={selectedProject?.id ?? ''}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          if (!val) return;
-                          const proj = projects.find(p => p.id === val || String(p.numericId) === val);
-                          if (proj) {
-                            setEditingDprId(null);
-                            setDprIdRes(null);
-                            setSelectedProject(proj);
-                            setSelectedSubproject(null);
-                            setActivities([]);
-                          }
-                        }}
-                        className={`w-full px-4 py-3.5 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
-                          isDark
-                            ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800'
-                            : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                        } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                      >
-                        <option value="">-- Select Project --</option>
-                        {projects.map((project) => (
-                          <option key={project.id} value={project.id}>
-                            {project.name}
-                          </option>
-                        ))}
-                      </select>
+                <div className="px-4 sm:px-6 lg:px-8 pt-4 pb-4 sm:pt-6 sm:pb-6 border-b border-inherit">
+                  <div className="flex flex-row items-center gap-3 sm:gap-4">
+                    <div className="relative flex-1 min-w-0">
+                      <Search className={`absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 ${textSecondary} pointer-events-none`} />
+                      <input
+                        type="text"
+                        value={activitySearchQuery}
+                        onChange={e => setActivitySearchQuery(e.target.value)}
+                        placeholder="Search by activity name or unit..."
+                        className={`w-full pl-12 pr-5 py-3.5 rounded-lg text-sm font-bold border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                      />
                     </div>
-                    <div>
-                      <label className={`block text-sm font-bold mb-3 ${textPrimary}`}>
-                        Select Subproject (Optional)
-                      </label>
-                      {isLoadingSubprojects ? (
-                        <div className={`w-full px-4 py-3.5 rounded-lg text-sm ${textSecondary} flex items-center gap-2`}>
-                          <div className="w-4 h-4 border-2 border-[#C2D642] border-t-transparent rounded-full animate-spin" />
-                          Loading subprojects...
-                        </div>
-                      ) : (
-                        <select
-                          value={selectedSubproject?.id ?? ''}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            if (!val) {
-                              setEditingDprId(null);
-                              setDprIdRes(null);
-                              setSelectedSubproject(null);
-                              return;
-                            }
-                            const sub = subprojects.find(s => s.id === val || String(s.numericId) === val);
-                            if (sub) {
-                              setEditingDprId(null);
-                              setDprIdRes(null);
-                              setSelectedSubproject(sub);
-                            }
-                          }}
-                          disabled={!selectedProject}
-                          className={`w-full px-4 py-3.5 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
-                            isDark
-                              ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800'
-                              : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-                          } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none ${!selectedProject ? 'opacity-50 cursor-not-allowed' : ''}`}
-                        >
-                          <option value="">-- All Subprojects --</option>
-                          {subprojects.map((subproject) => (
-                            <option key={subproject.id} value={subproject.id}>
-                              {subproject.name}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                    </div>
-                  </div>
-                </div>
-                <div className="px-4 sm:px-6 pt-4 pb-4 sm:pt-6 sm:pb-6 border-b border-inherit">
-                  <div className="relative">
-                    <Search className={`absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 ${textSecondary} pointer-events-none`} />
-                    <input
-                      type="text"
-                      value={activitySearchQuery}
-                      onChange={e => setActivitySearchQuery(e.target.value)}
-                      placeholder="Search by activity name or unit..."
-                      className={`w-full pl-12 pr-5 py-3.5 rounded-lg text-sm font-bold border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                    />
+                    <button
+                      onClick={() => router.push(DPR_BASE + '/add-activity')}
+                      className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap flex-shrink-0 w-fit ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white'} shadow-md`}
+                    >
+                      <Plus className="w-4 h-4 flex-shrink-0" /> Create New
+                    </button>
                   </div>
                 </div>
               </div>
 
               {/* Activities Table - takes full space, appears first on open */}
-              <div className="p-4 sm:p-6">
+              <div className="px-4 sm:px-6 lg:px-8 pt-4 sm:pt-6 lg:pt-8 pb-6 sm:pb-8 lg:pb-10">
               {isLoadingActivities ? (
                 <div className={`flex flex-col items-center justify-center py-16 ${textSecondary}`}>
                   <div className="w-10 h-10 border-2 border-[#C2D642] border-t-transparent rounded-full animate-spin mb-4" />
@@ -3821,7 +4027,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             </div>
 
             {/* Modal Footer - sticky at bottom */}
-            <div className={`${bgPrimary} flex flex-row items-center justify-between gap-2 sm:gap-4 px-4 py-2 sm:py-3 border-t border-inherit flex-shrink-0 shrink-0`}>
+            <div className={`${bgPrimary} flex flex-row items-center justify-between gap-2 sm:gap-4 px-4 sm:px-6 py-4 border-t border-inherit flex-shrink-0 shrink-0`}>
               <button
                 type="button"
                 onClick={() => { setSelectedActivities(new Map()); setEditingDprId(null); setDprIdRes(null); router.push(`${DPR_BASE}/subprojects`); }}
@@ -3831,7 +4037,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                     : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
                 }`}
               >
-                <ChevronLeft className="w-4 h-4" /> Back
+                {'<'} Back
               </button>
               <button
                 type="button"
@@ -3860,13 +4066,14 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       {/* Material Selection Modal */}
       {showMaterialSelection && selectedProject && (
         <div 
-          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden"
+          className="fixed top-0 right-0 bottom-0 bg-black/50 z-[60] flex items-center justify-center p-4 sm:p-6 md:p-8 overflow-hidden"
+          style={{ left: sidebarWidth }}
           onClick={(e) => {
             if (e.target === e.currentTarget) { e.preventDefault(); e.stopPropagation(); }
           }}
         >
           <div 
-            className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[95vw] h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-hidden flex flex-col`}
+            className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] h-[calc(100vh-5rem)] max-h-[85vh] my-auto overflow-hidden flex flex-col`}
             onClick={(e) => e.stopPropagation()}
           >
             {/* X - fixed top right corner */}
@@ -3887,27 +4094,29 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                       {selectedSubproject ? <><span className="text-slate-500"> - </span><span className="font-bold text-[#C2D642]">{selectedSubproject.name}</span></> : ''}
                     </p>
                   </div>
-                  <button
-                    onClick={() => setShowCreateMaterialModal(true)}
-                    className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap flex-shrink-0 w-fit ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white'} shadow-md`}
-                  >
-                    <Plus className="w-4 h-4 flex-shrink-0" /> Create New
-                  </button>
                 </div>
                 <div className="px-4 sm:px-6 pt-4 pb-4 sm:pt-6 sm:pb-6 border-b border-inherit">
-                  <div className="relative">
-                    <Search className={`absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 ${textSecondary} pointer-events-none`} />
-                    <input
-                      type="text"
-                      value={materialSearchQuery}
-                      onChange={e => setMaterialSearchQuery(e.target.value)}
-                      placeholder="Search by class, code, name, specification, or unit..."
-                      className={`w-full pl-12 pr-5 py-3.5 rounded-lg text-sm font-bold border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                    />
+                  <div className="flex flex-row items-center gap-3 sm:gap-4">
+                    <div className="relative flex-1 min-w-0">
+                      <Search className={`absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 ${textSecondary} pointer-events-none`} />
+                      <input
+                        type="text"
+                        value={materialSearchQuery}
+                        onChange={e => setMaterialSearchQuery(e.target.value)}
+                        placeholder="Search by class, code, name, specification, or unit..."
+                        className={`w-full pl-12 pr-5 py-3.5 rounded-lg text-sm font-bold border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                      />
+                    </div>
+                    <button
+                      onClick={() => setShowCreateMaterialModal(true)}
+                      className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap flex-shrink-0 w-fit ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white'} shadow-md`}
+                    >
+                      <Plus className="w-4 h-4 flex-shrink-0" /> Create New
+                    </button>
                   </div>
                 </div>
               </div>
-              <div className="p-4 sm:p-6">
+              <div className="px-4 sm:px-6 pt-4 sm:pt-6 pb-6 sm:pb-8">
               {isLoadingMaterials ? (
                 <div className={`flex flex-col items-center justify-center py-16 ${textSecondary}`}>
                   <div className="w-10 h-10 border-2 border-[#C2D642] border-t-transparent rounded-full animate-spin mb-4" />
@@ -4061,7 +4270,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             </div>
 
             {/* Modal Footer - sticky at bottom */}
-            <div className={`${bgPrimary} flex items-center justify-between gap-2 sm:gap-4 px-4 py-2 sm:py-3 border-t border-inherit flex-shrink-0 shrink-0`}>
+            <div className={`${bgPrimary} flex items-center justify-between gap-2 sm:gap-4 px-4 sm:px-6 py-4 border-t border-inherit flex-shrink-0 shrink-0`}>
               <button
                 onClick={() => { setSelectedMaterials(new Map()); router.push(`${DPR_BASE}/activities`); }}
                 className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
@@ -4070,7 +4279,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                     : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
                 }`}
               >
-                Back
+                {'<'} Back
               </button>
               <button
                 onClick={handleMaterialSelectionNext}
@@ -4087,8 +4296,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
       {/* Labour Selection Modal */}
       {showLabourSelection && selectedProject && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
-          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[95vw] h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-hidden flex flex-col`}>
+        <div className="fixed top-0 right-0 bottom-0 bg-black/50 z-[60] flex items-center justify-center p-4 sm:p-6 md:p-8 overflow-hidden" style={{ left: sidebarWidth }}>
+          <div             className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] h-[calc(100vh-5rem)] max-h-[85vh] my-auto overflow-hidden flex flex-col`}>
             {/* X - fixed top right corner */}
             <button
               onClick={() => { setSelectedLabours(new Map()); router.push(`${DPR_BASE}/materials`); }}
@@ -4107,27 +4316,29 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                       {selectedSubproject ? <><span className="text-slate-500"> - </span><span className="font-bold text-[#C2D642]">{selectedSubproject.name}</span></> : ''}
                     </p>
                   </div>
-                  <button
-                    onClick={() => setShowCreateLabourModal(true)}
-                    className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap flex-shrink-0 w-fit ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white'} shadow-md`}
-                  >
-                    <Plus className="w-4 h-4 flex-shrink-0" /> Create New
-                  </button>
                 </div>
                 <div className="px-4 sm:px-6 pt-4 pb-4 sm:pt-6 sm:pb-6 border-b border-inherit">
-                  <div className="relative">
-                    <Search className={`absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 ${textSecondary} pointer-events-none`} />
-                    <input
-                      type="text"
-                      value={labourSearchQuery}
-                      onChange={e => setLabourSearchQuery(e.target.value)}
-                      placeholder="Search by name, type, or category..."
-                      className={`w-full pl-12 pr-5 py-3.5 rounded-lg text-sm font-bold border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                    />
+                  <div className="flex flex-row items-center gap-3 sm:gap-4">
+                    <div className="relative flex-1 min-w-0">
+                      <Search className={`absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 ${textSecondary} pointer-events-none`} />
+                      <input
+                        type="text"
+                        value={labourSearchQuery}
+                        onChange={e => setLabourSearchQuery(e.target.value)}
+                        placeholder="Search by name, type, or category..."
+                        className={`w-full pl-12 pr-5 py-3.5 rounded-lg text-sm font-bold border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                      />
+                    </div>
+                    <button
+                      onClick={() => setShowCreateLabourModal(true)}
+                      className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap flex-shrink-0 w-fit ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white'} shadow-md`}
+                    >
+                      <Plus className="w-4 h-4 flex-shrink-0" /> Create New
+                    </button>
                   </div>
                 </div>
               </div>
-              <div className="p-4 sm:p-6">
+              <div className="px-4 sm:px-6 pt-4 sm:pt-6 pb-6 sm:pb-8">
               {isLoadingLabours ? (
                 <div className={`flex flex-col items-center justify-center py-16 ${textSecondary}`}>
                   <div className="w-10 h-10 border-2 border-[#C2D642] border-t-transparent rounded-full animate-spin mb-4" />
@@ -4343,7 +4554,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             </div>
 
             {/* Modal Footer - sticky at bottom */}
-            <div className={`${bgPrimary} flex items-center justify-between gap-2 sm:gap-4 px-4 py-2 sm:py-3 border-t border-inherit flex-shrink-0 shrink-0`}>
+            <div className={`${bgPrimary} flex items-center justify-between gap-2 sm:gap-4 px-4 sm:px-6 py-4 border-t border-inherit flex-shrink-0 shrink-0`}>
               <button
                 onClick={() => { setSelectedLabours(new Map()); router.push(`${DPR_BASE}/materials`); }}
                 className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
@@ -4352,7 +4563,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                     : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
                 }`}
               >
-                Back
+                {'<'} Back
               </button>
               <button
                 onClick={handleLabourSelectionNext}
@@ -4369,8 +4580,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
       {/* Asset Selection Modal */}
       {showAssetSelection && selectedProject && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
-          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[95vw] h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-hidden flex flex-col`}>
+        <div className="fixed top-0 right-0 bottom-0 bg-black/50 z-[60] flex items-center justify-center p-4 sm:p-6 md:p-8 overflow-hidden" style={{ left: sidebarWidth }}>
+          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] h-[calc(100vh-5rem)] max-h-[85vh] my-auto overflow-hidden flex flex-col`}>
             {/* X - fixed top right corner */}
             <button
               onClick={() => { setSelectedAssets(new Map()); setAssetSearchQuery(''); router.push(`${DPR_BASE}/labour`); }}
@@ -4389,29 +4600,31 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                       {selectedSubproject ? <><span className="text-slate-500"> - </span><span className="font-bold text-[#C2D642]">{selectedSubproject.name}</span></> : ''}
                     </p>
                   </div>
-                  <button
-                    onClick={() => setShowCreateAssetModal(true)}
-                    className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap flex-shrink-0 w-fit ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white'} shadow-md`}
-                  >
-                    <Plus className="w-4 h-4 flex-shrink-0" /> Create New
-                  </button>
                 </div>
                 <div className="px-4 sm:px-6 pt-4 pb-4 sm:pt-6 sm:pb-6 border-b border-inherit">
-                  <div className="relative">
-                    <Search className={`absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 ${textSecondary} pointer-events-none`} />
-                    <input
-                      type="text"
-                      value={assetSearchQuery}
-                      onChange={(e) => setAssetSearchQuery(e.target.value)}
-                      placeholder="Search by code, name, specification, or unit..."
-                      className={`w-full pl-12 pr-5 py-3.5 rounded-lg text-sm font-bold border ${
-                        isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-                      } focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                    />
+                  <div className="flex flex-row items-center gap-3 sm:gap-4">
+                    <div className="relative flex-1 min-w-0">
+                      <Search className={`absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 ${textSecondary} pointer-events-none`} />
+                      <input
+                        type="text"
+                        value={assetSearchQuery}
+                        onChange={(e) => setAssetSearchQuery(e.target.value)}
+                        placeholder="Search by code, name, specification, or unit..."
+                        className={`w-full pl-12 pr-5 py-3.5 rounded-lg text-sm font-bold border ${
+                          isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+                        } focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                      />
+                    </div>
+                    <button
+                      onClick={() => setShowCreateAssetModal(true)}
+                      className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap flex-shrink-0 w-fit ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white'} shadow-md`}
+                    >
+                      <Plus className="w-4 h-4 flex-shrink-0" /> Create New
+                    </button>
                   </div>
                 </div>
               </div>
-              <div className="p-4 sm:p-6">
+              <div className="px-4 sm:px-6 pt-4 sm:pt-6 pb-6 sm:pb-8">
               {isLoadingAssets ? (
                 <div className={`flex flex-col items-center justify-center py-16 ${textSecondary}`}>
                   <div className="w-10 h-10 border-2 border-[#C2D642] border-t-transparent rounded-full animate-spin mb-4" />
@@ -4608,7 +4821,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             </div>
 
             {/* Modal Footer - sticky at bottom */}
-            <div className={`${bgPrimary} flex items-center justify-between gap-2 sm:gap-4 px-4 py-2 sm:py-3 border-t border-inherit flex-shrink-0 shrink-0`}>
+            <div className={`${bgPrimary} flex items-center justify-between gap-2 sm:gap-4 px-4 sm:px-6 py-4 border-t border-inherit flex-shrink-0 shrink-0`}>
               <button
                 onClick={() => {
                   setShowAssetSelection(false);
@@ -4622,7 +4835,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                     : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
                 }`}
               >
-                Back
+                {'<'} Back
               </button>
               <button
                 onClick={handleAssetSelectionNext}
@@ -4639,8 +4852,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
       {/* Safety Selection Modal */}
       {showSafetySelection && selectedProject && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
-          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[95vw] h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-hidden flex flex-col`}>
+        <div className="fixed top-0 right-0 bottom-0 bg-black/50 z-[60] flex items-center justify-center p-4 sm:p-6 md:p-8 overflow-hidden" style={{ left: sidebarWidth }}>
+          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] h-[calc(100vh-5rem)] max-h-[85vh] my-auto overflow-hidden flex flex-col`}>
             {/* X - fixed top right corner */}
             <button
               onClick={() => router.push(`${DPR_BASE}/assets`)}
@@ -4667,7 +4880,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                   </button>
                 </div>
               </div>
-              <div className="p-6">
+              <div className="px-6 pt-6 pb-8">
               {isLoadingSafety ? (
                 <div className={`flex items-center justify-center py-12 ${textSecondary}`}>
                   <Loader2 className="w-8 h-8 animate-spin" />
@@ -4759,7 +4972,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             </div>
 
             {/* Modal Footer - sticky at bottom */}
-            <div className={`${bgPrimary} flex items-center justify-between gap-2 sm:gap-4 px-4 py-2 sm:py-3 border-t border-inherit flex-shrink-0 shrink-0`}>
+            <div className={`${bgPrimary} flex items-center justify-between gap-2 sm:gap-4 px-4 sm:px-6 py-4 border-t border-inherit flex-shrink-0 shrink-0`}>
               <button
                 onClick={() => router.push(`${DPR_BASE}/assets`)}
                 className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
@@ -4768,7 +4981,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                     : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
                 }`}
               >
-                Back
+                {'<'} Back
               </button>
               <div className="flex items-center gap-2">
                 <button
@@ -4798,8 +5011,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
       {/* Hindrance Selection Modal */}
       {showHindranceSelection && selectedProject && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
-          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[95vw] h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-hidden flex flex-col`}>
+        <div className="fixed top-0 right-0 bottom-0 bg-black/50 z-[60] flex items-center justify-center p-4 sm:p-6 md:p-8 overflow-hidden" style={{ left: sidebarWidth }}>
+          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] h-[calc(100vh-5rem)] max-h-[85vh] my-auto overflow-hidden flex flex-col`}>
             {/* X - fixed top right corner */}
             <button
               onClick={() => router.push(`${DPR_BASE}/safety`)}
@@ -4826,7 +5039,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                   </button>
                 </div>
               </div>
-              <div className="p-6">
+              <div className="px-6 pt-6 pb-8">
               {isLoadingHindrance ? (
                 <div className={`flex items-center gap-2 py-8 ${textSecondary}`}>
                   <Loader2 className="w-5 h-5 animate-spin flex-shrink-0" />
@@ -4916,7 +5129,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             </div>
 
             {/* Modal Footer - sticky at bottom */}
-            <div className={`${bgPrimary} flex items-center justify-between gap-2 sm:gap-4 px-4 py-2 sm:py-3 border-t border-inherit flex-shrink-0 shrink-0`}>
+            <div className={`${bgPrimary} flex items-center justify-between gap-2 sm:gap-4 px-4 sm:px-6 py-4 border-t border-inherit flex-shrink-0 shrink-0`}>
               <button
                 onClick={() => router.push(`${DPR_BASE}/safety`)}
                 className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
@@ -4925,7 +5138,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                     : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
                 }`}
               >
-                Back
+                {'<'} Back
               </button>
               <div className="flex items-center gap-2">
                 <button
@@ -4955,8 +5168,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
       {/* DPR Complete Modal */}
       {showDPRComplete && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
-          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-md overflow-hidden flex flex-col`}>
+        <div className="fixed top-0 right-0 bottom-0 bg-black/50 z-[60] flex items-center justify-center p-2 sm:p-4 overflow-y-auto" style={{ left: sidebarWidth }}>
+          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-lg overflow-hidden flex flex-col`}>
             {/* X - fixed top right corner */}
             <button
               onClick={resetDPRForm}

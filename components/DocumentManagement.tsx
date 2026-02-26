@@ -6,6 +6,13 @@ import { useToast } from '../contexts/ToastContext';
 import { useUser } from '../contexts/UserContext';
 import { masterDataAPI, documentAPI } from '../services/api';
 import {
+  getChatContext,
+  createSession,
+  sendMessage as sendDmsAiMessage,
+  getSessionIdFromResponse,
+} from '../services/dmsAiService';
+import ChatMarkdownViewer from './ChatMarkdownViewer';
+import {
   Folder,
   Briefcase,
   Users,
@@ -16,7 +23,7 @@ import {
   List,
   RefreshCw,
   Plus,
-  MessageCircle,
+  BotMessageSquare,
   FileText,
   Info,
   ChevronDown,
@@ -34,9 +41,10 @@ import {
   Share2,
   Copy,
   RotateCcw,
-  Filter,
   Cloud,
-  CloudOff
+  CloudOff,
+  Mic,
+  Square
 } from 'lucide-react';
 
 interface FileItem {
@@ -78,6 +86,7 @@ interface Project {
 
 interface DocumentManagementProps {
   theme: ThemeType;
+  initialPathFromUrl?: string[];
 }
 
 interface ChatMessage {
@@ -87,26 +96,91 @@ interface ChatMessage {
   timestamp: string;
 }
 
-const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
+/** Create URL-safe slug from project name */
+function slugify(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '') || 'project';
+}
+
+/** Check if string is a UUID */
+function isUuid(s: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+}
+
+/** Convert URL segments to currentPath (internal state). projects needed to resolve slug to ID. */
+function urlSegmentsToPath(segments: string[], projects?: Project[]): string[] {
+  if (segments.length === 0) return ['office'];
+  if (segments[0] === 'project' && segments.length >= 2) {
+    const slugOrId = segments[1];
+    const rest = segments.slice(2);
+    let projectId = slugOrId;
+    if (!isUuid(slugOrId)) {
+      if (projects?.length) {
+        const project = projects.find(
+          p => slugify(p.name) === slugOrId || slugify(p.code || '') === slugOrId
+        );
+        projectId = project ? String(project.id) : slugOrId;
+      } else {
+        return ['projects'];
+      }
+    }
+    return ['projects', `project_${projectId}`, ...rest];
+  }
+  return segments;
+}
+
+/** Convert currentPath to URL segments. projects needed to use project name slug. */
+function pathToUrlSegments(path: string[], projects?: Project[]): string[] {
+  if (path.length === 0) return ['office'];
+  if (path[0] === 'projects' && path.length >= 2 && path[1].startsWith('project_')) {
+    const id = path[1].replace('project_', '');
+    const rest = path.slice(2);
+    let slug = id;
+    if (projects?.length) {
+      const project = projects.find(p => String(p.id) === id || String(p.numericId) === id);
+      if (project?.name) slug = slugify(project.name);
+    }
+    return ['project', slug, ...rest];
+  }
+  return path;
+}
+
+const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialPathFromUrl = [] }) => {
   const toast = useToast();
   const { isAuthenticated, isLoading } = useUser();
   const [selectedFolder, setSelectedFolder] = useState<string>('office');
-  const [currentPath, setCurrentPath] = useState<string[]>(['office']); // Track navigation path
+  const [currentPath, setCurrentPath] = useState<string[]>(() =>
+    urlSegmentsToPath(initialPathFromUrl, [])
+  );
+  const [folderDisplayNames, setFolderDisplayNames] = useState<Record<string, string>>({}); // uuid/path -> display name for breadcrumbs
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [showAIAssistant, setShowAIAssistant] = useState<boolean>(false);
+  const [aiPanelWidth, setAiPanelWidth] = useState<number>(320); // Default w-80
   const [showNewDropdown, setShowNewDropdown] = useState<boolean>(false);
   const [showCreateFolderModal, setShowCreateFolderModal] = useState<boolean>(false);
   const [showShareModal, setShowShareModal] = useState<boolean>(false);
   const [shareMode, setShareMode] = useState<'team' | 'link'>('team');
   const [selectedTeamMembers, setSelectedTeamMembers] = useState<Set<string>>(new Set());
   const [teamMemberSearch, setTeamMemberSearch] = useState<string>('');
+  const [teamMembersList, setTeamMembersList] = useState<Array<{ id: string; name: string; email: string; role?: string }>>([]);
+  const [teamMembersLoading, setTeamMembersLoading] = useState<boolean>(false);
+  const [teamMembersError, setTeamMembersError] = useState<string | null>(null);
   const [isSearchFocused, setIsSearchFocused] = useState<boolean>(false);
   const [newFolderName, setNewFolderName] = useState<string>('');
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState<boolean>(false);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
   const [documents, setDocuments] = useState<FileItem[]>([]);
+  const [documentsLoading, setDocumentsLoading] = useState<boolean>(false);
+  const [documentsError, setDocumentsError] = useState<string | null>(null);
   // Image Gallery filters
   const [imageSearchName, setImageSearchName] = useState<string>('');
   const [selectedProjectFilter, setSelectedProjectFilter] = useState<string>('all');
@@ -121,38 +195,66 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
   ]);
   const [chatInput, setChatInput] = useState<string>('');
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [recordingTime, setRecordingTime] = useState<number>(0);
+  const [dmsSessionId, setDmsSessionId] = useState<string | null>(null);
+  const [chatSending, setChatSending] = useState<boolean>(false);
+  const [chatCreatingSession, setChatCreatingSession] = useState<boolean>(false);
+  const [chatError, setChatError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [trashCount, setTrashCount] = useState<number>(0);
+  const [showRenameModal, setShowRenameModal] = useState<boolean>(false);
+  const [renameModalMode, setRenameModalMode] = useState<'file' | 'folder'>('file');
+  const [renameModalValue, setRenameModalValue] = useState<string>('');
+  const [renameModalError, setRenameModalError] = useState<string | null>(null);
+  const [renameModalExistingNames, setRenameModalExistingNames] = useState<Set<string>>(new Set());
+  const [pendingUploadQueue, setPendingUploadQueue] = useState<Array<{ file: File; displayName: string }>>([]);
+  const [renameUploadQueue, setRenameUploadQueue] = useState<File[]>([]);
+  const [viewFile, setViewFile] = useState<FileItem | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const uploadFileInputRef = React.useRef<HTMLInputElement>(null);
   const dropZoneRef = React.useRef<HTMLDivElement>(null);
+  const chatMessagesEndRef = React.useRef<HTMLDivElement>(null);
+  const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
+  const audioStreamRef = React.useRef<MediaStream | null>(null);
+  const audioChunksRef = React.useRef<Blob[]>([]);
+  const recordingTimerRef = React.useRef<NodeJS.Timeout | null>(null);
+  const aiResizeStartRef = React.useRef<{ x: number; w: number } | null>(null);
+  const prevSelectedCountRef = React.useRef<number>(0);
+  const [isDesktop, setIsDesktop] = React.useState(false);
+
+  const INVALID_FILENAME_CHARS = /[<>:"/\\|?*\x00-\x1f]/;
+  const isValidDisplayName = (name: string): boolean => !INVALID_FILENAME_CHARS.test(name) && name.trim().length > 0;
 
   const isDark = theme === 'dark';
+  const cardClass = isDark ? 'card-dark' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
   const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
   const bgSecondary = isDark ? 'bg-slate-800' : 'bg-slate-50';
 
-  // Fetch projects from API
+  // DMS Step 1: GET /api/project-list - load projects for sidebar only
   const loadProjects = async () => {
-    // Check token instead of isAuthenticated (which requires user to be loaded)
     if (typeof window !== 'undefined') {
       const { getCookie } = require('../utils/cookies');
       const token = getCookie('auth_token') || localStorage.getItem('auth_token');
       const authFlag = getCookie('isAuthenticated') === 'true' || localStorage.getItem('isAuthenticated') === 'true';
-      
       if (!token || !authFlag) {
-        console.warn('⚠️ Cannot load projects - no token or auth flag');
         setProjects([]);
+        setProjectsLoading(false);
+        setProjectsError(null);
         return;
       }
     } else {
       setProjects([]);
+      setProjectsLoading(false);
       return;
     }
-    
+
+    setProjectsLoading(true);
+    setProjectsError(null);
     try {
-      console.log('📡 Fetching projects from API for document management...');
       const fetchedProjects = await masterDataAPI.getProjects();
       console.log('✅ Fetched projects from API:', fetchedProjects?.length || 0);
       
@@ -162,16 +264,16 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
         return;
       }
       
-      // Transform API response to match Project interface
+      // Transform API response. Backend returns azure_path_status (true/false) only, not actual path (safety).
       const transformedProjects: Project[] = fetchedProjects.map((p: any) => {
         const companyName = p.companies?.registration_name || p.companies?.name || p.company || p.company_name || '';
         const companyLogo = p.companies?.logo || p.company_logo || '';
         const numericId = p.id;
         const uuid = p.uuid;
-        
+        const azurePathStatus = p.azure_path_status === true;
         return {
           id: uuid || String(numericId),
-          numericId: numericId, // Store numeric ID for API calls
+          numericId: numericId,
           name: p.project_name || p.name || '',
           code: p.code || '',
           company: companyName,
@@ -185,189 +287,64 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
           isContractor: p.own_project_or_contractor === 'yes' || p.is_contractor || p.isContractor,
           projectManager: p.project_manager || p.projectManager,
           createdAt: p.created_at || p.createdAt,
-          azure_folder_path: p.azure_folder_path || p.azureFolderPath || (p as any).azure_folder_path,
+          blobStorageConnected: azurePathStatus,
+          blobError: azurePathStatus ? undefined : 'Azure path not configured',
         };
       });
-      
-      console.log('✅ Transformed projects for document management:', transformedProjects.length);
-      
-      // Log Azure folder paths for debugging
-      // Backend creates path at: {company_azure_folder_path}/projects/{sanitized-name}_{uuid}
-      transformedProjects.forEach((project, index) => {
-        if (project.azure_folder_path) {
-          // Validate path format
-          const pathParts = project.azure_folder_path.split('/');
-          const isValidFormat = pathParts.length >= 3 && 
-                               pathParts[pathParts.length - 2] === 'projects' &&
-                               pathParts[pathParts.length - 1].includes('_');
-          
-          console.log(`📁 Project ${index + 1} (${project.name}) Azure folder:`, project.azure_folder_path);
-          console.log(`   Format validation: ${isValidFormat ? '✅ Valid' : '⚠️ Invalid'}`, {
-            expectedFormat: '{company-path}/projects/{name}_{uuid}',
-            pathParts: pathParts,
-            folderMarker: `${project.azure_folder_path}/.folder`,
-          });
-        } else {
-          console.warn(`⚠️ Project ${index + 1} (${project.name}) missing azure_folder_path`);
-          console.warn(`   Backend API: POST /api/project-add should create this`);
-          console.warn(`   Expected format: {company_azure_folder_path}/projects/{sanitized-name}_{uuid}`);
-          console.warn(`   Database column: projects.azure_folder_path`);
-        }
-      });
-      
-      // Verify blob storage connection for each project
-      // This ensures projects have corresponding folders in Azure Blob Storage
-      const projectsWithBlobStorage = await Promise.all(
-        transformedProjects.map(async (project) => {
-          // If project doesn't have azure_folder_path, try to get it from backend (project-edit uses uuid)
-          if (!project.azure_folder_path && (project.id || project.numericId)) {
-            console.warn(`⚠️ Project "${project.name}" missing azure_folder_path - fetching from backend...`);
-            try {
-              const projectIdOrUuid = project.id || String(project.numericId);
-              const projectDetails = await masterDataAPI.getProject(projectIdOrUuid);
-              const path = projectDetails?.azure_folder_path ?? projectDetails?.data?.azure_folder_path ?? (projectDetails as any)?.azure_folder_path;
-              if (path) {
-                project.azure_folder_path = path;
-                console.log(`✅ Retrieved azure_folder_path for project "${project.name}":`, path);
-              } else {
-                console.warn(`⚠️ Project "${project.name}" - backend did not return azure_folder_path. Ensure GET /project-edit includes it.`);
-                return { ...project, blobStorageConnected: false, blobError: 'Azure folder path not configured' };
-              }
-            } catch (err: any) {
-              console.error(`❌ Failed to fetch project details for "${project.name}":`, err.message);
-              return { ...project, blobStorageConnected: false, blobError: 'Failed to fetch project details' };
-            }
-          }
-          
-          if (!project.azure_folder_path || !project.numericId) {
-            console.warn(`⚠️ Project "${project.name}" missing azure_folder_path or numericId - skipping blob verification`);
-            return { ...project, blobStorageConnected: false, blobError: 'Missing azure_folder_path or numericId' };
-          }
-          
-          try {
-            // Try to list documents from blob storage to verify connection
-            console.log(`🔍 Verifying blob storage connection for project: ${project.name} (${project.azure_folder_path})`);
-            const testResponse = await documentAPI.getDocuments({
-              category: 'project',
-              project_id: project.numericId,
-              folder_path: project.azure_folder_path,
-            });
-            
-            if (testResponse.status) {
-              console.log(`✅ Blob storage connected for project: ${project.name}`, {
-                folderPath: project.azure_folder_path,
-                itemCount: testResponse.data?.length || 0,
-              });
-              return { ...project, blobStorageConnected: true, blobItemCount: testResponse.data?.length || 0 };
-            } else {
-              console.warn(`⚠️ Blob storage verification failed for project: ${project.name}`);
-              return { ...project, blobStorageConnected: false };
-            }
-          } catch (err: any) {
-            // If 401, it might be authentication issue, not blob storage issue
-            const is401 = err.response?.status === 401 || err.status === 401;
-            const is404 = err.response?.status === 404 || err.status === 404;
-            
-            if (is401) {
-              console.warn(`⚠️ Project "${project.name}" blob storage check returned 401 - authentication issue, not blob storage issue`);
-              // Still mark as connected since path exists, just auth issue
-              return { ...project, blobStorageConnected: true, blobError: 'Authentication required' };
-            } else if (is404) {
-              console.warn(`⚠️ Project "${project.name}" blob storage folder not found (404) - folder may not exist yet:`, project.azure_folder_path);
-              return { ...project, blobStorageConnected: false, blobError: 'Folder not found in blob storage' };
-            } else {
-              console.error(`❌ Error verifying blob storage for project "${project.name}":`, err.message || err.response?.data?.message);
-              return { ...project, blobStorageConnected: false, blobError: err.message || err.response?.data?.message };
-            }
-          }
-        })
-      );
-      
-      // Filter to show only projects with blob storage connection (or show all with warning)
-      // For now, show all projects but log which ones have blob storage
-      const connectedProjects = projectsWithBlobStorage.filter(p => p.blobStorageConnected);
-      const disconnectedProjects = projectsWithBlobStorage.filter(p => !p.blobStorageConnected);
-      
-      console.log(`📊 Blob Storage Connection Summary:`, {
-        total: projectsWithBlobStorage.length,
-        connected: connectedProjects.length,
-        disconnected: disconnectedProjects.length,
-        connectedProjects: connectedProjects.map(p => p.name),
-        disconnectedProjects: disconnectedProjects.map(p => ({ name: p.name, azure_folder_path: p.azure_folder_path })),
-      });
-      
-      // Set projects (include all, but mark connection status)
-      setProjects(projectsWithBlobStorage);
-      
-      // Show warning if some projects don't have blob storage connection
-      if (disconnectedProjects.length > 0) {
-        console.warn(`⚠️ ${disconnectedProjects.length} project(s) without blob storage connection:`, 
-          disconnectedProjects.map(p => p.name).join(', '));
-      }
+
+      setProjects(transformedProjects);
+      setProjectsError(null);
     } catch (err: any) {
-      console.error('❌ Failed to fetch projects:', err);
+      const message = err?.message || err?.response?.data?.message || 'Failed to load projects';
       setProjects([]);
-      toast.showError(err.message || 'Failed to load projects');
+      setProjectsError(message);
+      toast.showError(message);
+    } finally {
+      setProjectsLoading(false);
     }
   };
 
-  // Load projects from API when authenticated
-  // Wait for UserContext to finish loading before making API calls
-  useEffect(() => {
-    // Don't load if still checking authentication or user profile
-    if (isLoading) {
-      console.log('⏳ Waiting for user profile to load before fetching projects...');
-      return;
-    }
-    
-    // Check if we have a token (even if user profile hasn't loaded yet)
-    if (typeof window !== 'undefined') {
-      const { getCookie } = require('../utils/cookies');
-      const token = getCookie('auth_token') || localStorage.getItem('auth_token');
-      const authFlag = getCookie('isAuthenticated') === 'true' || localStorage.getItem('isAuthenticated') === 'true';
-      
-      if (token && authFlag) {
-        loadProjects();
-      } else {
-        console.warn('⚠️ No token or auth flag found, skipping project load');
-        setProjects([]);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated, isLoading]);
+  // Do NOT load project-list on DMS open. project-list is loaded only when user clicks "Project" in the sidebar (see sidebar button onClick for item.id === 'projects').
 
   // Get current folder path as string
   const getCurrentFolderPath = () => {
     return currentPath.join('/');
   };
 
-  // Load documents from API
-  const loadDocuments = async () => {
-    // Wait for user profile to be loaded (but don't require user to be set)
-    if (isLoading) {
-      console.log('⏳ Waiting for user profile to load...');
-      return;
-    }
+  // Trash count disabled - badge not shown
+  const loadTrashCount = async () => {
+    setTrashCount(0);
+  };
 
-    // Check token instead of isAuthenticated (which requires user to be loaded)
+  // DMS Step 2: GET /api/documents (office/shared) or GET /api/documents?category=project&project_id=<id> (when a project is selected). Do NOT call documents API when only "Project" menu is selected – only project-list is called then.
+  const loadDocuments = async () => {
+    if (isLoading) return;
     if (typeof window !== 'undefined') {
       const { getCookie } = require('../utils/cookies');
       const token = getCookie('auth_token') || localStorage.getItem('auth_token');
       const authFlag = getCookie('isAuthenticated') === 'true' || localStorage.getItem('isAuthenticated') === 'true';
-      
       if (!token || !authFlag) {
-        console.warn('⚠️ User not authenticated (no token or auth flag), skipping document load');
-        console.warn('⚠️ Token check:', { hasToken: !!token, hasAuthFlag: !!authFlag, isAuthenticated });
         setDocuments([]);
+        setDocumentsLoading(false);
+        setDocumentsError(null);
         return;
-      } else {
-        console.log('✅ Auth token and flag found, proceeding with document load');
       }
     } else {
       setDocuments([]);
+      setDocumentsLoading(false);
       return;
     }
 
+    // When user clicked "Project" in sidebar but no specific project selected: only project-list is called (on click). Do NOT call documents API here.
+    if (currentPath[0] === 'projects' && currentPath.length === 1) {
+      setDocuments([]);
+      setDocumentsLoading(false);
+      setDocumentsError(null);
+      return;
+    }
+
+    setDocumentsLoading(true);
+    setDocumentsError(null);
     try {
       // Determine category and project_id from currentPath
       const firstSegment = currentPath[0];
@@ -376,7 +353,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
       let folderUuid: string | undefined;
       let folderPath: string | undefined;
 
-      // Check if we're in a project folder
+      // DMS Step 3: Click a project → GET /api/documents?category=project&project_id=<id>&folder_path=<azure_path>
       if (firstSegment === 'projects' && currentPath.length > 1) {
         category = 'project';
         // Extract project ID from path (format: project_<id>)
@@ -391,55 +368,116 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
             
             // If project has azure_folder_path, use it as base path
             // Backend will use this to list blobs directly from Azure
-            if (project.azure_folder_path && currentPath.length === 2) {
-              // We're at the project root, use azure_folder_path for blob listing
-              folderPath = project.azure_folder_path;
-              console.log('📁 Using project azure_folder_path for blob listing:', folderPath);
-            } else if (!project.azure_folder_path && currentPath.length === 2) {
-              // Project doesn't have azure_folder_path - try to fetch from backend (use project.id for project-edit/{uuid})
-              console.warn(`⚠️ Project "${project.name}" missing azure_folder_path - fetching from backend...`);
-              try {
-                const projectIdOrUuid = project.id || String(project.numericId);
-                const projectDetails = await masterDataAPI.getProject(projectIdOrUuid);
-                const path = projectDetails?.azure_folder_path ?? projectDetails?.data?.azure_folder_path ?? (projectDetails as any)?.azure_folder_path;
-                if (path) {
-                  folderPath = path;
-                  setProjects(prev => prev.map(p => 
-                    p.id === project.id ? { ...p, azure_folder_path: path } : p
-                  ));
-                  console.log(`✅ Retrieved azure_folder_path for project "${project.name}":`, path);
-                } else {
-                  console.error(`❌ Project "${project.name}" - backend did not return azure_folder_path`);
-                  toast.showError(`Project "${project.name}" does not have an Azure folder path configured. Ensure GET /project-edit includes azure_folder_path.`);
-                  setDocuments([]);
-                  return;
-                }
-              } catch (fetchErr: any) {
-                console.error(`❌ Failed to fetch project details for "${project.name}":`, fetchErr.message);
-                toast.showError(`Failed to load project folder. Check auth (401) or backend.`);
-                setDocuments([]);
-                return;
-              }
-            }
+            // Backend resolves path from project (azure_folder_path in DB). Frontend does not receive or send actual path; we only have azure_path_status for icon. Send only project_id.
           }
         }
         // Check if we're navigating into a folder
         if (currentPath.length > 2) {
           const folderSegment = currentPath[currentPath.length - 1];
-          const projectIdStr = projectSegment.replace('project_', '');
-          const projectForPath = projects.find(p => p.id === projectIdStr || String(p.id) === projectIdStr) ?? null;
-          // Check if it's a UUID format (DB) or full Azure path
+          // Check if it's a UUID format or a path
           if (folderSegment.includes('/')) {
             folderPath = folderSegment;
-          } else if (projectForPath?.azure_folder_path) {
-            const segments = currentPath.slice(2);
-            folderPath = [projectForPath.azure_folder_path, ...segments].join('/');
           } else {
             folderUuid = folderSegment;
           }
         }
       } else if (firstSegment === 'shared') {
-        category = 'shared';
+        // Shared root: GET /api/documents/shared → flat list of items shared with user.
+        // Shared folder contents: GET /api/documents?category=shared&folder_uuid=<id> → files/folders inside that folder.
+        if (currentPath.length > 1) {
+          // User opened a shared folder: load its contents via list-documents API (same as office/project nested folders).
+          const sharedFolderUuid = currentPath[currentPath.length - 1];
+          const response = await documentAPI.getDocuments({
+            category: 'shared',
+            folder_uuid: sharedFolderUuid,
+          });
+          if (response.status && response.data) {
+            const fileItems: FileItem[] = response.data.map((doc: any) => ({
+              id: doc.uuid,
+              name: doc.original_name ?? doc.name,
+              size: doc.file_size ? `${(doc.file_size / 1024).toFixed(2)} KB` : '0 KB',
+              lastModified: doc.uploaded_at || new Date().toLocaleDateString(),
+              owner: doc.uploaded_by || 'Unknown',
+              type: doc.is_folder ? 'folder' : 'file',
+              path: doc.item_path || doc.full_path,
+              fileData: doc.file_url,
+              mimeType: doc.mime_type,
+            }));
+            setDocuments(fileItems);
+            setDocumentsError(null);
+            setFolderDisplayNames(prev => {
+              const next = { ...prev };
+              fileItems.filter(item => item.type === 'folder').forEach(f => {
+                if (f.name) next[f.id] = f.name;
+              });
+              return next;
+            });
+          } else {
+            setDocuments([]);
+          }
+        } else {
+          // Shared root: dedicated endpoint returns top-level shared items only.
+          const response = await documentAPI.getSharedItems();
+          if (response.status && response.data) {
+            const fileItems: FileItem[] = response.data.map((item: any) => ({
+              id: item.uuid,
+              name: item.item_name || 'Untitled',
+              size: '—',
+              lastModified: item.shared_date && item.shared_time ? `${item.shared_date} ${item.shared_time}` : (item.shared_at || '—'),
+              owner: item.shared_by || 'Unknown',
+              type: (item.item_type === 'folder' ? 'folder' : 'file') as 'file' | 'folder',
+              path: item.item_path,
+            }));
+            setDocuments(fileItems);
+            setDocumentsError(null);
+          } else {
+            setDocuments([]);
+          }
+        }
+        setDocumentsLoading(false);
+        setSelectedFiles(new Set());
+        return;
+      } else if (firstSegment === 'trash') {
+        // GET /api/documents/trash – list trashed items (soft-deleted)
+        try {
+          const response = await documentAPI.getTrash();
+          if (response.status && response.data) {
+            const fileItems: FileItem[] = response.data.map((item: any) => ({
+              id: item.uuid,
+              name: item.name || item.original_name || 'Untitled',
+              size: item.file_size ? `${(item.file_size / 1024).toFixed(2)} KB` : '—',
+              lastModified: item.deleted_at ? new Date(item.deleted_at).toLocaleString() : '—',
+              owner: item.uploaded_by || 'Unknown',
+              type: item.is_folder ? 'folder' : 'file',
+              path: 'trash',
+              originalPath: item.original_parent_uuid || item.original_parent_name || undefined,
+              deletedAt: item.deleted_at,
+            }));
+            setDocuments(fileItems);
+            setDocumentsError(null);
+            setTrashCount(Array.isArray(response.data) ? response.data.length : 0);
+          } else {
+            setDocuments([]);
+            setTrashCount(0);
+          }
+        } catch (err: any) {
+          const msg = err?.message || err?.response?.data?.message || 'Failed to load trash';
+          setDocuments([]);
+          setDocumentsError(msg);
+          setTrashCount(0);
+          toast.showError(msg);
+        }
+        setDocumentsLoading(false);
+        setSelectedFiles(new Set());
+        return;
+      } else if (firstSegment === 'office' && currentPath.length > 1) {
+        // Office nested folder: pass folder_uuid or folder_path so API returns this folder's contents (match Laravel)
+        const folderSegment = currentPath[currentPath.length - 1];
+        if (folderSegment.includes('/')) {
+          folderPath = folderSegment;
+        } else {
+          folderUuid = folderSegment;
+        }
       } else if (firstSegment === 'image-gallery') {
         try {
           // Load gallery images from API
@@ -452,21 +490,25 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
           
           const response = await documentAPI.getGalleryImages({
             project_id: galleryProjectId,
+            category: galleryProjectId ? 'project' : undefined,
+            page: 1,
+            per_page: 100,
           });
           
           if (response.status && response.data) {
             const galleryImages: FileItem[] = response.data.map((img: any) => ({
               id: img.uuid || img.id,
-              name: img.name || img.original_name,
+              name: img.original_name ?? img.name,
               size: img.file_size ? `${(img.file_size / 1024).toFixed(2)} KB` : '0 KB',
               lastModified: img.uploaded_at || new Date().toLocaleDateString(),
               owner: img.uploaded_by || 'Unknown',
               type: 'file' as const,
               path: img.blob_path,
-              fileData: img.url, // Store URL for display
+              fileData: img.url,
               mimeType: img.mime_type,
             }));
             setDocuments(galleryImages);
+            setDocumentsError(null);
             setSelectedFiles(new Set());
           } else {
             setDocuments([]);
@@ -505,37 +547,40 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
         params.folder_path = folderPath;
       }
 
-      // Recursive search: backend searches current folder + all nested subfolders
-      if (searchQuery && searchQuery.trim().length >= 2) {
-        params.search = searchQuery.trim();
-      }
-
       console.log('📄 Loading documents with params:', params);
       const response = await documentAPI.getDocuments(params);
       
       if (response.status && response.data) {
-        // Transform API response to FileItem format
         const fileItems: FileItem[] = response.data.map((doc: any) => ({
           id: doc.uuid,
-          name: doc.name || doc.original_name,
+          name: doc.original_name ?? doc.name,
           size: doc.file_size ? `${(doc.file_size / 1024).toFixed(2)} KB` : '0 KB',
           lastModified: doc.uploaded_at || new Date().toLocaleDateString(),
           owner: doc.uploaded_by || 'Unknown',
           type: doc.is_folder ? 'folder' : 'file',
           path: doc.item_path || doc.full_path,
-          fileData: doc.file_url, // Store signed URL
+          fileData: doc.file_url,
           mimeType: doc.mime_type,
         }));
-        
         setDocuments(fileItems);
+        setDocumentsError(null);
+        // Store folder names for breadcrumb display (no extra API calls)
+        setFolderDisplayNames(prev => {
+          const next = { ...prev };
+          fileItems.filter(item => item.type === 'folder').forEach(f => {
+            if (f.name) next[f.id] = f.name;
+          });
+          return next;
+        });
       } else {
         setDocuments([]);
       }
     } catch (err: any) {
+      const errorMessage = err?.response?.data?.message || err?.message || 'Failed to load documents';
+      setDocuments([]);
+      setDocumentsError(errorMessage);
       const errorStatus = err.status || err.response?.status;
-      const errorMessage = err.response?.data?.message || err.message || 'Failed to load documents';
       const errorData = err.response?.data || {};
-      
       console.error('❌ Failed to load documents:', {
         error: err,
         status: errorStatus,
@@ -571,18 +616,24 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
         });
         
         toast.showError(detailedMessage);
-        // Don't logout - let user try again or refresh
       } else {
-        // Show error toast for other errors
         toast.showError(errorMessage);
       }
-      
-      setDocuments([]);
+    } finally {
+      setDocumentsLoading(false);
     }
-    
-    // Clear selection when folder changes
     setSelectedFiles(new Set());
   };
+
+  // Load trash count for sidebar badge when DMS is ready (once when auth is ready)
+  useEffect(() => {
+    if (isLoading || typeof window === 'undefined') return;
+    const { getCookie } = require('../utils/cookies');
+    const token = getCookie('auth_token') || localStorage.getItem('auth_token');
+    const authFlag = getCookie('isAuthenticated') === 'true' || localStorage.getItem('isAuthenticated') === 'true';
+    if (token && authFlag) loadTrashCount();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading]);
 
   // Load documents when folder changes or when authenticated
   useEffect(() => {
@@ -600,26 +651,74 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
       const authFlag = getCookie('isAuthenticated') === 'true' || localStorage.getItem('isAuthenticated') === 'true';
       
       if (!token || !authFlag) {
-        console.warn('⚠️ Cannot load documents - no token or auth flag:', {
-          hasToken: !!token,
-          hasAuthFlag: !!authFlag,
-          isAuthenticated, // This might be false if user profile hasn't loaded yet
-        });
         setDocuments([]);
+        setDocumentsLoading(false);
+        setDocumentsError(null);
         return;
       }
-      
-      console.log('✅ Loading documents - token and auth flag present');
       loadDocuments();
     } else {
       setDocuments([]);
+      setDocumentsLoading(false);
+      setDocumentsError(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPath, isLoading, selectedProjectFilter, searchQuery]);
+  }, [currentPath, isLoading, selectedProjectFilter]);
 
-  // Update currentPath when sidebar folder changes
+  // Load projects when opening a project URL (needed to resolve slug to ID)
   useEffect(() => {
-    setCurrentPath([selectedFolder]);
+    if (initialPathFromUrl[0] === 'project' && projects.length === 0 && !projectsLoading) {
+      loadProjects();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPathFromUrl[0]]);
+
+  // Sync from URL when it changes (browser back/forward, direct load)
+  const initialPathKey = initialPathFromUrl.join('/');
+  useEffect(() => {
+    const pathFromUrl = urlSegmentsToPath(initialPathFromUrl, projects);
+    setCurrentPath(pathFromUrl);
+    const firstSegment = pathFromUrl[0];
+    const folder = firstSegment === 'projects' && pathFromUrl[1] ? pathFromUrl[1] : firstSegment;
+    setSelectedFolder(folder);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPathKey, projects]);
+
+  // Update URL when currentPath changes (without triggering navigation/refresh)
+  useEffect(() => {
+    const segments = pathToUrlSegments(currentPath, projects);
+    const targetPath = segments.length > 0 ? segments.join('/') : 'office';
+    const targetUrl = `/document-management/${targetPath}`;
+    if (typeof window !== 'undefined' && window.location.pathname !== targetUrl) {
+      window.history.pushState({ documentPath: targetPath }, '', targetUrl);
+    }
+  }, [currentPath, projects]);
+
+  // Handle browser back/forward
+  useEffect(() => {
+    const handlePopState = () => {
+      const pathSegments = window.location.pathname.replace('/document-management', '').replace(/^\//, '').split('/').filter(Boolean);
+      const pathFromUrl = urlSegmentsToPath(pathSegments, projects);
+      setCurrentPath(pathFromUrl);
+      const firstSegment = pathFromUrl[0];
+      const folder = firstSegment === 'projects' && pathFromUrl[1] ? pathFromUrl[1] : firstSegment;
+      setSelectedFolder(folder);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [projects]);
+
+  // Sync currentPath when sidebar folder changes. Keep 'projects' prefix when a project is selected so loadDocuments calls category=project&project_id=, not office.
+  useEffect(() => {
+    setCurrentPath(prev => {
+      if (selectedFolder.startsWith('project_')) {
+        const path = ['projects', selectedFolder];
+        if (prev.length === 2 && prev[0] === 'projects' && prev[1] === selectedFolder) return prev;
+        return path;
+      }
+      if (prev.length === 1 && prev[0] === selectedFolder) return prev;
+      return [selectedFolder];
+    });
   }, [selectedFolder]);
 
   // Prevent body scroll when sidebar is open on mobile
@@ -642,18 +741,16 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
   }, [sidebarOpen]);
 
   const handleRefresh = () => {
-    // Reload projects and documents
-    loadProjects();
+    if (currentPath[0] === 'projects') {
+      loadProjects();
+    }
     loadDocuments();
   };
 
-  // Save documents to localStorage
+  // Save documents to localStorage (skip when viewing API trash so we don't overwrite)
   useEffect(() => {
-    // Check if we're in the browser (localStorage is only available client-side)
-    if (typeof window === 'undefined' || !window.localStorage) {
-      return;
-    }
-    
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    if (currentPath[0] === 'trash') return;
     const folderPath = getCurrentFolderPath();
     if (documents.length > 0) {
       // Store only serializable data
@@ -778,6 +875,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
         blobStorageConnected: project.blobStorageConnected,
         azure_folder_path: project.azure_folder_path,
         blobItemCount: project.blobItemCount,
+        blobError: project.blobError,
       }))
     },
     {
@@ -813,31 +911,44 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
   };
 
   const getCurrentFolderLabel = () => {
-    // If we're in a nested folder, show the folder name
     if (currentPath.length > 1) {
       const lastSegment = currentPath[currentPath.length - 1];
-      // Extract folder name from ID (format: "path/to/folderName_timestamp")
+      const name = folderDisplayNames[lastSegment];
+      if (name) return name;
+      // Project segment: show project name (e.g. TowerD), not "project"
+      if (lastSegment.startsWith('project_')) {
+        const projectId = lastSegment.replace('project_', '');
+        const project = projects.find(p => p.id === projectId || String(p.id) === projectId);
+        return project?.name || lastSegment;
+      }
       const parts = lastSegment.split('/');
       const lastPart = parts[parts.length - 1];
-      return lastPart.split('_')[0];
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(lastPart);
+      return isUuid ? 'Folder' : (lastPart || 'Folder');
     }
-    // Otherwise show the sidebar folder name
-    if (selectedFolder === 'office') return 'Office';
-    const parent = sidebarItems.find(item => item.subItems.some(sub => sub.id === selectedFolder));
-    if (parent) {
-      const subItem = parent.subItems.find(sub => sub.id === selectedFolder);
-      return subItem?.label || 'Office';
+    // Section-level view: show correct section label (Trash, Shared, Projects, Office, Image Gallery)
+    const sectionId = currentPath[0] || selectedFolder;
+    const sectionItem = sidebarItems.find(item => item.id === sectionId);
+    if (sectionItem) return sectionItem.label;
+    if (sectionId.startsWith('project_')) {
+      const project = projects.find(p => p.id === sectionId.replace('project_', '') || String(p.id) === sectionId.replace('project_', ''));
+      return project?.name || sectionId;
     }
     return 'Office';
   };
 
-  // Navigate into a folder
-  // For Azure blob folders, use the full path; for DB-tracked folders, use UUID
+  // Navigate into a folder (from main content double-click; names stored for breadcrumb)
   const navigateToFolder = (folderId: string, folderName: string, folderPath?: string) => {
-    // If folderPath is provided and looks like an Azure path (contains '/'), use it
-    // Otherwise, use folderId (UUID for DB-tracked folders)
-    const pathToUse = folderPath && folderPath.includes('/') ? folderPath : folderId;
-    setCurrentPath(prev => [...prev, pathToUse]);
+    // In Shared view we must use folderId (SharedDocument.uuid) so the API can resolve the share and list folder contents. Using folderPath would send a blob path and the backend would not find the share.
+    const isSharedView = currentPath[0] === 'shared';
+    const pathToUse = isSharedView ? folderId : (folderPath && folderPath.includes('/') ? folderPath : folderId);
+    if (folderName) {
+      setFolderDisplayNames(prev => ({ ...prev, [pathToUse]: folderName }));
+    }
+    setCurrentPath(prev => {
+      if (prev[prev.length - 1] === pathToUse) return prev;
+      return [...prev, pathToUse];
+    });
     setSelectedFiles(new Set());
   };
 
@@ -879,6 +990,16 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
       toast.showWarning('Please enter a folder name');
       return;
     }
+    const folderName = newFolderName.trim();
+    const existingNames = new Set(documents.map((d) => d.name));
+    if (existingNames.has(folderName)) {
+      setRenameModalMode('folder');
+      setRenameModalValue(folderName);
+      setRenameModalExistingNames(existingNames);
+      setShowCreateFolderModal(false);
+      setShowRenameModal(true);
+      return;
+    }
 
     // Check token instead of isAuthenticated (which requires user to be loaded)
     if (typeof window !== 'undefined') {
@@ -895,7 +1016,6 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
       return;
     }
 
-    const folderName = newFolderName.trim();
     const firstSegment = currentPath[0];
     const isShared = firstSegment === 'shared';
     const isImageGallery = firstSegment === 'image-gallery';
@@ -917,22 +1037,20 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
     if (firstSegment === 'projects' && currentPath.length > 1) {
       category = 'project';
       const projectSegment = currentPath[1];
-      const projectForFolder = projectSegment.startsWith('project_')
-        ? projects.find(p => p.id === projectSegment.replace('project_', '') || String(p.id) === projectSegment.replace('project_', ''))
-        : null;
-      if (projectSegment.startsWith('project_') && projectForFolder) {
-        projectId = projectForFolder.numericId || (typeof projectForFolder.id === 'number' ? projectForFolder.id : parseInt(projectSegment.replace('project_', ''), 10));
-        if (projectForFolder.azure_folder_path && currentPath.length === 2) {
-          folderPathParam = projectForFolder.azure_folder_path;
-          console.log('📁 Using project azure_folder_path for folder creation:', folderPathParam);
+      if (projectSegment.startsWith('project_')) {
+        const projectIdStr = projectSegment.replace('project_', '');
+        const project = projects.find(p => p.id === projectIdStr || String(p.id) === projectIdStr);
+        if (project) {
+          projectId = project.numericId || (typeof project.id === 'number' ? project.id : parseInt(projectIdStr));
+          
+          // At project root: backend createFolder resolves path from project_id (no path sent from frontend).
         }
       }
+      // Check if we're in a subproject or nested folder
       if (currentPath.length > 2) {
         const folderSegment = currentPath[currentPath.length - 1];
         if (folderSegment.includes('/')) {
           folderPathParam = folderSegment;
-        } else if (projectForFolder?.azure_folder_path) {
-          folderPathParam = [projectForFolder.azure_folder_path, ...currentPath.slice(2)].join('/');
         } else {
           parentFolderUuid = folderSegment;
         }
@@ -1005,6 +1123,14 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
       }
     } catch (err: any) {
       console.error('❌ Failed to create folder:', err);
+      if (err.response?.status === 409) {
+        setRenameModalMode('folder');
+        setRenameModalValue(newFolderName.trim());
+        setRenameModalExistingNames(new Set(documents.map((d) => d.name)));
+        setShowCreateFolderModal(false);
+        setShowRenameModal(true);
+        return;
+      }
       const errorMessage = err.message || err.response?.data?.message || 'Failed to create folder';
       toast.showError(errorMessage);
     }
@@ -1184,15 +1310,29 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
-      await processFiles(Array.from(files));
+      const fileList = Array.from(files);
+      const existingNames = new Set(documents.map((d) => d.name));
+      const needRename = fileList.filter((f) => existingNames.has(f.name));
+      const okFiles = fileList.filter((f) => !existingNames.has(f.name));
+      if (needRename.length > 0) {
+        setPendingUploadQueue(okFiles.map((f) => ({ file: f, displayName: f.name })));
+        setRenameUploadQueue(needRename);
+        setRenameModalExistingNames(new Set(existingNames));
+        setRenameModalMode('file');
+        setRenameModalValue(needRename[0].name);
+        setRenameModalError(null);
+        setShowRenameModal(true);
+      } else {
+        await processFiles(fileList);
+      }
     }
     if (uploadFileInputRef.current) {
       uploadFileInputRef.current.value = '';
     }
   };
 
-  // Upload files to Azure Blob Storage via API
-  const processFiles = async (files: File[]) => {
+  // Upload files with optional display names (for rename flow). Used by processFiles and rename modal.
+  const doUpload = async (files: File[], displayNames?: string[]) => {
     // Check token instead of isAuthenticated (which requires user to be loaded)
     if (typeof window !== 'undefined') {
       const { getCookie } = require('../utils/cookies');
@@ -1226,22 +1366,21 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
     if (firstSegment === 'projects' && currentPath.length > 1) {
       category = 'project';
       const projectSegment = currentPath[1];
-      const projectForUpload = projectSegment.startsWith('project_')
-        ? projects.find(p => p.id === projectSegment.replace('project_', '') || String(p.id) === projectSegment.replace('project_', ''))
-        : null;
-      if (projectForUpload) {
-        projectId = projectForUpload.numericId || (typeof projectForUpload.id === 'number' ? projectForUpload.id : parseInt(projectSegment.replace('project_', ''), 10));
-        if (projectForUpload.azure_folder_path && currentPath.length === 2) {
-          folderPathParam = projectForUpload.azure_folder_path;
-          console.log('📤 Using project azure_folder_path for upload:', folderPathParam);
+      if (projectSegment.startsWith('project_')) {
+        const projectIdStr = projectSegment.replace('project_', '');
+        const project = projects.find(p => p.id === projectIdStr || String(p.id) === projectIdStr);
+        if (project) {
+          projectId = project.numericId || (typeof project.id === 'number' ? project.id : parseInt(projectIdStr));
+          
+          // At project root: backend upload resolves path from project_id (no path sent from frontend).
         }
       }
+      // Check if we're in a subproject folder
       if (currentPath.length > 2) {
         const folderSegment = currentPath[currentPath.length - 1];
+        // Check if it's a folder path or UUID
         if (folderSegment.includes('/')) {
           folderPathParam = folderSegment;
-        } else if (projectForUpload?.azure_folder_path) {
-          folderPathParam = [projectForUpload.azure_folder_path, ...currentPath.slice(2)].join('/');
         } else {
           parentFolderUuid = folderSegment;
         }
@@ -1266,30 +1405,25 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
     }
 
     try {
-      // Create FormData for API upload
       const formData = new FormData();
-      
-      // Add all files - Laravel expects 'files' as array
-      // Use 'files[]' format for Laravel to parse as array
       files.forEach((file) => {
         formData.append('files[]', file);
       });
-      
-      // Add required fields
+      if (displayNames && displayNames.length === files.length) {
+        displayNames.forEach((name) => {
+          formData.append('original_names[]', name);
+        });
+      }
       formData.append('category', category);
-      
       if (projectId) {
         formData.append('project_id', projectId.toString());
       }
-      
       if (subprojectId) {
         formData.append('subproject_id', subprojectId.toString());
       }
-      
       if (parentFolderUuid) {
         formData.append('parent_folder_uuid', parentFolderUuid);
       }
-      
       if (folderPathParam) {
         formData.append('folder_path', folderPathParam);
       }
@@ -1322,7 +1456,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
         // Transform API response to FileItem format
         const fileItems: FileItem[] = uploadedFiles.map((doc: any) => ({
           id: doc.uuid,
-          name: doc.name || doc.original_name,
+          name: doc.original_name ?? doc.name,
           size: doc.file_size ? `${(doc.file_size / 1024).toFixed(2)} KB` : '0 KB',
           lastModified: doc.uploaded_at || new Date().toLocaleDateString(),
           owner: doc.uploaded_by || 'You',
@@ -1346,6 +1480,46 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
       console.error('❌ Failed to upload files:', err);
       const errorMessage = err.message || err.response?.data?.message || 'Failed to upload files';
       toast.showError(errorMessage);
+    }
+  };
+
+  const processFiles = async (files: File[]) => doUpload(files);
+  const processFilesWithNames = async (filesWithNames: Array<{ file: File; displayName: string }>) =>
+    doUpload(filesWithNames.map((x) => x.file), filesWithNames.map((x) => x.displayName));
+
+  const handleRenameModalSubmit = () => {
+    const newName = renameModalValue.trim();
+    setRenameModalError(null);
+    if (!newName) {
+      setRenameModalError('Name is required.');
+      return;
+    }
+    if (renameModalExistingNames.has(newName)) {
+      setRenameModalError('A file or folder with this name already exists in this folder.');
+      return;
+    }
+    if (!isValidDisplayName(newName)) {
+      setRenameModalError('Name contains invalid characters (e.g. \\ / : * ? " < > |).');
+      return;
+    }
+    if (renameModalMode === 'file' && renameUploadQueue.length > 0) {
+      const nextPending = [...pendingUploadQueue, { file: renameUploadQueue[0], displayName: newName }];
+      const updatedExisting = new Set([...renameModalExistingNames, newName]);
+      if (renameUploadQueue.length > 1) {
+        setPendingUploadQueue(nextPending);
+        setRenameUploadQueue(renameUploadQueue.slice(1));
+        setRenameModalExistingNames(updatedExisting);
+        setRenameModalValue(renameUploadQueue[1].name);
+      } else {
+        setShowRenameModal(false);
+        setRenameUploadQueue([]);
+        setPendingUploadQueue([]);
+        processFilesWithNames(nextPending);
+      }
+    } else if (renameModalMode === 'folder') {
+      setShowRenameModal(false);
+      setNewFolderName(newName);
+      setShowCreateFolderModal(true);
     }
   };
 
@@ -1392,18 +1566,99 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
     };
   }, []);
 
-  const handleSendChatMessage = () => {
-    if (!chatInput.trim() && attachedFiles.length === 0) return;
+  // Current project identifier for AI (context + chat). Use project UUID string to match MVC Laravel (this.currentProject).
+  // Laravel AI chat expects project_id as string (UUID); documents API uses numeric id for list/folder.
+  const currentProjectIdForAi = ((): string | undefined => {
+    if (currentPath[0] !== 'projects' || currentPath.length < 2) return undefined;
+    const projectSegment = currentPath[1];
+    if (!projectSegment?.startsWith('project_')) return undefined;
+    const projectIdStr = projectSegment.replace('project_', '');
+    const project = projects.find(p => p.id === projectIdStr || String(p.id) === projectIdStr);
+    return project ? String(project.id) : undefined;
+  })();
+
+  // When AI panel opens: load context (optional, matches MVC)
+  useEffect(() => {
+    if (!showAIAssistant || !isAuthenticated) return;
+    let cancelled = false;
+    getChatContext(currentProjectIdForAi)
+      .then(() => { if (!cancelled) setChatError(null); })
+      .catch(() => { if (!cancelled) setChatError(null); }); // Context failure is non-blocking
+    return () => { cancelled = true; };
+  }, [showAIAssistant, isAuthenticated, currentProjectIdForAi]);
+
+  const formatRecordingTime = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStreamRef.current = stream;
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const audioFile = new File([audioBlob], `voice-recording-${Date.now()}.webm`, { type: 'audio/webm' });
+        setAttachedFiles((prev) => [...prev, audioFile]);
+        if (audioStreamRef.current) {
+          audioStreamRef.current.getTracks().forEach((track) => track.stop());
+          audioStreamRef.current = null;
+        }
+        setRecordingTime(0);
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+      setRecordingTime(0);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingTime((prev) => prev + 1);
+      }, 1000);
+    } catch (error) {
+      console.error('Error accessing microphone:', error);
+      toast.showError('Unable to access microphone. Please check your permissions.');
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      mediaRecorderRef.current = null;
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+    }
+  };
+
+  const handleVoiceClick = () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  };
+
+  const handleSendChatMessage = async () => {
+    if ((!chatInput.trim() && attachedFiles.length === 0) || chatSending || isRecording) return;
 
     const messageContent = chatInput.trim();
     const hasFiles = attachedFiles.length > 0;
-    
     let fullContent = messageContent;
     if (hasFiles) {
       const fileList = attachedFiles.map(f => `📎 ${f.name} (${(f.size / 1024).toFixed(2)} KB)`).join('\n');
-      fullContent = messageContent 
-        ? `${messageContent}\n\n${fileList}`
-        : `Files attached:\n${fileList}`;
+      fullContent = messageContent ? `${messageContent}\n\n${fileList}` : `Files attached:\n${fileList}`;
     }
 
     const userMessage: ChatMessage = {
@@ -1412,23 +1667,133 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
       content: fullContent,
       timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
     };
-
+    const filesToSend = hasFiles ? [...attachedFiles] : undefined;
     setChatMessages(prev => [...prev, userMessage]);
     setChatInput('');
     setAttachedFiles([]);
+    setChatError(null);
+    setChatSending(true);
 
-    // Simulate AI response
-    setTimeout(() => {
-      const aiResponse: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: messageContent 
-          ? `I understand you're asking about "${messageContent}".${hasFiles ? ' I can see you\'ve attached some files.' : ''} Let me help you with that.`
-          : `I can see you've attached ${attachedFiles.length} file(s). How can I help you with these files?`,
-        timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
-      };
-      setChatMessages(prev => [...prev, aiResponse]);
-    }, 1000);
+    const placeholderId = `ai-${Date.now()}`;
+    const placeholderMsg: ChatMessage = {
+      id: placeholderId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+    };
+    setChatMessages(prev => [...prev, { ...placeholderMsg, content: '…' }]);
+
+    try {
+      let sessionId = dmsSessionId;
+      if (!sessionId) {
+        const sessionRes = await createSession();
+        sessionId = getSessionIdFromResponse(sessionRes);
+        if (!sessionId) throw new Error('Could not create AI session.');
+        setDmsSessionId(sessionId);
+      }
+
+      const response = await sendDmsAiMessage(sessionId, messageContent || (hasFiles ? 'Files attached.' : ''), {
+        projectId: currentProjectIdForAi,
+        files: filesToSend,
+      });
+
+      const replyText = response.reply ?? response.response ?? response.message ?? response.content ?? 'No response received.';
+      setChatMessages(prev =>
+        prev.map(m => (m.id === placeholderId ? { ...m, content: replyText } : m))
+      );
+    } catch (err: any) {
+      const msg = err?.response?.data?.message ?? err?.message ?? 'Failed to send message.';
+      setChatMessages(prev =>
+        prev.map(m => (m.id === placeholderId ? { ...m, content: `Error: ${msg}` } : m))
+      );
+      setChatError(msg);
+      toast.showError(msg);
+    } finally {
+      setChatSending(false);
+    }
+  };
+
+  const handleNewChatSession = async () => {
+    setChatCreatingSession(true);
+    setChatError(null);
+    try {
+      const sessionRes = await createSession();
+      const sessionId = getSessionIdFromResponse(sessionRes);
+      if (!sessionId) throw new Error('Could not create AI session.');
+      setDmsSessionId(sessionId);
+      setChatMessages([
+        {
+          id: '1',
+          role: 'assistant',
+          content: "Hello! I'm your AI assistant. How can I help you with your documents today?",
+          timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
+        }
+      ]);
+      setChatInput('');
+      setAttachedFiles([]);
+      toast.showSuccess('New chat session started');
+    } catch (err: any) {
+      const msg = err?.response?.data?.message ?? err?.message ?? 'Failed to create session';
+      setChatError(msg);
+      toast.showError(msg);
+    } finally {
+      setChatCreatingSession(false);
+    }
+  };
+
+  const isViewableImage = (file: FileItem) =>
+    file.type === 'file' &&
+    file.fileData &&
+    typeof file.fileData === 'string' &&
+    (file.fileData.startsWith('http') || file.fileData.startsWith('data:')) &&
+    (file.mimeType?.startsWith('image/') || /\.(jpe?g|png|gif|webp|bmp)$/i.test(file.name || ''));
+
+  const openFileInNewTab = async (file: FileItem) => {
+    try {
+      if (isPdf(file)) {
+        if (hasDirectUrl(file) || (file.fileData && typeof file.fileData === 'string' && file.fileData.startsWith('data:'))) {
+          window.open(file.fileData as string, '_blank', 'noopener,noreferrer');
+        } else if (isUuid(file.id)) {
+          const blob = await documentAPI.downloadDocumentByUuid(file.id, file.name);
+          const blobUrl = URL.createObjectURL(blob);
+          window.open(blobUrl, '_blank', 'noopener,noreferrer');
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+        } else {
+          toast.showWarning(`File "${file.name}" cannot be opened`);
+        }
+      } else {
+        if (hasDirectUrl(file)) {
+          window.open(file.fileData as string, '_blank', 'noopener,noreferrer');
+        } else if (isUuid(file.id)) {
+          const blob = await documentAPI.downloadDocumentByUuid(file.id, file.name);
+          const blobUrl = URL.createObjectURL(blob);
+          window.open(blobUrl, '_blank', 'noopener,noreferrer');
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+        } else if (file.file) {
+          const blobUrl = URL.createObjectURL(file.file);
+          window.open(blobUrl, '_blank', 'noopener,noreferrer');
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+        } else if (file.fileData && file.mimeType) {
+          const blob = base64ToBlob(file.fileData, file.mimeType);
+          const blobUrl = URL.createObjectURL(blob);
+          window.open(blobUrl, '_blank', 'noopener,noreferrer');
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+        } else {
+          toast.showWarning(`File "${file.name}" cannot be opened`);
+        }
+      }
+    } catch (err: any) {
+      toast.showError(err?.message || `Failed to open ${file.name}`);
+    }
+  };
+
+  const handleOpenViewMode = async (file: FileItem) => {
+    if (file.type !== 'file') return;
+    if (isViewableImage(file)) {
+      setViewFile(file);
+    } else {
+      await openFileInNewTab(file);
+    }
   };
 
   const handleAttachClick = () => {
@@ -1450,12 +1815,79 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
     setAttachedFiles(prev => prev.filter((_, i) => i !== index));
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey && !isRecording) {
       e.preventDefault();
       handleSendChatMessage();
     }
   };
+
+  // Auto-scroll chat to most recent message when user sends or AI responds
+  const scrollChatToBottom = () => {
+    requestAnimationFrame(() => {
+      chatMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    });
+  };
+
+  useEffect(() => {
+    if (showAIAssistant) {
+      scrollChatToBottom();
+    }
+  }, [chatMessages, showAIAssistant]);
+
+  // AI panel resize: drag left edge to resize; hide sidebar when panel wide
+  const handleAiResizeStart = (e: React.MouseEvent) => {
+    e.preventDefault();
+    aiResizeStartRef.current = { x: e.clientX, w: aiPanelWidth };
+  };
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!aiResizeStartRef.current) return;
+      const delta = aiResizeStartRef.current.x - e.clientX;
+      const newW = Math.min(600, Math.max(280, aiResizeStartRef.current.w + delta));
+      aiResizeStartRef.current.w = newW; // keep ref updated for onUp
+      setAiPanelWidth(newW);
+    };
+    const onUp = () => {
+      if (aiResizeStartRef.current) {
+        if (aiResizeStartRef.current.w > 450 && typeof window !== 'undefined' && window.innerWidth >= 768) {
+          setSidebarOpen(false);
+        }
+        aiResizeStartRef.current = null;
+      }
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+  }, []);
+
+  useEffect(() => {
+    const check = () => setIsDesktop(typeof window !== 'undefined' && window.innerWidth >= 768);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Show toast when user selects file(s); avoid on clear
+  useEffect(() => {
+    const count = selectedFiles.size;
+    if (count > 0 && count > prevSelectedCountRef.current) {
+      toast.showInfo(`${count} item${count !== 1 ? 's' : ''} selected`);
+    }
+    prevSelectedCountRef.current = count;
+  }, [selectedFiles, toast]);
 
   // File selection handlers
   const toggleFileSelection = (fileId: string, e?: React.MouseEvent) => {
@@ -1487,76 +1919,93 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
       return;
     }
     
+    const fileCount = selectedFiles.size;
+    const isTrashView = currentPath[0] === 'trash';
     const filesToMove = documents.filter(doc => selectedFiles.has(doc.id));
-    const fileCount = filesToMove.length;
-    
-    // Check if any files have API path (blob_path from Azure/document API)
-    const apiFiles = filesToMove.filter(f => f.path && (f.path.includes('/') || f.path.length > 50));
-    
-    if (apiFiles.length > 0) {
-      // API-backed documents: call delete API
-      const confirmMsg = apiFiles.length === fileCount
-        ? `Are you sure you want to permanently delete ${fileCount} file(s)?`
-        : `Delete ${apiFiles.length} file(s) from storage and move ${fileCount - apiFiles.length} to trash?`;
-      
-      if (!window.confirm(confirmMsg)) return;
-      
-      try {
-        let successCount = 0;
-        for (const file of apiFiles) {
-          try {
-            const response = await documentAPI.deleteFile(file.path!);
-            if (response?.status) successCount++;
-          } catch (err) {
-            console.error(`Delete failed for ${file.name}:`, err);
-            toast.showError(`Failed to delete ${file.name}`);
-          }
-        }
-        if (successCount > 0) {
-          setDocuments(prev => prev.filter(doc => !selectedFiles.has(doc.id)));
-          setSelectedFiles(new Set());
+
+    // Not in trash: move to trash via API (soft delete; does not remove from Azure)
+    if (!isTrashView) {
+      const uuids = filesToMove.map(f => f.id).filter(Boolean);
+      const useApi = uuids.length > 0 && uuids.every(id => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
+      if (useApi) {
+        if (!window.confirm(`Move ${fileCount} item(s) to trash?`)) return;
+        try {
+          const res = await documentAPI.moveToTrash(uuids);
           await loadDocuments();
-          toast.showSuccess(`${successCount} file(s) deleted successfully`);
+          setSelectedFiles(new Set());
+          toast.showSuccess(res?.message || `${fileCount} item(s) moved to trash`);
+        } catch (err: any) {
+          toast.showError(err?.message || 'Failed to move to trash');
         }
-      } catch (err: any) {
-        toast.showError(err?.message || 'Failed to delete files');
+        return;
       }
-      return;
+      // API-sourced view (office or project) but ids are not UUIDs – do not remove from UI (would cause reappear bug)
+      const isApiSourcedView = currentPath[0] === 'office' || (currentPath[0] === 'projects' && currentPath.length > 1);
+      if (isApiSourcedView) {
+        toast.showWarning('Selected items cannot be moved to trash from this view. Try again or use a different folder.');
+        return;
+      }
     }
-    
-    // Local/legacy: move to trash
-    if (window.confirm(`Are you sure you want to move ${fileCount} file(s) to trash?`)) {
-      const savedTrash = localStorage.getItem('documents_trash');
-      let trashDocuments: FileItem[] = [];
-      if (savedTrash) {
-        try { trashDocuments = JSON.parse(savedTrash); } catch (e) { console.error('Error loading trash:', e); }
+
+    // Trash view or localStorage-only: move to trash (localStorage fallback)
+    if (!window.confirm(`Are you sure you want to move ${fileCount} file(s) to trash?`)) return;
+    const savedTrash = localStorage.getItem('documents_trash');
+    let trashDocuments: FileItem[] = [];
+    if (savedTrash) {
+      try {
+        trashDocuments = JSON.parse(savedTrash);
+      } catch (e) {
+        console.error('Error loading trash:', e);
       }
-      const currentFolderPath = getCurrentFolderPath();
-      const filesForTrash = filesToMove.map(file => ({
-        ...file,
-        path: 'trash',
-        originalPath: file.path || currentFolderPath,
-        lastModified: 'Just now',
-        deletedAt: new Date().toISOString()
-      }));
-      const trashToStore = [...trashDocuments, ...filesForTrash].map(doc => ({
-        id: doc.id, name: doc.name, size: doc.size, lastModified: doc.lastModified,
-        owner: doc.owner, type: doc.type, path: doc.path,
-        originalPath: (doc as any).originalPath, deletedAt: (doc as any).deletedAt,
-        fileData: (doc as any).fileData, mimeType: (doc as any).mimeType
-      }));
-      const saved = safeSetItem('documents_trash', JSON.stringify(trashToStore));
-      if (saved) {
-        setDocuments(prev => prev.filter(doc => !selectedFiles.has(doc.id)));
-        setSelectedFiles(new Set());
-        toast.showSuccess(`${fileCount} file(s) moved to trash`);
-      } else {
-        toast.showError('Failed to move files to trash. Storage may be full.');
-      }
+    }
+    const currentFolderPath = getCurrentFolderPath();
+    const filesForTrash = filesToMove.map(file => ({
+      ...file,
+      path: 'trash',
+      originalPath: file.path || currentFolderPath,
+      lastModified: 'Just now',
+      deletedAt: new Date().toISOString()
+    }));
+    const trashToStore = [...trashDocuments, ...filesForTrash].map(doc => ({
+      id: doc.id,
+      name: doc.name,
+      size: doc.size,
+      lastModified: doc.lastModified,
+      owner: doc.owner,
+      type: doc.type,
+      path: doc.path,
+      originalPath: (doc as any).originalPath,
+      deletedAt: (doc as any).deletedAt,
+      fileData: (doc as any).fileData,
+      mimeType: (doc as any).mimeType
+    }));
+    const saved = safeSetItem('documents_trash', JSON.stringify(trashToStore));
+    if (saved) {
+      setDocuments(prev => prev.filter(doc => !selectedFiles.has(doc.id)));
+      setSelectedFiles(new Set());
+      toast.showSuccess(`${fileCount} file(s) moved to trash`);
+    } else {
+      toast.showError('Failed to move files to trash. Storage may be full.');
     }
   };
 
-  const handleRestoreFiles = () => {
+  const handleUnshare = async () => {
+    if (selectedFiles.size === 0 || currentPath[0] !== 'shared') return;
+    const count = selectedFiles.size;
+    if (!window.confirm(`Unshare ${count} item(s)?`)) return;
+    try {
+      for (const id of selectedFiles) {
+        await documentAPI.unshareItem(id);
+      }
+      await loadDocuments();
+      setSelectedFiles(new Set());
+      toast.showSuccess(`${count} item(s) unshared`);
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to unshare');
+    }
+  };
+
+  const handleRestoreFiles = async () => {
     if (selectedFiles.size === 0) {
       toast.showWarning('Please select files to restore');
       return;
@@ -1564,10 +2013,24 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
     
     const filesToRestore = documents.filter(doc => selectedFiles.has(doc.id));
     const fileCount = filesToRestore.length;
-    
+    const uuids = filesToRestore.map(f => f.id);
+    const fromApi = currentPath[0] === 'trash' && uuids.every(id => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
+
+    if (fromApi) {
+      try {
+        const res = await documentAPI.restore(uuids);
+        await loadDocuments();
+        setSelectedFiles(new Set());
+        loadTrashCount();
+        toast.showSuccess(res?.message || `${fileCount} item(s) restored`);
+      } catch (err: any) {
+        toast.showError(err?.message || 'Failed to restore');
+      }
+      return;
+    }
+
     let restoreSuccess = true;
-    
-    // Restore each file to its original location
+    // Restore each file to its original location (localStorage)
     filesToRestore.forEach(file => {
       const originalPath = (file as any).originalPath || 'office';
       
@@ -1654,15 +2117,31 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
     }
   };
 
-  const handlePermanentDelete = () => {
+  const handlePermanentDelete = async () => {
     if (selectedFiles.size === 0) {
       toast.showWarning('Please select files to delete permanently');
       return;
     }
     
     const fileCount = selectedFiles.size;
+    const uuids = Array.from(selectedFiles);
+    const fromApi = currentPath[0] === 'trash' && uuids.every(id => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
+
+    if (fromApi && window.confirm(`Permanently delete ${fileCount} item(s)? This cannot be undone.`)) {
+      try {
+        const res = await documentAPI.permanentDelete(uuids);
+        await loadDocuments();
+        setSelectedFiles(new Set());
+        loadTrashCount();
+        toast.showSuccess(res?.message || `${fileCount} item(s) permanently deleted`);
+      } catch (err: any) {
+        toast.showError(err?.message || 'Failed to permanently delete');
+      }
+      return;
+    }
+
     if (window.confirm(`Are you sure you want to permanently delete ${fileCount} file(s)? This action cannot be undone.`)) {
-      // Remove from trash
+      // Remove from trash (localStorage)
       const savedTrash = localStorage.getItem('documents_trash');
       let trashDocuments: FileItem[] = [];
       if (savedTrash) {
@@ -1700,48 +2179,92 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
     }
   };
 
+  const isUuid = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+
+  const isPdf = (file: FileItem) =>
+    file.mimeType === 'application/pdf' || (file.name || '').toLowerCase().endsWith('.pdf');
+
+  const hasDirectUrl = (file: FileItem) =>
+    typeof file.fileData === 'string' && (file.fileData.startsWith('https') || file.fileData.startsWith('http'));
+
+  const triggerBlobDownload = (blob: Blob, fileName: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName || 'download';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const handleDownloadFiles = async () => {
     if (selectedFiles.size === 0) {
       toast.showWarning('Please select files to download');
       return;
     }
-    
-    const filesToDownload = documents.filter(doc => selectedFiles.has(doc.id)).filter(doc => doc.type === 'file');
-    
+
+    const filesToDownload = documents.filter(doc => selectedFiles.has(doc.id)).filter(doc => doc.type !== 'folder');
+    if (filesToDownload.length === 0) {
+      toast.showWarning('Select files to download (folders are skipped)');
+      return;
+    }
+
+    let successCount = 0;
     for (const file of filesToDownload) {
       try {
+        if (isPdf(file)) {
+          if (hasDirectUrl(file)) {
+            window.open(file.fileData as string, '_blank', 'noopener,noreferrer');
+            successCount += 1;
+          } else if (isUuid(file.id)) {
+            const blob = await documentAPI.downloadDocumentByUuid(file.id, file.name);
+            const blobUrl = URL.createObjectURL(blob);
+            window.open(blobUrl, '_blank', 'noopener,noreferrer');
+            setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+            successCount += 1;
+          } else {
+            toast.showWarning(`File "${file.name}" cannot be opened (no URL or ID)`);
+          }
+          continue;
+        }
+
         let blob: Blob;
-        
         if (file.file) {
           blob = file.file;
-        } else if (file.fileData && typeof file.fileData === 'string' && file.fileData.startsWith('http')) {
-          // Azure signed URL - fetch and create blob for download
-          const response = await fetch(file.fileData);
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          blob = await response.blob();
+        } else if (hasDirectUrl(file)) {
+          try {
+            const res = await fetch(file.fileData as string);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            blob = await res.blob();
+          } catch (directErr: any) {
+            if (isUuid(file.id)) {
+              blob = await documentAPI.downloadDocumentByUuid(file.id, file.name);
+            } else {
+              throw directErr;
+            }
+          }
+        } else if (isUuid(file.id)) {
+          blob = await documentAPI.downloadDocumentByUuid(file.id, file.name);
         } else if (file.fileData && file.mimeType) {
           blob = base64ToBlob(file.fileData, file.mimeType);
         } else {
           toast.showWarning(`File "${file.name}" data not found`);
           continue;
         }
-        
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = file.name;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-      } catch (error) {
+
+        triggerBlobDownload(blob, file.name || 'download');
+        successCount += 1;
+      } catch (error: any) {
         console.error(`Error downloading file ${file.name}:`, error);
-        toast.showError(`Failed to download ${file.name}`);
+        toast.showError(error?.message || `Failed to download ${file.name}`);
       }
     }
-    
-    if (filesToDownload.length > 0) {
-      toast.showSuccess(`${filesToDownload.length} file(s) download started`);
+
+    if (successCount > 0) {
+      toast.showSuccess(successCount === filesToDownload.length
+        ? `${successCount} file(s) download started`
+        : `${successCount} of ${filesToDownload.length} file(s) download started`);
     }
   };
 
@@ -1755,99 +2278,62 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
 
   const handleShareSubmit = async () => {
     const filesToShare = documents.filter(doc => selectedFiles.has(doc.id));
-    const firstSegment = currentPath[0];
-    let section = 'office';
-    let projectId: string | undefined;
-    if (firstSegment === 'projects' && currentPath.length > 1) {
-      section = 'project';
-      const seg = currentPath[1];
-      if (seg?.startsWith('project_')) projectId = seg.replace('project_', '');
-    } else if (firstSegment === 'shared') section = 'shared';
-
-    const items = filesToShare.map(doc => ({
-      type: doc.type as 'folder' | 'document',
-      uuid: doc.id,
-      name: doc.name,
-      section,
-      path: doc.path,
-      projectId,
-    }));
-
-    try {
-      if (shareMode === 'team') {
-        const memberIds = Array.from(selectedTeamMembers).map(id => parseInt(id, 10));
-        if (memberIds.length === 0) {
-          toast.showWarning('Please select at least one team member');
-          return;
-        }
-        const response = await documentAPI.shareItems({
-          items,
-          shared_with: memberIds,
-        });
-        if (response?.status) {
-          toast.showSuccess(response.message || `Shared with ${memberIds.length} team member(s)`);
-          setShowShareModal(false);
-          setSelectedTeamMembers(new Set());
-          setTeamMemberSearch('');
-          setIsSearchFocused(false);
-        } else {
-          toast.showError(response?.message || 'Failed to share');
-        }
-      } else {
-        const response = await documentAPI.shareItems({
-          items,
-          is_public: true,
-        });
-        if (response?.status && response?.data?.length > 0) {
-          const token = response.data[0]?.public_token;
-          const shareLink = token ? `${typeof window !== 'undefined' ? window.location.origin : ''}/shared/${token}` : '';
-          if (shareLink) {
-            await navigator.clipboard.writeText(shareLink);
-            toast.showSuccess('Public link copied to clipboard!');
-          } else {
-            toast.showSuccess(response.message || 'Public link created');
-          }
-          setShowShareModal(false);
-          setSelectedTeamMembers(new Set());
-          setTeamMemberSearch('');
-          setIsSearchFocused(false);
-        } else {
-          toast.showError(response?.message || 'Failed to create share link');
-        }
+    
+    if (shareMode === 'team') {
+      if (selectedTeamMembers.size === 0) {
+        toast.showError('Please select at least one team member');
+        return;
       }
-    } catch (err: any) {
-      toast.showError(err?.message || 'Failed to share');
+      const section = currentPath[0] || 'office';
+      let projectId: number | undefined;
+      if (section === 'project' && currentPath[1]) {
+        const projectIdStr = currentPath[1].replace('project_', '');
+        const project = projects.find(p => p.id === projectIdStr || String(p.id) === projectIdStr);
+        projectId = project?.numericId ?? (typeof project?.id === 'number' ? project.id : parseInt(projectIdStr, 10));
+      }
+      const items = filesToShare.map(f => ({
+        type: (f.type === 'folder' ? 'folder' : 'document') as 'folder' | 'document',
+        uuid: f.id,
+        name: f.name,
+        section,
+        path: f.path,
+        projectId: projectId != null ? String(projectId) : undefined,
+      }));
+      const shared_with = Array.from(selectedTeamMembers).map(Number);
+      try {
+        const res = await documentAPI.shareItems({ items, shared_with });
+        if (res?.status) {
+          toast.showSuccess(`Shared ${filesToShare.length} item(s) with ${shared_with.length} team member(s)`);
+          setShowShareModal(false);
+          setSelectedTeamMembers(new Set());
+          setTeamMemberSearch('');
+          setIsSearchFocused(false);
+          setSelectedFiles(new Set());
+          await loadDocuments();
+        } else {
+          toast.showError(res?.message || 'Share failed');
+        }
+      } catch (err: any) {
+        toast.showError(err?.message || 'Failed to share');
+      }
+      return;
     }
+    // Handle link sharing (no backend call)
+    const shareLink = `${window.location.origin}/share/${Date.now()}`;
+    navigator.clipboard.writeText(shareLink).then(() => {
+      toast.showSuccess('Share link copied to clipboard!');
+    });
+    setShowShareModal(false);
+    setSelectedTeamMembers(new Set());
+    setTeamMemberSearch('');
+    setIsSearchFocused(false);
   };
 
-  const [teamMembers, setTeamMembers] = useState<Array<{ id: string; name: string; email: string; avatar?: string }>>([]);
-  const [teamMembersLoading, setTeamMembersLoading] = useState(false);
-
-  useEffect(() => {
-    if (showShareModal) {
-      setTeamMembersLoading(true);
-      documentAPI.getTeamMembers()
-        .then((res: any) => {
-          if (res?.status && Array.isArray(res?.data)) {
-            setTeamMembers(res.data.map((u: any) => ({
-              id: String(u.id),
-              name: u.name || '',
-              email: u.email || '',
-              avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name || '')}&background=6366f1&color=fff`,
-            })));
-          } else {
-            setTeamMembers([]);
-          }
-        })
-        .catch(() => setTeamMembers([]))
-        .finally(() => setTeamMembersLoading(false));
-    }
-  }, [showShareModal]);
-
-  const filteredTeamMembers = teamMembers.filter(member =>
+  // Team members from API (GET /api/documents/team-members); filtered for search
+  const filteredTeamMembers = teamMembersList.filter(member =>
     member.name.toLowerCase().includes(teamMemberSearch.toLowerCase()) ||
     member.email.toLowerCase().includes(teamMemberSearch.toLowerCase())
-  );
+  ).map(m => ({ ...m, avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(m.name)}&background=6366f1&color=fff` }));
 
   const toggleTeamMember = (memberId: string) => {
     setSelectedTeamMembers(prev => {
@@ -1862,6 +2348,31 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
       return newSet;
     });
   };
+
+  // Load team members when Share modal opens (GET /api/documents/team-members)
+  useEffect(() => {
+    if (!showShareModal) return;
+    setTeamMembersLoading(true);
+    setTeamMembersError(null);
+    documentAPI.getTeamMembers()
+      .then((res: any) => {
+        if (res?.status && Array.isArray(res?.data)) {
+          setTeamMembersList(res.data.map((u: any) => ({
+            id: String(u.id),
+            name: u.name || '',
+            email: u.email || '',
+            role: u.role,
+          })));
+        } else {
+          setTeamMembersList([]);
+        }
+      })
+      .catch((err: any) => {
+        setTeamMembersError(err?.message || 'Failed to load team members');
+        setTeamMembersList([]);
+      })
+      .finally(() => setTeamMembersLoading(false));
+  }, [showShareModal]);
 
   // Auto-expand folders in current path
   useEffect(() => {
@@ -1906,16 +2417,14 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
             }}
             className={`w-full flex items-center gap-2 sm:gap-3 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${
               isSelected && !hasChildren
-                ? isDark
-                  ? 'bg-[#5a7a1e] text-white'
-                  : 'bg-[#6B8E23]/20 text-[#5a7a1e]'
+                ? 'bg-[#C2D642] text-white'
                 : isInCurrentPath
                   ? isDark
-                    ? 'bg-[#6B8E23]/20 text-[#6B8E23]'
-                    : 'bg-[#6B8E23]/10 text-[#6B8E23]'
+                    ? 'bg-[#C2D642]/20 text-[#C2D642]'
+                    : 'bg-[#C2D642]/10 text-[#C2D642]'
                   : isDark
-                    ? 'hover:bg-[#6B8E23]/20 text-[#6B8E23]'
-                    : 'hover:bg-[#6B8E23]/10 text-[#6B8E23]'
+                    ? 'hover:bg-[#C2D642]/20 text-[#C2D642]'
+                    : 'hover:bg-[#C2D642]/10 text-[#C2D642]'
             }`}
           >
             {hasChildren ? (
@@ -1930,7 +2439,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
               <span className="w-4 flex items-center justify-center flex-shrink-0" />
             )}
             <Folder className="w-4 h-4 flex-shrink-0" />
-            <span className="flex-1 text-left truncate">{node.name}</span>
+            <span className="flex-1 text-left truncate" title={node.name}>{node.name}</span>
           </button>
           {hasChildren && isExpanded && (
             <div className="mt-1">
@@ -1976,7 +2485,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
       )}
 
       {/* Left Sidebar */}
-      <div className={`fixed md:static inset-y-0 left-0 z-[101] md:z-auto w-full sm:w-80 md:w-64 border-r ${isDark ? 'bg-[#0a0a0a] md:bg-[#6B8E23]/10 border-[#6B8E23]/20' : 'bg-white md:bg-[#6B8E23]/5 border-[#6B8E23]/10'} flex flex-col transform transition-transform duration-300 ease-in-out shadow-xl md:shadow-none ${
+      <div className={`fixed md:static inset-y-0 left-0 z-[101] md:z-auto w-full sm:w-72 md:w-56 border-r ${isDark ? 'bg-[#0a0a0a] border-slate-700' : 'bg-white border-slate-200'} flex flex-col transform transition-transform duration-300 ease-in-out shadow-xl md:shadow-none ${
         sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
       }`}>
         {/* Mobile Close Button */}
@@ -1996,8 +2505,8 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
             const isExpanded = expandedFolders.has(item.id);
             const isSelected = currentPath[0] === item.id || (selectedFolder === item.id && currentPath.length === 1);
             const hasSubItems = item.subItems.length > 0;
-            // Check if base folders (office, shared) have subfolders
-            const folderTree = (item.id === 'office' || item.id === 'shared') ? getFolderTreeForPath(item.id) : [];
+            // Laravel: Office and Shared are single menu items (no dropdown/tree). Only Projects has expandable tree.
+            const folderTree = (item.id === 'office' || item.id === 'shared') ? [] : getFolderTreeForPath(item.id);
             const hasFolderTree = folderTree.length > 0;
             const shouldShowChevron = hasSubItems || hasFolderTree;
 
@@ -2005,8 +2514,13 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
               <div key={item.id}>
                 <button
                   onClick={() => {
+                    const isExpandingProjects = item.id === 'projects' && !isExpanded;
                     if (shouldShowChevron) {
                       toggleFolder(item.id);
+                    }
+                    // Call project-list API only once: when first expanding Project menu (not on collapse, not on re-expand)
+                    if (item.id === 'projects' && isExpandingProjects && projects.length === 0 && !projectsLoading) {
+                      loadProjects();
                     }
                     setCurrentPath([item.id]);
                     setSelectedFolder(item.id);
@@ -2015,18 +2529,19 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                       setSidebarOpen(false);
                     }
                   }}
-                  className={`w-full flex items-center gap-2 sm:gap-3 px-2 sm:px-3 py-2 sm:py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-all ${
-                    isSelected && !shouldShowChevron
-                      ? isDark
-                        ? 'bg-[#6B8E23] text-white'
-                        : 'bg-[#6B8E23]/10 text-[#6B8E23] border-l-4 border-orange-400'
-                      : isSelected
-                        ? isDark
-                          ? 'bg-[#6B8E23]/20 text-white'
-                          : 'bg-[#6B8E23]/10 text-[#6B8E23]'
-                        : isDark
-                          ? 'hover:bg-[#6B8E23]/20 text-[#6B8E23]'
-                          : 'hover:bg-[#6B8E23]/10 text-[#6B8E23]'
+                  className={`w-full flex items-center gap-2 sm:gap-3 px-2 sm:px-3 py-2 sm:py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-all duration-200 ${
+                    item.id === 'projects' || item.id === 'office'
+                      ? (isDark ? 'text-[#C2D642] hover:bg-[#C2D642]/20' : 'text-[#C2D642] hover:bg-[#C2D642]/10')
+                        + ' hover:scale-[1.02] hover:translate-x-0.5 origin-left'
+                      : isSelected && !shouldShowChevron
+                        ? 'bg-[#C2D642] text-white'
+                        : isSelected
+                          ? isDark
+                            ? 'bg-[#C2D642]/20 text-white'
+                            : 'bg-[#C2D642]/10 text-[#C2D642]'
+                          : isDark
+                            ? 'hover:bg-[#C2D642]/20 text-[#C2D642]'
+                            : 'hover:bg-[#C2D642]/10 text-[#C2D642]'
                   }`}
                 >
                   {shouldShowChevron && (
@@ -2041,12 +2556,28 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                   {!shouldShowChevron && <span className="w-4" />}
                   <Icon className="w-4 h-4" />
                   <span className="flex-1 text-left">{item.label}</span>
+                    {item.id === 'trash' && trashCount > 0 && (
+                    <span className="min-w-[1.25rem] h-5 px-1.5 flex items-center justify-center rounded-full text-xs font-bold bg-[#C2D642] text-white">
+                      {trashCount > 99 ? '99+' : trashCount}
+                    </span>
+                  )}
                 </button>
 
-                {/* Sub Items - Projects */}
+                {/* Sub Items - Projects (DMS Step 1: GET /api/project-list) */}
                 {hasSubItems && isExpanded && item.id === 'projects' && (
                   <div className="ml-3 sm:ml-4 mt-1 space-y-1">
-                    {item.subItems.map((subItem) => {
+                    {projectsLoading && (
+                      <div className={`px-2 sm:px-3 py-2 text-xs sm:text-sm ${textSecondary}`}>
+                        Loading projects...
+                      </div>
+                    )}
+                    {!projectsLoading && projectsError && (
+                      <div className={`px-2 sm:px-3 py-2 text-xs sm:text-sm ${isDark ? 'text-red-400' : 'text-red-600'}`}>
+                        <p className="mb-1">{projectsError}</p>
+                        <button type="button" onClick={() => loadProjects()} className="underline font-medium hover:no-underline">Retry</button>
+                      </div>
+                    )}
+                    {!projectsLoading && !projectsError && item.subItems.map((subItem) => {
                       const isSubSelected = currentPath[0] === subItem.id;
                       const projectFolderTree = getFolderTreeForPath(subItem.id);
                       const isProjectExpanded = expandedFolders.has(subItem.id);
@@ -2054,64 +2585,18 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                       return (
                         <div key={subItem.id}>
                           <button
-                            onClick={async () => {
-                              // Verify blob storage connection when clicking project
-                              const projectIdStr = subItem.id.replace('project_', '');
-                              const project = projects.find(p => p.id === projectIdStr || String(p.id) === projectIdStr);
-                              
-                              if (project && project.azure_folder_path && project.numericId) {
-                                // Verify blob storage connection
-                                if (!project.blobStorageConnected) {
-                                  console.log(`🔍 Verifying blob storage for project: ${project.name}`);
-                                  try {
-                                    const verifyResponse = await documentAPI.getDocuments({
-                                      category: 'project',
-                                      project_id: project.numericId,
-                                      folder_path: project.azure_folder_path,
-                                    });
-                                    
-                                    if (verifyResponse.status) {
-                                      console.log(`✅ Blob storage connected for project: ${project.name}`);
-                                      // Update project blob storage status
-                                      setProjects(prev => prev.map(p => 
-                                        p.id === project.id 
-                                          ? { ...p, blobStorageConnected: true, blobItemCount: verifyResponse.data?.length || 0 }
-                                          : p
-                                      ));
-                                    }
-                                  } catch (err: any) {
-                                    console.warn(`⚠️ Blob storage verification failed for project: ${project.name}`, err.message);
-                                    toast.showWarning(`Project "${project.name}" blob storage not accessible. Please check Azure configuration.`);
-                                  }
-                                } else {
-                                  console.log(`✅ Project "${project.name}" already connected to blob storage (${project.blobItemCount || 0} items)`);
-                                }
-                              } else if (project && !project.azure_folder_path) {
-                                toast.showWarning(`Project "${project.name}" does not have an Azure folder path configured.`);
-                              }
-                              
+                            onClick={() => {
                               toggleFolder(subItem.id);
                               setCurrentPath(['projects', subItem.id]);
                               setSelectedFolder(subItem.id);
-                              // Close sidebar on mobile after selection
                               if (window.innerWidth < 768) {
                                 setSidebarOpen(false);
                               }
                             }}
-                            className={`w-full flex items-center gap-2 sm:gap-3 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${
-                              isSubSelected && currentPath.length === 1
-                                ? isDark
-                                  ? 'bg-[#5a7a1e] text-white'
-                                  : 'bg-[#6B8E23]/20 text-[#5a7a1e]'
-                                : currentPath[0] === subItem.id || currentPath[1] === subItem.id
-                                  ? isDark
-                                    ? 'bg-[#6B8E23]/20 text-[#6B8E23]'
-                                    : 'bg-[#6B8E23]/10 text-[#6B8E23]'
-                                  : isDark
-                                    ? 'hover:bg-[#6B8E23]/20 text-[#6B8E23]'
-                                    : 'hover:bg-[#6B8E23]/10 text-[#6B8E23]'
-                            }`}
-                            title={subItem.blobStorageConnected === false ? `Blob storage not connected - ${subItem.azure_folder_path || 'No Azure path'}` : subItem.blobStorageConnected ? `Blob storage connected (${subItem.blobItemCount || 0} items)` : 'Checking blob storage...'}
+                            className={`w-full flex items-center gap-2 sm:gap-3 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-bold transition-all duration-200 origin-left ${
+                              isDark ? 'text-[#C2D642] hover:bg-[#C2D642]/20' : 'text-[#C2D642] hover:bg-[#C2D642]/10'
+                            } hover:scale-[1.02] hover:translate-x-0.5`}
+                            title={subItem.blobStorageConnected === false ? (subItem.blobError || 'Azure path not configured') : subItem.blobStorageConnected ? 'Azure path configured' : 'Checking...'}
                           >
                             {projectFolderTree.length > 0 && (
                               <span className="w-4 flex items-center justify-center flex-shrink-0">
@@ -2124,7 +2609,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                             )}
                             {projectFolderTree.length === 0 && <span className="w-4" />}
                             <Briefcase className="w-4 h-4 flex-shrink-0" />
-                            <span className="flex-1 text-left truncate">{subItem.label}</span>
+                            <span className="flex-1 text-left truncate" title={subItem.label}>{subItem.label}</span>
                             {/* Blob storage connection indicator */}
                             {subItem.blobStorageConnected === true && (
                               <span title={`Blob storage connected (${subItem.blobItemCount || 0} items)`}>
@@ -2147,13 +2632,6 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                     })}
                   </div>
                 )}
-                
-                {/* Folder Tree for Office and Shared */}
-                {!hasSubItems && isExpanded && (item.id === 'office' || item.id === 'shared') && (
-                  <div className="ml-3 sm:ml-4 mt-1">
-                    {renderFolderTree(getFolderTreeForPath(item.id), item.id, 0)}
-                  </div>
-                )}
               </div>
             );
           })}
@@ -2161,36 +2639,37 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <div className={`p-3 md:p-4 border-b ${isDark ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-white'} flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4`}>
-          {/* Search Bar */}
-          <div className="flex-1 relative flex items-center gap-2">
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Page Header - aligned with masters */}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-3 md:px-4 py-3 flex-shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`p-2.5 sm:p-3 rounded-xl flex-shrink-0 ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
+              <FolderOpen className="w-5 h-5 sm:w-6 sm:h-6 text-[#C2D642]" />
+            </div>
+            <div className="min-w-0">
+              <h1 className={`text-lg sm:text-xl font-black tracking-tight truncate ${textPrimary}`}>Document Management</h1>
+              <p className={`text-[10px] sm:text-[11px] font-bold uppercase tracking-widest ${textSecondary}`}>
+                Manage and organize your files
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Actions Bar */}
+        <div className={`px-3 md:px-4 pb-2 flex-shrink-0`}>
+          <div className={`p-2 sm:p-3 rounded-xl border ${cardClass} flex flex-wrap items-center justify-between gap-2`}>
             <button
               onClick={() => setSidebarOpen(true)}
               className="md:hidden p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 flex-shrink-0"
             >
               <Menu className={`w-5 h-5 ${textSecondary}`} />
             </button>
-            <div className="flex-1 relative">
-              <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search documents, folders..."
-                className={`w-full pl-10 pr-4 py-2 rounded-lg text-xs sm:text-sm font-bold ${isDark ? 'bg-slate-700 border-slate-600 text-slate-100' : 'bg-slate-50 border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-              />
-            </div>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap ml-auto">
             <button
               onClick={() => setViewMode('grid')}
               className={`p-1.5 sm:p-2 rounded-lg transition-colors flex-shrink-0 ${
                 viewMode === 'grid'
-                  ? isDark ? 'bg-[#6B8E23] text-white' : 'bg-[#6B8E23]/10 text-[#6B8E23]'
+                  ? 'bg-[#C2D642] text-white'
                   : isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'
               }`}
               title="Grid view"
@@ -2201,7 +2680,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
               onClick={() => setViewMode('list')}
               className={`p-1.5 sm:p-2 rounded-lg transition-colors flex-shrink-0 ${
                 viewMode === 'list'
-                  ? isDark ? 'bg-[#6B8E23] text-white' : 'bg-[#6B8E23]/10 text-[#6B8E23]'
+                  ? 'bg-[#C2D642] text-white'
                   : isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'
               }`}
               title="List view"
@@ -2215,11 +2694,11 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
             >
               <RefreshCw className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${textSecondary}`} />
             </button>
-            {currentPath[0] !== 'image-gallery' && (
+            {(currentPath[0] === 'office' || (currentPath[0] === 'projects' && currentPath.length > 1)) && (
               <div className="relative new-dropdown">
                 <button
                   onClick={() => setShowNewDropdown(!showNewDropdown)}
-                  className={`new-button flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md`}
+                  className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all bg-[#C2D642] hover:bg-[#A8B838] text-white shadow-md border-2 border-[#A8B838]`}
                 >
                   <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> <span className="hidden sm:inline">New</span>
                 </button>
@@ -2238,7 +2717,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                         <FolderPlus className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
                         Create Folder
                       </button>
-                      {currentPath[0] !== 'shared' && (
+                      {((currentPath[0] as string) !== 'shared') && (
                         <button
                           onClick={handleUploadFiles}
                           className={`w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-bold transition-colors text-left ${
@@ -2263,74 +2742,79 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
             )}
             <button
               onClick={() => setShowAIAssistant(!showAIAssistant)}
-              className={`p-1.5 sm:p-2 rounded-lg transition-colors flex-shrink-0 ${
+              className={`p-1.5 sm:p-2 rounded-lg border transition-colors flex-shrink-0 ${
                 showAIAssistant
-                  ? isDark ? 'bg-[#6B8E23] text-white' : 'bg-[#6B8E23]/10 text-[#6B8E23]'
-                  : isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'
+                  ? 'bg-[#C2D642] border-[#C2D642] text-white'
+                  : `border-[#C2D642]/60 ${isDark ? 'hover:bg-slate-700 text-[#C2D642]' : 'hover:bg-slate-100 text-[#C2D642]'}`
               }`}
               title="AI Assistant"
             >
-              <MessageCircle className={`w-3.5 h-3.5 sm:w-4 sm:h-4`} />
+              <BotMessageSquare className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             </button>
+            </div>
           </div>
         </div>
 
         {/* Breadcrumb Navigation */}
-        {currentPath.length > 1 && (
-          <div className={`px-3 md:px-4 py-2 border-b ${isDark ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-white'}`}>
-            <div className="flex items-center gap-1 sm:gap-2 flex-wrap">
-              {currentPath.map((pathSegment, index) => {
-                const isLast = index === currentPath.length - 1;
-                // Extract folder name from path segment
-                let segmentLabel = '';
-                if (index === 0) {
-                  // Check if it's a project
-                  if (pathSegment.startsWith('project_')) {
-                    const projectId = pathSegment.replace('project_', '');
-                    const project = projects.find(p => p.id === projectId);
-                    segmentLabel = project?.name || pathSegment;
-                  } else {
-                    const sidebarItem = sidebarItems.find(item => item.id === pathSegment);
-                    segmentLabel = sidebarItem?.label || pathSegment;
-                  }
+        <div className={`px-3 md:px-4 py-2 flex-shrink-0 border-b ${isDark ? 'border-slate-700/50' : 'border-slate-200/80'}`}>
+          <div className="flex items-center gap-1 sm:gap-2 flex-wrap">
+            {currentPath.map((pathSegment, index) => {
+              const isLast = index === currentPath.length - 1;
+              let segmentLabel = '';
+              if (index === 0) {
+                if (pathSegment.startsWith('project_')) {
+                  const projectId = pathSegment.replace('project_', '');
+                  const project = projects.find(p => p.id === projectId);
+                  segmentLabel = project?.name || pathSegment;
                 } else {
-                  // Extract folder name from ID (format: "path/to/folderName_timestamp")
-                  const parts = pathSegment.split('/');
-                  const lastPart = parts[parts.length - 1];
-                  // Remove timestamp from folder name
-                  const nameParts = lastPart.split('_');
-                  // Join all parts except the last one (timestamp)
-                  segmentLabel = nameParts.slice(0, -1).join('_') || lastPart;
+                  const sidebarItem = sidebarItems.find(item => item.id === pathSegment);
+                  segmentLabel = sidebarItem?.label || pathSegment;
                 }
-                
-                return (
-                  <React.Fragment key={index}>
-                    {index > 0 && (
-                      <ChevronRight className={`w-3 h-3 sm:w-4 sm:h-4 ${textSecondary}`} />
-                    )}
-                    <button
-                      onClick={() => !isLast && navigateToPath(index)}
-                      className={`text-xs sm:text-sm font-bold transition-colors ${
-                        isLast
-                          ? `${textPrimary} cursor-default`
-                          : `${textSecondary} hover:text-[#6B8E23] cursor-pointer`
-                      }`}
-                      disabled={isLast}
-                    >
-                      {segmentLabel}
-                    </button>
-                  </React.Fragment>
-                );
-              })}
-            </div>
+              } else {
+                // Project segment (e.g. project_123): always resolve from projects so we show "TowerD" not "project"
+                if (pathSegment.startsWith('project_')) {
+                  const projectId = pathSegment.replace('project_', '');
+                  const project = projects.find(p => p.id === projectId || String(p.id) === projectId);
+                  segmentLabel = project?.name || pathSegment;
+                } else {
+                  // Prefer stored folder name (from API or navigateToFolder); never show raw UUID/path
+                  segmentLabel = folderDisplayNames[pathSegment];
+                  if (!segmentLabel) {
+                    const parts = pathSegment.split('/');
+                    const lastPart = parts[parts.length - 1];
+                    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(lastPart);
+                    segmentLabel = isUuid ? 'Folder' : lastPart;
+                  }
+                }
+              }
+
+              return (
+                <React.Fragment key={index}>
+                  {index > 0 && (
+                    <ChevronRight className={`w-3 h-3 sm:w-4 sm:h-4 ${textSecondary}`} />
+                  )}
+                  <button
+                    onClick={() => !isLast && navigateToPath(index)}
+                    className={`text-xs sm:text-sm font-bold transition-colors ${
+                      isLast
+                        ? `${textPrimary} cursor-default`
+                        : `${textSecondary} hover:text-[#C2D642] cursor-pointer`
+                    }`}
+                    disabled={isLast}
+                  >
+                    {segmentLabel}
+                  </button>
+                </React.Fragment>
+              );
+            })}
           </div>
-        )}
+        </div>
 
         {/* Content Area */}
-        <div className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6 pb-8 sm:pb-10 md:pb-6 custom-scrollbar">
           {/* Image Gallery Filters */}
           {currentPath[0] === 'image-gallery' && (
-            <div className={`mb-6 p-4 sm:p-6 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+            <div className={`mb-6 p-4 sm:p-6 rounded-xl border ${cardClass}`}>
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 mb-4">
                 {/* Search by Name */}
                 <div className="flex-1 w-full sm:w-auto">
@@ -2342,7 +2826,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                     value={imageSearchName}
                     onChange={(e) => setImageSearchName(e.target.value)}
                     placeholder="Enter image name..."
-                    className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-slate-300 text-slate-900 placeholder-slate-500'} focus:outline-none focus:ring-2 focus:ring-[#6B8E23] focus:border-transparent`}
+                    className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' : 'bg-white border-slate-300 text-slate-900 placeholder-slate-500'} focus:outline-none focus:ring-2 focus:ring-[#C2D642] focus:border-transparent`}
                   />
                 </div>
 
@@ -2355,7 +2839,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                     onClick={() => {
                       setShowProjectDropdown(!showProjectDropdown);
                     }}
-                    className={`w-full px-4 py-2 rounded-lg border flex items-center justify-between ${isDark ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'} hover:border-[#6B8E23] transition-colors`}
+                    className={`w-full px-4 py-2 rounded-lg border flex items-center justify-between ${isDark ? 'bg-slate-700 border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'} hover:border-[#C2D642] transition-colors`}
                   >
                     <span className="text-sm font-bold">
                       {selectedProjectFilter === 'all' 
@@ -2373,7 +2857,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                         }}
                         className={`w-full px-4 py-2 text-left text-sm font-bold transition-colors ${
                           selectedProjectFilter === 'all'
-                            ? isDark ? 'bg-[#6B8E23] text-white' : 'bg-[#6B8E23]/10 text-[#6B8E23]'
+                            ? isDark ? 'bg-[#C2D642] text-white' : 'bg-[#C2D642]/10 text-[#C2D642]'
                             : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                         }`}
                       >
@@ -2388,7 +2872,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                           }}
                           className={`w-full px-4 py-2 text-left text-sm font-bold transition-colors ${
                             selectedProjectFilter === `project_${project.id}`
-                              ? isDark ? 'bg-[#6B8E23] text-white' : 'bg-[#6B8E23]/10 text-[#6B8E23]'
+                              ? isDark ? 'bg-[#C2D642] text-white' : 'bg-[#C2D642]/10 text-[#C2D642]'
                               : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                           }`}
                         >
@@ -2399,38 +2883,6 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                   )}
                 </div>
 
-                {/* Action Buttons */}
-                <div className="flex items-end gap-3 w-full sm:w-auto">
-                  <button
-                    onClick={() => {
-                      // Filters are applied automatically via filteredFiles
-                      toast.showInfo('Filters applied');
-                    }}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-colors ${
-                      isDark 
-                        ? 'bg-blue-600 hover:bg-blue-500 text-white' 
-                        : 'bg-blue-500 hover:bg-blue-600 text-white'
-                    }`}
-                  >
-                    <Filter className="w-4 h-4" />
-                    Apply Filters
-                  </button>
-                  <button
-                    onClick={() => {
-                      setImageSearchName('');
-                      setSelectedProjectFilter('all');
-                      toast.showInfo('Filters cleared');
-                    }}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-colors ${
-                      isDark 
-                        ? 'bg-slate-700 hover:bg-slate-600 text-white' 
-                        : 'bg-slate-600 hover:bg-slate-700 text-white'
-                    }`}
-                  >
-                    <X className="w-4 h-4" />
-                    Clear
-                  </button>
-                </div>
               </div>
 
               {/* Results Count */}
@@ -2440,43 +2892,41 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
             </div>
           )}
 
-          {/* Current Directory & Tip */}
+          {/* Current Directory */}
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
             <div className="flex items-center gap-2">
               <span className={`px-3 sm:px-4 py-1 sm:py-1.5 rounded-full text-xs sm:text-sm font-bold ${isDark ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-700'}`}>
                 {getCurrentFolderLabel()}
               </span>
             </div>
-            <div className="flex items-center gap-2 hidden lg:flex">
-              <Info className={`w-4 h-4 ${textSecondary}`} />
-              <p className={`text-xs font-bold ${textSecondary}`}>
-                Tip: Hold <strong>Ctrl</strong> to select multiple items, <strong>Shift</strong> for range, or press <strong>Ctrl+A</strong> to select all
-              </p>
-            </div>
           </div>
 
-          {/* Files List */}
+          {/* DMS Step 2: Loading / Error for GET /api/documents (Office content) */}
+          {currentPath[0] !== 'image-gallery' && documentsLoading && (
+            <div className={`flex flex-col items-center justify-center py-12 sm:py-16 rounded-xl border ${cardClass}`}>
+              <div className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center mb-4 border-2 ${isDark ? 'border-[#C2D642]/50' : 'border-[#C2D642]/40'}`}>
+                <RefreshCw className={`w-10 h-10 sm:w-12 sm:h-12 animate-spin ${textSecondary}`} />
+              </div>
+              <p className={`text-sm font-bold ${textSecondary}`}>Loading folders and files...</p>
+            </div>
+          )}
+          {currentPath[0] !== 'image-gallery' && !documentsLoading && documentsError && (
+            <div className={`flex flex-col items-center justify-center py-12 sm:py-16 rounded-xl border ${cardClass}`}>
+              <p className={`text-sm font-bold mb-2 ${isDark ? 'text-red-400' : 'text-red-600'}`}>{documentsError}</p>
+              <button type="button" onClick={() => loadDocuments()} className="mt-2 px-4 py-2 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#A8B838] text-white">Retry</button>
+            </div>
+          )}
+
+          {/* Files List (when not loading and no error, or image-gallery) */}
+          {(currentPath[0] === 'image-gallery' || (!documentsLoading && !documentsError)) && (
+          <>
           {viewMode === 'list' ? (
-            <div className={`rounded-lg border overflow-hidden ${isDark ? 'border-slate-700 bg-slate-800' : 'border-slate-200 bg-white'}`}>
+            <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[600px]">
                   <thead className={isDark ? 'bg-slate-700/50' : 'bg-slate-50'}>
                     <tr>
-                      <th className={`px-3 sm:px-4 md:px-6 py-2 sm:py-3 text-left text-[10px] sm:text-xs font-black uppercase tracking-wider ${textSecondary} w-12`}>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if (selectedFiles.size === filteredFiles.length) {
-                              clearSelection();
-                            } else {
-                              selectAllFiles();
-                            }
-                          }}
-                          className="p-1 rounded hover:bg-black/5 dark:hover:bg-white/5 transition-colors"
-                        >
-                          <Check className={`w-4 h-4 ${selectedFiles.size === filteredFiles.length && filteredFiles.length > 0 ? 'text-[#6B8E23]' : textSecondary}`} />
-                        </button>
-                      </th>
+                      <th className={`px-3 sm:px-4 md:px-6 py-2 sm:py-3 w-12`} />
                       <th className={`px-3 sm:px-4 md:px-6 py-2 sm:py-3 text-left text-[10px] sm:text-xs font-black uppercase tracking-wider ${textSecondary}`}>Name</th>
                       <th className={`px-3 sm:px-4 md:px-6 py-2 sm:py-3 text-left text-[10px] sm:text-xs font-black uppercase tracking-wider ${textSecondary} hidden sm:table-cell`}>Size</th>
                       <th className={`px-3 sm:px-4 md:px-6 py-2 sm:py-3 text-left text-[10px] sm:text-xs font-black uppercase tracking-wider ${textSecondary} hidden md:table-cell`}>Last Modified</th>
@@ -2501,6 +2951,9 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                               toggleFileSelection(file.id);
                             }
                           }}
+                          onDoubleClick={() => {
+                            if (file.type === 'file') handleOpenViewMode(file);
+                          }}
                           className={`${isSelected ? (isDark ? 'bg-indigo-500/20' : 'bg-indigo-100') : ''} ${isDark ? 'hover:bg-slate-700/30' : 'hover:bg-slate-50/50'} transition-colors cursor-pointer`}
                         >
                           <td className={`px-3 sm:px-4 md:px-6 py-3 sm:py-4`} onClick={(e) => e.stopPropagation()}>
@@ -2508,25 +2961,27 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                               onClick={(e) => toggleFileSelection(file.id, e)}
                               className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
                                 isSelected
-                                  ? 'bg-[#6B8E23] border-[#6B8E23]'
+                                  ? 'bg-[#C2D642] border-[#C2D642]'
                                   : isDark
-                                    ? 'border-slate-600 hover:border-[#6B8E23]'
-                                    : 'border-slate-300 hover:border-[#6B8E23]'
+                                    ? 'border-slate-600 hover:border-[#C2D642]'
+                                    : 'border-slate-300 hover:border-[#C2D642]'
                               }`}
                             >
                               {isSelected && <Check className="w-3 h-3 text-white" />}
                             </button>
                           </td>
                           <td className={`px-3 sm:px-4 md:px-6 py-3 sm:py-4 flex items-center gap-2 sm:gap-3`}>
-                            <div className={`w-6 h-6 sm:w-8 sm:h-8 rounded flex items-center justify-center flex-shrink-0 ${isDark ? 'bg-[#6B8E23]/20' : 'bg-[#6B8E23]/10'}`}>
+                            <div className={`w-6 h-6 sm:w-8 sm:h-8 rounded flex items-center justify-center flex-shrink-0 overflow-hidden ${isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/10'}`}>
                               {file.type === 'folder' ? (
-                                <Folder className={`w-4 h-4 sm:w-5 sm:h-5 ${isDark ? 'text-[#6B8E23]' : 'text-[#6B8E23]'}`} />
+                                <Folder className={`w-4 h-4 sm:w-5 sm:h-5 ${isDark ? 'text-[#C2D642]' : 'text-[#C2D642]'}`} />
+                              ) : currentPath[0] === 'image-gallery' && file.fileData && typeof file.fileData === 'string' && (file.fileData.startsWith('http') || file.fileData.startsWith('data:')) && (file.mimeType?.startsWith('image/') || /\.(jpe?g|png|gif|webp|bmp)$/i.test(file.name)) ? (
+                                <img src={file.fileData} alt={file.name} className="w-full h-full object-contain" loading="lazy" />
                               ) : (
-                                <FileText className={`w-4 h-4 sm:w-5 sm:h-5 ${isDark ? 'text-[#6B8E23]' : 'text-[#6B8E23]'}`} />
+                                <FileText className={`w-4 h-4 sm:w-5 sm:h-5 ${isDark ? 'text-[#C2D642]' : 'text-[#C2D642]'}`} />
                               )}
                             </div>
                             <div className="min-w-0 flex-1">
-                              <span className={`text-xs sm:text-sm font-bold ${textPrimary} block truncate`}>{file.name}</span>
+                              <span className={`text-xs sm:text-sm font-bold ${textPrimary} block truncate`} title={file.name}>{file.name}</span>
                               <span className={`text-[10px] sm:text-xs font-bold ${textSecondary} sm:hidden`}>{file.size}</span>
                             </div>
                           </td>
@@ -2559,6 +3014,9 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                         toggleFileSelection(file.id);
                       }
                     }}
+                    onDoubleClick={() => {
+                      if (file.type === 'file') handleOpenViewMode(file);
+                    }}
                     className={`p-2 sm:p-3 md:p-4 rounded-lg border cursor-pointer transition-all relative ${
                       isSelected
                         ? isDark
@@ -2570,18 +3028,20 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                     } hover:shadow-md`}
                   >
                     {isSelected && (
-                      <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-[#6B8E23] flex items-center justify-center">
+                      <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-[#C2D642] flex items-center justify-center">
                         <Check className="w-3 h-3 text-white" />
                       </div>
                     )}
-                    <div className={`w-full h-16 sm:h-20 md:h-24 rounded-lg flex items-center justify-center mb-2 sm:mb-3 ${isDark ? 'bg-[#6B8E23]/20' : 'bg-[#6B8E23]/10'}`}>
+                    <div className={`w-full h-16 sm:h-20 md:h-24 rounded-lg flex items-center justify-center mb-2 sm:mb-3 overflow-hidden ${isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/10'}`}>
                       {file.type === 'folder' ? (
-                        <Folder className={`w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 ${isDark ? 'text-[#6B8E23]' : 'text-[#6B8E23]'}`} />
+                        <Folder className={`w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 ${isDark ? 'text-[#C2D642]' : 'text-[#C2D642]'}`} />
+                      ) : currentPath[0] === 'image-gallery' && file.fileData && typeof file.fileData === 'string' && (file.fileData.startsWith('http') || file.fileData.startsWith('data:')) && (file.mimeType?.startsWith('image/') || /\.(jpe?g|png|gif|webp|bmp)$/i.test(file.name)) ? (
+                        <img src={file.fileData} alt={file.name} className="w-full h-full object-contain" loading="lazy" />
                       ) : (
-                        <FileText className={`w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 ${isDark ? 'text-[#6B8E23]' : 'text-[#6B8E23]'}`} />
+                        <FileText className={`w-8 h-8 sm:w-10 sm:h-10 md:w-12 md:h-12 ${isDark ? 'text-[#C2D642]' : 'text-[#C2D642]'}`} />
                       )}
                     </div>
-                    <p className={`text-xs sm:text-sm font-bold ${textPrimary} truncate mb-1`}>{file.name}</p>
+                    <p className={`text-xs sm:text-sm font-bold ${textPrimary} truncate mb-1`} title={file.name}>{file.name}</p>
                     <p className={`text-[10px] sm:text-xs font-bold ${textSecondary}`}>{file.size}</p>
                   </div>
                 );
@@ -2590,6 +3050,11 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
           )}
 
           {filteredFiles.length === 0 && (
+            currentPath[0] === 'trash' ? (
+              <div className={`p-6 sm:p-8 rounded-lg text-center ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                <p className="text-sm font-bold">Trash is empty</p>
+              </div>
+            ) : (
             <div
               ref={dropZoneRef}
               onDragEnter={currentPath[0] !== 'shared' && currentPath[0] !== 'image-gallery' ? handleDragEnter : undefined}
@@ -2601,11 +3066,11 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
               } ${
                 isDragging && currentPath[0] !== 'shared' && currentPath[0] !== 'image-gallery'
                   ? isDark
-                    ? 'border-[#6B8E23] bg-[#6B8E23]/10'
-                    : 'border-[#6B8E23] bg-[#6B8E23]/10'
+                    ? 'border-[#C2D642] bg-[#C2D642]/10'
+                    : 'border-[#C2D642] bg-[#C2D642]/10'
                   : isDark
-                    ? 'border-slate-700 bg-slate-800 hover:border-[#6B8E23]/50'
-                    : 'border-slate-200 bg-white hover:border-[#6B8E23]/30'
+                    ? 'border-slate-700 bg-slate-800 hover:border-[#C2D642]/50'
+                    : 'border-slate-200 bg-white hover:border-[#C2D642]/30'
               }`}
               onClick={() => {
                 if (!isDragging && currentPath[0] !== 'shared' && currentPath[0] !== 'image-gallery') {
@@ -2615,11 +3080,11 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
             >
               <div className={`w-16 h-16 sm:w-20 sm:h-20 mx-auto mb-3 sm:mb-4 rounded-full flex items-center justify-center ${
                 isDragging && currentPath[0] !== 'shared' && currentPath[0] !== 'image-gallery'
-                  ? isDark ? 'bg-[#6B8E23]/20' : 'bg-[#6B8E23]/10'
+                  ? isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/10'
                   : isDark ? 'bg-slate-700/50' : 'bg-slate-100'
               }`}>
                 {isDragging && currentPath[0] !== 'shared' && currentPath[0] !== 'image-gallery' ? (
-                  <Upload className={`w-8 h-8 sm:w-10 sm:h-10 ${isDark ? 'text-[#6B8E23]' : 'text-[#6B8E23]'}`} />
+                  <Upload className={`w-8 h-8 sm:w-10 sm:h-10 ${isDark ? 'text-[#C2D642]' : 'text-[#C2D642]'}`} />
                 ) : (
                   <Folder className={`w-8 h-8 sm:w-10 sm:h-10 ${textSecondary} opacity-50`} />
                 )}
@@ -2646,8 +3111,8 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                   }}
                   className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                     isDark
-                      ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
-                      : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                      ? 'bg-[#C2D642] hover:bg-[#A8B838] text-white'
+                      : 'bg-[#C2D642] hover:bg-[#A8B838] text-white'
                   } shadow-md`}
                 >
                   <Upload className="w-4 h-4" />
@@ -2655,9 +3120,35 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                 </button>
               )}
             </div>
+            )
+          )}
+          </>
           )}
         </div>
       </div>
+
+      {/* View File Modal */}
+      {viewFile && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[120] p-4" onClick={() => setViewFile(null)}>
+          <div className={`w-full max-w-4xl max-h-[90vh] rounded-xl border overflow-hidden flex flex-col ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'} shadow-2xl`} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-3 sm:p-4 border-b shrink-0 border-inherit">
+              <h3 className={`text-sm sm:text-base font-bold truncate flex-1 min-w-0 ${textPrimary}`} title={viewFile.name}>{viewFile.name}</h3>
+              <button
+                onClick={() => setViewFile(null)}
+                className={`ml-2 p-1.5 rounded-lg flex-shrink-0 transition-colors ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}
+                title="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto p-4 flex items-center justify-center min-h-[200px]">
+              {viewFile.fileData && (
+                <img src={viewFile.fileData} alt={viewFile.name} className="max-w-full max-h-[70vh] w-auto h-auto object-contain" />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Share Modal */}
       {showShareModal && (
@@ -2677,9 +3168,9 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                   setSelectedTeamMembers(new Set());
                   setTeamMemberSearch('');
                 }}
-                className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${isDark ? 'bg-[#6B8E23]/20 hover:bg-[#6B8E23]/30' : 'bg-[#6B8E23]/10 hover:bg-[#6B8E23]/20'}`}
+                className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${isDark ? 'bg-[#C2D642]/20 hover:bg-[#C2D642]/30' : 'bg-[#C2D642]/10 hover:bg-[#C2D642]/20'}`}
               >
-                <X className={`w-4 h-4 ${isDark ? 'text-[#6B8E23]' : 'text-[#5a7a1e]'}`} />
+                <X className={`w-4 h-4 ${isDark ? 'text-[#C2D642]' : 'text-[#A8B838]'}`} />
               </button>
             </div>
 
@@ -2746,21 +3237,21 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                   {selectedTeamMembers.size > 0 && (
                     <div className="flex flex-wrap gap-2 pb-2">
                       {Array.from(selectedTeamMembers).map((memberId) => {
-                        const member = teamMembers.find(m => m.id === memberId);
+                        const member = teamMembersList.find(m => m.id === memberId);
                         if (!member) return null;
                         return (
                           <div
                             key={memberId}
-                            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full ${isDark ? 'bg-[#6B8E23]/20 border border-[#6B8E23]/30' : 'bg-[#6B8E23]/10 border border-[#6B8E23]/20'}`}
+                            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full ${isDark ? 'bg-[#C2D642]/20 border border-[#C2D642]/30' : 'bg-[#C2D642]/10 border border-[#C2D642]/20'}`}
                           >
-                            <span className={`text-xs font-bold ${isDark ? 'text-[#6B8E23]' : 'text-[#5a7a1e]'}`}>
+                            <span className={`text-xs font-bold ${isDark ? 'text-[#C2D642]' : 'text-[#A8B838]'}`}>
                               {member.name}
                             </span>
                             <button
                               onClick={() => toggleTeamMember(memberId)}
-                              className={`w-4 h-4 rounded-full flex items-center justify-center transition-colors ${isDark ? 'hover:bg-[#6B8E23]/30' : 'hover:bg-[#6B8E23]/20'}`}
+                              className={`w-4 h-4 rounded-full flex items-center justify-center transition-colors ${isDark ? 'hover:bg-[#C2D642]/30' : 'hover:bg-[#C2D642]/20'}`}
                             >
-                              <X className={`w-3 h-3 ${isDark ? 'text-[#6B8E23]' : 'text-[#5a7a1e]'}`} />
+                              <X className={`w-3 h-3 ${isDark ? 'text-[#C2D642]' : 'text-[#A8B838]'}`} />
                             </button>
                           </div>
                         );
@@ -2769,10 +3260,13 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                   )}
                   
                   {/* Team Members List - Only show when search is clicked/focused */}
+                  {teamMembersError && (
+                    <p className={`text-sm font-bold text-red-500 py-2`}>{teamMembersError}</p>
+                  )}
                   {isSearchFocused && (
                     <div className="max-h-60 overflow-y-auto custom-scrollbar space-y-2 team-members-list">
                       {teamMembersLoading ? (
-                        <p className={`text-sm ${textSecondary} text-center py-4`}>Loading team members...</p>
+                        <p className={`text-sm font-bold ${textSecondary} text-center py-4`}>Loading team members...</p>
                       ) : filteredTeamMembers.length > 0 ? (
                         filteredTeamMembers.map((member) => {
                           const isSelected = selectedTeamMembers.has(member.id);
@@ -2794,7 +3288,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                               }`}
                             >
                               <img
-                                src={member.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(member.name || '')}&background=6366f1&color=fff`}
+                                src={member.avatar}
                                 alt={member.name}
                                 className="w-10 h-10 rounded-full"
                               />
@@ -2869,12 +3363,89 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                     ? isDark
                       ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
                       : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                    : 'bg-gradient-to-r from-[#6B8E23] to-[#5a7a1e] hover:from-[#5a7a1e] hover:to-[#4a6a18] text-white shadow-lg'
+                    : 'bg-gradient-to-r from-[#C2D642] to-[#A8B838] hover:from-[#A8B838] hover:to-[#8B9A38] text-white shadow-lg'
                 }`}
               >
                 <Share2 className="w-4 h-4" />
                 Share
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rename (duplicate name) Modal */}
+      {showRenameModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className={`w-full max-w-md rounded-xl border ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'} p-4 sm:p-6`}>
+            <div className="flex items-center justify-between mb-3 sm:mb-4">
+              <h3 className={`text-base sm:text-lg font-black ${textPrimary}`}>
+                {renameModalMode === 'file' ? 'File name already exists' : 'Folder name already exists'}
+              </h3>
+              <button
+                onClick={() => {
+                  setShowRenameModal(false);
+                  setRenameUploadQueue([]);
+                  setPendingUploadQueue([]);
+                  setRenameModalError(null);
+                }}
+                className={`p-1 rounded-lg transition-colors ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}
+              >
+                <X className={`w-4 h-4 sm:w-5 sm:h-5 ${textSecondary}`} />
+              </button>
+            </div>
+            <p className={`text-xs sm:text-sm mb-3 ${textSecondary}`}>
+              {renameModalMode === 'file'
+                ? 'A file with this name already exists in this folder. Please enter a new name.'
+                : 'A folder with this name already exists in this folder. Please enter a new name.'}
+            </p>
+            <div className="space-y-3 sm:space-y-4">
+              <div>
+                <label className={`block text-xs sm:text-sm font-bold mb-2 ${textPrimary}`}>
+                  {renameModalMode === 'file' ? 'File name' : 'Folder name'}
+                </label>
+                <input
+                  type="text"
+                  value={renameModalValue}
+                  onChange={(e) => {
+                    setRenameModalValue(e.target.value);
+                    setRenameModalError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleRenameModalSubmit();
+                  }}
+                  placeholder={renameModalMode === 'file' ? 'Enter new file name...' : 'Enter new folder name...'}
+                  className={`w-full px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold ${isDark ? 'bg-slate-700 border-slate-600 text-slate-100' : 'bg-slate-50 border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                  autoFocus
+                />
+                {renameModalError && (
+                  <p className="mt-1 text-xs font-bold text-red-500">{renameModalError}</p>
+                )}
+              </div>
+              <div className="flex items-center gap-2 sm:gap-3 justify-end">
+                <button
+                  onClick={() => {
+                    setShowRenameModal(false);
+                    setRenameUploadQueue([]);
+                    setPendingUploadQueue([]);
+                    setRenameModalError(null);
+                  }}
+                  className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-bold transition-colors ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'} border ${isDark ? 'border-slate-600' : 'border-slate-200'}`}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleRenameModalSubmit}
+                  disabled={!renameModalValue.trim()}
+                  className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
+                    renameModalValue.trim()
+                      ? isDark ? 'bg-[#C2D642] hover:bg-[#A8B838] text-white' : 'bg-[#C2D642] hover:bg-[#A8B838] text-white'
+                      : isDark ? 'bg-slate-700 text-slate-400 cursor-not-allowed' : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                  }`}
+                >
+                  {renameModalMode === 'file' ? 'Upload with this name' : 'Create with this name'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -2911,7 +3482,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                     }
                   }}
                   placeholder="Enter folder name..."
-                  className={`w-full px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold ${isDark ? 'bg-slate-700 border-slate-600 text-slate-100' : 'bg-slate-50 border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                  className={`w-full px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold ${isDark ? 'bg-slate-700 border-slate-600 text-slate-100' : 'bg-slate-50 border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                   autoFocus
                 />
               </div>
@@ -2930,7 +3501,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
                   disabled={!newFolderName.trim()}
                   className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-bold transition-colors ${
                     newFolderName.trim()
-                      ? isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                      ? isDark ? 'bg-[#C2D642] hover:bg-[#A8B838] text-white' : 'bg-[#C2D642] hover:bg-[#A8B838] text-white'
                       : isDark ? 'bg-slate-700 text-slate-400 cursor-not-allowed' : 'bg-slate-200 text-slate-400 cursor-not-allowed'
                   }`}
                 >
@@ -2942,7 +3513,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
         </div>
       )}
 
-      {/* AI Assistant Panel */}
+      {/* AI Assistant Panel - resizable by dragging left edge */}
       {showAIAssistant && (
         <>
           {/* Mobile Overlay */}
@@ -2950,54 +3521,83 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
             className="fixed inset-0 bg-black/50 z-40 md:hidden"
             onClick={() => setShowAIAssistant(false)}
           />
-          <div className={`fixed md:static inset-y-0 right-0 z-50 md:z-auto w-full sm:w-96 md:w-80 border-l ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'} flex flex-col transform transition-transform duration-300 ease-in-out`}>
+          {/* Resize handle - desktop only, drag left to widen AI panel */}
+          <div
+            onMouseDown={handleAiResizeStart}
+            className="hidden md:flex w-2 flex-shrink-0 cursor-col-resize select-none hover:bg-[#C2D642]/15 active:bg-[#C2D642]/30 transition-colors items-stretch justify-center self-stretch min-h-0"
+            title="Drag left to widen, drag right to narrow"
+            role="separator"
+            aria-orientation="vertical"
+          >
+            <div className="w-px min-h-full bg-slate-300/50 hover:bg-[#C2D642]/60 dark:bg-slate-600/50 dark:hover:bg-[#C2D642]/60 transition-colors pointer-events-none" />
+          </div>
+          <div 
+            className={`fixed md:static inset-y-0 right-0 z-50 md:z-auto w-full md:flex-shrink-0 border-l ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'} flex flex-col transform transition-transform duration-300 ease-in-out`}
+            style={isDesktop ? { width: aiPanelWidth, minWidth: 280, maxWidth: 600 } : undefined}
+          >
           {/* AI Assistant Header */}
-          <div className={`p-3 sm:p-4 border-b ${isDark ? 'border-slate-700' : 'border-slate-200'} flex items-center justify-between`}>
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <Bot className={`w-4 h-4 sm:w-5 sm:h-5 ${isDark ? 'text-[#6B8E23]' : 'text-[#6B8E23]'}`} />
+          <div className={`p-3 sm:p-4 border-b ${isDark ? 'border-slate-700' : 'border-slate-200'} flex items-center justify-between gap-2`}>
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="relative flex-shrink-0">
+                <Bot className={`w-5 h-5 sm:w-6 sm:h-6 ${isDark ? 'text-[#C2D642]' : 'text-[#C2D642]'}`} />
                 <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 sm:w-2 sm:h-2 bg-red-500 rounded-full border-2 border-white"></span>
               </div>
-              <h3 className={`text-xs sm:text-sm font-black ${textPrimary}`}>AI Assistant</h3>
+              <h3 className={`text-xs sm:text-sm font-black truncate ${textPrimary}`}>AI Assistant</h3>
             </div>
-            <button
-              onClick={() => setShowAIAssistant(false)}
-              className={`p-1 rounded-lg transition-colors ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}
-            >
-              <X className={`w-4 h-4 ${textSecondary}`} />
-            </button>
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <button
+                onClick={handleNewChatSession}
+                disabled={chatCreatingSession}
+                title="New chat session"
+                className={`p-1.5 rounded-lg border border-[#C2D642]/60 bg-transparent hover:bg-[#C2D642]/10 transition-colors flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                <Plus className={`w-4 h-4 ${textSecondary}`} />
+                <span className="text-[10px] sm:text-xs font-bold hidden sm:inline">New Chat</span>
+              </button>
+              <button
+                onClick={() => setShowAIAssistant(false)}
+                className={`p-1.5 rounded-lg transition-colors ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}
+                title="Close"
+              >
+                <X className={`w-5 h-5 sm:w-6 sm:h-6 ${textSecondary}`} />
+              </button>
+            </div>
           </div>
 
           {/* Chat Messages */}
-          <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 custom-scrollbar">
+          <div className="flex-1 overflow-y-auto p-3 sm:p-4 pb-8 sm:pb-10 space-y-3 sm:space-y-4 custom-scrollbar">
             {chatMessages.map((message) => (
               <div
                 key={message.id}
                 className={`flex gap-2 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 {message.role === 'assistant' && (
-                  <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${isDark ? 'bg-[#6B8E23]/20' : 'bg-[#6B8E23]/10'}`}>
-                    <Bot className={`w-4 h-4 sm:w-5 sm:h-5 ${isDark ? 'text-[#6B8E23]' : 'text-[#6B8E23]'}`} />
+                  <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/10'}`}>
+                    <Bot className={`w-5 h-5 sm:w-6 sm:h-6 ${isDark ? 'text-[#C2D642]' : 'text-[#C2D642]'}`} />
                   </div>
                 )}
                 <div className={`max-w-[75%] sm:max-w-[80%] ${message.role === 'user' ? 'order-2' : ''}`}>
                   <div className={`rounded-lg p-2 sm:p-3 ${
                     message.role === 'user'
-                      ? isDark ? 'bg-[#6B8E23] text-white' : 'bg-[#6B8E23] text-white'
+                      ? isDark ? 'bg-[#C2D642] text-white' : 'bg-[#C2D642] text-white'
                       : isDark ? 'bg-slate-700 text-slate-100' : 'bg-slate-100 text-slate-900'
                   }`}>
-                    <p className={`text-xs sm:text-sm font-bold break-words ${message.role === 'user' ? 'text-white' : textPrimary}`}>
-                      {message.content}
-                    </p>
+                    <ChatMarkdownViewer
+                      content={message.content}
+                      isDark={isDark}
+                      role={message.role as 'assistant' | 'user'}
+                      className={`text-[10px] sm:text-xs font-bold ${message.role === 'user' ? 'text-white font-chat-user' : `${textPrimary} font-chat-ai`}`}
+                    />
                   </div>
                 </div>
                 {message.role === 'user' && (
-                  <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-[#6B8E23] flex items-center justify-center flex-shrink-0">
+                  <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-[#C2D642] flex items-center justify-center flex-shrink-0 border-2 ${isDark ? 'border-[#C2D642]/60' : 'border-[#A8B838]/50'}`}>
                     <span className="text-white text-[10px] sm:text-xs font-bold">U</span>
                   </div>
                 )}
               </div>
             ))}
+            <div ref={chatMessagesEndRef} />
           </div>
 
           {/* Attached Files Preview */}
@@ -3022,8 +3622,8 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
           )}
 
           {/* Chat Input */}
-          <div className={`p-3 sm:p-4 border-t ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
-            <div className={`flex items-center gap-1.5 sm:gap-2 p-1.5 sm:p-2 rounded-lg border ${isDark ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
+          <div className={`p-2 sm:p-3 md:p-4 border-t min-w-0 overflow-hidden ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
+            <div className={`flex items-center gap-1 sm:gap-1.5 md:gap-2 p-1.5 sm:p-2 rounded-lg border min-w-0 w-full overflow-hidden ${isDark ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -3039,20 +3639,42 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
               >
                 <Paperclip className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${textSecondary}`} />
               </button>
-              <input
-                type="text"
+              {isRecording ? (
+                <>
+                  <button
+                    onClick={stopRecording}
+                    className="p-1 sm:p-1.5 rounded-lg transition-colors flex-shrink-0 bg-red-500 hover:bg-red-600 text-white animate-pulse"
+                    title="Stop recording"
+                  >
+                    <Square className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-white" />
+                  </button>
+                  <span className={`text-[10px] sm:text-xs font-bold min-w-[2.5rem] sm:min-w-[3rem] ${isDark ? 'text-red-400' : 'text-red-600'}`}>
+                    {formatRecordingTime(recordingTime)}
+                  </span>
+                </>
+              ) : (
+                <button
+                  onClick={handleVoiceClick}
+                  className={`p-1 sm:p-1.5 rounded-lg transition-colors flex-shrink-0 ${isDark ? 'hover:bg-slate-600' : 'hover:bg-slate-200'}`}
+                  title="Start voice recording"
+                >
+                  <Mic className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${textSecondary}`} />
+                </button>
+              )}
+              <textarea
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
-                onKeyPress={handleKeyPress}
+                onKeyDown={handleKeyPress}
                 placeholder="Ask about documents..."
-                className={`flex-1 bg-transparent outline-none text-xs sm:text-sm font-bold ${textPrimary} placeholder:${textSecondary}`}
+                rows={2}
+                className={`flex-1 min-w-0 max-h-24 resize-none overflow-y-auto overflow-x-hidden bg-transparent outline-none text-xs sm:text-sm font-bold py-1.5 sm:py-2 break-words leading-relaxed ${textPrimary} placeholder:${textSecondary}`}
               />
               <button
                 onClick={handleSendChatMessage}
-                disabled={!chatInput.trim() && attachedFiles.length === 0}
+                disabled={(!chatInput.trim() && attachedFiles.length === 0) || chatSending || isRecording}
                 className={`p-1 sm:p-1.5 rounded-lg transition-colors flex-shrink-0 ${
-                  (chatInput.trim() || attachedFiles.length > 0)
-                    ? isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'
+                  (chatInput.trim() || attachedFiles.length > 0) && !chatSending && !isRecording
+                    ? isDark ? 'bg-[#C2D642] hover:bg-[#A8B838] text-white' : 'bg-[#C2D642] hover:bg-[#A8B838] text-white'
                     : isDark ? 'bg-slate-600 text-slate-400 cursor-not-allowed' : 'bg-slate-200 text-slate-400 cursor-not-allowed'
                 }`}
               >
@@ -3066,93 +3688,95 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
 
       {/* Floating Action Bar */}
       {selectedFiles.size > 0 && (
-        <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 z-[102] ${isDark ? 'bg-gradient-to-r from-[#6B8E23] via-[#5a7a1e] to-[#4a6a18]' : 'bg-gradient-to-r from-[#6B8E23] via-[#5a7a1e] to-[#4a6a18]'} rounded-2xl px-4 sm:px-6 py-3 sm:py-4 shadow-2xl ${isDark ? 'border border-[#6B8E23]/30' : 'border border-[#6B8E23]/30'}`}>
-          <div className="flex items-center gap-3 sm:gap-4 md:gap-6">
-            <div className="flex items-center gap-2">
-              <div className={`w-8 h-8 rounded-full ${isDark ? 'bg-[#6B8E23]/30 border border-white/30' : 'bg-[#6B8E23]/40 border border-white/40'} flex items-center justify-center`}>
-                <span className="text-white text-sm font-black">{selectedFiles.size}</span>
-              </div>
-              <span className="text-white text-xs sm:text-sm font-bold hidden sm:inline">selected</span>
-            </div>
-            
-            <div className={`h-6 w-px ${isDark ? 'bg-white/30' : 'bg-white/40'}`}></div>
-            
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[102] rounded-xl px-2.5 sm:px-3 py-1.5 sm:py-2 shadow-2xl border-2 border-[#C2D642]/70 bg-transparent backdrop-blur-md max-w-xl">
+          <div className="flex items-center gap-1.5 sm:gap-2 md:gap-3">
             <button
               onClick={clearSelection}
-              className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg ${isDark ? 'bg-[#6B8E23]/30 hover:bg-[#6B8E23]/40' : 'bg-[#6B8E23]/30 hover:bg-[#6B8E23]/40'} transition-colors text-white`}
+              className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-[#C2D642]/60 bg-transparent hover:bg-[#C2D642]/10 transition-colors text-[#C2D642]`}
               title="Clear selection"
             >
-              <X className="w-4 h-4" />
-              <span className="text-xs sm:text-sm font-bold hidden sm:inline">Clear</span>
+              <X className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <span className="text-[10px] sm:text-xs font-bold hidden sm:inline">Clear</span>
             </button>
             
             {currentPath[0] === 'trash' ? (
               <>
                 <button
                   onClick={handleRestoreFiles}
-                  className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg ${isDark ? 'bg-[#C2D642]/80 hover:bg-[#C2D642]' : 'bg-[#C2D642] hover:bg-[#a8b835]'} transition-colors text-white`}
+                  className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-[#C2D642]/60 bg-transparent hover:bg-[#C2D642]/10 transition-colors text-[#C2D642]"
                   title="Restore selected files"
                 >
-                  <RotateCcw className="w-4 h-4" />
-                  <span className="text-xs sm:text-sm font-bold hidden sm:inline">Restore</span>
+                  <RotateCcw className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                  <span className="text-[10px] sm:text-xs font-bold hidden sm:inline">Restore</span>
                 </button>
                 
                 <button
                   onClick={handlePermanentDelete}
-                  className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg ${isDark ? 'bg-red-500/90 hover:bg-red-500' : 'bg-red-500 hover:bg-red-600'} transition-colors text-white`}
+                  className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-red-500 bg-transparent hover:bg-red-500/10 transition-colors text-red-500"
                   title="Permanently delete selected files"
                 >
-                  <Trash2 className="w-4 h-4" />
-                  <span className="text-xs sm:text-sm font-bold hidden sm:inline">Delete Permanently</span>
+                  <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                  <span className="text-[10px] sm:text-xs font-bold hidden sm:inline">Delete Permanently</span>
                 </button>
               </>
             ) : currentPath[0] === 'image-gallery' ? (
               <>
                 <button
                   onClick={handleDownloadFiles}
-                  className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg ${isDark ? 'bg-[#6B8E23]/30 hover:bg-[#6B8E23]/40' : 'bg-[#6B8E23]/30 hover:bg-[#6B8E23]/40'} transition-colors text-white`}
+                  className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-[#C2D642]/60 bg-transparent hover:bg-[#C2D642]/10 transition-colors text-[#C2D642]"
                   title="Download selected images"
                 >
-                  <Download className="w-4 h-4" />
-                  <span className="text-xs sm:text-sm font-bold hidden sm:inline">Download</span>
+                  <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                  <span className="text-[10px] sm:text-xs font-bold hidden sm:inline">Download</span>
                 </button>
                 
                 <button
                   onClick={handleDeleteFiles}
-                  className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg ${isDark ? 'bg-red-500/90 hover:bg-red-500' : 'bg-red-500 hover:bg-red-600'} transition-colors text-white`}
+                  className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-red-500 bg-transparent hover:bg-red-500/10 transition-colors text-red-500"
                   title="Delete selected images"
                 >
-                  <Trash2 className="w-4 h-4" />
-                  <span className="text-xs sm:text-sm font-bold hidden sm:inline">Delete</span>
+                  <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                  <span className="text-[10px] sm:text-xs font-bold hidden sm:inline">Delete</span>
                 </button>
               </>
             ) : (
               <>
                 <button
                   onClick={handleDownloadFiles}
-                  className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg ${isDark ? 'bg-[#6B8E23]/30 hover:bg-[#6B8E23]/40' : 'bg-[#6B8E23]/30 hover:bg-[#6B8E23]/40'} transition-colors text-white`}
+                  className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-[#C2D642]/60 bg-transparent hover:bg-[#C2D642]/10 transition-colors text-[#C2D642]"
                   title="Download selected files"
                 >
-                  <Download className="w-4 h-4" />
-                  <span className="text-xs sm:text-sm font-bold hidden sm:inline">Download</span>
+                  <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                  <span className="text-[10px] sm:text-xs font-bold hidden sm:inline">Download</span>
                 </button>
                 
                 <button
                   onClick={handleShareFiles}
-                  className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg ${isDark ? 'bg-[#6B8E23]/30 hover:bg-[#6B8E23]/40' : 'bg-[#6B8E23]/30 hover:bg-[#6B8E23]/40'} transition-colors text-white`}
+                  className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-[#C2D642]/60 bg-transparent hover:bg-[#C2D642]/10 transition-colors text-[#C2D642]"
                   title="Share selected files"
                 >
-                  <Share2 className="w-4 h-4" />
-                  <span className="text-xs sm:text-sm font-bold hidden sm:inline">Share</span>
+                  <Share2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                  <span className="text-[10px] sm:text-xs font-bold hidden sm:inline">Share</span>
                 </button>
+                
+                {currentPath[0] === 'shared' && (
+                  <button
+                    onClick={handleUnshare}
+                    className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-amber-500/70 bg-transparent hover:bg-amber-500/10 transition-colors text-amber-500"
+                    title="Unshare selected items"
+                  >
+                    <Share2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                    <span className="text-[10px] sm:text-xs font-bold hidden sm:inline">Unshare</span>
+                  </button>
+                )}
                 
                 <button
                   onClick={handleDeleteFiles}
-                  className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg ${isDark ? 'bg-red-500/90 hover:bg-red-500' : 'bg-red-500 hover:bg-red-600'} transition-colors text-white`}
+                  className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-red-500 bg-transparent hover:bg-red-500/10 transition-colors text-red-500"
                   title="Delete selected files"
                 >
-                  <Trash2 className="w-4 h-4" />
-                  <span className="text-xs sm:text-sm font-bold hidden sm:inline">Delete</span>
+                  <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                  <span className="text-[10px] sm:text-xs font-bold hidden sm:inline">Delete</span>
                 </button>
               </>
             )}

@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "dev": "cross-env NEXT_TELEMETRY_DISABLED=1 next dev",
+    "dev": "cross-env NODE_ENV=development NEXT_TELEMETRY_DISABLED=1 node server.js",
     "dev:turbo": "cross-env NEXT_TELEMETRY_DISABLED=1 next dev --turbo",
     "build": "next build",
     "start": "next start",
@@ -18,7 +18,9 @@
     "next": "^15.1.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
+    "react-markdown": "^10.1.0",
     "recharts": "^3.6.0",
+    "remark-gfm": "^4.0.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

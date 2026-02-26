@@ -95,9 +95,9 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
       label: 'Operations', 
       icon: ClipboardList,
       children: [
-        { label: 'Daily work progress', id: ViewType.DPR, path: '/work-progress-reports' },
+        { label: 'Daily work progress', id: ViewType.DPR, path: '/work-progress-reports/dpr' },
         { label: 'Labours', id: ViewType.LABOUR_MANAGEMENT, path: '/operations/labour' },
-        { label: 'Staff', id: 'OPERATIONS_STAFF', path: '/operations/staff' }
+        { label: 'Staff', id: ViewType.COMPANY_USERS, path: '/company-users/manage-teams' }
       ] 
     },
     { 
@@ -137,7 +137,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
           id: ViewType.WORK_PROGRESS_REPORTS, 
           children: [
             { label: 'Work Progress Details', id: ViewType.WORK_PROGRESS_DETAILS, path: '/work-progress-reports/work-progress-details' },
-            { label: 'DPR', id: ViewType.DPR, path: '/work-progress-reports' },
+            { label: 'DPR', id: ViewType.DPR, path: '/work-progress-reports/dpr' },
             { label: 'Resources Usage from DPR', id: ViewType.RESOURCES_USAGE_FROM_DPR, path: '/work-progress-reports/resources-usage-from-dpr' },
             { label: 'Material Used vs Store Issue', id: ViewType.MATERIAL_USED_VS_STORE_ISSUE, path: '/work-progress-reports/material-used-vs-store-issue' }
           ]
@@ -189,11 +189,12 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
             { label: 'Project Permissions', id: ViewType.PROJECT_PERMISSIONS, path: '/project-permissions' }
           ]
         },
-        {
-          label: 'Workflow Settings',
-          id: 'WORKFLOW_SETTINGS',
+        { 
+          label: 'Workflow Settings', 
+          id: 'WORKFLOW_SETTINGS', 
           children: [
-            { label: 'PR Approval Manage', id: ViewType.PR_APPROVAL_MANAGE, path: '/pr-management/pr-approval-manage' }
+            { label: 'PR Approval Manage', id: ViewType.PR_APPROVAL_MANAGE, path: '/pr-management/pr-approval-manage' },
+            { label: 'PR', id: ViewType.PR, path: '/pr-management/pr' }
           ]
         }
       ] 
@@ -203,7 +204,6 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
       label: 'Settings', 
       icon: Settings, 
       children: [
-        { label: 'User Profile', id: 'PROFILE', path: '/user-profile' },
         { label: 'Subscriptions and Billing', id: ViewType.SUBSCRIPTION, path: '/subscription' },
         { label: 'Logout', id: 'LOGOUT', path: '#' }
       ] 
@@ -212,10 +212,17 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
 
   const isActive = (path?: string) => path && pathname === path;
 
+  const expandSidebarIfMinimized = () => {
+    if (!sidebarOpen && typeof window !== 'undefined' && window.innerWidth >= 1024) {
+      setSidebarOpen(true);
+    }
+  };
+
   const toggleDropdown = (itemId: string, e?: React.MouseEvent) => {
     if (e) {
       e.stopPropagation();
     }
+    expandSidebarIfMinimized();
     setOpenDropdowns(prev => {
       const newSet = new Set(prev);
       // Find the parent of this item (if it's a nested child)
@@ -416,29 +423,16 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
                             key={child.id}
                             onClick={(e) => {
                               e.stopPropagation();
-                              if (window.innerWidth < 1024) setSidebarOpen(false);
+                              // Close sidebar on mobile after logout
+                              if (window.innerWidth < 1024) {
+                                setSidebarOpen(false);
+                              }
                               handleLogout();
                             }}
                             className={`w-full text-left text-sm font-bold py-1 px-2 rounded-md cursor-pointer transition-colors block opacity-40 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}
                           >
                             {child.label}
                           </button>
-                        );
-                      }
-                      // User Profile - navigate to /user-profile (modal page)
-                      if (child.id === 'PROFILE') {
-                        return (
-                          <Link
-                            key={child.id}
-                            href="/user-profile"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (window.innerWidth < 1024) setSidebarOpen(false);
-                            }}
-                            className={`w-full text-left text-sm font-bold py-1 px-2 rounded-md cursor-pointer transition-colors block touch-manipulation truncate opacity-40 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}
-                          >
-                            {child.label}
-                          </Link>
                         );
                       }
                       // Handle nested children (like Work Progress Reports and Inventory Reports)
@@ -548,6 +542,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
                   <Link
                     href={item.path || '#'}
                     onClick={() => {
+                      expandSidebarIfMinimized();
                       // Close sidebar on mobile after navigation
                       if (window.innerWidth < 1024) {
                         setSidebarOpen(false);

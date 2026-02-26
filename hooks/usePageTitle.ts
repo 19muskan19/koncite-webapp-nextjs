@@ -47,7 +47,9 @@ export const usePageTitle = (customTitle?: string) => {
   const pathname = usePathname();
 
   useEffect(() => {
-    const title = customTitle || (pathname ? routeTitles[pathname] : undefined) || 'KONCITE - Construction Platform';
+    const exactTitle = pathname ? routeTitles[pathname] : undefined;
+    const docMgmtTitle = pathname?.startsWith('/document-management') ? 'Document Management - KONCITE' : undefined;
+    const title = customTitle || exactTitle || docMgmtTitle || 'KONCITE - Construction Platform';
     document.title = title;
   }, [pathname, customTitle]);
 };
