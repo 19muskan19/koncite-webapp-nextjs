@@ -703,7 +703,7 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
       {/* Delete All Vendors Confirmation Modal */}
       {deleteAllConfirm && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className={`${cardClass} rounded-xl border w-full max-w-md p-6 shadow-xl`}>
+          <div className={`${cardClass} rounded-xl border w-full max-w-lg p-6 shadow-xl`}>
             <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>Confirm Delete All</h3>
             <p className={`text-sm ${textSecondary} mb-6`}>
               Are you sure you want to delete all <span className={`font-bold ${textPrimary}`}>{vendors.length}</span> vendor{vendors.length !== 1 ? 's' : ''}? This action cannot be undone.

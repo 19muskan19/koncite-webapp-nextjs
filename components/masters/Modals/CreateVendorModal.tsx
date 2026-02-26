@@ -298,9 +298,12 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-      <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl`}>
-        {/* Modal Header */}
-        <div className="flex items-center justify-between p-6 border-b border-inherit">
+      <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1024px)] max-h-[90vh] overflow-hidden flex flex-col shadow-2xl`}>
+        <button onClick={onClose} disabled={isSubmitting} className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors disabled:opacity-50`} title="Close">
+          <X className={`w-5 h-5 ${textSecondary}`} />
+        </button>
+        <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="flex items-center justify-between p-6 pr-14 border-b border-inherit">
           <div>
             <h2 className={`text-xl font-black ${textPrimary}`}>
               {isEditing ? 'Edit Vendor' : 'Create New Vendor'}
@@ -309,13 +312,6 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
               {isEditing ? 'Update vendor details below' : 'Enter vendor details below'}
             </p>
           </div>
-          <button
-            onClick={onClose}
-            disabled={isSubmitting}
-            className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors disabled:opacity-50`}
-          >
-            <X className={`w-5 h-5 ${textSecondary}`} />
-          </button>
         </div>
 
         {/* Modal Body */}
@@ -599,6 +595,7 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
             {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
             {isEditing ? 'Update' : 'Create'}
           </button>
+        </div>
         </div>
       </div>
     </div>

@@ -15,6 +15,7 @@ import {
 import { useTheme } from '@/contexts/ThemeContext';
 import { useUser } from '@/contexts/UserContext';
 import { authAPI } from '@/services/api';
+import { SidebarProvider } from '@/contexts/SidebarContext';
 import Sidebar from './Sidebar';
 
 const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -74,6 +75,7 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
   const getThemeClass = (prefix: string) => `${prefix}-${theme}`;
 
   return (
+    <SidebarProvider sidebarOpen={sidebarOpen}>
     <div className={`flex h-screen overflow-hidden theme-${theme} transition-colors duration-500`}>
       {/* Sidebar Component */}
       <Sidebar 
@@ -165,6 +167,7 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
       </div>
 
     </div>
+    </SidebarProvider>
   );
 };
 

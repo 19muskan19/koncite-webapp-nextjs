@@ -146,12 +146,13 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ isOpen, onClo
           onClick={handleClose}
         >
           <div 
-            className={`${cardClass} ${isDark ? 'bg-slate-800' : 'bg-white'} rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 relative border ${borderClass} z-[101]`}
+            className={`${cardClass} ${isDark ? 'bg-slate-800' : 'bg-white'} rounded-xl shadow-2xl w-full max-w-lg mx-4 p-6 relative border ${borderClass} z-[101]`}
             onClick={(e) => e.stopPropagation()}
           >
             <button
               onClick={handleClose}
-              className={`absolute top-4 right-4 p-2 ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'} rounded-lg transition-colors`}
+              className={`absolute top-3 right-3 z-10 p-2 ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'} rounded-lg transition-colors`}
+            title="Close"
             >
               <X className={`w-5 h-5 ${textSecondary}`} />
             </button>
@@ -233,7 +234,7 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ isOpen, onClo
           onClick={handleClose}
         >
           <div 
-            className={`${cardClass} ${isDark ? 'bg-slate-800' : 'bg-white'} rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 relative border ${borderClass} z-[101]`}
+            className={`${cardClass} ${isDark ? 'bg-slate-800' : 'bg-white'} rounded-xl shadow-2xl w-full max-w-lg mx-4 p-6 relative border ${borderClass} z-[101]`}
             onClick={(e) => e.stopPropagation()}
           >
             <button
@@ -247,7 +248,8 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ isOpen, onClo
             </button>
             <button
               onClick={handleClose}
-              className={`absolute top-4 right-4 p-2 ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'} rounded-lg transition-colors`}
+              className={`absolute top-3 right-3 z-10 p-2 ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'} rounded-lg transition-colors`}
+            title="Close"
             >
               <X className={`w-5 h-5 ${textSecondary}`} />
             </button>

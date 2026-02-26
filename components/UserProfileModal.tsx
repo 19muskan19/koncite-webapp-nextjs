@@ -354,13 +354,15 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onClose }) 
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-y-auto">
-      <div className={`${cardClass} rounded-xl shadow-2xl w-full max-w-2xl mx-4 p-6 md:p-8 relative border ${borderClass} my-8 max-h-[90vh] overflow-y-auto custom-scrollbar`}>
+      <div className={`${cardClass} rounded-xl shadow-2xl w-full max-w-[min(92vw,1024px)] mx-4 relative border ${borderClass} my-8 max-h-[90vh] overflow-hidden flex flex-col`}>
         <button
           onClick={onClose}
-          className={`absolute top-4 right-4 p-2 ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'} rounded-lg transition-colors z-10`}
+          className={`absolute top-3 right-3 z-10 p-2 ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'} rounded-lg transition-colors`}
+          title="Close"
         >
           <X className={`w-5 h-5 ${textSecondary}`} />
         </button>
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-6 md:p-8 pr-14">
 
         <div className="text-center mb-6">
           <div className={`inline-flex items-center justify-center w-16 h-16 ${isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/10'} rounded-full mb-4`}>
@@ -593,6 +595,7 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onClose }) 
             )}
           </button>
         </form>
+        </div>
       </div>
     </div>
   );

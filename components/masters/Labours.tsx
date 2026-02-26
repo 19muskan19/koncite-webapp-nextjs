@@ -818,7 +818,7 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
       {/* Delete Single Labour Confirmation Modal */}
       {deleteConfirmLabourId && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className={`${cardClass} rounded-xl border w-full max-w-md p-6 shadow-xl`}>
+          <div className={`${cardClass} rounded-xl border w-full max-w-lg p-6 shadow-xl`}>
             <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>Confirm Delete</h3>
             <p className={`text-sm ${textSecondary} mb-6`}>
               Are you sure you want to delete labour{' '}
@@ -848,7 +848,7 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
       {/* Delete All Labours Confirmation Modal */}
       {deleteAllConfirm && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className={`${cardClass} rounded-xl border w-full max-w-md p-6 shadow-xl`}>
+          <div className={`${cardClass} rounded-xl border w-full max-w-lg p-6 shadow-xl`}>
             <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>Confirm Delete All</h3>
             <p className={`text-sm ${textSecondary} mb-6`}>
               Are you sure you want to delete all <span className={`font-bold ${textPrimary}`}>{labours.length}</span> labour{labours.length !== 1 ? 's' : ''}? This action cannot be undone.

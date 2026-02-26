@@ -1174,9 +1174,16 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
       {/* Edit/View Company Modal */}
       {showCompanyModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className={`w-full max-w-2xl rounded-xl border ${cardClass} shadow-2xl max-h-[90vh] overflow-y-auto`}>
-            {/* Modal Header */}
-            <div className={`flex items-center justify-between p-6 border-b border-inherit`}>
+          <div className={`relative w-full max-w-[min(92vw,1024px)] rounded-xl border ${cardClass} shadow-2xl max-h-[90vh] overflow-hidden flex flex-col`}>
+            <button
+              onClick={handleCloseModal}
+              className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+              title="Close"
+            >
+              <X className={`w-5 h-5 ${textSecondary}`} />
+            </button>
+            <div className="flex-1 min-h-0 overflow-y-auto">
+            <div className={`flex items-center justify-between p-6 pr-14 border-b border-inherit`}>
               <div>
                 <h2 className={`text-xl font-black ${textPrimary}`}>
                   {viewingCompanyId ? 'Company Details' : 'Edit Company'}
@@ -1185,12 +1192,6 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                   {viewingCompanyId ? 'View company information' : 'Update company details below'}
                 </p>
               </div>
-              <button
-                onClick={handleCloseModal}
-                className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
-              >
-                <X className={`w-5 h-5 ${textSecondary}`} />
-              </button>
             </div>
 
             {/* Modal Body */}
@@ -1444,6 +1445,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                 </>
               )}
             </div>
+            </div>
           </div>
         </div>
       )}
@@ -1451,7 +1453,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
       {/* Delete Confirmation Modal */}
       {deleteConfirmId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-          <div className={`w-full max-w-md rounded-xl border ${cardClass} shadow-2xl`}>
+          <div className={`w-full max-w-lg rounded-xl border ${cardClass} shadow-2xl`}>
             <div className={`p-6 border-b border-inherit`}>
               <h2 className={`text-xl font-black ${textPrimary}`}>Delete Company</h2>
               <p className={`text-sm ${textSecondary} mt-1`}>

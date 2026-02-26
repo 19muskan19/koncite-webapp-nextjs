@@ -76,10 +76,11 @@ const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin, signU
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className={`${cardClass} rounded-xl shadow-2xl w-full max-w-md mx-4 p-6 relative border ${borderClass}`}>
+      <div className={`${cardClass} rounded-xl shadow-2xl w-full max-w-lg mx-4 p-6 relative border ${borderClass}`}>
         <button
           onClick={onClose}
-          className={`absolute top-4 right-4 p-2 ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'} rounded-lg transition-colors`}
+          className={`absolute top-3 right-3 z-10 p-2 ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'} rounded-lg transition-colors`}
+          title="Close"
         >
           <X className={`w-5 h-5 ${textSecondary}`} />
         </button>

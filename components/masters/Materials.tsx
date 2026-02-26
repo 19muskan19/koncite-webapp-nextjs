@@ -1293,7 +1293,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
       {/* Delete All Materials Confirmation Modal */}
       {deleteAllConfirm && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className={`${cardClass} rounded-xl border w-full max-w-md p-6 shadow-xl`}>
+          <div className={`${cardClass} rounded-xl border w-full max-w-lg p-6 shadow-xl`}>
             <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>Confirm Delete All</h3>
             <p className={`text-sm ${textSecondary} mb-6`}>
               Are you sure you want to delete all <span className={`font-bold ${textPrimary}`}>{materials.length}</span> material{materials.length !== 1 ? 's' : ''}? This action cannot be undone.
@@ -1319,7 +1319,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
       {/* Delete Confirmation Modal */}
       {deleteConfirmMaterial && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className={`${cardClass} rounded-xl border w-full max-w-md p-6 shadow-xl`}>
+          <div className={`${cardClass} rounded-xl border w-full max-w-lg p-6 shadow-xl`}>
             <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>Confirm Delete</h3>
             <p className={`text-sm ${textSecondary} mb-6`}>
               Are you sure you want to delete material <span className={`font-bold ${textPrimary}`}>{deleteConfirmMaterial.name}</span> ({deleteConfirmMaterial.code})? This action cannot be undone.

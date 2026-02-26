@@ -2662,7 +2662,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
       {/* Share Modal */}
       {showShareModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[110] p-4" onClick={() => setShowShareModal(false)}>
-          <div className={`w-full max-w-lg rounded-xl border ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'} shadow-2xl`} onClick={(e) => e.stopPropagation()}>
+          <div className={`w-full max-w-[min(92vw,640px)] rounded-xl border ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'} shadow-2xl`} onClick={(e) => e.stopPropagation()}>
             {/* Modal Header */}
             <div className="flex items-center justify-between p-4 sm:p-6 border-b border-inherit">
               <div className="flex items-center gap-3">
@@ -2883,7 +2883,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme }) => {
       {/* Create Folder Modal */}
       {showCreateFolderModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className={`w-full max-w-md rounded-xl border ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'} p-4 sm:p-6`}>
+          <div className={`w-full max-w-lg rounded-xl border ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'} p-4 sm:p-6`}>
             <div className="flex items-center justify-between mb-3 sm:mb-4">
               <h3 className={`text-base sm:text-lg font-black ${textPrimary}`}>Create New Folder</h3>
               <button

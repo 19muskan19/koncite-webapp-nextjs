@@ -1125,7 +1125,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
       {/* Inventory PR - Project & Subproject Selection Modal (multi-step) */}
       {currentView === ViewType.INVENTORY_PR && showProjectSelection && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
-          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-4xl h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-y-auto overflow-x-hidden`}>
+          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-y-auto overflow-x-hidden`}>
             <button
               onClick={handlePRCloseModal}
               className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
@@ -1568,7 +1568,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
       {/* Inventory PR - Edit Previous Modal (list of PRs: date, project, created by) */}
       {currentView === ViewType.INVENTORY_PR && showEditPreviousModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col`}>
+          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] max-h-[85vh] overflow-hidden flex flex-col`}>
             <div className="flex items-center justify-between p-4 border-b border-inherit flex-shrink-0">
               <h2 className={`text-lg font-black ${textPrimary}`}>Edit Previous Purchase Request</h2>
               <button
@@ -1623,7 +1623,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
       {/* Inventory PR - View Details Modal */}
       {currentView === ViewType.INVENTORY_PR && showViewModal && viewingPr && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col`}>
+          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] max-h-[85vh] overflow-hidden flex flex-col`}>
             <div className="flex items-center justify-between p-4 border-b border-inherit flex-shrink-0">
               <h2 className={`text-lg font-black ${textPrimary}`}>Purchase Request Details</h2>
               <button

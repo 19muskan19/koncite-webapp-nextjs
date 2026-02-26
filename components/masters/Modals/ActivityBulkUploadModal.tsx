@@ -203,24 +203,26 @@ const ActivityBulkUploadModal: React.FC<ActivityBulkUploadModalProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-      <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl`}>
-        <div className="flex items-center justify-between p-6 border-b border-inherit">
+      <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1024px)] max-h-[90vh] overflow-hidden flex flex-col shadow-2xl`}>
+        <button
+          onClick={resetOnClose}
+          disabled={isExporting || isImporting}
+          className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors disabled:opacity-50`}
+          title="Close"
+        >
+          <X className={`w-5 h-5 ${textSecondary}`} />
+        </button>
+        <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="flex items-center justify-between p-6 pr-14 border-b border-inherit">
           <div>
             <h2 className={`text-xl font-black ${textPrimary}`}>Bulk Upload Activities</h2>
             <p className={`text-sm ${textSecondary} mt-1`}>
               Select project (subproject optional), then export or import activities data
             </p>
           </div>
-          <button
-            onClick={resetOnClose}
-            disabled={isExporting || isImporting}
-            className="p-2 rounded-lg hover:bg-slate-800/50 transition-colors disabled:opacity-50"
-          >
-            <X className={`w-5 h-5 ${textSecondary}`} />
-          </button>
         </div>
 
-        <div className="p-6 space-y-6 overflow-y-auto flex-1">
+        <div className="p-6 space-y-6">
           {/* Project & Subproject */}
           <div className={`rounded-lg border p-4 ${isDark ? 'bg-slate-800/50 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
             <h3 className={`text-sm font-bold ${textPrimary} mb-3`}>Select project (subproject optional)</h3>
@@ -361,6 +363,7 @@ const ActivityBulkUploadModal: React.FC<ActivityBulkUploadModalProps> = ({
               <strong className={textPrimary}>Import:</strong> Upload Excel (.xlsx, .xls) or CSV file. Max {MAX_SIZE_MB}MB. Backend POST /api/activities-import must be implemented.
             </p>
           </div>
+        </div>
         </div>
       </div>
     </div>

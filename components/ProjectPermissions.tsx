@@ -420,7 +420,7 @@ const ProjectPermissions: React.FC<ProjectPermissionsProps> = ({ theme }) => {
       {/* Add Permission Modal */}
       {showPermissionModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-2xl max-h-[90vh] overflow-y-auto`}>
+          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1024px)] max-h-[90vh] overflow-y-auto`}>
             <div className="p-6 border-b border-inherit">
               <h2 className={`text-2xl font-black text-center ${textPrimary}`}>
                 Project and User Allocation
@@ -519,7 +519,7 @@ const ProjectPermissions: React.FC<ProjectPermissionsProps> = ({ theme }) => {
       {/* Delete Confirmation Modal */}
       {deleteConfirmId && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-md`}>
+          <div className={`${bgPrimary} rounded-xl border ${cardClass} w-full max-w-lg`}>
             <div className="p-6">
               <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>Confirm Delete</h3>
               <p className={`text-sm ${textSecondary} mb-6`}>
