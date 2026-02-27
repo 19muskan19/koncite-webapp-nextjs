@@ -18,11 +18,14 @@ module.exports = {
   ],
   theme: {
     extend: {
+      screens: {
+        xs: '475px',
+      },
       fontFamily: {
-        sans: ['var(--font-inter)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-        // User chat: Inter (via sans). AI chat: Georgia for distinct, readable serif.
-        'chat-user': ['var(--font-inter)', 'Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-        'chat-ai': ['Georgia', 'Cambria', 'Times New Roman', 'Times', 'serif'],
+        sans: ['ui-sans-serif', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
+        // ChatGPT-style: same clean sans-serif for both user and AI messages
+        'chat-user': ['ui-sans-serif', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+        'chat-ai': ['ui-sans-serif', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
       },
     },
   },

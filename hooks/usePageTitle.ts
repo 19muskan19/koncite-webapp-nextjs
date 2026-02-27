@@ -7,6 +7,8 @@ const routeTitles: Record<string, string> = {
   '/dashboard': 'Dashboard - KONCITE',
   '/document-management': 'Document Management - KONCITE',
   '/ai-agents': 'AI Agents - KONCITE',
+  '/ai-agents/dpr': 'DPR - AI Hub - KONCITE',
+  '/ai-agents/inventory': 'Inventory - AI Hub - KONCITE',
   '/labour-management': 'Labour Management - KONCITE',
   '/operations/labour': 'Labour Management - KONCITE',
   '/labour-strength': 'Labour Strength - KONCITE',

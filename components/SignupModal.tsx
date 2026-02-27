@@ -515,8 +515,8 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 overflow-y-auto">
-      <div className={`${cardClass} rounded-xl shadow-2xl w-full max-w-[min(92vw,1024px)] mx-4 relative border ${borderClass} my-8 max-h-[90vh] overflow-hidden flex flex-col`}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-3 sm:p-4 overflow-y-auto">
+      <div className={`${cardClass} rounded-xl shadow-2xl w-full max-w-[min(95vw,440px)] sm:max-w-[min(92vw,480px)] md:max-w-[480px] mx-auto relative border ${borderClass} my-4 sm:my-6 md:my-8 max-h-[90vh] overflow-hidden flex flex-col`}>
         <button
           onClick={onClose}
           className={`absolute top-3 right-3 z-10 p-2 ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'} rounded-lg transition-colors`}
@@ -524,20 +524,20 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
         >
           <X className={`w-5 h-5 ${textSecondary}`} />
         </button>
-        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-6 md:p-8 pr-14">
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4 sm:p-5 md:p-6 pr-12 sm:pr-14">
 
-        <div className="text-center mb-6">
-          <div className={`inline-flex items-center justify-center w-16 h-16 ${isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/10'} rounded-full mb-4`}>
-            <UserPlus className="w-8 h-8 text-[#C2D642]" />
+        <div className="text-center mb-4 sm:mb-6">
+          <div className={`inline-flex items-center justify-center w-14 h-14 sm:w-16 sm:h-16 ${isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/10'} rounded-full mb-3 sm:mb-4`}>
+            <UserPlus className="w-7 h-7 sm:w-8 sm:h-8 text-[#C2D642]" />
           </div>
-          <h2 className={`text-2xl md:text-3xl font-black ${textPrimary} mb-2`}>Create Account</h2>
-          <p className={`text-sm ${textSecondary}`}>Sign up to get started with Koncite</p>
+          <h2 className={`text-xl sm:text-2xl md:text-3xl font-black ${textPrimary} mb-1 sm:mb-2`}>Create Account</h2>
+          <p className={`text-xs sm:text-sm ${textSecondary}`}>Sign up to get started with Koncite</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4" autoComplete="off">
           {/* Name */}
           <div>
-            <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>
+            <label className={`block text-xs sm:text-sm font-semibold mb-1.5 sm:mb-2 ${textPrimary}`}>
               Full Name <span className="text-red-500">*</span>
             </label>
             <div className="relative">
@@ -547,7 +547,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
                 name="name"
                 value={formData.name}
                 onChange={handleInputChange}
-                className={`w-full pl-10 pr-4 py-3 border ${errors.name ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
+                className={`w-full pl-9 sm:pl-10 pr-3 sm:pr-4 py-2.5 sm:py-3 border ${errors.name ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
                 placeholder="Enter your full name"
                 required
                 autoComplete="off"
@@ -558,7 +558,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
 
           {/* Email */}
           <div>
-            <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>
+            <label className={`block text-xs sm:text-sm font-semibold mb-1.5 sm:mb-2 ${textPrimary}`}>
               Email <span className="text-red-500">*</span>
             </label>
             <div className="relative">
@@ -568,7 +568,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
                 name="email"
                 value={formData.email}
                 onChange={handleInputChange}
-                className={`w-full pl-10 pr-4 py-3 border ${errors.email ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
+                className={`w-full pl-9 sm:pl-10 pr-3 sm:pr-4 py-2.5 sm:py-3 border ${errors.email ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
                 placeholder="Enter your email"
                 required
                 autoComplete="off"
@@ -579,14 +579,14 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
 
           {/* Phone with Country Code */}
           <div>
-            <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>
+            <label className={`block text-xs sm:text-sm font-semibold mb-1.5 sm:mb-2 ${textPrimary}`}>
               Phone Number <span className="text-red-500">*</span>
             </label>
             <div className="flex gap-2">
               {/* Country Code Selector */}
-              <div className="relative">
+              <div className="relative flex-shrink-0">
                 {isLoadingCountryCodes ? (
-                  <div className={`w-32 px-3 py-3 border ${borderClass} rounded-lg ${inputBg} flex items-center justify-center`}>
+                  <div className={`w-24 sm:w-28 md:w-32 px-2 sm:px-3 py-2.5 sm:py-3 border ${borderClass} rounded-lg ${inputBg} flex items-center justify-center`}>
                     <Loader2 className="w-4 h-4 animate-spin text-[#C2D642]" />
                   </div>
                 ) : (
@@ -594,7 +594,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
                     <button
                       type="button"
                       onClick={() => setIsCountryDropdownOpen(!isCountryDropdownOpen)}
-                      className={`flex items-center gap-2 px-3 py-3 border ${errors.countryCode ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none min-w-[120px] hover:bg-opacity-80 transition-colors`}
+                      className={`flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-2.5 sm:py-3 border ${errors.countryCode ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none min-w-[100px] sm:min-w-[110px] md:min-w-[120px] hover:bg-opacity-80 transition-colors`}
                     >
                       {formData.countryCode && countryCodes.length > 0 ? (
                         (() => {
@@ -629,7 +629,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
                           className="fixed inset-0 z-40" 
                           onClick={() => { setIsCountryDropdownOpen(false); setCountrySearchQuery(''); }}
                         />
-                        <div className={`absolute top-full left-0 mt-1 z-[60] w-72 max-h-72 overflow-hidden ${inputBg} border ${borderClass} rounded-lg shadow-xl flex flex-col`}>
+                        <div className={`absolute top-full left-0 mt-1 z-[60] w-[min(90vw,288px)] max-h-72 overflow-hidden ${inputBg} border ${borderClass} rounded-lg shadow-xl flex flex-col`}>
                           {countryCodes.length > 0 ? (
                             <>
                               <div className="p-2 border-b border-inherit flex-shrink-0">
@@ -738,7 +738,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
                   pattern="[0-9]*"
                   inputMode="numeric"
                   maxLength={10}
-                  className={`w-full pl-10 pr-4 py-3 border ${errors.phone ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
+                  className={`w-full pl-9 sm:pl-10 pr-3 sm:pr-4 py-2.5 sm:py-3 border ${errors.phone ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
                   placeholder="Enter phone number"
                   required
                   autoComplete="off"
@@ -751,14 +751,14 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
 
           {/* Country - auto-filled from phone country code */}
           <div>
-            <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>
+            <label className={`block text-xs sm:text-sm font-semibold mb-1.5 sm:mb-2 ${textPrimary}`}>
               Country <span className="text-red-500">*</span>
             </label>
             <p className={`text-xs mb-2 ${textSecondary}`}>Auto-filled from phone country code</p>
             <div className="relative">
               <Building className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 z-10" />
               <div
-                className={`w-full pl-10 pr-4 py-3 border ${errors.country ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} min-h-[46px] flex items-center`}
+                className={`w-full pl-9 sm:pl-10 pr-3 sm:pr-4 py-2.5 sm:py-3 border ${errors.country ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} min-h-[42px] sm:min-h-[46px] flex items-center text-sm`}
               >
                 {formData.countryCode && countryCodes.length > 0
                   ? (findCountryByDialCode(countryCodes, formData.countryCode, formData.countryCodeIso)?.name || 'Select a country code above')
@@ -770,7 +770,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
 
           {/* Password */}
           <div>
-            <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>
+            <label className={`block text-xs sm:text-sm font-semibold mb-1.5 sm:mb-2 ${textPrimary}`}>
               Password <span className="text-red-500">*</span>
             </label>
             <div className="relative">
@@ -780,7 +780,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
                 name="password"
                 value={formData.password}
                 onChange={handleInputChange}
-                className={`w-full pl-10 pr-12 py-3 border ${errors.password ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
+                className={`w-full pl-9 sm:pl-10 pr-12 py-2.5 sm:py-3 border ${errors.password ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
                 placeholder="Create a password"
                 required
                 autoComplete="off"
@@ -800,7 +800,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
 
           {/* Confirm Password */}
           <div>
-            <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>
+            <label className={`block text-xs sm:text-sm font-semibold mb-1.5 sm:mb-2 ${textPrimary}`}>
               Confirm Password <span className="text-red-500">*</span>
             </label>
             <div className="relative">
@@ -810,7 +810,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
                 name="confirmPassword"
                 value={formData.confirmPassword}
                 onChange={handleInputChange}
-                className={`w-full pl-10 pr-12 py-3 border ${errors.confirmPassword ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
+                className={`w-full pl-9 sm:pl-10 pr-12 py-2.5 sm:py-3 border ${errors.confirmPassword ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
                 placeholder="Confirm your password"
                 required
                 autoComplete="off"
@@ -830,7 +830,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
 
           {/* Company Name */}
           <div>
-            <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>
+            <label className={`block text-xs sm:text-sm font-semibold mb-1.5 sm:mb-2 ${textPrimary}`}>
               Company Name <span className="text-red-500">*</span>
             </label>
             <div className="relative">
@@ -840,7 +840,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
                 name="companyName"
                 value={formData.companyName}
                 onChange={handleInputChange}
-                className={`w-full pl-10 pr-4 py-3 border ${errors.companyName ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
+                className={`w-full pl-9 sm:pl-10 pr-3 sm:pr-4 py-2.5 sm:py-3 border ${errors.companyName ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
                 placeholder="Enter your company name"
                 required
                 autoComplete="off"
@@ -851,7 +851,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
 
           {/* Profile Image */}
           <div>
-            <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>
+            <label className={`block text-xs sm:text-sm font-semibold mb-1.5 sm:mb-2 ${textPrimary}`}>
               Profile Image (Optional)
             </label>
             <div className="relative">
@@ -860,7 +860,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
                 name="profileImage"
                 accept="image/*"
                 onChange={handleFileChange}
-                className={`w-full px-4 py-3 border ${errors.profileImage ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-[#C2D642] file:text-white hover:file:bg-[#A8B838] cursor-pointer`}
+                className={`w-full px-3 sm:px-4 py-2.5 sm:py-3 border ${errors.profileImage ? 'border-red-500' : borderClass} rounded-lg ${inputBg} ${textPrimary} focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-[#C2D642] file:text-white hover:file:bg-[#A8B838] cursor-pointer text-sm`}
                 autoComplete="off"
               />
             </div>
@@ -903,7 +903,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full px-4 py-3 bg-[#C2D642] hover:bg-[#A8B838] disabled:bg-slate-400 disabled:cursor-not-allowed text-white rounded-lg font-semibold transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2 mt-6"
+            className="w-full px-4 py-2.5 sm:py-3 bg-[#C2D642] hover:bg-[#A8B838] disabled:bg-slate-400 disabled:cursor-not-allowed text-white rounded-lg text-sm sm:text-base font-semibold transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-2 mt-4 sm:mt-6"
           >
             {isSubmitting ? (
               <>
@@ -925,8 +925,8 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
           onClose={() => setShowTermsModal(false)}
         />
 
-        <div className={`mt-6 pt-6 border-t ${borderClass}`}>
-          <p className={`text-sm text-center ${textSecondary}`}>
+        <div className={`mt-4 sm:mt-6 pt-4 sm:pt-6 border-t ${borderClass}`}>
+          <p className={`text-xs sm:text-sm text-center ${textSecondary}`}>
             Already have an account?{' '}
             {loginHref ? (
               <Link href={loginHref} className="text-[#C2D642] hover:underline font-semibold">

@@ -3175,23 +3175,52 @@ export const documentAPI = {
   },
 
   /**
-   * Download document
-   * POST /api/documents/download
+   * Download document - POST /api/documents/download
+   * Backend may expect uuid (to look up document) or file_path. Send both when available.
    */
-  downloadDocument: async (file_path: string, original_name?: string): Promise<any> => {
+  downloadDocument: async (file_path: string, original_name?: string, uuid?: string): Promise<Blob> => {
+    const parseBlobError = async (data: any): Promise<string> => {
+      if (data instanceof Blob) {
+        try {
+          const text = await data.text();
+          const json = JSON.parse(text);
+          return json?.message || 'Failed to download document';
+        } catch {
+          return 'Failed to download document';
+        }
+      }
+      return (data?.message as string) || 'Failed to download document';
+    };
+
+    const body: Record<string, string> = {};
+    if (original_name) body.original_name = original_name;
+    const isValidUuid = uuid && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uuid);
+    if (isValidUuid) {
+      body.uuid = uuid;
+      body.item_uuid = uuid;
+    }
+    if (file_path && file_path.trim()) body.file_path = file_path;
+
     try {
-      const response = await apiClient.post('/documents/download', {
-        file_path,
-        original_name,
-      }, {
-        responseType: 'blob',
-      });
-      return response.data;
+      const response = await apiClient.post(
+        '/documents/download',
+        body,
+        { responseType: 'blob' }
+      );
+      const blob = response.data as Blob;
+      if (!blob || blob.size === 0) {
+        throw new Error('Server returned empty file');
+      }
+      if (blob.type?.startsWith('application/json')) {
+        const errMsg = await parseBlobError(blob);
+        throw new Error(errMsg);
+      }
+      return blob;
     } catch (error: any) {
-      throw {
-        message: error.response?.data?.message || 'Failed to download document',
-        errors: error.response?.data?.errors || {},
-      } as ApiError;
+      const message = error.response?.data instanceof Blob
+        ? await parseBlobError(error.response.data)
+        : (error.response?.data?.message || 'Failed to download document');
+      throw { message, errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
 
@@ -3360,24 +3389,10 @@ export const documentAPI = {
   },
 
   /**
-   * Download document by UUID
-   * POST /api/documents/download-by-uuid or similar - returns blob
+   * Alias for downloadDocument - sends uuid as primary param for backend lookup.
    */
-  downloadDocumentByUuid: async (uuid: string, original_name?: string): Promise<Blob> => {
-    try {
-      const response = await apiClient.post(
-        '/documents/download-by-uuid',
-        { uuid, original_name },
-        { responseType: 'blob' }
-      );
-      return response.data;
-    } catch (error: any) {
-      throw {
-        message: error.response?.data?.message || 'Failed to download document',
-        errors: error.response?.data?.errors || {},
-      } as ApiError;
-    }
-  },
+  downloadDocumentByUuid: async (uuid: string, original_name?: string): Promise<Blob> =>
+    documentAPI.downloadDocument(uuid, original_name, uuid),
 
   /**
    * Get gallery images
