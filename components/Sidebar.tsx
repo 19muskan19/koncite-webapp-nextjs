@@ -40,6 +40,8 @@ interface NavItem {
   icon: React.ComponentType<{ className?: string }>;
   path?: string;
   children?: NavItemChild[];
+  /** When set, item is active if pathname starts with this (e.g. '/ai-agents' for /ai-agents/dpr, /ai-agents/inventory) */
+  activeWhenPrefix?: string;
 }
 
 interface SidebarProps {
@@ -95,7 +97,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
       label: 'Operations', 
       icon: ClipboardList,
       children: [
-        { label: 'Daily work progress', id: ViewType.DPR, path: '/work-progress-reports/dpr' },
+        { label: 'Daily work progress', id: ViewType.DPR, path: '/work-progress-reports' },
         { label: 'Labours', id: ViewType.LABOUR_MANAGEMENT, path: '/operations/labour' },
         { label: 'Staff', id: ViewType.COMPANY_USERS, path: '/company-users/manage-teams' }
       ] 
@@ -104,7 +106,8 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
       id: ViewType.DOCUMENT_MANAGEMENT, 
       label: 'Document', 
       icon: FileText, 
-      path: '/document-management' 
+      path: '/document-management/office',
+      activeWhenPrefix: '/document-management'
     },
     { 
       id: 'SHIFT_INVENTORY', 
@@ -125,7 +128,8 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
       id: ViewType.AI_AGENTS, 
       label: 'AI Hub', 
       icon: Bot, 
-      path: '/ai-agents' 
+      path: '/ai-agents/dpr',
+      activeWhenPrefix: '/ai-agents'
     },
     { 
       id: 'REPORTS', 
@@ -137,7 +141,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
           id: ViewType.WORK_PROGRESS_REPORTS, 
           children: [
             { label: 'Work Progress Details', id: ViewType.WORK_PROGRESS_DETAILS, path: '/work-progress-reports/work-progress-details' },
-            { label: 'DPR', id: ViewType.DPR, path: '/work-progress-reports/dpr' },
+            { label: 'DPR', id: ViewType.DPR, path: '/work-progress-reports' },
             { label: 'Resources Usage from DPR', id: ViewType.RESOURCES_USAGE_FROM_DPR, path: '/work-progress-reports/resources-usage-from-dpr' },
             { label: 'Material Used vs Store Issue', id: ViewType.MATERIAL_USED_VS_STORE_ISSUE, path: '/work-progress-reports/material-used-vs-store-issue' }
           ]
@@ -170,7 +174,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
           children: [
             { label: 'Companies', id: ViewType.COMPANIES, path: '/masters/companies' },
             { label: 'Projects', id: ViewType.PROJECTS, path: '/masters/projects' },
-            { label: 'Subproject', id: ViewType.SUBPROJECT, path: '/masters/subproject' },
+            { label: 'Subprojects', id: ViewType.SUBPROJECT, path: '/masters/subproject' },
             { label: 'Units', id: ViewType.UNITS, path: '/masters/units' },
             { label: 'Warehouses', id: ViewType.WAREHOUSES, path: '/masters/warehouses' },
             { label: 'Labours', id: ViewType.LABOURS, path: '/masters/labours' },
@@ -210,7 +214,8 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
     },
   ];
 
-  const isActive = (path?: string) => path && pathname === path;
+  const isActive = (path?: string, activeWhenPrefix?: string) =>
+    (path && pathname === path) || (activeWhenPrefix && pathname?.startsWith(activeWhenPrefix));
 
   const expandSidebarIfMinimized = () => {
     if (!sidebarOpen && typeof window !== 'undefined' && window.innerWidth >= 1024) {
@@ -397,7 +402,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
             const isDropdownOpen = openDropdowns.has(item.id.toString());
             const hasChildren = item.children && item.children.length > 0;
             const itemPath = item.path || (hasChildren ? item.children![0].path : '');
-            const active = isActive(itemPath) || (hasChildren && item.children?.some(child => isActive(child.path)));
+            const active = isActive(itemPath, item.activeWhenPrefix) || (hasChildren && item.children?.some(child => isActive(child.path)));
             
             return (
               <div key={item.id} className="mb-3">

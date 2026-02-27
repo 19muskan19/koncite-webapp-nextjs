@@ -1,24 +1,34 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
 import { ThemeType } from '../types';
 import ChatMarkdownViewer from './ChatMarkdownViewer';
 import { useToast } from '../contexts/ToastContext';
-import { 
-  Bot, 
-  Send, 
-  Paperclip, 
-  Mic, 
-  Search, 
-  MoreVertical, 
-  Settings,
-  ChevronDown,
+import {
+  createSession,
+  getSession,
+  sendMessage,
+  renameSession,
+  extractReplyFromResponse,
+  getSessionIdFromResponse,
+  getDefaultDprSessionName,
+  AGENT_DPR_INVENTORY,
+  AGENT_DOC_MGMT,
+  type AiSession,
+} from '@/services/dmsAiService';
+import { listAgentSessions, getAgentForWorkspace } from '@/services/aiAgentService';
+import {
+  Bot,
+  Send,
+  Paperclip,
+  Mic,
   Plus,
-  Truck,
-  Clock,
   Menu,
   X,
-  Square
+  Square,
+  Pencil,
+  ChevronDown,
 } from 'lucide-react';
 
 interface Message {
@@ -28,38 +38,45 @@ interface Message {
   timestamp: string;
 }
 
+type AgentType = 'dpr' | 'inventory';
+
 interface AIAgentsProps {
   theme: ThemeType;
+  initialAgent?: AgentType;
 }
 
-const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
+function formatSessionTime(iso?: string): string {
+  try {
+    const d = iso ? new Date(iso) : new Date();
+    return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+  } catch {
+    return '--';
+  }
+}
+
+const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
   const toast = useToast();
-  const [selectedWorkspace, setSelectedWorkspace] = useState<string>('DPR');
-  const [showWorkspaceDropdown, setShowWorkspaceDropdown] = useState<boolean>(false);
-  const [currentSessionId, setCurrentSessionId] = useState<string>('1');
-  const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
-  const [sessions, setSessions] = useState<{ id: string; preview: string; time: string; messages: Message[] }[]>([
-    {
-      id: '1',
-      preview: 'hello...',
-      time: '01:44 AM',
-      messages: [
-        {
-          id: '1',
-          role: 'user',
-          content: 'hello',
-          timestamp: '01:44 AM'
-        },
-        {
-          id: '2',
-          role: 'assistant',
-          content: 'Hello. I am your Supply Chain AI Agent. I am ready to assist you with demand forecasting, inventory optimization, logistics strategy, or end-to-end visibility. How can I help you optimize your operations today?',
-          timestamp: '01:44 AM'
-        }
-      ]
+  const router = useRouter();
+  const pathname = usePathname();
+  const [selectedAgent, setSelectedAgent] = useState<AgentType>(initialAgent);
+
+  // Sync selectedAgent with URL
+  useEffect(() => {
+    const match = pathname?.match(/^\/ai-agents\/(dpr|inventory)$/);
+    const agentFromUrl = match?.[1] as AgentType | undefined;
+    if (agentFromUrl && agentFromUrl !== selectedAgent) {
+      setSelectedAgent(agentFromUrl);
     }
-  ]);
-  const [messages, setMessages] = useState<Message[]>(sessions[0].messages);
+  }, [pathname]);
+
+  const handleAgentChange = (agent: AgentType) => {
+    setSelectedAgent(agent);
+    router.push(`/ai-agents/${agent}`);
+  };
+  const [currentSessionId, setCurrentSessionId] = useState<string>('');
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
+  const [sessions, setSessions] = useState<{ id: string; preview: string; time: string; messages: Message[] }[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState<string>('');
   const [isRecording, setIsRecording] = useState<boolean>(false);
   const [recordingTime, setRecordingTime] = useState<number>(0);
@@ -79,82 +96,176 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
   const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
   const bgSecondary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
 
-  const workspaceOptions = ['DPR', 'Inventory'];
+  const parseSessionMessages = (
+    sess: AiSession & { chat_history?: unknown[]; history?: unknown[]; conversation?: unknown[]; data?: { messages?: unknown[]; chat_history?: unknown[] } },
+    sessionId: string
+  ): Message[] => {
+    const raw =
+      sess?.messages ??
+      sess?.chat_history ??
+      sess?.history ??
+      sess?.conversation ??
+      (sess?.data && typeof sess.data === 'object'
+        ? ((sess.data as { messages?: unknown[] }).messages ?? (sess.data as { chat_history?: unknown[] }).chat_history)
+        : undefined) ??
+      [];
+    const arr = Array.isArray(raw) ? raw : [];
+    return arr.map((m: unknown, i: number) => {
+      const msg = m as { role?: string; sender?: string; content?: string; text?: string };
+      return {
+        id: `msg-${sessionId}-${i}`,
+        role: ((msg.role ?? msg.sender) === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+        content: (msg.content ?? msg.text ?? '') as string,
+        timestamp: formatSessionTime(),
+      };
+    });
+  };
 
-  // Save current session messages when they change
+  // Load sessions from API on mount (filtered by agent - only DPR/Inventory, not DMS)
+  const loadSessions = useCallback(async () => {
+    try {
+      const agentKey = selectedAgent === 'dpr' ? 'DPR' : 'Inventory';
+      const rawList = await listAgentSessions(getAgentForWorkspace(agentKey));
+      const list = (Array.isArray(rawList) ? rawList : []).filter(
+        (s: AiSession) => (s as { agent?: string }).agent !== AGENT_DOC_MGMT
+      );
+      const mapped = list.map((s: AiSession & { chat_history?: unknown[] }) => {
+        const id = String(s.session_id ?? s.id ?? '');
+        const preview = (s.name as string) || 'New session';
+        const time = formatSessionTime(s.created_at as string) || '--';
+        const rawMessages = s.messages ?? s.chat_history ?? [];
+        const msgs: Message[] = Array.isArray(rawMessages)
+          ? rawMessages.map((m: { role?: string; content?: string }, i: number) => ({
+              id: `msg-${id}-${i}`,
+              role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
+              content: (m.content ?? '') as string,
+              timestamp: time,
+            }))
+          : [];
+        return { id, preview, time, messages: msgs };
+      });
+      setSessions(mapped);
+      if (mapped.length > 0) {
+        const firstId = mapped[0].id;
+        setCurrentSessionId(firstId);
+        if (mapped[0].messages.length > 0) {
+          setMessages(mapped[0].messages);
+        } else {
+          try {
+            const res = await getSession(firstId);
+            const sess = (typeof res === 'object' && res !== null && 'data' in res
+              ? (res as { data: AiSession }).data
+              : res) as AiSession;
+            const msgs = parseSessionMessages(sess, firstId);
+            setMessages(msgs);
+            setSessions(prev =>
+              prev.map(s => (s.id === firstId ? { ...s, messages: msgs } : s))
+            );
+          } catch {
+            setMessages([]);
+          }
+        }
+      } else {
+        setCurrentSessionId('');
+        setMessages([]);
+      }
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
+        ?? (err as { message?: string })?.message ?? 'Failed to load sessions';
+      toast.showError(msg);
+      setSessions([]);
+      setCurrentSessionId('');
+      setMessages([]);
+    }
+  }, [toast, selectedAgent]);
+
+  useEffect(() => {
+    loadSessions();
+  }, [loadSessions]);
+
+  // Save current session messages when they change (for in-memory sync)
   useEffect(() => {
     if (messages.length > 0 && currentSessionId) {
-      setSessions(prev => {
-        const updated = prev.map(session => 
-          session.id === currentSessionId 
-            ? { ...session, messages: messages }
-            : session
-        );
-        return updated;
-      });
+      setSessions(prev =>
+        prev.map(session =>
+          session.id === currentSessionId ? { ...session, messages } : session
+        )
+      );
     }
   }, [messages, currentSessionId]);
 
-  const handleNewSession = () => {
-    // Save current session if it has messages
-    if (messages.length > 0) {
-      const lastUserMessage = messages.filter(m => m.role === 'user').pop();
-      const preview = lastUserMessage 
-        ? (lastUserMessage.content.length > 20 ? lastUserMessage.content.substring(0, 20) + '...' : lastUserMessage.content)
-        : 'New session';
-      
-      setSessions(prev => {
-        const updated = prev.map(session => 
-          session.id === currentSessionId 
-            ? { ...session, messages: messages, preview: preview }
-            : session
-        );
-        return updated;
-      });
+  const handleNewSession = async () => {
+    setAiState('thinking');
+    try {
+      const res = await createSession(undefined, AGENT_DPR_INVENTORY);
+      const sessionId = getSessionIdFromResponse(res);
+      if (!sessionId) {
+        throw new Error('Could not create session');
+      }
+      const currentTime = formatSessionTime() || new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+      const newSession = {
+        id: sessionId,
+        preview: (res as { name?: string }).name ?? getDefaultDprSessionName(),
+        time: currentTime,
+        messages: [],
+      };
+      setSessions(prev => [newSession, ...prev]);
+      setCurrentSessionId(sessionId);
+      setMessages([]);
+      setInputMessage('');
+      setAttachedFiles([]);
+      toast.showSuccess('New session created');
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
+        ?? (err as { message?: string })?.message ?? 'Failed to create session';
+      toast.showError(msg);
+    } finally {
+      setAiState('ready');
     }
-
-    // Create new session
-    const newSessionId = Date.now().toString();
-    const currentTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-    
-    const newSession = {
-      id: newSessionId,
-      preview: 'New session',
-      time: currentTime,
-      messages: []
-    };
-
-    setSessions(prev => [newSession, ...prev]);
-    setCurrentSessionId(newSessionId);
-    setMessages([]);
-    setInputMessage('');
   };
 
-  const handleSessionClick = (sessionId: string) => {
-    // Save current session before switching
-    if (messages.length > 0) {
-      const lastUserMessage = messages.filter(m => m.role === 'user').pop();
-      const preview = lastUserMessage 
-        ? (lastUserMessage.content.length > 20 ? lastUserMessage.content.substring(0, 20) + '...' : lastUserMessage.content)
-        : 'New session';
-      
-      setSessions(prev => {
-        return prev.map(session => 
-          session.id === currentSessionId 
-            ? { ...session, messages: messages, preview: preview }
-            : session
-        );
-      });
-    }
+  const fetchSessionHistory = useCallback(async (sessionId: string): Promise<Message[]> => {
+    const res = await getSession(sessionId);
+    const sess = (typeof res === 'object' && res !== null && 'data' in res
+      ? (res as { data: AiSession }).data
+      : res) as AiSession & { chat_history?: unknown[]; history?: unknown[]; conversation?: unknown[] };
+    return parseSessionMessages(sess, sessionId);
+  }, []);
 
-    // Load selected session
-    const selectedSession = sessions.find(s => s.id === sessionId);
-    if (selectedSession) {
-      setCurrentSessionId(sessionId);
-      setMessages(selectedSession.messages);
+  const handleRenameSession = async (e: React.MouseEvent, sessionId: string, currentName: string) => {
+    e.stopPropagation();
+    const newName = window.prompt('Rename session', currentName || 'New session');
+    if (newName === null || newName.trim() === '' || newName.trim() === currentName) return;
+    try {
+      await renameSession(sessionId, newName.trim());
+      setSessions(prev =>
+        prev.map(s => (s.id === sessionId ? { ...s, preview: newName.trim() } : s))
+      );
+      toast.showSuccess('Session renamed');
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
+        ?? (err as { message?: string })?.message ?? 'Failed to rename session';
+      toast.showError(msg);
     }
-    
-    // Close sidebar on mobile after selecting session
+  };
+
+  const handleSessionClick = async (sessionId: string) => {
+    setCurrentSessionId(sessionId);
+    setAiState('thinking');
+    try {
+      const msgs = await fetchSessionHistory(sessionId);
+      setMessages(msgs);
+      setSessions(prev =>
+        prev.map(s => (s.id === sessionId ? { ...s, messages: msgs } : s))
+      );
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
+        ?? (err as { message?: string })?.message ?? 'Failed to load chat history';
+      toast.showError(msg);
+      setMessages([]);
+    } finally {
+      setAiState('ready');
+    }
     setSidebarOpen(false);
   };
 
@@ -176,74 +287,81 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
     }
   }, [aiState]);
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     const messageContent = inputMessage.trim();
     const hasFiles = attachedFiles.length > 0;
-    
     if (!messageContent && !hasFiles) return;
 
-    const currentTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-
-    // Create message content including file info
+    const currentTime = formatSessionTime();
     let fullContent = messageContent;
     if (hasFiles) {
       const fileList = attachedFiles.map(f => `📎 ${f.name} (${(f.size / 1024).toFixed(2)} KB)`).join('\n');
-      fullContent = messageContent 
-        ? `${messageContent}\n\n${fileList}`
-        : `Files attached:\n${fileList}`;
+      fullContent = messageContent ? `${messageContent}\n\n${fileList}` : `Files attached:\n${fileList}`;
     }
 
-    const newMessage: Message = {
+    const userMsg: Message = {
       id: Date.now().toString(),
       role: 'user',
       content: fullContent,
-      timestamp: currentTime
+      timestamp: currentTime,
     };
-
-    setMessages(prev => [...prev, newMessage]);
+    setMessages(prev => [...prev, userMsg]);
     setInputMessage('');
+    const filesToSend = [...attachedFiles];
     setAttachedFiles([]);
 
-    // Update session preview with the new message
-    const previewText = messageContent || (hasFiles ? `${attachedFiles.length} file(s) attached` : '');
-    setSessions(prev => {
-      return prev.map(session => {
-        if (session.id === currentSessionId) {
-          const preview = previewText.length > 20 
-            ? previewText.substring(0, 20) + '...' 
-            : previewText || 'New session';
-          return { ...session, preview, time: currentTime };
-        }
-        return session;
-      });
-    });
-
-    // Simulate AI response with state changes
     setAiState('thinking');
-    setTimeout(() => {
-      // Randomly set error state (10% chance) for demo purposes
-      const isError = Math.random() < 0.1;
-      
-      if (isError) {
-        setAiState('error');
-        setTimeout(() => {
-          setAiState('ready');
-        }, 3000);
-      } else {
-        const responseText = messageContent 
-          ? `I understand you're asking about "${messageContent}".${hasFiles ? ' I can see you\'ve also attached some files.' : ''} Let me help you with that.`
-          : `I can see you've attached ${attachedFiles.length} file(s). How can I help you with these files?`;
-        
-        const aiResponse: Message = {
-          id: (Date.now() + 1).toString(),
-          role: 'assistant',
-          content: responseText,
-          timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
-        };
-        setMessages(prev => [...prev, aiResponse]);
+
+    let sessionId = currentSessionId;
+    if (!sessionId || !sessions.some(s => s.id === sessionId)) {
+      try {
+        const res = await createSession(undefined, AGENT_DPR_INVENTORY);
+        sessionId = getSessionIdFromResponse(res);
+        if (!sessionId) throw new Error('No session ID');
+        setCurrentSessionId(sessionId);
+        const newSession = { id: sessionId, preview: (res as { name?: string }).name ?? getDefaultDprSessionName(), time: currentTime, messages: [] };
+        setSessions(prev => [newSession, ...prev]);
+      } catch (err: unknown) {
+        const msg = (err as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
+          ?? (err as { message?: string })?.message ?? 'Failed to create session';
+        toast.showError(msg);
         setAiState('ready');
+        return;
       }
-    }, 1000);
+    }
+
+    try {
+      const response = await sendMessage(
+        sessionId,
+        messageContent || 'Files attached.',
+        { agent: AGENT_DPR_INVENTORY, files: filesToSend.length > 0 ? filesToSend : undefined }
+      );
+      const replyText = extractReplyFromResponse(response);
+      const aiMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: replyText || 'No response received from the AI.',
+        timestamp: formatSessionTime(),
+      };
+      setMessages(prev => [...prev, aiMsg]);
+      const previewText = messageContent || (hasFiles ? `${filesToSend.length} file(s) attached` : '');
+      setSessions(prev =>
+        prev.map(s => (s.id === sessionId ? { ...s, preview: previewText.slice(0, 20) + (previewText.length > 20 ? '...' : ''), time: currentTime } : s))
+      );
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
+        ?? (err as { message?: string })?.message ?? 'Failed to send message';
+      toast.showError(msg);
+      const errorMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: `Error: ${msg}`,
+        timestamp: formatSessionTime(),
+      };
+      setMessages(prev => [...prev, errorMsg]);
+    } finally {
+      setAiState('ready');
+    }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -260,24 +378,9 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
-      const newFiles = Array.from(files);
-      setAttachedFiles(prev => [...prev, ...newFiles]);
-      
-      // Show notification for each file
-      newFiles.forEach(file => {
-        const fileMessage: Message = {
-          id: Date.now().toString() + Math.random(),
-          role: 'user',
-          content: `📎 Attached: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`,
-          timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
-        };
-        setMessages(prev => [...prev, fileMessage]);
-      });
+      setAttachedFiles(prev => [...prev, ...Array.from(files)]);
     }
-    // Reset input so same file can be selected again
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleRemoveFile = (index: number) => {
@@ -395,7 +498,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
   };
 
   return (
-    <div className={`flex flex-col md:flex-row h-[calc(100vh-3.5rem-2rem)] sm:h-[calc(100vh-4rem-2rem)] md:h-[calc(100vh-3.5rem-2rem)] ${isDark ? 'bg-[#2d2d2d]' : 'bg-white'} rounded-xl border ${isDark ? 'border-[#404040]' : 'border-gray-200'} overflow-hidden relative`}>
+    <div className={`flex flex-col md:flex-row h-[calc(100vh-4rem)] min-h-0 max-h-[calc(100dvh-4rem)] sm:h-[calc(100vh-4.5rem)] md:h-[calc(100vh-3.5rem-2rem)] ${isDark ? 'bg-[#2d2d2d]' : 'bg-white'} rounded-lg sm:rounded-xl border ${isDark ? 'border-[#404040]' : 'border-gray-200'} overflow-hidden relative`}>
       {/* Mobile Sidebar Overlay */}
       {sidebarOpen && (
         <div 
@@ -405,101 +508,91 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
       )}
 
       {/* Left Sidebar */}
-      <div className={`fixed md:static inset-y-0 left-0 z-50 md:z-auto w-full sm:w-80 md:w-64 border-r ${isDark ? 'border-[#2d2d2d]' : 'border-gray-200'} flex flex-col ${bgSecondary} transform transition-transform duration-300 ease-in-out ${
+      <div className={`fixed md:static inset-y-0 left-0 z-50 md:z-auto w-[min(100%,320px)] max-w-[85vw] sm:w-80 md:w-64 md:max-w-none border-r ${isDark ? 'border-[#2d2d2d]' : 'border-gray-200'} flex flex-col ${bgSecondary} transform transition-transform duration-300 ease-in-out ${
         sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
       }`}>
         {/* Logo Section */}
-        <div className={`p-4 md:p-6 border-b ${isDark ? 'border-[#404040]' : 'border-gray-200'}`}>
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-[#C2D642] rounded-lg flex items-center justify-center">
-                <Bot className="w-5 h-5 text-white" />
+        <div className={`p-3 sm:p-4 md:p-6 border-b ${isDark ? 'border-[#404040]' : 'border-gray-200'} flex-shrink-0`}>
+          <div className="flex items-center justify-between mb-3 sm:mb-4">
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+              <div className="w-7 h-7 sm:w-8 sm:h-8 bg-[#C2D642] rounded-lg flex items-center justify-center flex-shrink-0">
+                <Bot className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
               </div>
-              <div>
-                <h2 className={`text-sm font-black ${textPrimary}`}>koncite</h2>
-                <p className={`text-[10px] font-bold uppercase tracking-wider ${textSecondary}`}>INTELLIGENCE</p>
+              <div className="min-w-0">
+                <h2 className={`text-xs sm:text-sm font-black truncate ${textPrimary}`}>Koncite</h2>
+                <p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-wider truncate ${textSecondary}`}>INTELLIGENCE</p>
               </div>
             </div>
             <button
               onClick={() => setSidebarOpen(false)}
-              className="md:hidden p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5"
+              className="md:hidden p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 flex-shrink-0 touch-manipulation"
+              aria-label="Close sidebar"
             >
               <X className={`w-5 h-5 ${textSecondary}`} />
             </button>
           </div>
-          <button 
+          {/* Agent type dropdown */}
+          <div className="mb-3 sm:mb-4">
+            <label htmlFor="agent-select" className={`sr-only ${textSecondary}`}>
+              Select agent type
+            </label>
+            <div className="relative">
+              <select
+                id="agent-select"
+                value={selectedAgent}
+                onChange={(e) => handleAgentChange(e.target.value as AgentType)}
+                className={`w-full appearance-none pl-3 pr-9 py-2.5 rounded-lg text-xs sm:text-sm font-bold cursor-pointer border-2 transition-colors ${isDark ? 'bg-[#2d2d2d] border-[#404040] text-slate-100 hover:border-[#C2D642]/50 focus:border-[#C2D642]' : 'bg-white border-gray-200 text-slate-900 hover:border-[#C2D642]/50 focus:border-[#C2D642]'} focus:outline-none`}
+              >
+                <option value="dpr">DPR</option>
+                <option value="inventory">Inventory</option>
+              </select>
+              <ChevronDown className={`absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none ${textSecondary}`} />
+            </div>
+          </div>
+          <button
             onClick={handleNewSession}
-            className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#A8B838] text-white' : 'bg-[#C2D642] hover:bg-[#A8B838] text-white'} shadow-md`}
+            disabled={aiState === 'thinking' || selectedAgent === 'inventory'}
+            className={`w-full flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-all touch-manipulation min-h-[44px] ${isDark ? 'bg-[#C2D642] hover:bg-[#A8B838] text-white' : 'bg-[#C2D642] hover:bg-[#A8B838] text-white'} shadow-md disabled:opacity-60 disabled:cursor-not-allowed`}
           >
-            <Plus className="w-4 h-4" /> New Session
+            <Plus className="w-4 h-4 flex-shrink-0" /> <span className="truncate">New Session</span>
           </button>
         </div>
 
-        {/* Active Workspace */}
-        <div className={`p-3 md:p-4 border-b ${isDark ? 'border-[#404040]' : 'border-gray-200'}`}>
-          <p className={`text-[10px] font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>ACTIVE WORKSPACE</p>
-          <div className="relative">
-            <button
-              onClick={() => setShowWorkspaceDropdown(!showWorkspaceDropdown)}
-              className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#2d2d2d] hover:bg-[#404040] text-slate-100' : 'bg-white hover:bg-gray-50 text-slate-900'} border ${isDark ? 'border-[#404040]' : 'border-gray-200'} shadow-sm`}
-            >
-              <div className="flex items-center gap-2">
-                <Truck className="w-4 h-4" />
-                <span>{selectedWorkspace}</span>
-              </div>
-              <ChevronDown className={`w-4 h-4 transition-transform ${showWorkspaceDropdown ? 'rotate-180' : ''}`} />
-            </button>
-            {showWorkspaceDropdown && (
-              <div className={`absolute top-full left-0 right-0 mt-2 rounded-lg border shadow-lg z-20 ${isDark ? 'bg-[#2d2d2d] border-[#404040]' : 'bg-white border-gray-200'}`}>
-                <div className="py-1">
-                  {workspaceOptions.map((option) => (
-                    <button
-                      key={option}
-                      onClick={() => {
-                        setSelectedWorkspace(option);
-                        setShowWorkspaceDropdown(false);
-                      }}
-                      className={`w-full flex items-center gap-2 px-3 py-2 text-sm font-bold transition-colors text-left ${
-                        selectedWorkspace === option
-                          ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
-                          : isDark ? 'hover:bg-[#2d2d2d] text-slate-100' : 'hover:bg-gray-50 text-slate-900'
-                      }`}
-                    >
-                      <Truck className="w-4 h-4" />
-                      {option}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Recent Sessions */}
-        <div className="flex-1 overflow-y-auto p-3 md:p-4">
+        {/* Recent Sessions - only for DPR */}
+        <div className={`flex-1 min-h-0 overflow-y-auto p-2 sm:p-3 md:p-4 ${selectedAgent === 'inventory' ? 'hidden' : ''}`}>
           <p className={`text-[10px] font-bold uppercase tracking-wider mb-3 ${textSecondary}`}>RECENT SESSIONS</p>
           <div className="space-y-2">
             {sessions.map((session) => (
               <div
                 key={session.id}
                 onClick={() => handleSessionClick(session.id)}
-                className={`p-3 rounded-lg cursor-pointer transition-colors ${
+                className={`p-2.5 sm:p-3 rounded-lg cursor-pointer transition-colors touch-manipulation ${
                   session.id === currentSessionId 
                     ? isDark ? 'bg-[#C2D642]/20 border-[#C2D642]/50' : 'bg-[#C2D642]/10 border-[#C2D642]/30'
                     : isDark ? 'bg-[#2d2d2d] hover:bg-[#404040] border-[#404040]' : 'bg-white hover:bg-gray-50 border-gray-200'
                 } border`}
               >
-                <div className="flex items-center justify-between">
-                  <p className={`text-sm font-bold ${session.id === currentSessionId ? 'text-[#C2D642]' : textPrimary} truncate`}>{session.preview}</p>
-                  <span className={`text-[10px] font-bold ${textSecondary}`}>{session.time}</span>
+                <div className="flex items-center justify-between gap-2">
+                  <p className={`text-sm font-bold flex-1 min-w-0 truncate ${session.id === currentSessionId ? 'text-[#C2D642]' : textPrimary}`}>{session.preview}</p>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <button
+                      onClick={(e) => handleRenameSession(e, session.id, session.preview)}
+                      className={`p-1.5 rounded hover:opacity-80 transition-opacity min-w-[32px] min-h-[32px] flex items-center justify-center ${textSecondary} hover:text-[#C2D642] touch-manipulation`}
+                      title="Rename session"
+                      aria-label="Rename session"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                    <span className={`text-[10px] font-bold ${textSecondary}`}>{session.time}</span>
+                  </div>
                 </div>
               </div>
             ))}
           </div>
         </div>
 
-        {/* AI State Indicator */}
-        <div className={`p-3 md:p-4 border-t ${isDark ? 'border-[#404040]' : 'border-gray-200'}`}>
+        {/* AI State Indicator - only for DPR */}
+        <div className={`p-2 sm:p-3 md:p-4 border-t flex-shrink-0 ${isDark ? 'border-[#404040]' : 'border-gray-200'} ${selectedAgent === 'inventory' ? 'hidden' : ''}`}>
           <div className={`w-full flex items-center gap-2 md:gap-3 px-3 py-2 rounded-lg ${isDark ? 'bg-[#2d2d2d]/50' : 'bg-white'}`}>
             <div className={`w-2 h-2 md:w-2.5 md:h-2.5 rounded-full flex-shrink-0 ${
               aiState === 'thinking' 
@@ -525,22 +618,37 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
       </div>
 
       {/* Chat Area */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
+        {selectedAgent === 'inventory' ? (
+          /* Inventory - Coming Soon */
+          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
+            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 ${isDark ? 'bg-[#2d2d2d] border border-[#404040]' : 'bg-gray-100 border border-gray-200'}`}>
+              <Bot className={`w-10 h-10 ${textSecondary}`} />
+            </div>
+            <h3 className={`text-lg sm:text-xl font-black mb-2 ${textPrimary}`}>Inventory</h3>
+            <p className={`text-sm sm:text-base font-medium max-w-md mb-4 ${textSecondary}`}>
+              Inventory functionality is coming soon. Stock status, material tracking, and related features will be available in a future update.
+            </p>
+            <p className={`text-xs font-bold uppercase tracking-wider ${textSecondary}`}>Stay tuned</p>
+          </div>
+        ) : (
+          <>
         {/* Chat Header */}
-        <div className={`p-3 md:p-4 border-b ${isDark ? 'border-[#404040]' : 'border-gray-200'} flex items-center justify-between ${bgSecondary}`}>
+        <div className={`p-2 sm:p-3 md:p-4 border-b flex-shrink-0 ${isDark ? 'border-[#404040]' : 'border-gray-200'} flex items-center justify-between ${bgSecondary}`}>
           <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
             <button
               onClick={() => setSidebarOpen(true)}
-              className="md:hidden p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 mr-1 flex-shrink-0"
+              className="md:hidden p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 mr-1 flex-shrink-0 min-w-[44px] min-h-[44px] flex items-center justify-center touch-manipulation"
+              aria-label="Open sessions"
             >
               <Menu className={`w-5 h-5 ${textSecondary}`} />
             </button>
-            <div className="w-7 h-7 md:w-8 md:h-8 bg-[#C2D642] rounded-lg flex items-center justify-center flex-shrink-0">
+            <div className="w-8 h-8 md:w-8 md:h-8 bg-[#C2D642] rounded-lg flex items-center justify-center flex-shrink-0">
               <Bot className="w-4 h-4 md:w-5 md:h-5 text-white" />
             </div>
             <div className="min-w-0 flex-1">
-              <h3 className={`text-xs md:text-sm font-black truncate ${textPrimary}`}>Workspace Chat</h3>
-              <p className={`text-[9px] md:text-[10px] font-bold uppercase tracking-wider ${textSecondary}`}>GLOBAL CONTEXT</p>
+              <h3 className={`text-xs sm:text-sm font-black truncate ${textPrimary}`}>Workspace Chat</h3>
+              <p className={`text-[9px] md:text-[10px] font-bold uppercase tracking-wider hidden sm:block truncate ${textSecondary}`}>DPR & INVENTORY AGENT</p>
             </div>
           </div>
           {/* <div className="flex items-center gap-2">
@@ -557,7 +665,20 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
         </div>
 
         {/* Messages Area */}
-        <div className="flex-1 overflow-y-auto p-3 md:p-4 lg:p-6 pb-8 md:pb-10 lg:pb-6 space-y-3 md:space-y-4 custom-scrollbar">
+        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-2 sm:p-3 md:p-4 lg:p-6 pb-6 sm:pb-8 md:pb-10 lg:pb-6 space-y-2 sm:space-y-3 md:space-y-4 custom-scrollbar">
+          {messages.length === 0 && (
+            <div className="flex flex-col items-center justify-center min-h-[160px] sm:min-h-[200px] md:min-h-[280px] text-center px-3 sm:px-4">
+              <div className="w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 bg-[#C2D642] rounded-xl sm:rounded-2xl flex items-center justify-center mb-3 sm:mb-4">
+                <Bot className="w-6 h-6 sm:w-8 sm:h-8 md:w-9 md:h-9 text-white" />
+              </div>
+              <p className={`text-base sm:text-lg md:text-xl font-bold max-w-[280px] sm:max-w-md ${isDark ? 'text-violet-400' : 'text-[#7C3AED]'}`}>
+                You're connected to the DPR & Inventory Agent.
+              </p>
+              <p className={`text-[11px] sm:text-xs md:text-sm font-normal mt-1.5 sm:mt-2 max-w-[280px] sm:max-w-md ${isDark ? 'text-slate-400' : 'text-[#4B5563]'}`}>
+                Ask me to file a DPR, get stock status, or review today's work.
+              </p>
+            </div>
+          )}
           {messages.map((message) => (
             <div
               key={message.id}
@@ -568,13 +689,13 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
                   <Bot className="w-4 h-4 md:w-5 md:h-5 text-white" />
                 </div>
               )}
-              <div className={`max-w-[85%] sm:max-w-[75%] md:max-w-[70%] ${message.role === 'user' ? 'order-2' : ''}`}>
-                <div className={`rounded-xl p-3 md:p-4 ${message.role === 'user' ? 'bg-[#C2D642] text-white' : isDark ? 'bg-[#2d2d2d] text-slate-100' : 'bg-white text-slate-900'} border ${message.role === 'user' ? 'border-[#C2D642]' : isDark ? 'border-[#404040]' : 'border-gray-200'}`}>
+              <div className={`max-w-[90%] xs:max-w-[85%] sm:max-w-[75%] md:max-w-[70%] ${message.role === 'user' ? 'order-2' : ''}`}>
+                <div className={`rounded-lg sm:rounded-xl p-2.5 sm:p-3 md:p-4 ${message.role === 'user' ? `${isDark ? 'bg-slate-800/40 border border-[#404040]' : 'bg-slate-100 border border-gray-200'}` : isDark ? 'bg-[#2d2d2d] text-slate-100 border border-[#404040]' : 'bg-white text-slate-900 border border-gray-200'}`}>
                   <ChatMarkdownViewer
                     content={message.content}
                     isDark={isDark}
                     role={message.role}
-                    className={`text-xs md:text-sm font-bold ${message.role === 'user' ? 'text-white font-chat-user' : `${textPrimary} font-chat-ai`}`}
+                    className={`text-xs sm:text-sm md:text-base font-normal break-words leading-relaxed ${message.role === 'user' ? `font-chat-user ${textPrimary}` : `font-chat-ai ${textPrimary}`}`}
                   />
                 </div>
                 <p className={`text-[9px] md:text-[10px] font-bold mt-1 ${textSecondary} ${message.role === 'user' ? 'text-right' : 'text-left'}`}>
@@ -592,17 +713,17 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
         </div>
 
         {/* Input Area */}
-        <div className={`p-3 md:p-4 border-t ${isDark ? 'border-[#404040]' : 'border-gray-200'} ${bgSecondary}`}>
+        <div className={`p-2 sm:p-3 md:p-4 border-t flex-shrink-0 ${isDark ? 'border-[#404040]' : 'border-gray-200'} ${bgSecondary}`}>
           {/* Attached Files Preview */}
           {attachedFiles.length > 0 && (
-            <div className="mb-2 flex flex-wrap gap-2">
+            <div className="mb-1.5 sm:mb-2 flex flex-wrap gap-1.5 sm:gap-2">
               {attachedFiles.map((file, index) => (
                 <div
                   key={index}
-                  className={`flex items-center gap-1.5 md:gap-2 px-2 md:px-3 py-1 md:py-1.5 rounded-lg text-[10px] md:text-xs font-bold ${isDark ? 'bg-[#2d2d2d] text-slate-100' : 'bg-gray-100 text-slate-900'}`}
+                  className={`flex items-center gap-1 sm:gap-1.5 md:gap-2 px-2 sm:px-2.5 md:px-3 py-1 sm:py-1.5 rounded-md sm:rounded-lg text-[10px] md:text-xs font-bold ${isDark ? 'bg-[#2d2d2d] text-slate-100' : 'bg-gray-100 text-slate-900'}`}
                 >
-                  <Paperclip className="w-3 h-3 flex-shrink-0" />
-                  <span className="max-w-[100px] sm:max-w-[150px] truncate">{file.name}</span>
+                  <Paperclip className="w-2.5 h-2.5 sm:w-3 sm:h-3 flex-shrink-0" />
+                  <span className="max-w-[80px] xs:max-w-[100px] sm:max-w-[150px] truncate">{file.name}</span>
                   <button
                     onClick={() => handleRemoveFile(index)}
                     className={`ml-1 hover:opacity-70 transition-opacity ${textSecondary} flex-shrink-0`}
@@ -614,7 +735,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
             </div>
           )}
           
-          <div className={`flex items-center gap-1.5 md:gap-2 p-2 md:p-3 rounded-xl border-2 ${isDark ? 'bg-[#2d2d2d] border-[#C2D642]/30' : 'bg-white border-[#C2D642]/30'}`}>
+          <div className={`flex items-center gap-1 sm:gap-1.5 md:gap-2 p-2 sm:p-2.5 md:p-3 rounded-lg sm:rounded-xl border-2 ${isDark ? 'bg-[#2d2d2d] border-[#C2D642]/30' : 'bg-white border-[#C2D642]/30'}`}>
             <input
               ref={fileInputRef}
               type="file"
@@ -625,10 +746,11 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
             />
             <button
               onClick={handleAttachClick}
-              className={`p-1.5 md:p-2 rounded-lg transition-colors flex-shrink-0 ${isDark ? 'hover:bg-[#404040]' : 'hover:bg-gray-100'}`}
+              className={`p-2 rounded-lg transition-colors flex-shrink-0 min-w-[40px] min-h-[40px] flex items-center justify-center touch-manipulation ${isDark ? 'hover:bg-[#404040]' : 'hover:bg-gray-100'}`}
               title="Attach file"
+              aria-label="Attach file"
             >
-              <Paperclip className={`w-3.5 h-3.5 md:w-4 md:h-4 ${textSecondary}`} />
+              <Paperclip className={`w-4 h-4 ${textSecondary}`} />
             </button>
             <input
               type="text"
@@ -636,37 +758,39 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
               onChange={(e) => setInputMessage(e.target.value)}
               onKeyPress={handleKeyPress}
               placeholder="Type your command..."
-              className={`flex-1 min-w-0 bg-transparent outline-none text-xs md:text-sm font-bold ${textPrimary} placeholder:${textSecondary}`}
+              className={`flex-1 min-w-0 bg-transparent outline-none text-xs sm:text-sm font-bold ${textPrimary} placeholder:${textSecondary}`}
             />
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-0.5 sm:gap-1">
               {isRecording ? (
                 <>
                   <button
                     onClick={stopRecording}
-                    className="p-1.5 md:p-2 rounded-lg transition-colors flex-shrink-0 bg-red-500 hover:bg-red-600 text-white animate-pulse"
+                    className="p-2 rounded-lg transition-colors flex-shrink-0 min-w-[40px] min-h-[40px] flex items-center justify-center bg-red-500 hover:bg-red-600 text-white animate-pulse touch-manipulation"
                     title="Stop recording"
+                    aria-label="Stop recording"
                   >
-                    <Square className="w-3.5 h-3.5 md:w-4 md:h-4 fill-white" />
+                    <Square className="w-4 h-4 fill-white" />
                   </button>
-                  <span className={`text-[10px] md:text-xs font-bold min-w-[3rem] text-center ${isDark ? 'text-red-400' : 'text-red-600'}`}>
+                  <span className={`text-[9px] sm:text-[10px] md:text-xs font-bold min-w-[2.5rem] sm:min-w-[3rem] text-center self-center hidden xs:inline ${isDark ? 'text-red-400' : 'text-red-600'}`}>
                     {formatRecordingTime(recordingTime)}
                   </span>
                 </>
               ) : (
                 <button
                   onClick={handleVoiceClick}
-                  className={`p-1.5 md:p-2 rounded-lg transition-colors flex-shrink-0 ${
+                  className={`p-2 rounded-lg transition-colors flex-shrink-0 min-w-[40px] min-h-[40px] flex items-center justify-center touch-manipulation ${
                     isDark ? 'hover:bg-[#404040]' : 'hover:bg-gray-100'
                   }`}
                   title="Start voice recording"
+                  aria-label="Voice recording"
                 >
-                  <Mic className={`w-3.5 h-3.5 md:w-4 md:h-4 ${textSecondary}`} />
+                  <Mic className={`w-4 h-4 ${textSecondary}`} />
                 </button>
               )}
               <button
                 onClick={handleSendMessage}
-                disabled={(!inputMessage.trim() && attachedFiles.length === 0) || isRecording}
-                className={`p-1.5 md:p-2 rounded-lg transition-colors flex-shrink-0 ${
+                disabled={(!inputMessage.trim() && attachedFiles.length === 0) || isRecording || aiState === 'thinking'}
+                className={`p-2 rounded-lg transition-colors flex-shrink-0 min-w-[40px] min-h-[40px] flex items-center justify-center touch-manipulation ${
                   (inputMessage.trim() || attachedFiles.length > 0) && !isRecording
                     ? 'bg-[#C2D642] hover:bg-[#A8B838] text-white' 
                     : isDark 
@@ -674,21 +798,24 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme }) => {
                     : 'bg-gray-200 text-slate-400 cursor-not-allowed'
                 }`}
                 title="Send message"
+                aria-label="Send message"
               >
-                <Send className="w-3.5 h-3.5 md:w-4 md:h-4" />
+                <Send className="w-4 h-4" />
               </button>
             </div>
           </div>
           {/* Recording Indicator */}
           {isRecording && (
-            <div className={`mt-2 flex items-center justify-center gap-2 px-3 py-2 rounded-lg ${isDark ? 'bg-red-500/20 border border-red-500/30' : 'bg-red-50 border border-red-200'}`}>
-              <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-              <span className={`text-[10px] md:text-xs font-bold ${isDark ? 'text-red-400' : 'text-red-600'}`}>
+            <div className={`mt-1.5 sm:mt-2 flex items-center justify-center gap-2 px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg ${isDark ? 'bg-red-500/20 border border-red-500/30' : 'bg-red-50 border border-red-200'}`}>
+              <div className="w-1.5 h-1.5 sm:w-2 sm:h-2 bg-red-500 rounded-full animate-pulse" />
+              <span className={`text-[9px] sm:text-[10px] md:text-xs font-bold ${isDark ? 'text-red-400' : 'text-red-600'}`}>
                 Recording: {formatRecordingTime(recordingTime)}
               </span>
             </div>
           )}
         </div>
+          </>
+        )}
       </div>
     </div>
   );

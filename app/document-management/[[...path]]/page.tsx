@@ -5,14 +5,24 @@ import DocumentManagement from '@/components/DocumentManagement';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
 import { usePageTitle } from '@/hooks/usePageTitle';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
+import { useEffect } from 'react';
 
 export default function DOCUMENT_MANAGEMENTPage() {
   usePageTitle();
   const { theme } = useTheme();
   const { isAuthenticated, isChecking } = useAuth();
   const params = useParams();
-  const pathSegments = (params?.path as string[] | undefined) ?? [];
+  const router = useRouter();
+  const rawPath = (params?.path as string[] | undefined) ?? [];
+  const pathSegments = Array.isArray(rawPath) ? rawPath : [rawPath].filter(Boolean);
+
+  // Redirect /document-management (no path) to /document-management/office
+  useEffect(() => {
+    if (pathSegments.length === 0) {
+      router.replace('/document-management/office');
+    }
+  }, [pathSegments.length, router]);
 
   if (isChecking) {
     return (

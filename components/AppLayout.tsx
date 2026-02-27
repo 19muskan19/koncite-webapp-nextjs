@@ -37,9 +37,9 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
     }
   }, []);
 
-  // Auto-minimize sidebar when Document Management page is opened (sidebar only reopens via hamburger)
+  // Minimize sidebar when user navigates to AI Hub or Document Management (full-width experience)
   useEffect(() => {
-    if (pathname?.startsWith('/document-management')) {
+    if (pathname?.startsWith('/ai-agents') || pathname?.startsWith('/document-management')) {
       setSidebarOpen(false);
     }
   }, [pathname]);
@@ -83,10 +83,10 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
             <Link href="/dashboard" className="flex-shrink-0 flex items-center gap-2">
               <img 
                 src="/logo.png" 
-                alt="Koncite Logo" 
+                alt="Logo" 
                 className="w-8 h-8 sm:w-9 sm:h-9 object-contain"
               />
-              <span className="text-base sm:text-lg font-black tracking-tight text-[#C2D642] hidden sm:inline">KONCITE</span>
+              <span className={`font-black text-lg sm:text-xl tracking-tight ${theme === 'dark' ? 'text-white' : 'text-slate-900'}`}>KONCITE</span>
             </Link>
             {/* Mobile Hamburger Menu Button */}
             <button
@@ -127,7 +127,7 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
 
         <div className={`flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar ${getThemeClass('theme')} p-3 sm:p-4`}>
           <div className={`${
-            pathname === '/ai-agents' || pathname?.startsWith('/document-management') ? 'max-w-full h-full' : 'max-w-[1400px] mx-auto fade-in-premium'
+            pathname?.startsWith('/ai-agents') || pathname === '/document-management' ? 'max-w-full h-full' : 'max-w-[1400px] mx-auto fade-in-premium'
           }`}>
             {children}
           </div>

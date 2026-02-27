@@ -1,13 +1,11 @@
 'use client';
 
 import AppLayout from '@/components/AppLayout';
-import AIAgents from '@/components/AIAgents';
+import ManageTeams from '@/components/company-users/ManageTeams';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
-import { usePageTitle } from '@/hooks/usePageTitle';
 
-export default function AI_AGENTSPage() {
-  usePageTitle();
+export default function ManageTeamsPageClient() {
   const { theme } = useTheme();
   const { isAuthenticated, isChecking } = useAuth();
 
@@ -25,7 +23,7 @@ export default function AI_AGENTSPage() {
 
   return (
     <AppLayout>
-      <AIAgents theme={theme} />
+      <ManageTeams theme={theme} />
     </AppLayout>
   );
 }

@@ -1,29 +1,7 @@
-'use client';
+import ManageTeamsPageClient from '@/components/company-users/ManageTeamsPageClient';
 
-import AppLayout from '@/components/AppLayout';
-import ManageTeams from '@/components/company-users/ManageTeams';
-import { useTheme } from '@/contexts/ThemeContext';
-import { useAuth } from '@/hooks/useAuth';
+export const dynamic = 'force-dynamic';
 
 export default function ManageTeamsPage() {
-  const { theme } = useTheme();
-  const { isAuthenticated, isChecking } = useAuth();
-
-  if (isChecking) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
-      </div>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return null;
-  }
-
-  return (
-    <AppLayout>
-      <ManageTeams theme={theme} />
-    </AppLayout>
-  );
+  return <ManageTeamsPageClient />;
 }
