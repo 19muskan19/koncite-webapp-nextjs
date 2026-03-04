@@ -37,6 +37,19 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
     }
   }, []);
 
+  // Auto-close sidebar on smaller screens when window is resized
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 1024) {
+        setSidebarOpen(false);
+      } else {
+        setSidebarOpen(true);
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   // Minimize sidebar when user navigates to AI Hub or Document Management (full-width experience)
   useEffect(() => {
     if (pathname?.startsWith('/ai-agents') || pathname?.startsWith('/document-management')) {

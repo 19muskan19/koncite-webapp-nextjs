@@ -11,7 +11,7 @@ export default function LABOUR_MANAGEMENTRedirect() {
   useEffect(() => {
     if (!isChecking) {
       if (isAuthenticated) {
-        router.replace('/operations/labour');
+        router.replace('/operations/workforce-management');
       } else {
         router.replace('/');
       }

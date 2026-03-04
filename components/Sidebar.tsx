@@ -98,8 +98,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
       icon: ClipboardList,
       children: [
         { label: 'Daily work progress', id: ViewType.DPR, path: '/work-progress-reports' },
-        { label: 'Labours', id: ViewType.LABOUR_MANAGEMENT, path: '/operations/labour' },
-        { label: 'Staff', id: ViewType.COMPANY_USERS, path: '/company-users/manage-teams' }
+        { label: 'Workforce management', id: ViewType.WORKFORCE_MANAGEMENT, path: '/operations/workforce-management' }
       ] 
     },
     { 

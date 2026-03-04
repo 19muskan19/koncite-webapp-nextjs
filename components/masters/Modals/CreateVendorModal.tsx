@@ -41,6 +41,8 @@ interface CreateVendorModalProps {
   onSuccess?: (createdVendor?: any, formData?: any) => void;
   editingVendorId?: string | null;
   vendors?: Vendor[];
+  /** Pre-select vendor type when creating new vendor (e.g. 'contractor' when opening from Add Labour Entry) */
+  defaultVendorType?: 'contractor' | 'supplier' | 'both';
 }
 
 const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
@@ -49,7 +51,8 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
   onClose,
   onSuccess,
   editingVendorId = null,
-  vendors = []
+  vendors = [],
+  defaultVendorType
 }) => {
   const toast = useToast();
   const [formData, setFormData] = useState({
@@ -179,11 +182,11 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
       };
       loadVendorData();
     } else if (isOpen && !editingVendorId) {
-      // Reset form for new vendor
+      // Reset form for new vendor (use defaultVendorType if provided)
       setFormData({
         name: '',
         address: '',
-        type: '',
+        type: defaultVendorType || '',
         contact_person_name: '',
         country_code: '91',
         phone: '',
@@ -191,7 +194,7 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
         is_active: 1
       });
     }
-  }, [isOpen, editingVendorId]);
+  }, [isOpen, editingVendorId, defaultVendorType]);
 
   // Reset form when modal closes
   useEffect(() => {

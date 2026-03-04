@@ -11,6 +11,7 @@ const routeTitles: Record<string, string> = {
   '/ai-agents/inventory': 'Inventory - AI Hub - KONCITE',
   '/labour-management': 'Labour Management - KONCITE',
   '/operations/labour': 'Labour Management - KONCITE',
+  '/operations/workforce-management': 'Workforce Management - KONCITE',
   '/labour-strength': 'Labour Strength - KONCITE',
   '/subscription': 'Subscription - KONCITE',
   '/project-permissions': 'Project Permissions - KONCITE',
@@ -51,7 +52,9 @@ export const usePageTitle = (customTitle?: string) => {
   useEffect(() => {
     const exactTitle = pathname ? routeTitles[pathname] : undefined;
     const docMgmtTitle = pathname?.startsWith('/document-management') ? 'Document Management - KONCITE' : undefined;
-    const title = customTitle || exactTitle || docMgmtTitle || 'KONCITE - Construction Platform';
+    const rfqSubmitTitle = pathname?.match(/^\/inventory-reports\/rfq\/[^/]+\/submit-quotes/) ? 'Submit Quotes - RFQ - KONCITE' : undefined;
+    const rfqCreateTitle = pathname?.startsWith('/inventory-reports/rfq/create') ? 'Create RFQ - KONCITE' : undefined;
+    const title = customTitle || exactTitle || rfqSubmitTitle || rfqCreateTitle || docMgmtTitle || 'KONCITE - Construction Platform';
     document.title = title;
   }, [pathname, customTitle]);
 };
