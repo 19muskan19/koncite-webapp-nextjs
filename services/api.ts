@@ -2499,11 +2499,10 @@ export const safetyAPI = {
   }): Promise<any[]> => {
     try {
       const p = params || {};
-      const payload = {
-        dprId: p.dprId,
-        projects_id: p.projects_id ?? p.project_id,
-        sub_projects_id: p.sub_projects_id ?? p.subproject_id,
-      };
+      const payload: Record<string, string | number> = {};
+      if (p.dprId != null && p.dprId !== '') payload.dprId = p.dprId;
+      if (p.projects_id != null || p.project_id != null) payload.projects_id = p.projects_id ?? p.project_id ?? '';
+      if (p.sub_projects_id != null || p.subproject_id != null) payload.sub_projects_id = p.sub_projects_id ?? p.subproject_id ?? '';
       const response = await apiClient.post('/safety-list', payload);
       const data = response.data?.data ?? response.data ?? [];
       return Array.isArray(data) ? data : [];
@@ -2559,11 +2558,10 @@ export const hinderanceAPI = {
   }): Promise<any[]> => {
     try {
       const p = params || {};
-      const payload = {
-        dprId: p.dprId,
-        projects_id: p.projects_id,
-        sub_projects_id: p.sub_projects_id,
-      };
+      const payload: Record<string, string | number> = {};
+      if (p.dprId != null && p.dprId !== '') payload.dprId = p.dprId;
+      if (p.projects_id != null) payload.projects_id = p.projects_id;
+      if (p.sub_projects_id != null) payload.sub_projects_id = p.sub_projects_id;
       const response = await apiClient.post('/hinderance-list', payload);
       const data = response.data?.data ?? response.data ?? [];
       return Array.isArray(data) ? data : [];
@@ -3053,9 +3051,8 @@ export const dprAPI = {
   },
   bulkAdd: async (formData: FormData): Promise<any> => {
     try {
-      const response = await apiClient.post('/dpr-bulk-add', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      // Do NOT set Content-Type - let browser set multipart/form-data with boundary for file uploads
+      const response = await apiClient.post('/dpr-bulk-add', formData);
       return response.data;
     } catch (error: any) {
       throw {

@@ -308,6 +308,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const [isLoadingHindrance, setIsLoadingHindrance] = useState<boolean>(false);
   const [dprList, setDprList] = useState<any[]>([]);
   const [isLoadingDprList, setIsLoadingDprList] = useState<boolean>(false);
+  const [projectsMapForDprList, setProjectsMapForDprList] = useState<Record<string, string>>({});
+  const [subprojectsMapForDprList, setSubprojectsMapForDprList] = useState<Record<string, string>>({});
   const [projectRefreshKey, setProjectRefreshKey] = useState(0); // Increment to trigger project refetch after create
 
   // Pagination state per sector (reset when modal/search changes)
@@ -1027,17 +1029,20 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       if (r == null) continue;
       const actId = r?.activities_id ?? r?.activities_history_activities_id ?? r?.activity_id ?? r?.id ?? (typeof r === 'number' ? r : null);
       const act = r?.activities ?? r?.activites;
-      const id = String(actId ?? (typeof r === 'string' && /^\d+$/.test(r) ? r : ''));
-      if (!id || (typeof r === 'string' && r.length > 20)) continue;
-      const name = act?.activities ?? act?.name ?? r?.activity_name ?? r?.activities_name ?? getActivityName(id);
+      const numericActId = actId != null ? Number(actId) : NaN;
+      const idStr = String(actId ?? (typeof r === 'string' && /^\d+$/.test(r) ? r : ''));
+      if (!idStr || (typeof r === 'string' && r.length > 20)) continue;
+      const matchedActivity = activitiesList.find((a) => String(a.id) === idStr || String(a.numericId) === idStr || (numericActId && (a.numericId === numericActId || Number(a.id) === numericActId)));
+      const id = matchedActivity ? String(matchedActivity.id) : idStr;
+      const name = act?.activities ?? act?.name ?? r?.activity_name ?? r?.activities_name ?? getActivityName(idStr);
       const qty = r?.qty ?? r?.activities_history_qty ?? r?.quantity ?? r?.activities_history_quantity ?? 0;
       const remarks = r?.remarkes ?? r?.activities_history_remarkes ?? r?.remarks ?? '';
       const contractor = getContractor(r?.vendors ?? r?.vendor ?? r?.vendors_id ?? r?.vendors ?? r?.contractor);
       map.set(id, {
         id,
-        numericId: Number(actId) || undefined,
+        numericId: Number.isFinite(numericActId) ? numericActId : undefined,
         name: String(name || 'Activity'),
-        unit: r?.unit ?? act?.unit ?? '',
+        unit: r?.unit ?? act?.unit ?? (matchedActivity?.unit ?? ''),
         quantity: Number(qty) || 0,
         contractor: contractor || undefined,
         remarks: remarks || undefined,
@@ -1047,34 +1052,41 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     return map;
   };
 
+  // Edit mode: Step 1 fetch-dpr-history-edit (IDs) → Step 2 activities-history-edit (full records with qty, remarks, img, contractor)
   useEffect(() => {
     if (!showActivitySelection || !editingDprId || !selectedProject) return;
     let cancelled = false;
     const load = async () => {
-      let records = editModeActivityRecordsRef.current;
-      if (records.length === 0) {
-        try {
-          const res = await dprAPI.dprHistoryEdit({ type: 'activites', dprId: Number(editingDprId) });
-          let data = res?.data ?? res;
-          if (data && !Array.isArray(data)) {
-            data = data?.activites ?? data?.activities ?? (Array.isArray(data?.data) ? data.data : []);
-          }
-          records = Array.isArray(data) ? data : [];
-          if (!cancelled) editModeActivityRecordsRef.current = records;
-        } catch {
-          records = [];
+      let records: any[] = [];
+      try {
+        const res = await dprAPI.dprHistoryEdit({ type: 'activites', dprId: Number(editingDprId) });
+        let data = res?.data ?? res;
+        if (data && !Array.isArray(data)) {
+          data = data?.activites ?? data?.activities ?? (Array.isArray(data?.data) ? data.data : []);
         }
+        const arr = Array.isArray(data) ? data : [];
+        const ids = arr.map((e: any) => e?.activities_id ?? e?.activities_history_activities_id ?? e?.activity_id ?? e?.id).filter(Boolean);
+        if (ids.length > 0) {
+          try {
+            records = await activitiesHistoryAPI.edit(editingDprId, ids);
+          } catch {
+            records = arr;
+          }
+        }
+      } catch {
+        records = [];
       }
       if (cancelled) return;
       const map = mapActivityRecordsToSelected(records, activities);
       setSelectedActivities(map);
+      editModeActivityRecordsRef.current = records;
       if (records.length === 0 && !cancelled) toast.showWarning('Could not load previous activities—you can add them manually');
     };
     load();
     return () => { cancelled = true; };
   }, [showActivitySelection, editingDprId, selectedProject, activities]);
 
-  // Edit mode: Step 1 fetch-dpr-history-edit (IDs) → Step 2 materials-history-edit (full records). Fallback to fetch data if edit fails.
+  // Edit mode: Step 1 fetch-dpr-history-edit (IDs) → Step 2 materials-history-edit (full records). Use materials list id for map key so checkboxes match.
   useEffect(() => {
     if (!showMaterialSelection || !editingDprId || !selectedProject) return;
     let cancelled = false;
@@ -1101,17 +1113,19 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       for (const r of records) {
         const matId = r?.materials_id ?? r?.materials_history_materials_id ?? r?.id;
         const mat = r?.materials ?? r?.material;
-        const id = String(matId ?? r?.id ?? '');
-        if (!id) continue;
-        const cls = (mat?.class ?? r?.class ?? 'B') as 'A' | 'B' | 'C';
+        const recordId = String(matId ?? r?.id ?? '');
+        if (!recordId) continue;
+        const matchedMaterial = materials.find((m) => String(m.id) === recordId || String(m.numericId) === recordId || (Number(matId) && (m.numericId === Number(matId) || Number(m.id) === Number(matId))));
+        const id = matchedMaterial ? String(matchedMaterial.id) : recordId;
+        const cls = (mat?.class ?? r?.class ?? (matchedMaterial?.class ?? 'B')) as 'A' | 'B' | 'C';
         map.set(id, {
           id,
           numericId: Number(matId) || undefined,
           class: ['A', 'B', 'C'].includes(cls) ? cls : 'B',
-          code: mat?.code ?? r?.code ?? '',
-          name: mat?.name ?? r?.material_name ?? r?.materials_name ?? '',
-          specification: mat?.specification ?? r?.specification ?? '',
-          unit: mat?.unit ?? r?.unit ?? '',
+          code: mat?.code ?? r?.code ?? matchedMaterial?.code ?? '',
+          name: mat?.name ?? r?.material_name ?? r?.materials_name ?? matchedMaterial?.name ?? '',
+          specification: mat?.specification ?? r?.specification ?? matchedMaterial?.specification ?? '',
+          unit: mat?.unit ?? r?.unit ?? matchedMaterial?.unit ?? '',
           quantity: Number(r?.qty ?? r?.quantity ?? 0),
           activity: r?.activities?.activities ?? r?.activities?.name ?? r?.activity_name ?? '',
           remarks: r?.remarkes ?? r?.remarks ?? ''
@@ -1122,9 +1136,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     };
     load();
     return () => { cancelled = true; };
-  }, [showMaterialSelection, editingDprId, selectedProject]);
+  }, [showMaterialSelection, editingDprId, selectedProject, materials]);
 
-  // Edit mode: Step 1 fetch-dpr-history-edit (IDs) → Step 2 labour-history-edit (full records). Fallback to fetch data if edit fails.
+  // Edit mode: Step 1 fetch-dpr-history-edit (IDs) → Step 2 labour-history-edit (full records). Use labours list id for map key so checkboxes match.
   useEffect(() => {
     if (!showLabourSelection || !editingDprId || !selectedProject) return;
     let cancelled = false;
@@ -1156,13 +1170,15 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       for (const r of records) {
         const labId = r?.labours_id ?? r?.labour_id ?? r?.id;
         const lab = r?.labours ?? r?.labour;
-        const id = String(labId ?? r?.id ?? '');
-        if (!id) continue;
+        const recordId = String(labId ?? r?.id ?? '');
+        if (!recordId) continue;
+        const matchedLabour = labours.find((l) => String(l.id) === recordId || String(l.numericId) === recordId || (Number(labId) && (l.numericId === Number(labId) || Number(l.id) === Number(labId))));
+        const id = matchedLabour ? String(matchedLabour.id) : recordId;
         map.set(id, {
           id,
           numericId: Number(labId) || undefined,
-          type: lab?.type ?? r?.type ?? '',
-          category: lab?.category ?? r?.category ?? '',
+          type: lab?.type ?? r?.type ?? matchedLabour?.type ?? '',
+          category: lab?.category ?? r?.category ?? matchedLabour?.category ?? '',
           quantity: Number(r?.qty ?? r?.quantity ?? 0),
           overtimeQuantity: Number(r?.ot_qty ?? r?.overtime_qty ?? 0),
           activity: r?.activities?.activities ?? r?.activities?.name ?? r?.activity_name ?? '',
@@ -1176,9 +1192,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     };
     load();
     return () => { cancelled = true; };
-  }, [showLabourSelection, editingDprId, selectedProject]);
+  }, [showLabourSelection, editingDprId, selectedProject, labours]);
 
-  // Edit mode: Step 1 fetch-dpr-history-edit (IDs) → Step 2 assets-history-edit (full records). Fallback to fetch data if edit fails.
+  // Edit mode: Step 1 fetch-dpr-history-edit (IDs) → Step 2 assets-history-edit (full records). Use assets list id for map key so checkboxes match.
   useEffect(() => {
     if (!showAssetSelection || !editingDprId || !selectedProject) return;
     let cancelled = false;
@@ -1210,13 +1226,15 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       for (const r of records) {
         const assetId = r?.assets_id ?? r?.assets_history_assets_id ?? r?.id;
         const asset = r?.assets ?? r?.asset;
-        const id = String(assetId ?? r?.id ?? '');
-        if (!id) continue;
+        const recordId = String(assetId ?? r?.id ?? '');
+        if (!recordId) continue;
+        const matchedAsset = assets.find((a) => String(a.id) === recordId || String(a.numericId) === recordId || (Number(assetId) && (a.numericId === Number(assetId) || Number(a.id) === Number(assetId))));
+        const id = matchedAsset ? String(matchedAsset.id) : recordId;
         map.set(id, {
           id,
           numericId: Number(assetId) || undefined,
-          code: asset?.code ?? r?.code ?? '',
-          name: asset?.name ?? r?.asset_name ?? '',
+          code: asset?.code ?? r?.code ?? matchedAsset?.code ?? '',
+          name: asset?.name ?? r?.asset_name ?? matchedAsset?.name ?? '',
           quantity: Number(r?.qty ?? r?.quantity ?? 0),
           activity: r?.activities?.activities ?? r?.activities?.name ?? r?.activity_name ?? '',
           contractor: getContractor(r?.vendors ?? r?.vendor ?? r?.vendors_id ?? r?.contractor),
@@ -1229,7 +1247,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     };
     load();
     return () => { cancelled = true; };
-  }, [showAssetSelection, editingDprId, selectedProject]);
+  }, [showAssetSelection, editingDprId, selectedProject, assets]);
 
   // Build hierarchical tree like Masters > Activities (headings first, then children, srNo: 1, 1.1, 1.2, 1.3, 1.3.1)
   type ActivityTreeNode = { item: ActivityItem; srNo: string };
@@ -1359,30 +1377,39 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     if (!files || files.length === 0) return;
 
     const imagePromises = Array.from(files).map(file => {
-      return new Promise<string>((resolve) => {
+      return new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (e) => {
           const result = e.target?.result as string;
-          resolve(result);
+          if (result) resolve(result);
+          else reject(new Error('Failed to read file'));
         };
+        reader.onerror = () => reject(new Error('File read error'));
         reader.readAsDataURL(file);
       });
     });
 
-    Promise.all(imagePromises).then(imageDataUrls => {
-      setSelectedActivities(prev => {
-        const newMap = new Map(prev);
-        const activity = newMap.get(activityId);
-        if (activity) {
-          const currentImages = activity.images || [];
-          newMap.set(activityId, { 
-            ...activity, 
-            images: [...currentImages, ...imageDataUrls]
-          });
-        }
-        return newMap;
+    Promise.all(imagePromises)
+      .then(imageDataUrls => {
+        const valid = imageDataUrls.filter((url): url is string => !!url && typeof url === 'string');
+        if (valid.length === 0) return;
+        setSelectedActivities(prev => {
+          const newMap = new Map(prev);
+          const activity = newMap.get(activityId);
+          if (activity) {
+            const currentImages = activity.images || [];
+            newMap.set(activityId, { 
+              ...activity, 
+              images: [...currentImages, ...valid]
+            });
+          }
+          return newMap;
+        });
+      })
+      .catch((err) => {
+        console.error('Image upload error:', err);
+        toast.showError('Failed to add image. Please try again.');
       });
-    });
   };
 
   const handleRemoveImage = (activityId: string, imageIndex: number) => {
@@ -1961,8 +1988,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     fetchTeamMembers();
   }, [isAuthenticated, showSafetySelection, showHindranceSelection]);
 
-  // Load safety entries from API when Safety modal opens
-  // safety-list expects dprId for existing DPR, or projects_id/sub_projects_id
+  // Load safety entries from API when Safety modal opens.
+  // When editing: pass only dprId, filter to entries belonging to this DPR. Never merge with previous entries.
   useEffect(() => {
     if (!showSafetySelection || !isAuthenticated) return;
     const dprId = dprIdRes ?? editingDprId;
@@ -1970,25 +1997,42 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     const fetchSafetyList = async () => {
       setIsLoadingSafety(true);
       try {
-        const params: { dprId?: string | number; projects_id?: string | number; sub_projects_id?: string | number } = {
-          dprId,
-          projects_id: selectedProject?.numericId ?? selectedProject?.id,
-          sub_projects_id: selectedSubproject ? (selectedSubproject.numericId ?? selectedSubproject.id) : undefined
-        };
+        // When dprId exists: pass only dprId (no projects_id/sub_projects_id) to avoid entries from other DPRs.
+        const params: { dprId?: string | number; projects_id?: string | number; sub_projects_id?: string | number } = dprId
+          ? { dprId }
+          : {
+              projects_id: selectedProject?.numericId ?? selectedProject?.id,
+              sub_projects_id: selectedSubproject ? (selectedSubproject.numericId ?? selectedSubproject.id) : undefined
+            };
         const list = await safetyAPI.getSafetyList(params);
-        const mapped: SafetyEntry[] = (list || []).map((item: any) => {
-          const singleImg = item.image || item.image_url || '';
-          const imgArr = Array.isArray(item.images) ? item.images : (singleImg ? [singleImg] : []);
-          return {
-            id: item.uuid || String(item.id),
-            serverId: item.id,
-            details: item.details || item.description || '',
-            images: imgArr.filter(Boolean),
-            teamMembers: Array.isArray(item.team_members) ? item.team_members.map((m: any) => String(m?.id ?? m)) : Array.isArray(item.teamMembers) ? item.teamMembers : [],
-            remarks: item.remarks || '',
-          };
-        });
-        setSafetyEntries(mapped);
+        const rawList = Array.isArray(list) ? list : [];
+        const dprIdStr = String(dprId);
+        const filtered = dprId ? rawList.filter((item: any) => {
+          const itemDprId = item.dpr_id ?? item.dprId ?? item.daily_progress_reports_id ?? item.dprs_id;
+          if (itemDprId == null || itemDprId === '') return true;
+          return String(itemDprId) === dprIdStr;
+        }) : rawList;
+        const seen = new Set<string>();
+        const mapped: SafetyEntry[] = filtered
+          .map((item: any) => {
+            const singleImg = item.image || item.image_url || item.img || '';
+            const imgArr = Array.isArray(item.images) ? item.images : (singleImg ? [singleImg] : []);
+            return {
+              id: item.uuid || String(item.id),
+              serverId: item.id,
+              details: item.details || item.description || item.name || '',
+              images: imgArr.filter(Boolean),
+              teamMembers: Array.isArray(item.team_members) ? item.team_members.map((m: any) => String(m?.id ?? m)) : Array.isArray(item.teamMembers) ? item.teamMembers : [],
+              remarks: item.remarks || '',
+            };
+          })
+          .filter((e) => {
+            const key = e.id || String(e.serverId ?? '');
+            if (!key || seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+        setSafetyEntries(mapped); // Replace entirely - never merge with previous
       } catch (err: any) {
         toast.showError(err?.message || 'Failed to load safety list');
       } finally {
@@ -1998,7 +2042,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     fetchSafetyList();
   }, [showSafetySelection, isAuthenticated, editingDprId, dprIdRes, selectedProject, selectedSubproject]);
 
-  // Load hinderance entries from API when Hindrance modal opens
+  // Load hinderance entries from API when Hindrance modal opens.
+  // When editing: pass only dprId, filter to entries belonging to this DPR. Never merge with previous entries.
   useEffect(() => {
     if (!showHindranceSelection || !isAuthenticated) return;
     const dprId = dprIdRes ?? editingDprId;
@@ -2006,25 +2051,42 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     const fetchHinderanceList = async () => {
       setIsLoadingHindrance(true);
       try {
-        const params: { dprId?: string | number; projects_id?: string | number; sub_projects_id?: string | number } = {
-          dprId,
-          projects_id: selectedProject?.numericId ?? selectedProject?.id,
-          sub_projects_id: selectedSubproject ? (selectedSubproject.numericId ?? selectedSubproject.id) : undefined
-        };
+        // When dprId exists: pass only dprId (no projects_id/sub_projects_id) to avoid entries from other DPRs.
+        const params: { dprId?: string | number; projects_id?: string | number; sub_projects_id?: string | number } = dprId
+          ? { dprId }
+          : {
+              projects_id: selectedProject?.numericId ?? selectedProject?.id,
+              sub_projects_id: selectedSubproject ? (selectedSubproject.numericId ?? selectedSubproject.id) : undefined
+            };
         const list = await hinderanceAPI.getList(params);
-        const mapped: HindranceEntry[] = (list || []).map((item: any) => {
-          const singleImg = item.image || item.image_url || item.img || '';
-          const imgArr = Array.isArray(item.images) ? item.images : (singleImg ? [singleImg] : []);
-          return {
-            id: item.uuid || String(item.id),
-            serverId: item.id,
-            details: item.details || item.description || '',
-            images: imgArr.filter(Boolean),
-            teamMembers: Array.isArray(item.team_members) ? item.team_members.map((m: any) => String(m?.id ?? m)) : Array.isArray(item.teamMembers) ? item.teamMembers : [],
-            remarks: item.remarks || '',
-          };
-        });
-        setHindranceEntries(mapped);
+        const rawList = Array.isArray(list) ? list : [];
+        const dprIdStr = String(dprId);
+        const filtered = dprId ? rawList.filter((item: any) => {
+          const itemDprId = item.dpr_id ?? item.dprId ?? item.daily_progress_reports_id ?? item.dprs_id;
+          if (itemDprId == null || itemDprId === '') return true;
+          return String(itemDprId) === dprIdStr;
+        }) : rawList;
+        const seen = new Set<string>();
+        const mapped: HindranceEntry[] = filtered
+          .map((item: any) => {
+            const singleImg = item.image || item.image_url || item.img || '';
+            const imgArr = Array.isArray(item.images) ? item.images : (singleImg ? [singleImg] : []);
+            return {
+              id: item.uuid || String(item.id),
+              serverId: item.id,
+              details: item.details || item.description || item.name || '',
+              images: imgArr.filter(Boolean),
+              teamMembers: Array.isArray(item.team_members) ? item.team_members.map((m: any) => String(m?.id ?? m)) : Array.isArray(item.teamMembers) ? item.teamMembers : [],
+              remarks: item.remarks || '',
+            };
+          })
+          .filter((e) => {
+            const key = e.id || String(e.serverId ?? '');
+            if (!key || seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+        setHindranceEntries(mapped); // Replace entirely - never merge with previous
       } catch (err: any) {
         toast.showError(err?.message || 'Failed to load hinderance list');
       } finally {
@@ -2039,12 +2101,50 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setIsLoadingDprList(true);
     setDprListError(null);
     try {
-      // Fetch all DPRs (no project/subproject filter) - avoid refreshing list on every project/subproject selection
-      const list = await dprAPI.getList({});
+      const [list, fetchedProjects] = await Promise.all([
+        dprAPI.getList({}),
+        masterDataAPI.getProjectsList().catch(() => [])
+      ]);
       const arr = Array.isArray(list) ? list : [];
       if (arr.length > 0 || !opts?.preserveOnEmpty) setDprList(arr);
       else setDprList(prev => prev);
       opts?.onFetched?.(arr);
+
+      // Build project id -> name map for DPR list display
+      const projArr = Array.isArray(fetchedProjects) ? fetchedProjects : ((fetchedProjects as any)?.data ?? (fetchedProjects as any)?.projects ?? []);
+      const projMap: Record<string, string> = {};
+      for (const p of projArr) {
+        const rawId = p.id ?? p.project_id ?? p.projects_id;
+        const name = p.project_name || p.name || '';
+        if (rawId != null && name) {
+          projMap[String(rawId)] = name;
+          if (Number.isFinite(Number(rawId))) projMap[String(Number(rawId))] = name;
+        }
+      }
+      setProjectsMapForDprList(projMap);
+
+      // Fetch subprojects for unique project IDs in DPR list
+      const projectIds = [...new Set(arr.map((d: any) => {
+        const pid = d.projects_id;
+        if (pid != null && typeof pid !== 'object') return String(pid);
+        return pid?.id ?? pid;
+      }).filter(Boolean))];
+      const subMap: Record<string, string> = {};
+      await Promise.all(projectIds.map(async (projectId) => {
+        try {
+          const subs = await masterDataAPI.getSubprojects(projectId);
+          const subArr = Array.isArray(subs) ? subs : [];
+          for (const s of subArr) {
+            const rawId = s.id ?? s.subproject_id ?? s.sub_projects_id;
+            const name = s.name || s.subproject_name || '';
+            if (rawId != null && name) {
+              subMap[String(rawId)] = name;
+              if (Number.isFinite(Number(rawId))) subMap[String(Number(rawId))] = name;
+            }
+          }
+        } catch { /* ignore */ }
+      }));
+      setSubprojectsMapForDprList(subMap);
     } catch (err: any) {
       setDprListError(err?.message || 'Failed to load DPR list');
       if (!opts?.preserveOnEmpty) setDprList([]);
@@ -2202,7 +2302,10 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setHindranceEntries(prev => prev.map(e => e.id === id ? { ...e, remarks } : e));
   };
 
-  const generateDPRPDF = async (snapshotData?: { project: any; subproject: any; activities: any[]; materials: any[]; labours: any[]; assets: any[]; safety: any[]; hindrance: any[]; teamMembers: any[] }) => {
+  const generateDPRPDF = async (
+    snapshotData?: { project: any; subproject: any; activities: any[]; materials: any[]; labours: any[]; assets: any[]; safety: any[]; hindrance: any[]; teamMembers: any[] },
+    options?: { returnBlob?: boolean }
+  ): Promise<Blob | void> => {
     const proj = snapshotData?.project ?? selectedProject;
     const subproj = snapshotData?.subproject ?? selectedSubproject;
     const rawActList = snapshotData?.activities ?? Array.from(selectedActivities.values());
@@ -2800,7 +2903,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     const subprojectName = subproj?.name || '';
     const filename = `DPR_${projectName}_${subprojectName}_${new Date().toLocaleDateString('en-CA')}.pdf`.replace(/[^a-z0-9]/gi, '_');
 
-    // Save PDF
+    if (options?.returnBlob) {
+      return doc.output('blob');
+    }
     doc.save(filename);
   };
 
@@ -2846,10 +2951,12 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     }
 
     if (selectedActivities.size > 0) {
-      let actIdx = 0;
-      for (const a of selectedActivities.values()) {
-        const actId = a.numericId ?? (Number.isFinite(Number(a.id)) ? Number(a.id) : null);
-        if (actId == null) continue;
+      // Build array of valid activities (with actId) so activities and activities_images indices stay aligned
+      const validActivities = Array.from(selectedActivities.values()).filter(
+        (a) => (a.numericId ?? (Number.isFinite(Number(a.id)) ? Number(a.id) : null)) != null
+      );
+      validActivities.forEach((a, actIdx) => {
+        const actId = a.numericId ?? (Number.isFinite(Number(a.id)) ? Number(a.id) : null)!;
         const masterAct = activities.find((m) => m.id === a.id);
         const totalQty = masterAct?.qty ?? 0;
         const qty = Number(a.quantity ?? 0);
@@ -2863,21 +2970,19 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         formData.append(`activities[${actIdx}][remaining_qty]`, '0');
         formData.append(`activities[${actIdx}][total_qty]`, String(totalQty > 0 ? totalQty : qty));
         formData.append(`activities[${actIdx}][activities_history_remarkes]`, a.remarks || '');
-        actIdx++;
-      }
-      let imgIdx = 0;
-      for (const a of selectedActivities.values()) {
-        const imgs = a.images || [];
-        imgs.forEach((dataUrl, j) => {
-          if (dataUrl && typeof dataUrl === 'string') {
-            const f = dataURLtoFile(dataUrl, `activity_${imgIdx}_${j}.jpg`);
-            if (f) {
-              formData.append(`activities_images[${imgIdx}][${j}]`, f);
-            }
-          }
-        });
-        imgIdx++;
-      }
+        // Backend expects activities_history_img as base64 (per API ref: activities-history-add)
+        const imgs = (a.images || []).filter((url): url is string => !!url && typeof url === 'string');
+        if (imgs.length > 0) {
+          const toBase64 = (dataUrl: string) => {
+            const idx = dataUrl.indexOf(',');
+            return idx >= 0 ? dataUrl.slice(idx + 1) : dataUrl;
+          };
+          formData.append(`activities[${actIdx}][activities_history_img]`, toBase64(imgs[0]));
+          imgs.slice(1).forEach((dataUrl, j) => {
+            formData.append(`activities[${actIdx}][images][${j}]`, toBase64(dataUrl));
+          });
+        }
+      });
     }
     if (selectedMaterials.size > 0) {
       const firstActivityId = Array.from(selectedActivities.values())[0]?.numericId ?? Array.from(selectedActivities.values())[0]?.id;
@@ -3055,7 +3160,22 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   }, [showDPRComplete, completedDprId]);
 
   const handleViewCompletedDpr = async () => {
-    // View = open PDF in browser (same as mobile: Linking.openURL(pdf_url))
+    // Prefer client-side PDF (includes activity images) when we have form data
+    const hasFormData = selectedActivities.size > 0 || selectedMaterials.size > 0 || selectedLabours.size > 0 || selectedAssets.size > 0 || safetyEntries.length > 0 || hindranceEntries.length > 0;
+    if (hasFormData) {
+      try {
+        const blob = await generateDPRPDF(undefined, { returnBlob: true });
+        if (blob) {
+          const url = URL.createObjectURL(blob);
+          window.open(url, '_blank');
+          setTimeout(() => URL.revokeObjectURL(url), 60000);
+          return;
+        }
+      } catch (err) {
+        console.warn('Client-side PDF failed, falling back to backend:', err);
+      }
+    }
+    // Fallback: backend PDF
     const dprId = completedDprId ?? dprIdRes ?? editingDprId;
     if (!dprId) {
       toast.showError('DPR ID not found. Please save the DPR first.');
@@ -3080,9 +3200,28 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   };
 
   const handleDownloadDPR = async () => {
-    // DPR download flow: 1) Get pdf_url from bulk response or POST /api/generate-pdf
-    // 2) Fetch GET /api/dpr-pdf/{token}?file={base64} (token-based, no auth)
-    // 3) Trigger browser download as dpr_{dprId}.pdf
+    // Prefer client-side PDF (includes activity images) when we have form data
+    const hasFormData = selectedActivities.size > 0 || selectedMaterials.size > 0 || selectedLabours.size > 0 || selectedAssets.size > 0 || safetyEntries.length > 0 || hindranceEntries.length > 0;
+    if (hasFormData) {
+      try {
+        const blob = await generateDPRPDF(undefined, { returnBlob: true });
+        if (blob) {
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.download = `dpr_${completedDprId ?? dprIdRes ?? editingDprId ?? 'report'}.pdf`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(blobUrl);
+          toast.showSuccess('DPR downloaded');
+          return;
+        }
+      } catch (err) {
+        console.warn('Client-side PDF failed, falling back to backend:', err);
+      }
+    }
+    // Fallback: backend PDF
     const dprId = completedDprId ?? dprIdRes ?? editingDprId;
     if (!dprId) {
       toast.showError('DPR ID not found. Please save the DPR first.');
@@ -3115,7 +3254,6 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       URL.revokeObjectURL(blobUrl);
       toast.showSuccess('DPR downloaded');
     } catch (err: any) {
-      // Fallback: open in new tab so user can download via browser
       window.open(url, '_blank');
       toast.showWarning('Download via browser opened');
     }
@@ -3186,6 +3324,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setSelectedMaterials(new Map());
     setSelectedLabours(new Map());
     setSelectedAssets(new Map());
+    setSafetyEntries([]);
+    setHindranceEntries([]);
     setShowActivitySelection(true);
   };
 
@@ -3276,12 +3416,12 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                     <td className={`px-4 py-3 text-sm ${textPrimary}`}>
                       {typeof dpr.projects_id === 'object' && dpr.projects_id
                         ? (dpr.projects_id?.project_name ?? dpr.projects_id?.name ?? '-')
-                        : (dpr.projects?.project_name ?? dpr.projects?.name ?? (dpr.projects_id ? `Project #${dpr.projects_id}` : '-'))}
+                        : (dpr.projects?.project_name ?? dpr.projects?.name ?? (dpr.projects_id ? (projectsMapForDprList[String(dpr.projects_id)] ?? `Project #${dpr.projects_id}`) : '-'))}
                     </td>
                     <td className={`px-4 py-3 text-sm ${textPrimary}`}>
                       {typeof dpr.sub_projects_id === 'object' && dpr.sub_projects_id
                         ? (dpr.sub_projects_id?.name ?? '-')
-                        : (dpr.sub_projects?.name ?? dpr.subProjects?.name ?? (dpr.sub_projects_id ? `#${dpr.sub_projects_id}` : '-'))}
+                        : (dpr.sub_projects?.name ?? dpr.subProjects?.name ?? (dpr.sub_projects_id ? (subprojectsMapForDprList[String(dpr.sub_projects_id)] ?? `#${dpr.sub_projects_id}`) : '-'))}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1">
@@ -3958,7 +4098,10 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                             type="file"
                                             accept="image/*"
                                             multiple
-                                            onChange={(e) => handleImageUpload(activity.id, e.target.files)}
+                                            onChange={(e) => {
+                                              handleImageUpload(activity.id, e.target.files);
+                                              e.target.value = '';
+                                            }}
                                             className="hidden"
                                           />
                                         </label>
@@ -3977,7 +4120,10 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                           type="file"
                                           accept="image/*"
                                           multiple
-                                          onChange={(e) => handleImageUpload(activity.id, e.target.files)}
+                                          onChange={(e) => {
+                                            handleImageUpload(activity.id, e.target.files);
+                                            e.target.value = '';
+                                          }}
                                           className="hidden"
                                         />
                                       </label>
