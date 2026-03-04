@@ -33,7 +33,8 @@ import {
   Eye,
   Download
 } from 'lucide-react';
-import { masterDataAPI, materialRequestAPI } from '../services/api';
+import { masterDataAPI, materialRequestAPI, rfqAPI, goodsReturnAPI, goodsIssueAPI, goodsReceiptAPI } from '../services/api';
+import { useRouter } from 'next/navigation';
 import { useToast } from '../contexts/ToastContext';
 import CreateProjectModal from './masters/Modals/CreateProjectModal';
 import CreateSubprojectModal from './masters/Modals/CreateSubprojectModal';
@@ -95,12 +96,27 @@ const PROJECT_PAGE_SIZE = 10;
 const SUBPROJECT_PAGE_SIZE = 10;
 const MATERIAL_PAGE_SIZE = 10;
 
+const INVENTORY_SECTION_VIEWS: ViewType[] = [
+  ViewType.INVENTORY_PR,
+  ViewType.INVENTORY_RFQ,
+  ViewType.INVENTORY_GRN_MRN_SLIP,
+  ViewType.INVENTORY_GRN_MRN_DETAILS,
+  ViewType.INVENTORY_ISSUE_SLIP,
+  ViewType.INVENTORY_ISSUE_OUTWARD_DETAILS,
+  ViewType.INVENTORY_ISSUE_RETURN,
+  ViewType.INVENTORY_GLOBAL_STOCK_DETAILS,
+  ViewType.INVENTORY_PROJECT_STOCK_STATEMENT,
+];
+const isInventorySection = (v: ViewType) => INVENTORY_SECTION_VIEWS.includes(v);
+
 interface ViewConfig {
   title: string;
   icon: React.ComponentType<{ className?: string }>;
   description: string;
   columns: string[];
   sampleData: Array<Record<string, string>>;
+  emptyStateTitle?: string;
+  emptyStateMessage?: string;
 }
 
 const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
@@ -144,10 +160,24 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
   const [viewingPr, setViewingPr] = useState<any>(null);
   const [isLoadingActivities, setIsLoadingActivities] = useState(false);
   const [isLoadingEditPr, setIsLoadingEditPr] = useState(false);
+  const [inventorySearchQuery, setInventorySearchQuery] = useState('');
+  const [rfqList, setRfqList] = useState<any[]>([]);
+  const [isLoadingRfqList, setIsLoadingRfqList] = useState(false);
+  const [showEditPreviousRfqModal, setShowEditPreviousRfqModal] = useState(false);
+  const [returnList, setReturnList] = useState<any[]>([]);
+  const [isLoadingReturnList, setIsLoadingReturnList] = useState(false);
+  const [showEditPreviousReturnModal, setShowEditPreviousReturnModal] = useState(false);
+  const [issueList, setIssueList] = useState<any[]>([]);
+  const [isLoadingIssueList, setIsLoadingIssueList] = useState(false);
+  const [showEditPreviousIssueModal, setShowEditPreviousIssueModal] = useState(false);
+  const [grnList, setGrnList] = useState<any[]>([]);
+  const [isLoadingGrnList, setIsLoadingGrnList] = useState(false);
+  const [showEditPreviousGrnModal, setShowEditPreviousGrnModal] = useState(false);
+  const router = useRouter();
 
-  // Fetch projects when project selection modal opens for INVENTORY_PR
+  // Fetch projects when project selection modal opens for any inventory section
   useEffect(() => {
-    if (!showProjectSelection || currentView !== ViewType.INVENTORY_PR) return;
+    if (!showProjectSelection || !isInventorySection(currentView)) return;
     const token = typeof document !== 'undefined' ? document.cookie.split('; ').find(c => c.startsWith('auth_token='))?.split('=')[1] : null;
     const authFlag = typeof localStorage !== 'undefined' ? localStorage.getItem('isAuthenticated') === 'true' : false;
     if (!token || !authFlag) {
@@ -158,15 +188,18 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
     setIsLoadingProjects(true);
     masterDataAPI.getProjects()
       .then((fetched: any[]) => {
-        const transformed: PRProject[] = (Array.isArray(fetched) ? fetched : []).map((p: any) => ({
-          id: p.uuid || String(p.id),
-          numericId: Number.isFinite(Number(p.id)) ? Number(p.id) : undefined,
-          name: p.project_name || p.name || '',
-          logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name || p.name || '')}&background=6B8E23&color=fff&size=128`,
-          code: p.code || '',
-          company: p.companies?.registration_name || p.companies?.name || p.company || p.company_name || '',
-          location: p.address || p.location || ''
-        }));
+        const transformed: PRProject[] = (Array.isArray(fetched) ? fetched : []).map((p: any) => {
+          const numId = Number.isFinite(Number(p.id)) ? Number(p.id) : Number.isFinite(Number(p.projects_id)) ? Number(p.projects_id) : Number.isFinite(Number(p.project_id)) ? Number(p.project_id) : undefined;
+          return {
+            id: p.uuid || String(p.id),
+            numericId: numId,
+            name: p.project_name || p.name || '',
+            logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name || p.name || '')}&background=6B8E23&color=fff&size=128`,
+            code: p.code || '',
+            company: p.companies?.registration_name || p.companies?.name || p.company || p.company_name || '',
+            location: p.address || p.location || ''
+          };
+        });
         setPrProjects(transformed);
       })
       .catch(() => setPrProjects([]))
@@ -261,6 +294,106 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
     fetchPrList();
   }, [currentView]);
 
+  const fetchRfqList = () => {
+    if (currentView !== ViewType.INVENTORY_RFQ) return;
+    setIsLoadingRfqList(true);
+    rfqAPI.list()
+      .then((data) => setRfqList(Array.isArray(data) ? data : []))
+      .catch(() => setRfqList([]))
+      .finally(() => setIsLoadingRfqList(false));
+  };
+
+  useEffect(() => {
+    if (currentView !== ViewType.INVENTORY_RFQ) return;
+    fetchRfqList();
+  }, [currentView]);
+
+  const fetchReturnList = () => {
+    if (currentView !== ViewType.INVENTORY_ISSUE_RETURN) return;
+    setIsLoadingReturnList(true);
+    goodsReturnAPI.list()
+      .then((data) => setReturnList(Array.isArray(data) ? data : []))
+      .catch(() => setReturnList([]))
+      .finally(() => setIsLoadingReturnList(false));
+  };
+
+  useEffect(() => {
+    if (currentView !== ViewType.INVENTORY_ISSUE_RETURN) return;
+    fetchReturnList();
+  }, [currentView]);
+
+  const fetchIssueList = () => {
+    if (currentView !== ViewType.INVENTORY_ISSUE_SLIP) return;
+    setIsLoadingIssueList(true);
+    goodsIssueAPI.list()
+      .then((data) => setIssueList(Array.isArray(data) ? data : []))
+      .catch(() => setIssueList([]))
+      .finally(() => setIsLoadingIssueList(false));
+  };
+
+  useEffect(() => {
+    if (currentView !== ViewType.INVENTORY_ISSUE_SLIP) return;
+    fetchIssueList();
+  }, [currentView]);
+
+  const fetchGrnList = () => {
+    if (currentView !== ViewType.INVENTORY_GRN_MRN_SLIP) return;
+    setIsLoadingGrnList(true);
+    goodsReceiptAPI.list()
+      .then((data) => setGrnList(Array.isArray(data) ? data : []))
+      .catch(() => setGrnList([]))
+      .finally(() => setIsLoadingGrnList(false));
+  };
+
+  useEffect(() => {
+    if (currentView !== ViewType.INVENTORY_GRN_MRN_SLIP) return;
+    fetchGrnList();
+  }, [currentView]);
+
+  const filteredRfqList = useMemo(() => {
+    if (!inventorySearchQuery.trim() || currentView !== ViewType.INVENTORY_RFQ) return rfqList;
+    const q = inventorySearchQuery.toLowerCase();
+    return rfqList.filter(
+      (r: any) =>
+        (r.rfq_no ?? r.request_no ?? r.id ?? '').toString().toLowerCase().includes(q) ||
+        (r.date ?? '').toLowerCase().includes(q) ||
+        (r.projects_id?.project_name ?? r.project_name ?? '').toLowerCase().includes(q)
+    );
+  }, [rfqList, inventorySearchQuery, currentView]);
+
+  const filteredReturnList = useMemo(() => {
+    if (!inventorySearchQuery.trim() || currentView !== ViewType.INVENTORY_ISSUE_RETURN) return returnList;
+    const q = inventorySearchQuery.toLowerCase();
+    return returnList.filter(
+      (r: any) =>
+        (r.return_no ?? r.name ?? r.id ?? '').toString().toLowerCase().includes(q) ||
+        (r.date ?? '').toLowerCase().includes(q) ||
+        (r.projects_id?.project_name ?? r.project_name ?? '').toLowerCase().includes(q)
+    );
+  }, [returnList, inventorySearchQuery, currentView]);
+
+  const filteredIssueList = useMemo(() => {
+    if (!inventorySearchQuery.trim() || currentView !== ViewType.INVENTORY_ISSUE_SLIP) return issueList;
+    const q = inventorySearchQuery.toLowerCase();
+    return issueList.filter(
+      (r: any) =>
+        (r.issue_no ?? r.name ?? r.id ?? '').toString().toLowerCase().includes(q) ||
+        (r.date ?? '').toLowerCase().includes(q) ||
+        (r.projects_id?.project_name ?? r.project_name ?? '').toLowerCase().includes(q)
+    );
+  }, [issueList, inventorySearchQuery, currentView]);
+
+  const filteredGrnList = useMemo(() => {
+    if (!inventorySearchQuery.trim() || currentView !== ViewType.INVENTORY_GRN_MRN_SLIP) return grnList;
+    const q = inventorySearchQuery.toLowerCase();
+    return grnList.filter(
+      (r: any) =>
+        (r.grn_no ?? r.name ?? r.id ?? '').toString().toLowerCase().includes(q) ||
+        (r.date ?? '').toLowerCase().includes(q) ||
+        (r.projects_id?.project_name ?? r.project_name ?? '').toLowerCase().includes(q)
+    );
+  }, [grnList, inventorySearchQuery, currentView]);
+
   const filteredPrList = useMemo(() => {
     if (!prSearchQuery.trim()) return prList;
     const q = prSearchQuery.toLowerCase();
@@ -339,12 +472,62 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
     setProjectPage(1);
   };
 
+  const handleInventoryCreateNew = () => {
+    setPrStep('project');
+    setPrSelectedProject(null);
+    setProjectSearchQuery('');
+    setProjectPage(1);
+    setShowProjectSelection(true);
+  };
+
   const handlePRSelectProject = (project: PRProject) => {
     setPrSelectedProject(project);
   };
 
   const handlePRProjectStepNext = () => {
-    if (prSelectedProject) setPrStep('subproject');
+    if (!prSelectedProject) return;
+    if (currentView === ViewType.INVENTORY_RFQ) {
+      handlePRCloseModal();
+      const numericId = prSelectedProject.numericId != null ? String(prSelectedProject.numericId) : '';
+      const projectId = String(prSelectedProject.id ?? prSelectedProject.numericId);
+      const params = new URLSearchParams({ projectId, projectName: prSelectedProject.name });
+      if (numericId) params.set('projectNumericId', numericId);
+      router.push(`/inventory-reports/rfq/create?${params.toString()}`);
+      return;
+    }
+    if (currentView === ViewType.INVENTORY_ISSUE_RETURN) {
+      handlePRCloseModal();
+      const numericId = prSelectedProject.numericId != null ? String(prSelectedProject.numericId) : '';
+      const projectId = String(prSelectedProject.id ?? prSelectedProject.numericId);
+      const params = new URLSearchParams({ projectId, projectName: prSelectedProject.name });
+      if (numericId) params.set('projectNumericId', numericId);
+      router.push(`/inventory-reports/issue-return/create?${params.toString()}`);
+      return;
+    }
+    if (currentView === ViewType.INVENTORY_ISSUE_SLIP) {
+      handlePRCloseModal();
+      const numericId = prSelectedProject.numericId != null ? String(prSelectedProject.numericId) : '';
+      const projectId = String(prSelectedProject.id ?? prSelectedProject.numericId);
+      const params = new URLSearchParams({ projectId, projectName: prSelectedProject.name });
+      if (numericId) params.set('projectNumericId', numericId);
+      router.push(`/inventory-reports/issue-slip/create?${params.toString()}`);
+      return;
+    }
+    if (currentView === ViewType.INVENTORY_GRN_MRN_SLIP) {
+      handlePRCloseModal();
+      const numericId = prSelectedProject.numericId != null ? String(prSelectedProject.numericId) : '';
+      const projectId = String(prSelectedProject.id ?? prSelectedProject.numericId);
+      const params = new URLSearchParams({ projectId, projectName: prSelectedProject.name });
+      if (numericId) params.set('projectNumericId', numericId);
+      router.push(`/inventory-reports/grn-mrn-slip/create?${params.toString()}`);
+      return;
+    }
+    if (currentView !== ViewType.INVENTORY_PR) {
+      handlePRCloseModal();
+      toast.showSuccess(`Project "${prSelectedProject.name}" selected. Create flow for this section coming soon.`);
+      return;
+    }
+    setPrStep('subproject');
   };
 
   const handlePRCloseModal = () => {
@@ -850,7 +1033,89 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
           icon: ClipboardCheck,
           description: 'Create and manage purchase requisitions',
           columns: ['PR Number', 'Date', 'Project', 'Items', 'Total Amount', 'Status'],
-          sampleData: []
+          sampleData: [],
+          emptyStateTitle: 'No Purchase Requests',
+          emptyStateMessage: 'Create your first purchase request using the Create New button above'
+        };
+      case ViewType.INVENTORY_RFQ:
+        return {
+          title: 'RFQ',
+          icon: FileText,
+          description: 'Create and manage request for quotations',
+          columns: ['RFQ No', 'Date', 'Project', 'Status'],
+          sampleData: [],
+          emptyStateTitle: 'No RFQs',
+          emptyStateMessage: 'Create your first RFQ using the Create New button above'
+        };
+      case ViewType.INVENTORY_GRN_MRN_SLIP:
+        return {
+          title: 'Goods Receipt (GRN/MRN)',
+          icon: Package,
+          description: 'Create and manage goods receipt notes',
+          columns: ['Slip No', 'Date', 'Project', 'Status'],
+          sampleData: [],
+          emptyStateTitle: 'No Goods Receipts',
+          emptyStateMessage: 'Create your first goods receipt using the Create New button above'
+        };
+      case ViewType.INVENTORY_GRN_MRN_DETAILS:
+        return {
+          title: 'GRN(MRN) Details',
+          icon: Package,
+          description: 'View goods receipt and material receipt details',
+          columns: ['Detail No', 'Date', 'Project', 'Status'],
+          sampleData: [],
+          emptyStateTitle: 'No GRN/MRN Details',
+          emptyStateMessage: 'Create your first goods receipt using the Create New button above'
+        };
+      case ViewType.INVENTORY_ISSUE_SLIP:
+        return {
+          title: 'Goods Issue',
+          icon: Package,
+          description: 'Create and manage goods issue slips',
+          columns: ['Slip No', 'Date', 'Project', 'Status'],
+          sampleData: [],
+          emptyStateTitle: 'No Goods Issue Slips',
+          emptyStateMessage: 'Create your first goods issue using the Create New button above'
+        };
+      case ViewType.INVENTORY_ISSUE_OUTWARD_DETAILS:
+        return {
+          title: 'Issue (Outward) Details',
+          icon: Package,
+          description: 'View goods issue outward details',
+          columns: ['Detail No', 'Date', 'Project', 'Status'],
+          sampleData: [],
+          emptyStateTitle: 'No Issue Outward Details',
+          emptyStateMessage: 'Create your first goods issue using the Create New button above'
+        };
+      case ViewType.INVENTORY_ISSUE_RETURN:
+        return {
+          title: 'Goods Returns',
+          icon: Package,
+          description: 'Create and manage goods returns',
+          columns: ['Return No', 'Date', 'Project', 'Status'],
+          sampleData: [],
+          emptyStateTitle: 'No Goods Returns',
+          emptyStateMessage: 'Create your first goods return using the Create New button above'
+        };
+      case ViewType.INVENTORY_GLOBAL_STOCK_DETAILS:
+        return {
+          title: 'Global Stock Details',
+          icon: Package,
+          description: 'View global stock levels and details',
+          columns: ['Material', 'Quantity', 'Location', 'Status'],
+          sampleData: [],
+          emptyStateTitle: 'No Stock Data',
+          emptyStateMessage: 'Stock details will appear here once records are available'
+        };
+      case ViewType.INVENTORY_PROJECT_STOCK_STATEMENT:
+        return {
+          title: 'Project Stock Statement',
+          icon: Package,
+          description: 'View project-wise stock statements',
+          columns: ['Project', 'Material', 'Quantity', 'Status'],
+          sampleData: [],
+          emptyStateTitle: 'No Project Stock Statements',
+          emptyStateMessage: 'Project stock data will appear here once available'
         };
       case ViewType.REPORTS:
       case ViewType.WORK_PROGRESS_REPORTS:
@@ -870,9 +1135,17 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
           icon: Package,
           description: 'Generate and view inventory reports',
           columns: ['Report Name', 'Warehouse', 'Date', 'Items Count', 'Status'],
+          sampleData: []
+        };
+      case ViewType.WORKFORCE_MANAGEMENT:
+        return {
+          title: 'Workforce Management',
+          icon: UsersRound,
+          description: 'Manage workforce, labour, and staff assignments',
+          columns: ['Name', 'Role', 'Project', 'Status', 'Availability'],
           sampleData: [
-            { reportName: 'Monthly Inventory - Jan', warehouse: 'Main Warehouse', date: '2024-01-31', itemsCount: '250', status: 'Generated' },
-            { reportName: 'Stock Level Report', warehouse: 'Storage Facility B', date: '2024-02-01', itemsCount: '180', status: 'Generated' },
+            { name: 'John Doe', role: 'Supervisor', project: 'Site A', status: 'Active', availability: 'Available' },
+            { name: 'Jane Smith', role: 'Site Engineer', project: 'Site B', status: 'Active', availability: 'Assigned' },
           ]
         };
       case ViewType.LABOUR_STRENGTH:
@@ -938,16 +1211,23 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
           </p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
-          {currentView === ViewType.INVENTORY_PR ? (
+          {isInventorySection(currentView) ? (
             <>
               <button
-                onClick={handlePRCreateNew}
+                onClick={currentView === ViewType.INVENTORY_PR ? handlePRCreateNew : handleInventoryCreateNew}
                 className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md`}
               >
                 <Plus className="w-4 h-4 flex-shrink-0" /> <span className="hidden sm:inline">Create New</span><span className="sm:hidden">Create</span>
               </button>
               <button
-                onClick={() => setShowEditPreviousModal(true)}
+                onClick={() => {
+                  if (currentView === ViewType.INVENTORY_PR) setShowEditPreviousModal(true);
+                  else if (currentView === ViewType.INVENTORY_RFQ) setShowEditPreviousRfqModal(true);
+                  else if (currentView === ViewType.INVENTORY_ISSUE_RETURN) setShowEditPreviousReturnModal(true);
+                  else if (currentView === ViewType.INVENTORY_ISSUE_SLIP) setShowEditPreviousIssueModal(true);
+                  else if (currentView === ViewType.INVENTORY_GRN_MRN_SLIP) setShowEditPreviousGrnModal(true);
+                  else toast.showInfo('Edit previous – coming soon for this section');
+                }}
                 className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all border-2 ${isDark ? 'border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10' : 'border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10'}`}
               >
                 <Edit className="w-4 h-4 flex-shrink-0" /> <span className="hidden sm:inline">Edit previous</span><span className="sm:hidden">Edit</span>
@@ -961,16 +1241,16 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
         </div>
       </div>
 
-      {/* Stats Cards - show first for INVENTORY_PR (Masters-style dashboard) */}
-      {currentView === ViewType.INVENTORY_PR && (
+      {/* Stats Cards - for all inventory sections */}
+      {isInventorySection(currentView) && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className={`p-4 rounded-xl border ${cardClass}`}>
             <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Total Records</p>
-            <p className={`text-2xl font-black ${textPrimary}`}>{filteredPrList.length}</p>
+            <p className={`text-2xl font-black ${textPrimary}`}>{currentView === ViewType.INVENTORY_PR ? filteredPrList.length : currentView === ViewType.INVENTORY_RFQ ? filteredRfqList.length : currentView === ViewType.INVENTORY_ISSUE_RETURN ? filteredReturnList.length : currentView === ViewType.INVENTORY_ISSUE_SLIP ? filteredIssueList.length : currentView === ViewType.INVENTORY_GRN_MRN_SLIP ? filteredGrnList.length : 0}</p>
           </div>
           <div className={`p-4 rounded-xl border ${cardClass}`}>
-            <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Approved</p>
-            <p className={`text-2xl font-black text-[#C2D642]`}>{filteredPrList.filter((p: any) => p.status === 1).length}</p>
+            <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>{currentView === ViewType.INVENTORY_PR ? 'Approved' : 'Active'}</p>
+            <p className={`text-2xl font-black text-[#C2D642]`}>{currentView === ViewType.INVENTORY_PR ? filteredPrList.filter((p: any) => p.status === 1).length : currentView === ViewType.INVENTORY_RFQ ? filteredRfqList.length : currentView === ViewType.INVENTORY_ISSUE_RETURN ? filteredReturnList.length : currentView === ViewType.INVENTORY_ISSUE_SLIP ? filteredIssueList.length : currentView === ViewType.INVENTORY_GRN_MRN_SLIP ? filteredGrnList.length : 0}</p>
           </div>
           <div className={`p-4 rounded-xl border ${cardClass}`}>
             <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>
@@ -985,17 +1265,24 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
           <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
           <input 
             type="text" 
-            placeholder={currentView === ViewType.INVENTORY_PR ? "Search by Req No, project, subproject, created by..." : "Search..."} 
-            value={currentView === ViewType.INVENTORY_PR ? prSearchQuery : ''}
-            onChange={(e) => { if (currentView === ViewType.INVENTORY_PR) setPrSearchQuery(e.target.value); }}
+            placeholder={isInventorySection(currentView) ? (currentView === ViewType.INVENTORY_PR ? "Search by Req No, project, subproject, created by..." : currentView === ViewType.INVENTORY_ISSUE_RETURN ? "Search by return no, project, date..." : currentView === ViewType.INVENTORY_ISSUE_SLIP ? "Search by issue no, project, date..." : currentView === ViewType.INVENTORY_GRN_MRN_SLIP ? "Search by GRN no, project, date..." : "Search by project, reference no...") : "Search..."} 
+            value={isInventorySection(currentView) ? (currentView === ViewType.INVENTORY_PR ? prSearchQuery : inventorySearchQuery) : ''}
+            onChange={(e) => { if (currentView === ViewType.INVENTORY_PR) setPrSearchQuery(e.target.value); else if (isInventorySection(currentView)) setInventorySearchQuery(e.target.value); }}
             className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
           />
         </div>
-        {currentView === ViewType.INVENTORY_PR ? (
+        {isInventorySection(currentView) ? (
           <button 
-            onClick={() => { setPrSearchQuery(''); fetchPrList(); }}
+            onClick={() => {
+              if (currentView === ViewType.INVENTORY_PR) { setPrSearchQuery(''); fetchPrList(); }
+              else if (currentView === ViewType.INVENTORY_RFQ) { setInventorySearchQuery(''); fetchRfqList(); }
+              else if (currentView === ViewType.INVENTORY_ISSUE_RETURN) { setInventorySearchQuery(''); fetchReturnList(); }
+              else if (currentView === ViewType.INVENTORY_ISSUE_SLIP) { setInventorySearchQuery(''); fetchIssueList(); }
+              else if (currentView === ViewType.INVENTORY_GRN_MRN_SLIP) { setInventorySearchQuery(''); fetchGrnList(); }
+              else setInventorySearchQuery('');
+            }}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all shrink-0 ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'} shadow-sm`}
-            title="Refresh Purchase Requests"
+            title="Refresh"
           >
             <RefreshCw className="w-4 h-4" /> Refresh
           </button>
@@ -1061,6 +1348,206 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
             </div>
           )}
         </>
+      ) : currentView === ViewType.INVENTORY_RFQ ? (
+        <>
+          {isLoadingRfqList ? (
+            <div className={`flex items-center justify-center py-16 ${textSecondary}`}>
+              <Loader2 className="w-8 h-8 animate-spin" />
+              <span className="ml-2 font-bold">Loading RFQs...</span>
+            </div>
+          ) : filteredRfqList.length > 0 ? (
+            <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
+                    <tr>
+                      <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>RFQ No</th>
+                      <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Date</th>
+                      <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Project</th>
+                      <th className={`px-6 py-4 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-inherit">
+                    {filteredRfqList.map((rfq: any) => (
+                      <tr key={rfq.id || rfq.uuid} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
+                        <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{rfq.rfq_no ?? rfq.request_no ?? rfq.id ?? '-'}</td>
+                        <td className={`px-6 py-4 text-sm ${textPrimary}`}>{rfq.date ?? rfq.created_at ?? '-'}</td>
+                        <td className={`px-6 py-4 text-sm ${textPrimary}`}>{rfq.projects_id?.project_name ?? rfq.project_name ?? rfq.projects?.name ?? '-'}</td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => router.push(`/inventory-reports/rfq/${rfq.id ?? rfq.uuid}/submit-quotes`)}
+                              className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+                              title="Edit"
+                            >
+                              <Edit className={`w-4 h-4 ${textSecondary}`} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
+              <Icon className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
+              <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>No RFQs</h3>
+              <p className={`text-sm ${textSecondary}`}>Create your first RFQ using the Create New button above</p>
+            </div>
+          )}
+        </>
+      ) : currentView === ViewType.INVENTORY_GRN_MRN_SLIP ? (
+        <>
+          {isLoadingGrnList ? (
+            <div className={`flex justify-center items-center py-16 ${textSecondary}`}>
+              <Loader2 className="w-8 h-8 animate-spin" />
+              <span className="ml-2 font-bold">Loading goods receipts...</span>
+            </div>
+          ) : filteredGrnList.length > 0 ? (
+            <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
+                    <tr>
+                      <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>GRN/MRN No</th>
+                      <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Date</th>
+                      <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Project</th>
+                      <th className={`px-6 py-4 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-inherit">
+                    {filteredGrnList.map((grn: any) => (
+                      <tr key={grn.id ?? grn.uuid} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
+                        <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{grn.grn_no ?? grn.name ?? grn.id ?? '-'}</td>
+                        <td className={`px-6 py-4 text-sm ${textPrimary}`}>{grn.date ?? grn.created_at ?? '-'}</td>
+                        <td className={`px-6 py-4 text-sm ${textPrimary}`}>{grn.projects_id?.project_name ?? grn.project_name ?? grn.projects?.name ?? '-'}</td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex justify-end gap-1">
+                            <button
+                              onClick={() => router.push(`/inventory-reports/grn-mrn-slip/${grn.id ?? grn.uuid ?? grn.inv_inwards_id}`)}
+                              className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+                              title="Edit"
+                            >
+                              <Edit className={`w-4 h-4 ${textSecondary}`} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
+              <Icon className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
+              <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>No Goods Receipts</h3>
+              <p className={`text-sm ${textSecondary}`}>Create your first goods receipt using the Create New button above</p>
+            </div>
+          )}
+        </>
+      ) : currentView === ViewType.INVENTORY_ISSUE_RETURN ? (
+        <>
+          {isLoadingReturnList ? (
+            <div className={`flex justify-center items-center py-16 ${textSecondary}`}>
+              <Loader2 className="w-8 h-8 animate-spin" />
+              <span className="ml-2 font-bold">Loading returns...</span>
+            </div>
+          ) : filteredReturnList.length > 0 ? (
+            <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
+                    <tr>
+                      <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Return No</th>
+                      <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Date</th>
+                      <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Project</th>
+                      <th className={`px-6 py-4 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-inherit">
+                    {filteredReturnList.map((ret: any) => (
+                      <tr key={ret.id ?? ret.uuid} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
+                        <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{ret.return_no ?? ret.name ?? ret.id ?? '-'}</td>
+                        <td className={`px-6 py-4 text-sm ${textPrimary}`}>{ret.date ?? ret.created_at ?? '-'}</td>
+                        <td className={`px-6 py-4 text-sm ${textPrimary}`}>{ret.projects_id?.project_name ?? ret.project_name ?? ret.projects?.name ?? '-'}</td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex justify-end gap-1">
+                            <button
+                              onClick={() => router.push(`/inventory-reports/issue-return/${ret.id ?? ret.uuid}`)}
+                              className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+                              title="Edit"
+                            >
+                              <Edit className={`w-4 h-4 ${textSecondary}`} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
+              <Icon className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
+              <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>No Goods Returns</h3>
+              <p className={`text-sm ${textSecondary}`}>Create your first goods return using the Create New button above</p>
+            </div>
+          )}
+        </>
+      ) : currentView === ViewType.INVENTORY_ISSUE_SLIP ? (
+        <>
+          {isLoadingIssueList ? (
+            <div className={`flex justify-center items-center py-16 ${textSecondary}`}>
+              <Loader2 className="w-8 h-8 animate-spin" />
+              <span className="ml-2 font-bold">Loading issues...</span>
+            </div>
+          ) : filteredIssueList.length > 0 ? (
+            <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
+                    <tr>
+                      <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Issue No</th>
+                      <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Date</th>
+                      <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Project</th>
+                      <th className={`px-6 py-4 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-inherit">
+                    {filteredIssueList.map((iss: any) => (
+                      <tr key={iss.id ?? iss.uuid} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
+                        <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{iss.issue_no ?? iss.name ?? iss.id ?? '-'}</td>
+                        <td className={`px-6 py-4 text-sm ${textPrimary}`}>{iss.date ?? iss.created_at ?? '-'}</td>
+                        <td className={`px-6 py-4 text-sm ${textPrimary}`}>{iss.projects_id?.project_name ?? iss.project_name ?? iss.projects?.name ?? '-'}</td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex justify-end gap-1">
+                            <button
+                              onClick={() => router.push(`/inventory-reports/issue-slip/${iss.id ?? iss.uuid}`)}
+                              className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+                              title="Edit"
+                            >
+                              <Edit className={`w-4 h-4 ${textSecondary}`} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
+              <Icon className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
+              <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>No Goods Issues</h3>
+              <p className={`text-sm ${textSecondary}`}>Create your first goods issue using the Create New button above</p>
+            </div>
+          )}
+        </>
       ) : config.sampleData.length > 0 ? (
         <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
           <div className="overflow-x-auto">
@@ -1099,31 +1586,13 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
       ) : (
         <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
           <Icon className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
-          <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>No Data Available</h3>
-          <p className={`text-sm ${textSecondary}`}>Start by adding your first entry</p>
+          <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>{config.emptyStateTitle ?? 'No Data Available'}</h3>
+          <p className={`text-sm ${textSecondary}`}>{config.emptyStateMessage ?? 'Start by adding your first entry'}</p>
         </div>
       )}
 
-      {/* Stats Cards - for non-INVENTORY_PR views (PR stats shown above) */}
-      {currentView !== ViewType.INVENTORY_PR && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className={`p-4 rounded-xl border ${cardClass}`}>
-            <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Total Records</p>
-            <p className={`text-2xl font-black ${textPrimary}`}>{config.sampleData.length}</p>
-          </div>
-          <div className={`p-4 rounded-xl border ${cardClass}`}>
-            <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
-            <p className={`text-2xl font-black text-[#C2D642]`}>{config.sampleData.length}</p>
-          </div>
-          <div className={`p-4 rounded-xl border ${cardClass}`}>
-            <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>
-            <p className={`text-sm font-bold ${textPrimary}`}>Today</p>
-          </div>
-        </div>
-      )}
-
-      {/* Inventory PR - Project & Subproject Selection Modal (multi-step) */}
-      {currentView === ViewType.INVENTORY_PR && showProjectSelection && (
+      {/* Inventory - Project Selection Modal (multi-step for PR, Step 1 only for other inventory) */}
+      {isInventorySection(currentView) && showProjectSelection && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
           <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-hidden flex flex-col`}>
             <button
@@ -1141,7 +1610,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                   <div className="flex items-start gap-4 p-4 sm:p-6 pr-16 sm:pr-20 border-b border-inherit">
                     <div className="min-w-0 flex-1">
                       <h2 className={`text-lg sm:text-xl font-black ${textPrimary}`}>Step 1: Select a Project</h2>
-                      <p className={`text-sm ${textSecondary} mt-1`}>Choose a project for your purchase request</p>
+                      <p className={`text-sm ${textSecondary} mt-1`}>Choose a project for your {currentView === ViewType.INVENTORY_PR ? 'purchase request' : config.title.toLowerCase()}</p>
                     </div>
                   </div>
                   <div className="p-4 sm:p-6 flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4">
@@ -1614,6 +2083,231 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
               ) : (
                 <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
                   <p className={`text-sm ${textSecondary}`}>No purchase requests found. Create one using the Create New button.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Inventory RFQ - Edit Previous Modal */}
+      {currentView === ViewType.INVENTORY_RFQ && showEditPreviousRfqModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] max-h-[85vh] overflow-hidden flex flex-col`}>
+            <div className="flex items-center justify-between p-4 border-b border-inherit flex-shrink-0">
+              <h2 className={`text-lg font-black ${textPrimary}`}>Edit Previous RFQ</h2>
+              <button
+                onClick={() => setShowEditPreviousRfqModal(false)}
+                className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+                title="Close"
+              >
+                <X className={`w-5 h-5 ${textSecondary}`} />
+              </button>
+            </div>
+            <div className="p-4 flex-1 overflow-auto">
+              {filteredRfqList.length > 0 ? (
+                <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
+                  <table className="w-full">
+                    <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
+                      <tr>
+                        <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>RFQ No</th>
+                        <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Date</th>
+                        <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Project</th>
+                        <th className={`px-4 py-3 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className={`divide-y ${isDark ? 'divide-slate-700' : 'divide-slate-200'}`}>
+                      {filteredRfqList.map((rfq: any) => (
+                        <tr key={rfq.id ?? rfq.uuid} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
+                          <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{rfq.rfq_no ?? rfq.request_no ?? rfq.id ?? '-'}</td>
+                          <td className={`px-4 py-3 text-sm ${textPrimary}`}>{rfq.date ?? rfq.created_at ?? '-'}</td>
+                          <td className={`px-4 py-3 text-sm ${textPrimary}`}>{rfq.projects_id?.project_name ?? rfq.project_name ?? rfq.projects?.name ?? '-'}</td>
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              onClick={() => {
+                                setShowEditPreviousRfqModal(false);
+                                router.push(`/inventory-reports/rfq/${rfq.id ?? rfq.uuid}/submit-quotes`);
+                              }}
+                              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${isDark ? 'bg-[#6B8E23]/20 text-[#6B8E23] hover:bg-[#6B8E23]/30' : 'bg-[#6B8E23]/10 text-[#6B8E23] hover:bg-[#6B8E23]/20'}`}
+                            >
+                              <Edit className="w-3.5 h-3.5" /> Edit
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
+                  <p className={`text-sm ${textSecondary}`}>No RFQs found. Create one using the Create New button.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Inventory Goods Return - Edit Previous Modal */}
+      {currentView === ViewType.INVENTORY_ISSUE_RETURN && showEditPreviousReturnModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] max-h-[85vh] overflow-hidden flex flex-col`}>
+            <div className="flex items-center justify-between p-4 border-b border-inherit flex-shrink-0">
+              <h2 className={`text-lg font-black ${textPrimary}`}>Edit Previous Return</h2>
+              <button
+                onClick={() => setShowEditPreviousReturnModal(false)}
+                className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+                title="Close"
+              >
+                <X className={`w-5 h-5 ${textSecondary}`} />
+              </button>
+            </div>
+            <div className="p-4 flex-1 overflow-auto">
+              {filteredReturnList.length > 0 ? (
+                <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
+                  <table className="w-full">
+                    <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
+                      <tr>
+                        <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Return No</th>
+                        <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Date</th>
+                        <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Project</th>
+                        <th className={`px-4 py-3 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className={`divide-y ${isDark ? 'divide-slate-700' : 'divide-slate-200'}`}>
+                      {filteredReturnList.map((ret: any) => (
+                        <tr key={ret.id ?? ret.uuid} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
+                          <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{ret.return_no ?? ret.name ?? ret.id ?? '-'}</td>
+                          <td className={`px-4 py-3 text-sm ${textPrimary}`}>{ret.date ?? ret.created_at ?? '-'}</td>
+                          <td className={`px-4 py-3 text-sm ${textPrimary}`}>{ret.projects_id?.project_name ?? ret.project_name ?? ret.projects?.name ?? '-'}</td>
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              onClick={() => {
+                                setShowEditPreviousReturnModal(false);
+                                router.push(`/inventory-reports/issue-return/${ret.id ?? ret.uuid}`);
+                              }}
+                              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${isDark ? 'bg-[#6B8E23]/20 text-[#6B8E23] hover:bg-[#6B8E23]/30' : 'bg-[#6B8E23]/10 text-[#6B8E23] hover:bg-[#6B8E23]/20'}`}
+                            >
+                              <Edit className="w-3.5 h-3.5" /> Edit
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
+                  <p className={`text-sm ${textSecondary}`}>No returns found. Create one using the Create New button.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Inventory Goods Receipt (GRN/MRN) - Edit Previous Modal */}
+      {currentView === ViewType.INVENTORY_GRN_MRN_SLIP && showEditPreviousGrnModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] max-h-[85vh] overflow-hidden flex flex-col`}>
+            <div className="flex items-center justify-between p-4 border-b border-inherit flex-shrink-0">
+              <h2 className={`text-lg font-black ${textPrimary}`}>Edit Previous Goods Receipt</h2>
+              <button
+                onClick={() => setShowEditPreviousGrnModal(false)}
+                className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+                title="Close"
+              >
+                <X className={`w-5 h-5 ${textSecondary}`} />
+              </button>
+            </div>
+            <div className="p-4 flex-1 overflow-auto">
+              {filteredGrnList.length > 0 ? (
+                <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
+                  <table className="w-full">
+                    <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
+                      <tr>
+                        <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>GRN/MRN No</th>
+                        <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Date</th>
+                        <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Project</th>
+                        <th className={`px-4 py-3 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className={`divide-y ${isDark ? 'divide-slate-700' : 'divide-slate-200'}`}>
+                      {filteredGrnList.map((grn: any) => (
+                        <tr key={grn.id ?? grn.uuid} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
+                          <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{grn.grn_no ?? grn.name ?? grn.id ?? '-'}</td>
+                          <td className={`px-4 py-3 text-sm ${textPrimary}`}>{grn.date ?? grn.created_at ?? '-'}</td>
+                          <td className={`px-4 py-3 text-sm ${textPrimary}`}>{grn.projects_id?.project_name ?? grn.project_name ?? grn.projects?.name ?? '-'}</td>
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              onClick={() => {
+                                setShowEditPreviousGrnModal(false);
+                                router.push(`/inventory-reports/grn-mrn-slip/${grn.id ?? grn.uuid ?? grn.inv_inwards_id}`);
+                              }}
+                              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${isDark ? 'bg-[#6B8E23]/20 text-[#6B8E23] hover:bg-[#6B8E23]/30' : 'bg-[#6B8E23]/10 text-[#6B8E23] hover:bg-[#6B8E23]/20'}`}
+                            >
+                              <Edit className="w-3.5 h-3.5" /> Edit
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
+                  <p className={`text-sm ${textSecondary}`}>No goods receipts found. Create one using the Create New button.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Inventory Goods Issue - Edit Previous Modal */}
+      {currentView === ViewType.INVENTORY_ISSUE_SLIP && showEditPreviousIssueModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] max-h-[85vh] overflow-hidden flex flex-col`}>
+            <div className="flex items-center justify-between p-4 border-b border-inherit flex-shrink-0">
+              <h2 className={`text-lg font-black ${textPrimary}`}>Edit Previous Issue</h2>
+              <button onClick={() => setShowEditPreviousIssueModal(false)} className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`} title="Close">
+                <X className={`w-5 h-5 ${textSecondary}`} />
+              </button>
+            </div>
+            <div className="p-4 flex-1 overflow-auto">
+              {filteredIssueList.length > 0 ? (
+                <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
+                  <table className="w-full">
+                    <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
+                      <tr>
+                        <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Issue No</th>
+                        <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Date</th>
+                        <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Project</th>
+                        <th className={`px-4 py-3 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className={`divide-y ${isDark ? 'divide-slate-700' : 'divide-slate-200'}`}>
+                      {filteredIssueList.map((iss: any) => (
+                        <tr key={iss.id ?? iss.uuid} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
+                          <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{iss.issue_no ?? iss.name ?? iss.id ?? '-'}</td>
+                          <td className={`px-4 py-3 text-sm ${textPrimary}`}>{iss.date ?? iss.created_at ?? '-'}</td>
+                          <td className={`px-4 py-3 text-sm ${textPrimary}`}>{iss.projects_id?.project_name ?? iss.project_name ?? iss.projects?.name ?? '-'}</td>
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              onClick={() => { setShowEditPreviousIssueModal(false); router.push(`/inventory-reports/issue-slip/${iss.id ?? iss.uuid}`); }}
+                              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${isDark ? 'bg-[#6B8E23]/20 text-[#6B8E23] hover:bg-[#6B8E23]/30' : 'bg-[#6B8E23]/10 text-[#6B8E23] hover:bg-[#6B8E23]/20'}`}
+                            >
+                              <Edit className="w-3.5 h-3.5" /> Edit
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
+                  <p className={`text-sm ${textSecondary}`}>No issues found. Create one using the Create New button.</p>
                 </div>
               )}
             </div>

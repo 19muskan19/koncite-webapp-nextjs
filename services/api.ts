@@ -2744,6 +2744,59 @@ export const labourHistoryAPI = {
   },
 };
 
+// Workforce Management API - Punch, Staff, Contractor (LabourController, etc.)
+export const workforceAPI = {
+  /**
+   * Submit punch IN/OUT with photo and GPS
+   * POST /labour-punch-submit (or /company/labour/punch/submit)
+   * FormData: labour_id, punch_type (punch_in|punch_out), photo (file), latitude, longitude, accuracy?, altitude?, etc.
+   */
+  punchSubmit: async (formData: FormData): Promise<any> => {
+    try {
+      const response = await apiClient.post('/labour-punch-submit', formData, { timeout: 60000 });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to submit punch',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Add new worker profile (Staff tab - New Worker Profile)
+   * POST /user-management-add (or /company/userManagment/add)
+   * FormData: name, project_id, designation, worker_type, profile_images
+   */
+  addWorkerProfile: async (formData: FormData): Promise<any> => {
+    try {
+      const response = await apiClient.post('/user-management-add', formData);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to add worker profile',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Store contractor rate (vendor + category + daily_rate)
+   * POST /labour-rates-store
+   */
+  storeRate: async (data: { vendor_id: number; category: string; daily_rate: number; overtime_rate?: number }): Promise<any> => {
+    try {
+      const response = await apiClient.post('/labour-rates-store', data);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to store rate',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
 // Assets History API - DPR asset/equipment usage (AssetsHistoryController)
 export const assetsHistoryAPI = {
   /** Returns all asset history records for a DPR. DPR ID in request body. */
@@ -3710,6 +3763,450 @@ export const materialRequestAPI = {
   },
 };
 
+// RFQ (Request for Quotation) APIs - uses existing endpoints only:
+// - materials-request-list, materials-request-edit, materials-request-add
+// - materials-request-details-list, materials-request-details-edit
+// - vendor-list (masterDataAPI.getVendors)
+// - inventory/generate-pdf (material_request type)
+export const rfqAPI = {
+  /** List RFQs - uses materials-request-list (MRs serve as RFQ list) */
+  list: async (filters?: { projectId?: number | string }): Promise<any[]> => {
+    return materialRequestAPI.list(filters);
+  },
+  /** Get single RFQ for edit - uses materials-request-edit */
+  get: async (id: number | string): Promise<any> => {
+    return materialRequestAPI.edit(id);
+  },
+  /** Create or update RFQ - uses materials-request-add. When material_request_id provided, returns it (use existing MR). Else creates new MR header. */
+  save: async (data: {
+    id?: number | string;
+    projects_id: number | string;
+    sub_projects_id?: number | string;
+    material_request_id?: number | string;
+    image_url?: string;
+    message?: string;
+  }): Promise<any> => {
+    if (data.material_request_id) {
+      return { id: data.material_request_id, uuid: data.material_request_id };
+    }
+    const { material_request_id, image_url, message, ...rest } = data;
+    return materialRequestAPI.add(rest);
+  },
+  /** Get quote details - uses materials-request-edit (returns details) or empty */
+  getQuoteDetails: async (rfqId: number | string): Promise<any[]> => {
+    try {
+      const editResp = await materialRequestAPI.edit(rfqId);
+      const details = Array.isArray(editResp) ? editResp : editResp?.data ?? (editResp && Array.isArray(editResp.details) ? editResp.details : []);
+      return Array.isArray(details) ? details : [];
+    } catch {
+      return [];
+    }
+  },
+  /** Get vendors for quote - uses vendor-list */
+  getVendors: async (_rfqId?: number | string): Promise<any[]> => {
+    try {
+      return await masterDataAPI.getVendors();
+    } catch {
+      return [];
+    }
+  },
+  /** Send quote to vendors - no dedicated endpoint; returns success */
+  sendToVendors: async (_rfqId: number | string, _vendorIds: (number | string)[]): Promise<any> => {
+    return { success: true };
+  },
+  /**
+   * Send RFQ/quote email to vendor addresses
+   * POST /api/inventory/rfq-send-email
+   *
+   * REQUEST BODY:
+   * {
+   *   requestId: number | string,      // Material Request ID - backend generates PDF from this
+   *   email_addresses: string[],       // Vendor email addresses
+   *   message?: string,                // Email body text
+   *   image_base64?: string,           // Optional: base64 data URL (data:image/jpeg;base64,...)
+   *   image_filename?: string          // Optional: filename for attachment (e.g. "quote-image.png")
+   * }
+   *
+   * SUCCESS RESPONSE (200):
+   * { status: true, message: "Emails sent successfully", data?: {...} }
+   *
+   * ERROR RESPONSE (4xx/5xx):
+   * { status: false, message: "Error description", errors?: {...} }
+   */
+  sendEmailToVendors: async (
+    requestId: number | string,
+    emailAddresses: string[],
+    message?: string,
+    imageBase64?: string | null,
+    imageFilename?: string
+  ): Promise<any> => {
+    try {
+      const payload: Record<string, unknown> = {
+        requestId,
+        email_addresses: emailAddresses,
+        message: message || 'Please find our Request for Quotation attached. Kindly submit your quote at your earliest convenience.',
+      };
+      if (imageBase64) {
+        payload.image_base64 = imageBase64;
+        if (imageFilename) payload.image_filename = imageFilename;
+      }
+      const response = await apiClient.post('/inventory/rfq-send-email', payload);
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to send email to vendors',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /** Generate quote PDF - uses inventory/generate-pdf (material_request type) */
+  generatePdf: async (rfqId: number | string): Promise<{ pdf_url: string }> => {
+    return materialRequestAPI.generatePdf(rfqId);
+  },
+};
+
+// Goods Return APIs - Inventory > Goods Returns
+export const goodsReturnAPI = {
+  list: async (): Promise<any[]> => {
+    try {
+      const response = await apiClient.get('/inventory/return-list');
+      const data = response.data?.data ?? response.data;
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      if (error?.response?.status === 404) return [];
+      throw { message: error.response?.data?.message || 'Failed to fetch returns', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  edit: async (invReturnsId: number | string): Promise<any> => {
+    try {
+      const response = await apiClient.post('/inventory/return-edit', { inv_returns_id: invReturnsId });
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      const data = error.response?.data;
+      const msg = typeof data === 'object' ? data?.message : (typeof data === 'string' && data.includes('error') ? 'Backend error' : null);
+      throw { message: msg || 'Failed to fetch return (API may not be implemented)', errors: (typeof data === 'object' && data?.errors) || {} } as ApiError;
+    }
+  },
+  createHeader: async (data: { name: string; projects_id: number | string; store_warehouses_id: (number | string)[] }): Promise<any> => {
+    try {
+      const response = await apiClient.post('/inventory/return-add', data);
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw { message: error.response?.data?.message || 'Failed to create return header', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  projectToStoreList: async (projectId: number | string, storeIds: (number | string)[], type = 'return'): Promise<any> => {
+    try {
+      const response = await apiClient.post('/inventory/project-to-store-list', { type, project_id: projectId, store_id: storeIds });
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw { message: error.response?.data?.message || 'Failed to fetch project store', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  getIssueTypeList: async (): Promise<any[]> => {
+    try {
+      const response = await apiClient.get('/inventory/issue-type-list');
+      const data = response.data?.data ?? response.data;
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      if (error?.response?.status === 404) return [];
+      throw { message: error.response?.data?.message || 'Failed to fetch issue types', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  getIssueTypeTagList: async (type: string, projectId: number | string, storeIds: (number | string)[]): Promise<any[]> => {
+    try {
+      const response = await apiClient.post('/inventory/issue-type-tag-list', { type, project_id: projectId, store_id: storeIds });
+      const data = response.data?.data ?? response.data;
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      if (error?.response?.status === 404) return [];
+      throw { message: error.response?.data?.message || 'Failed to fetch tags', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  getMaterialList: async (projectId: number | string, goodsType: 'materials' | 'machines'): Promise<any[]> => {
+    try {
+      const response = await apiClient.post('/inventory/issue-material-list', {
+        goods_type: goodsType,
+        project_id: projectId,
+        type: 'return',
+      });
+      const data = response.data?.data ?? response.data;
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      if (error?.response?.status === 404) return [];
+      throw { message: error.response?.data?.message || 'Failed to fetch materials', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  addReturnGoods: async (payload: {
+    id?: number | string | null;
+    inv_return_id: number | string;
+    projects_id: number | string;
+    store_warehouses_id: (number | string)[];
+    return_no: string;
+    date: string;
+    type?: number | string;
+    goods_type: 'materials' | 'machines';
+    return_from: number | string;
+    materials_id: (number | string)[];
+  }): Promise<any> => {
+    try {
+      const response = await apiClient.post('/inventory/return-goods-add', payload);
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw { message: error.response?.data?.message || 'Failed to add return goods', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  addReturnDetails: async (items: Array<{
+    id?: number | string | null;
+    inv_return_goods_id: number | string;
+    projects_id: number | string;
+    store_warehouses_id: (number | string)[];
+    materials_id: number | string;
+    type: 'materials' | 'machines';
+    return_qty: number | string;
+    stock_qty?: number | string;
+    activities_id?: number | string;
+  }>): Promise<any> => {
+    try {
+      const response = await apiClient.post('/inventory/return-goods-details-add', items);
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw { message: error.response?.data?.message || 'Failed to update return details', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  generatePdf: async (requestId: number | string): Promise<{ pdf_url: string; name?: string }> => {
+    try {
+      const response = await apiClient.post('/inventory/generate-pdf', { type: 'return', requestId });
+      const data = response.data?.data ?? response.data;
+      const pdfUrl = response.data?.pdf_url ?? data?.pdf_url;
+      if (!pdfUrl) throw new Error('No PDF URL in response');
+      return { pdf_url: pdfUrl, name: data?.name ?? data?.filename };
+    } catch (error: any) {
+      throw { message: error.response?.data?.message || 'Failed to generate PDF', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+};
+
+// Goods Issue (Outward) APIs - Inventory > Goods Issue / Issue Slip
+export const goodsIssueAPI = {
+  list: async (): Promise<any[]> => {
+    try {
+      const response = await apiClient.get('/inventory/issue-list');
+      const data = response.data?.data ?? response.data;
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      if (error?.response?.status === 404) return [];
+      throw { message: error.response?.data?.message || 'Failed to fetch issues', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  edit: async (invIssuesId: number | string): Promise<any> => {
+    try {
+      const response = await apiClient.post('/inventory/issue-goods-edit', { inv_issues_id: invIssuesId });
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      const data = error.response?.data;
+      const msg = typeof data === 'object' ? data?.message : (typeof data === 'string' && data.includes('error') ? 'Backend error' : null);
+      throw { message: msg || 'Failed to fetch issue (API may not be implemented)', errors: (typeof data === 'object' && data?.errors) || {} } as ApiError;
+    }
+  },
+  createHeader: async (data: { name: string; projects_id: number | string; store_warehouses_id: (number | string)[] }): Promise<any> => {
+    try {
+      const response = await apiClient.post('/inventory/issue-add', data);
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw { message: error.response?.data?.message || 'Failed to create issue header', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  projectToStoreList: async (projectId: number | string, storeIds: (number | string)[], type = 'issue'): Promise<any> => {
+    try {
+      const response = await apiClient.post('/inventory/project-to-store-list', { type, project_id: projectId, store_id: storeIds });
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw { message: error.response?.data?.message || 'Failed to fetch project store', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  getIssueTypeList: async (): Promise<any[]> => {
+    try {
+      const response = await apiClient.get('/inventory/issue-type-list');
+      const data = response.data?.data ?? response.data;
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      if (error?.response?.status === 404) return [];
+      throw { message: error.response?.data?.message || 'Failed to fetch issue types', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  getIssueTypeTagList: async (type: string, projectId: number | string, storeIds: (number | string)[]): Promise<any[]> => {
+    try {
+      const response = await apiClient.post('/inventory/issue-type-tag-list', { type, project_id: projectId, store_id: storeIds });
+      const data = response.data?.data ?? response.data;
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      if (error?.response?.status === 404) return [];
+      throw { message: error.response?.data?.message || 'Failed to fetch tags', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  getMaterialList: async (projectId: number | string, goodsType: 'materials' | 'machines'): Promise<any[]> => {
+    try {
+      const response = await apiClient.post('/inventory/issue-material-list', {
+        goods_type: goodsType,
+        project_id: projectId,
+        type: 'issue',
+      });
+      const data = response.data?.data ?? response.data;
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      if (error?.response?.status === 404) return [];
+      throw { message: error.response?.data?.message || 'Failed to fetch materials', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  addIssueGoods: async (payload: {
+    id?: number | string | null;
+    inv_issues_id: number | string;
+    projects_id: number | string;
+    store_warehouses_id: (number | string)[];
+    issue_no: string;
+    date: string;
+    entry_type?: number | string;
+    goods_type: 'materials' | 'machines';
+    issue_to: number | string;
+    materials_id: (number | string)[];
+  }): Promise<any> => {
+    try {
+      const response = await apiClient.post('/inventory/issue-goods-add', payload);
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw { message: error.response?.data?.message || 'Failed to add issue goods', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  addIssueDetails: async (items: Array<{
+    id?: number | string | null;
+    inv_issue_goods_id: number | string;
+    projects_id: number | string;
+    store_warehouses_id: (number | string)[];
+    materials_id: number | string;
+    type: 'materials' | 'machines';
+    issue_qty: number | string;
+    stock_qty?: number | string;
+    activities_id?: number | string;
+  }>): Promise<any> => {
+    try {
+      const response = await apiClient.post('/inventory/issue-goods-details-add', items);
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw { message: error.response?.data?.message || 'Failed to update issue details', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  generatePdf: async (requestId: number | string): Promise<{ pdf_url: string; name?: string }> => {
+    try {
+      const response = await apiClient.post('/inventory/generate-pdf', { type: 'issue', requestId });
+      const data = response.data?.data ?? response.data;
+      const pdfUrl = response.data?.pdf_url ?? data?.pdf_url;
+      if (!pdfUrl) throw new Error('No PDF URL in response');
+      return { pdf_url: pdfUrl, name: data?.name ?? data?.filename };
+    } catch (error: any) {
+      throw { message: error.response?.data?.message || 'Failed to generate PDF', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+};
+
+// Goods Receipt (GRN/MRN / Inward) APIs - Inventory > Goods Receipt
+export const goodsReceiptAPI = {
+  list: async (): Promise<any[]> => {
+    try {
+      const response = await apiClient.get('/inventory/inward-list');
+      const data = response.data?.data ?? response.data;
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      if (error?.response?.status === 404) return [];
+      throw { message: error.response?.data?.message || 'Failed to fetch inwards', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  edit: async (invInwardsId: number | string): Promise<any> => {
+    try {
+      const response = await apiClient.post('/inventory/inward-goods-edit', { inv_inwards_id: invInwardsId });
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      const data = error.response?.data;
+      const msg = typeof data === 'object' ? data?.message : (typeof data === 'string' && data.includes('error') ? 'Backend error' : null);
+      throw { message: msg || 'Failed to fetch inward (API may not be implemented)', errors: (typeof data === 'object' && data?.errors) || {} } as ApiError;
+    }
+  },
+  createHeader: async (data: { name: string; projects_id: number | string; store_warehouses_id: (number | string)[] }): Promise<any> => {
+    try {
+      const response = await apiClient.post('/inventory/inward-add', data);
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw { message: error.response?.data?.message || 'Failed to create inward header', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  projectToStoreList: async (projectId: number | string, storeIds: (number | string)[], type = 'inward'): Promise<any> => {
+    try {
+      const response = await apiClient.post('/inventory/project-to-store-list', { type, project_id: projectId, store_id: storeIds });
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw { message: error.response?.data?.message || 'Failed to fetch project store', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  getEntryTypeList: async (): Promise<any[]> => {
+    try {
+      const response = await apiClient.get('/inventory/inward-goods-entry-type-list');
+      const data = response.data?.data ?? response.data;
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      if (error?.response?.status === 404) return [];
+      throw { message: error.response?.data?.message || 'Failed to fetch entry types', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  getTypeWiseList: async (type: string, projectId: number | string, storeIds: (number | string)[]): Promise<any[]> => {
+    try {
+      const response = await apiClient.post('/inventory/inward-goods-entry-type-id', { type, project_id: projectId, store_id: storeIds });
+      const data = response.data?.data ?? response.data;
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      if (error?.response?.status === 404) return [];
+      throw { message: error.response?.data?.message || 'Failed to fetch list', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  addInwardGoods: async (formData: FormData): Promise<any> => {
+    try {
+      const response = await apiClient.post('/inventory/inward-goods-add', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw { message: error.response?.data?.message || 'Failed to add inward goods', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  addInwardDetails: async (items: Array<{
+    id?: number | string | null;
+    inward_goods_id: number | string;
+    projects_id: number | string;
+    store_warehouses_id: (number | string)[];
+    materials_id: number | string;
+    type: 'materials' | 'machines';
+    recipt_qty: number | string;
+    reject_qty?: number | string;
+    price?: number | string;
+    remarkes?: string;
+  }>): Promise<any> => {
+    try {
+      const response = await apiClient.post('/inventory/inward-goods-details-add', items);
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw { message: error.response?.data?.message || 'Failed to update inward details', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  generatePdf: async (requestId: number | string): Promise<{ pdf_url: string; name?: string }> => {
+    try {
+      const response = await apiClient.post('/inventory/generate-pdf', { type: 'inward', requestId });
+      const data = response.data?.data ?? response.data;
+      const pdfUrl = response.data?.pdf_url ?? data?.pdf_url;
+      if (!pdfUrl) throw new Error('No PDF URL in response');
+      return { pdf_url: pdfUrl, name: data?.name ?? data?.filename };
+    } catch (error: any) {
+      throw { message: error.response?.data?.message || 'Failed to generate PDF', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+};
+
 // Export default for convenience
 export default {
   auth: authAPI,
@@ -3719,4 +4216,8 @@ export default {
   common: commonAPI,
   teams: teamsAPI,
   materialRequest: materialRequestAPI,
+  rfq: rfqAPI,
+  goodsReturn: goodsReturnAPI,
+  goodsIssue: goodsIssueAPI,
+  goodsReceipt: goodsReceiptAPI,
 };

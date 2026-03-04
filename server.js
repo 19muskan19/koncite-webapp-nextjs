@@ -95,7 +95,9 @@ app.prepare().then(() => {
       await handle(req, res, parsedUrl);
     } catch (err) {
       console.error('Error occurred handling', req.url, err);
+      console.error('Error stack:', err?.stack);
       res.statusCode = 500;
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
       res.end('internal server error');
     }
   }).once('error', (err) => {
