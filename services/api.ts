@@ -2499,11 +2499,10 @@ export const safetyAPI = {
   }): Promise<any[]> => {
     try {
       const p = params || {};
-      const payload = {
-        dprId: p.dprId,
-        projects_id: p.projects_id ?? p.project_id,
-        sub_projects_id: p.sub_projects_id ?? p.subproject_id,
-      };
+      const payload: Record<string, string | number> = {};
+      if (p.dprId != null && p.dprId !== '') payload.dprId = p.dprId;
+      if (p.projects_id != null || p.project_id != null) payload.projects_id = p.projects_id ?? p.project_id ?? '';
+      if (p.sub_projects_id != null || p.subproject_id != null) payload.sub_projects_id = p.sub_projects_id ?? p.subproject_id ?? '';
       const response = await apiClient.post('/safety-list', payload);
       const data = response.data?.data ?? response.data ?? [];
       return Array.isArray(data) ? data : [];
@@ -2514,9 +2513,13 @@ export const safetyAPI = {
       } as ApiError;
     }
   },
-  addSafety: async (data: Record<string, any>): Promise<any> => {
+  /** safety-add POST FormData (multipart) - Create new → submit */
+  addSafety: async (data: FormData | Record<string, any>): Promise<any> => {
     try {
-      const response = await apiClient.post('/safety-add', data);
+      const config = data instanceof FormData
+        ? { headers: { 'Content-Type': 'multipart/form-data' } } as const
+        : {};
+      const response = await apiClient.post('/safety-add', data, config);
       return response.data;
     } catch (error: any) {
       throw {
@@ -2559,11 +2562,10 @@ export const hinderanceAPI = {
   }): Promise<any[]> => {
     try {
       const p = params || {};
-      const payload = {
-        dprId: p.dprId,
-        projects_id: p.projects_id,
-        sub_projects_id: p.sub_projects_id,
-      };
+      const payload: Record<string, string | number> = {};
+      if (p.dprId != null && p.dprId !== '') payload.dprId = p.dprId;
+      if (p.projects_id != null) payload.projects_id = p.projects_id;
+      if (p.sub_projects_id != null) payload.sub_projects_id = p.sub_projects_id;
       const response = await apiClient.post('/hinderance-list', payload);
       const data = response.data?.data ?? response.data ?? [];
       return Array.isArray(data) ? data : [];
@@ -2574,9 +2576,13 @@ export const hinderanceAPI = {
       } as ApiError;
     }
   },
-  add: async (data: Record<string, any>): Promise<any> => {
+  /** hinderance-add POST FormData (multipart) - Create new → submit */
+  add: async (data: FormData | Record<string, any>): Promise<any> => {
     try {
-      const response = await apiClient.post('/hinderance-add', data);
+      const config = data instanceof FormData
+        ? { headers: { 'Content-Type': 'multipart/form-data' } } as const
+        : {};
+      const response = await apiClient.post('/hinderance-add', data, config);
       return response.data;
     } catch (error: any) {
       throw {
@@ -2799,7 +2805,7 @@ export const workforceAPI = {
 
 // Assets History API - DPR asset/equipment usage (AssetsHistoryController)
 export const assetsHistoryAPI = {
-  /** Returns all asset history records for a DPR. DPR ID in request body. */
+  /** Returns all asset history records for a DPR. POST assets-history-list with dpr_id in body */
   list: async (dprId: number | string): Promise<any[]> => {
     try {
       const response = await apiClient.post('/assets-history-list', { dpr_id: dprId });
@@ -2851,20 +2857,8 @@ export const assetsHistoryAPI = {
 };
 
 // Materials History API - DPR material consumption (MaterialsHistoryController)
+// Backend uses fetch-dpr-history-edit + materials-history-edit for DPR materials (no materials-history-list/{dprId} route)
 export const materialsHistoryAPI = {
-  /** Returns all materials history records for the company. Used for listing consumption. */
-  list: async (): Promise<any[]> => {
-    try {
-      const response = await apiClient.get('/materials-history-list/');
-      const data = response.data?.data ?? response.data ?? [];
-      return Array.isArray(data) ? data : [];
-    } catch (error: any) {
-      throw {
-        message: error.response?.data?.message || 'Failed to fetch materials history list',
-        errors: error.response?.data?.errors || {},
-      } as ApiError;
-    }
-  },
   /** Creates/updates material consumption entries for a DPR. Uses updateOrCreate on materials_id + dpr_id + activities_id. */
   add: async (entries: Array<{
     materials_id: number;
@@ -3053,9 +3047,8 @@ export const dprAPI = {
   },
   bulkAdd: async (formData: FormData): Promise<any> => {
     try {
-      const response = await apiClient.post('/dpr-bulk-add', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      // Do NOT set Content-Type - let browser set multipart/form-data with boundary for file uploads
+      const response = await apiClient.post('/dpr-bulk-add', formData);
       return response.data;
     } catch (error: any) {
       throw {
