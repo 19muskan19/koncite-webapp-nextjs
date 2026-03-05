@@ -29,7 +29,6 @@ import {
   CheckCircle,
   Eye
 } from 'lucide-react';
-import jsPDF from 'jspdf';
 import CreateProjectModal from '../masters/Modals/CreateProjectModal';
 import CreateSubprojectModal from '../masters/Modals/CreateSubprojectModal';
 import CreateActivityModal from '../masters/Modals/CreateActivityModal';
@@ -435,7 +434,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     hindranceModalScrollRef.current.scrollTop = 0;
   }, [showHindranceSelection]);
 
-  // Load projects from API - GET projects-list (operations DPR)
+  // Step 1 SelectprojectForDPR: project-list GET when screen loads
   // Deferred: only fetch when project selection modal opens (not on initial page load)
   useEffect(() => {
     if (!showProjectSelection) return;
@@ -460,7 +459,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
       setIsLoadingProjects(true);
       try {
-        console.log('📡 Fetching projects from GET /projects-list...');
+        console.log('📡 Fetching projects from GET /project-list...');
         const fetchedProjects = await masterDataAPI.getProjectsList();
         const arr = Array.isArray(fetchedProjects) ? fetchedProjects : ((fetchedProjects as any)?.data ?? (fetchedProjects as any)?.projects ?? []);
         console.log('✅ Fetched projects from API:', arr?.length || 0);
@@ -677,7 +676,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   };
   };
 
-  // Fetch subprojects when project is selected - try numeric ID first, then UUID
+  // Fetch subprojects when SelectSubprojectForDPR loads - POST project-subproject { project_id }
   useEffect(() => {
     if (!selectedProject) {
       setSubprojects([]);
@@ -689,7 +688,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       setSubprojectSearchQuery('');
       try {
         const projectId = selectedProject.numericId ?? selectedProject.id;
-        const result = await masterDataAPI.getSubprojects(projectId);
+        const result = await masterDataAPI.getProjectSubprojects(projectId);
         const res = result as any;
         const list = Array.isArray(result) ? result : res?.subProject ?? res?.data ?? [];
         const transformed = list.map((sub: any) => transformSubproject(sub, selectedProject.name));
@@ -842,12 +841,32 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setSubprojectsSearchResults(prev => prev.map(s => s.id === subprojectId ? { ...s, status: newStatus } : s));
   };
 
-  const handleSubprojectSelected = (subproject: Subproject | null) => {
+  // Step 3: Tap Next (subproject selected/skipped) -> dpr-add POST { name, projects_id, sub_projects_id, staps } -> navigate to Activities
+  const handleSubprojectSelected = async (subproject: Subproject | null) => {
+    if (!selectedProject) return;
     setEditingDprId(null);
-    setDprIdRes(null);
     setSelectedSubproject(subproject);
     setSubprojectSearchQuery('');
-    router.push(`${DPR_BASE}/activities`);
+    setIsCreatingDpr(true);
+    try {
+      const projectId = selectedProject.numericId ?? Number(selectedProject.id);
+      const subprojectId = subproject ? (subproject.numericId ?? Number(subproject.id)) : null;
+      const dprName = new Date().toLocaleDateString('en-CA') || new Date().toISOString().slice(0, 10) || 'DPR';
+      const res = await dprAPI.add({
+        name: dprName,
+        projects_id: projectId,
+        sub_projects_id: subprojectId ?? '',
+        staps: '7',
+      });
+      const created = res?.dpr ?? res?.data?.dpr ?? res?.data ?? res;
+      const dprId = created?.id ?? created?.dpr_id ?? res?.data?.id ?? res?.data?.dpr_id ?? res?.id ?? res?.dpr_id ?? null;
+      if (dprId != null) setDprIdRes(dprId);
+      router.push(`${DPR_BASE}/activities`);
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to create DPR');
+    } finally {
+      setIsCreatingDpr(false);
+    }
   };
 
   const handleSelectSubproject = (subproject: Subproject) => {
@@ -897,7 +916,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setAssets([]);
   };
 
-  // Load contractors once: used by Activities, Labour, Assets. Single fetch when any modal opens.
+  // ActivitiesDetailsDPR: supplier-contractor-list POST { type: 'contractor' } when screen loads
   const contractorsLoadedRef = useRef(false);
   useEffect(() => {
     const needsContractors = showActivitySelection || showLabourSelection || showAssetSelection;
@@ -1052,7 +1071,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     return map;
   };
 
-  // Edit mode: Step 1 fetch-dpr-history-edit (IDs) → Step 2 activities-history-edit (full records with qty, remarks, img, contractor)
+  // ActivitiesDetailsDPR: activities-history-edit (edit mode), supplier-contractor-list (screen loads), activities-history-add (Tap Next)
   useEffect(() => {
     if (!showActivitySelection || !editingDprId || !selectedProject) return;
     let cancelled = false;
@@ -1086,9 +1105,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     return () => { cancelled = true; };
   }, [showActivitySelection, editingDprId, selectedProject, activities]);
 
-  // Edit mode: Step 1 fetch-dpr-history-edit (IDs) → Step 2 materials-history-edit (full records). Use materials list id for map key so checkboxes match.
+  // MaterialsDetailsDPR: fetch-dpr-history-edit (Edit mode only) + materials-history-edit (on load) → materials-history-add (on update)
   useEffect(() => {
-    if (!showMaterialSelection || !editingDprId || !selectedProject) return;
+    if (!showMaterialSelection || !editingDprId || !selectedProject) return; // Edit mode only for loading existing materials
     let cancelled = false;
     const load = async () => {
       let records: any[] = [];
@@ -1138,9 +1157,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     return () => { cancelled = true; };
   }, [showMaterialSelection, editingDprId, selectedProject, materials]);
 
-  // Edit mode: Step 1 fetch-dpr-history-edit (IDs) → Step 2 labour-history-edit (full records). Use labours list id for map key so checkboxes match.
+  // LabourDetailsDPR: fetch-dpr-history-edit (Edit mode only) + labour-history-edit (on load) → labour-history-add (on update)
   useEffect(() => {
-    if (!showLabourSelection || !editingDprId || !selectedProject) return;
+    if (!showLabourSelection || !editingDprId || !selectedProject) return; // Edit mode only for loading existing labour
     let cancelled = false;
     const load = async () => {
       let records: any[] = [];
@@ -1194,9 +1213,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     return () => { cancelled = true; };
   }, [showLabourSelection, editingDprId, selectedProject, labours]);
 
-  // Edit mode: Step 1 fetch-dpr-history-edit (IDs) → Step 2 assets-history-edit (full records). Use assets list id for map key so checkboxes match.
+  // MachineDetailsDPR: fetch-dpr-history-edit (Edit mode only) + assets-history-edit (on load) → assets-history-add (on update)
   useEffect(() => {
-    if (!showAssetSelection || !editingDprId || !selectedProject) return;
+    if (!showAssetSelection || !editingDprId || !selectedProject) return; // Edit mode only for loading existing assets
     let cancelled = false;
     const load = async () => {
       let records: any[] = [];
@@ -1447,11 +1466,67 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       return;
     }
 
-    // Bulk flow: defer all saves to dpr-bulk-add at Hindrance Next
-    router.push(`${DPR_BASE}/materials`);
+    setIsSubmittingActivities(true);
+    try {
+      const dprId = await ensureDprId();
+      if (!dprId) {
+        toast.showError('Failed to create DPR. Please try again.');
+        return;
+      }
+
+      if (selectedActivities.size > 0) {
+        const getVendorId = (contractorName: string | undefined): number | null => {
+          if (!contractorName) return null;
+          const c = contractors.find((x) => x.name === contractorName);
+          const id = c?.numericId ?? c?.id;
+          return id != null && id !== '' ? Number(id) : null;
+        };
+        const toBase64 = (dataUrl: string) => {
+          const idx = dataUrl.indexOf(',');
+          return idx >= 0 ? dataUrl.slice(idx + 1) : dataUrl;
+        };
+        const entries = Array.from(selectedActivities.values())
+          .filter((a) => (a.numericId ?? (Number.isFinite(Number(a.id)) ? Number(a.id) : null)) != null)
+          .map((a) => {
+            const actId = a.numericId ?? (Number.isFinite(Number(a.id)) ? Number(a.id) : null)!;
+            const masterAct = activities.find((m) => m.id === a.id);
+            const totalQty = masterAct?.qty ?? 0;
+            const qty = Number(a.quantity ?? 0);
+            const completion = totalQty > 0 ? Math.round((qty / totalQty) * 100) : 0;
+            const imgs = (a.images || []).filter((url): url is string => !!url && typeof url === 'string');
+            const entry: {
+              activities_history_activities_id: number;
+              activities_history_qty: number;
+              activities_history_completion?: number;
+              activities_history_vendors_id?: number | null;
+              activities_history_remarkes?: string;
+              activities_history_img?: string;
+              activities_history_dpr_id?: number | null;
+            } = {
+              activities_history_activities_id: actId,
+              activities_history_qty: qty,
+              activities_history_completion: completion,
+              activities_history_dpr_id: Number(dprId),
+            };
+            const vendorId = getVendorId(a.contractor);
+            if (vendorId != null) entry.activities_history_vendors_id = vendorId;
+            if (a.remarks) entry.activities_history_remarkes = a.remarks;
+            if (imgs.length > 0) entry.activities_history_img = toBase64(imgs[0]);
+            return entry;
+          });
+        if (entries.length > 0) {
+          await activitiesHistoryAPI.add(entries);
+        }
+      }
+      router.push(`${DPR_BASE}/materials`);
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to save activities');
+    } finally {
+      setIsSubmittingActivities(false);
+    }
   };
 
-  // Load materials: GET materials-list (MaterialsListDPR)
+  // MaterialsListDPR: materials-list GET when screen loads
   useEffect(() => {
     if (!showMaterialSelection || !isAuthenticated) return;
 
@@ -1551,8 +1626,64 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     });
   };
 
-  const handleMaterialSelectionNext = () => {
-    router.push(`${DPR_BASE}/labour`);
+  const ensureDprId = async (): Promise<number | string | null> => {
+    let dprId: number | string | null = dprIdRes ?? editingDprId;
+    if (dprId) return dprId;
+    if (!selectedProject) return null;
+    const projectId = selectedProject.numericId ?? Number(selectedProject.id);
+    const subprojectId = selectedSubproject ? (selectedSubproject.numericId ?? Number(selectedSubproject.id)) : null;
+    try {
+      const res = await dprAPI.add({
+        dpr: {
+          projects_id: projectId,
+          sub_projects_id: subprojectId ?? '',
+          name: new Date().toLocaleDateString('en-CA'),
+          staps: '7',
+          force_new: '1',
+        },
+      });
+      const created = res?.dpr ?? res?.data?.dpr ?? res?.data ?? res;
+      dprId = created?.id ?? created?.dpr_id ?? res?.data?.id ?? res?.data?.dpr_id ?? res?.id ?? res?.dpr_id ?? null;
+      if (dprId != null) setDprIdRes(dprId);
+      return dprId;
+    } catch {
+      return null;
+    }
+  };
+
+  const handleMaterialSelectionNext = async () => {
+    setIsSubmittingMaterials(true);
+    try {
+      const dprId = await ensureDprId();
+      if (!dprId) {
+        toast.showError('DPR not found. Please complete Activities first.');
+        return;
+      }
+      if (selectedMaterials.size > 0) {
+        const firstActivityId = Array.from(selectedActivities.values())[0]?.numericId ?? Array.from(selectedActivities.values())[0]?.id;
+        const getActivityId = (activityName: string | undefined): number | null => {
+          if (!activityName) return firstActivityId != null ? Number(firstActivityId) : null;
+          const act = Array.from(selectedActivities.values()).find((a) => a.name === activityName);
+          const id = act?.numericId ?? act?.id;
+          return id != null ? Number(id) : (firstActivityId != null ? Number(firstActivityId) : null);
+        };
+        const entries = Array.from(selectedMaterials.values())
+          .filter((m) => (m.numericId ?? Number(m.id)) != null)
+          .map((m) => ({
+            materials_id: Number(m.numericId ?? m.id),
+            dpr_id: Number(dprId),
+            activities_id: getActivityId(m.activity) ?? undefined,
+            qty: Number(m.quantity ?? 0),
+            remarkes: m.remarks || '',
+          }));
+        if (entries.length > 0) await materialsHistoryAPI.add(entries);
+      }
+      router.push(`${DPR_BASE}/labour`);
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to save materials');
+    } finally {
+      setIsSubmittingMaterials(false);
+    }
   };
 
   // Activity names for Tag Activity dropdown: use activities-list (per API table) merged with selected
@@ -1575,7 +1706,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     return activitiesForDropdown.length > 0 ? activitiesForDropdown : Array.from(selectedActivities.values()).map(act => act.name);
   }, [activitiesForDropdown, selectedActivities]);
 
-  // Load labours: use master labour list so newly created labours appear after Create New
+  // SelectLabourDPR: labour-list GET when screen loads
   useEffect(() => {
     if (!showLabourSelection || !isAuthenticated) return;
 
@@ -1614,7 +1745,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
   // Asset modal: contractors already loaded in Activity step. Skip duplicate fetch.
 
-  // Load assets: use master assets list (like Labour uses getLabours) - avoids assets-history-list 500 errors
+  // SelectMachineDPR: assets-list GET when screen loads
   useEffect(() => {
     if (!showAssetSelection || !isAuthenticated) return;
 
@@ -1827,14 +1958,10 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   };
 
   const handleLabourSelectionNext = async () => {
-    if (selectedLabours.size === 0) {
-      router.push(`${DPR_BASE}/assets`);
-      return;
-    }
     const withoutQuantity = Array.from(selectedLabours.values()).filter(
       (l) => l.quantity == null || l.quantity <= 0
     );
-    if (withoutQuantity.length > 0) {
+    if (withoutQuantity.length > 0 && selectedLabours.size > 0) {
       const names = withoutQuantity.map((l) => l.type || l.category).join(', ');
       toast.showWarning(
         `Quantity is required for all selected labours. Please enter quantity for: ${names}`
@@ -1842,7 +1969,48 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       return;
     }
 
-    router.push(`${DPR_BASE}/assets`);
+    setIsSubmittingLabour(true);
+    try {
+      const dprId = await ensureDprId();
+      if (!dprId) {
+        toast.showError('DPR not found. Please complete Activities first.');
+        return;
+      }
+      if (selectedLabours.size > 0) {
+        const getVendorId = (contractorName: string | undefined): number | null => {
+          if (!contractorName) return null;
+          const c = contractors.find((x) => x.name === contractorName);
+          const id = c?.numericId ?? c?.id;
+          return id != null && id !== '' ? Number(id) : null;
+        };
+        const firstActId = Array.from(selectedActivities.values())[0]?.numericId ?? Array.from(selectedActivities.values())[0]?.id;
+        const getActivityId = (name: string | undefined): number | null =>
+          name ? (Array.from(selectedActivities.values()).find((a) => a.name === name)?.numericId ?? Number(Array.from(selectedActivities.values()).find((a) => a.name === name)?.id) ?? null) : Number(firstActId) || null;
+        const entries = Array.from(selectedLabours.values())
+          .filter((l) => (l.numericId ?? Number(l.id)) != null)
+          .map((l) => {
+            const e: { labours_id: number; dpr_id: number; qty: number; ot_qty: number; remarkes: string; activities_id?: number | null; vendors_id?: number | null; rate_per_unit: number } = {
+              labours_id: Number(l.numericId ?? l.id),
+              dpr_id: Number(dprId),
+              qty: Number(l.quantity ?? 0),
+              ot_qty: Number(l.overtimeQuantity ?? 0),
+              remarkes: l.remarks || '',
+              rate_per_unit: Number(l.ratePerUnit ?? 0),
+            };
+            const actId = getActivityId(l.activity);
+            if (actId != null) e.activities_id = actId;
+            const vendorId = getVendorId(l.contractor);
+            if (vendorId != null) e.vendors_id = vendorId;
+            return e;
+          });
+        if (entries.length > 0) await labourHistoryAPI.add(entries);
+      }
+      router.push(`${DPR_BASE}/assets`);
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to save labour');
+    } finally {
+      setIsSubmittingLabour(false);
+    }
   };
 
   const handleToggleAsset = (asset: AssetEquipment) => {
@@ -1934,22 +2102,59 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     });
   };
 
-  const handleAssetSelectionNext = () => {
-    if (selectedAssets.size === 0) {
-      router.push(`${DPR_BASE}/safety`);
-      return;
-    }
+  const handleAssetSelectionNext = async () => {
     const withoutQuantity = Array.from(selectedAssets.values()).filter(
       (a) => !a.quantity || a.quantity <= 0
     );
-    if (withoutQuantity.length > 0) {
+    if (withoutQuantity.length > 0 && selectedAssets.size > 0) {
       const names = withoutQuantity.map((a) => a.name || a.code).join(', ');
       toast.showWarning(
         `Quantity is required for all selected assets. Please enter quantity for: ${names}`
       );
       return;
     }
-    router.push(`${DPR_BASE}/safety`);
+
+    setIsSubmittingAssets(true);
+    try {
+      const dprId = await ensureDprId();
+      if (!dprId) {
+        toast.showError('DPR not found. Please complete Activities first.');
+        return;
+      }
+      if (selectedAssets.size > 0) {
+        const getVendorId = (contractorName: string | undefined): number | null => {
+          if (!contractorName) return null;
+          const c = contractors.find((x) => x.name === contractorName);
+          const id = c?.numericId ?? c?.id;
+          return id != null && id !== '' ? Number(id) : null;
+        };
+        const firstActId = Array.from(selectedActivities.values())[0]?.numericId ?? Array.from(selectedActivities.values())[0]?.id;
+        const getActivityId = (name: string | undefined): number | null =>
+          name ? (Array.from(selectedActivities.values()).find((a) => a.name === name)?.numericId ?? Number(Array.from(selectedActivities.values()).find((a) => a.name === name)?.id) ?? null) : Number(firstActId) || null;
+        const entries = Array.from(selectedAssets.values())
+          .filter((a) => (a.numericId ?? Number(a.id)) != null)
+          .map((a) => {
+            const e: { assets_id: number; dpr_id: number; qty: number; remarkes: string; activities_id?: number | null; vendors_id?: number | null; rate_per_unit: number } = {
+              assets_id: Number(a.numericId ?? a.id),
+              dpr_id: Number(dprId),
+              qty: Number(a.quantity ?? 0),
+              remarkes: a.remarks || '',
+              rate_per_unit: Number(a.ratePerUnit ?? 0),
+            };
+            const actId = getActivityId(a.activity);
+            if (actId != null) e.activities_id = actId;
+            const vendorId = getVendorId(a.contractor);
+            if (vendorId != null) e.vendors_id = vendorId;
+            return e;
+          });
+        if (entries.length > 0) await assetsHistoryAPI.add(entries);
+      }
+      router.push(`${DPR_BASE}/safety`);
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to save assets');
+    } finally {
+      setIsSubmittingAssets(false);
+    }
   };
 
   // Load team members (staff list) from Admin > User Management > Teams (GET /teams-list)
@@ -1988,8 +2193,24 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     fetchTeamMembers();
   }, [isAuthenticated, showSafetySelection, showHindranceSelection]);
 
-  // Load safety entries from API when Safety modal opens.
-  // When editing: pass only dprId, filter to entries belonging to this DPR. Never merge with previous entries.
+  /** Resolve image URL to absolute - backend may return relative paths (e.g. /storage/...) */
+  const resolveImageUrl = (url: string): string => {
+    if (!url || typeof url !== 'string') return '';
+    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) return url;
+    const baseUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging.koncite.com/api';
+    const base = String(baseUrl).replace(/\/$/, '');
+    return url.startsWith('/') ? `${base}${url}` : `${base}/${url}`;
+  };
+
+  /** Parse images from API item - handles image, image_url, img, images, image_paths, etc. */
+  const parseImagesFromItem = (item: any): string[] => {
+    const single = item?.image ?? item?.image_url ?? item?.img ?? item?.image_path ?? '';
+    const arr = item?.images ?? item?.image_urls ?? item?.image_paths ?? item?.imgs;
+    const combined = Array.isArray(arr) ? arr : (single ? [single] : []);
+    return combined.filter(Boolean).map((u: string) => resolveImageUrl(String(u)));
+  };
+
+  // SafetyDPR: safety-list POST { projects_id, sub_projects_id, dprId } when screen loads
   useEffect(() => {
     if (!showSafetySelection || !isAuthenticated) return;
     const dprId = dprIdRes ?? editingDprId;
@@ -1997,13 +2218,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     const fetchSafetyList = async () => {
       setIsLoadingSafety(true);
       try {
-        // When dprId exists: pass only dprId (no projects_id/sub_projects_id) to avoid entries from other DPRs.
-        const params: { dprId?: string | number; projects_id?: string | number; sub_projects_id?: string | number } = dprId
-          ? { dprId }
-          : {
-              projects_id: selectedProject?.numericId ?? selectedProject?.id,
-              sub_projects_id: selectedSubproject ? (selectedSubproject.numericId ?? selectedSubproject.id) : undefined
-            };
+        const params: { dprId: string | number; projects_id?: string | number; sub_projects_id?: string | number } = {
+          dprId,
+          projects_id: selectedProject?.numericId ?? selectedProject?.id ?? '',
+          sub_projects_id: selectedSubproject ? (selectedSubproject.numericId ?? selectedSubproject.id) : ''
+        };
         const list = await safetyAPI.getSafetyList(params);
         const rawList = Array.isArray(list) ? list : [];
         const dprIdStr = String(dprId);
@@ -2014,18 +2233,14 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         }) : rawList;
         const seen = new Set<string>();
         const mapped: SafetyEntry[] = filtered
-          .map((item: any) => {
-            const singleImg = item.image || item.image_url || item.img || '';
-            const imgArr = Array.isArray(item.images) ? item.images : (singleImg ? [singleImg] : []);
-            return {
-              id: item.uuid || String(item.id),
-              serverId: item.id,
-              details: item.details || item.description || item.name || '',
-              images: imgArr.filter(Boolean),
-              teamMembers: Array.isArray(item.team_members) ? item.team_members.map((m: any) => String(m?.id ?? m)) : Array.isArray(item.teamMembers) ? item.teamMembers : [],
-              remarks: item.remarks || '',
-            };
-          })
+          .map((item: any) => ({
+            id: item.uuid || String(item.id),
+            serverId: item.id,
+            details: item.details || item.description || item.name || '',
+            images: parseImagesFromItem(item),
+            teamMembers: Array.isArray(item.team_members) ? item.team_members.map((m: any) => String(m?.id ?? m)) : Array.isArray(item.teamMembers) ? item.teamMembers : [],
+            remarks: item.remarks || '',
+          }))
           .filter((e) => {
             const key = e.id || String(e.serverId ?? '');
             if (!key || seen.has(key)) return false;
@@ -2042,8 +2257,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     fetchSafetyList();
   }, [showSafetySelection, isAuthenticated, editingDprId, dprIdRes, selectedProject, selectedSubproject]);
 
-  // Load hinderance entries from API when Hindrance modal opens.
-  // When editing: pass only dprId, filter to entries belonging to this DPR. Never merge with previous entries.
+  // HinderenceDPR: hinderance-list POST { projects_id, sub_projects_id, dprId } when screen loads
   useEffect(() => {
     if (!showHindranceSelection || !isAuthenticated) return;
     const dprId = dprIdRes ?? editingDprId;
@@ -2051,13 +2265,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     const fetchHinderanceList = async () => {
       setIsLoadingHindrance(true);
       try {
-        // When dprId exists: pass only dprId (no projects_id/sub_projects_id) to avoid entries from other DPRs.
-        const params: { dprId?: string | number; projects_id?: string | number; sub_projects_id?: string | number } = dprId
-          ? { dprId }
-          : {
-              projects_id: selectedProject?.numericId ?? selectedProject?.id,
-              sub_projects_id: selectedSubproject ? (selectedSubproject.numericId ?? selectedSubproject.id) : undefined
-            };
+        const params: { dprId: string | number; projects_id?: string | number; sub_projects_id?: string | number } = {
+          dprId,
+          projects_id: selectedProject?.numericId ?? selectedProject?.id ?? '',
+          sub_projects_id: selectedSubproject ? (selectedSubproject.numericId ?? selectedSubproject.id) : ''
+        };
         const list = await hinderanceAPI.getList(params);
         const rawList = Array.isArray(list) ? list : [];
         const dprIdStr = String(dprId);
@@ -2068,18 +2280,14 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         }) : rawList;
         const seen = new Set<string>();
         const mapped: HindranceEntry[] = filtered
-          .map((item: any) => {
-            const singleImg = item.image || item.image_url || item.img || '';
-            const imgArr = Array.isArray(item.images) ? item.images : (singleImg ? [singleImg] : []);
-            return {
-              id: item.uuid || String(item.id),
-              serverId: item.id,
-              details: item.details || item.description || item.name || '',
-              images: imgArr.filter(Boolean),
-              teamMembers: Array.isArray(item.team_members) ? item.team_members.map((m: any) => String(m?.id ?? m)) : Array.isArray(item.teamMembers) ? item.teamMembers : [],
-              remarks: item.remarks || '',
-            };
-          })
+          .map((item: any) => ({
+            id: item.uuid || String(item.id),
+            serverId: item.id,
+            details: item.details || item.description || item.name || '',
+            images: parseImagesFromItem(item),
+            teamMembers: Array.isArray(item.team_members) ? item.team_members.map((m: any) => String(m?.id ?? m)) : Array.isArray(item.teamMembers) ? item.teamMembers : [],
+            remarks: item.remarks || '',
+          }))
           .filter((e) => {
             const key = e.id || String(e.serverId ?? '');
             if (!key || seen.has(key)) return false;
@@ -2132,7 +2340,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       const subMap: Record<string, string> = {};
       await Promise.all(projectIds.map(async (projectId) => {
         try {
-          const subs = await masterDataAPI.getSubprojects(projectId);
+          const subs = await masterDataAPI.getProjectSubprojects(projectId);
           const subArr = Array.isArray(subs) ? subs : [];
           for (const s of subArr) {
             const rawId = s.id ?? s.subproject_id ?? s.sub_projects_id;
@@ -2234,7 +2442,33 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setSafetyEntries(prev => prev.map(e => e.id === id ? { ...e, remarks } : e));
   };
 
-  const handleSafetyNext = () => {
+  const handleSafetyNext = async () => {
+    const newEntries = safetyEntries.filter(e => e.serverId == null);
+    if (newEntries.length > 0) {
+      setIsSubmittingSafety(true);
+      try {
+        for (const entry of newEntries) {
+          const fd = buildSafetyAddFormData(entry);
+          if (!fd) {
+            toast.showError('Missing project or DPR. Please go back and complete project selection.');
+            setIsSubmittingSafety(false);
+            return;
+          }
+          const res = await safetyAPI.addSafety(fd);
+          const createdId = res?.data?.id ?? res?.id ?? res?.results?.id;
+          if (createdId != null) {
+            setSafetyEntries(prev => prev.map(e =>
+              e.id === entry.id ? { ...e, serverId: createdId } : e
+            ));
+          }
+        }
+      } catch (err: any) {
+        toast.showError(err?.message || 'Failed to save safety entries');
+        setIsSubmittingSafety(false);
+        return;
+      }
+      setIsSubmittingSafety(false);
+    }
     router.push(`${DPR_BASE}/hindrance`);
   };
 
@@ -2302,613 +2536,6 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setHindranceEntries(prev => prev.map(e => e.id === id ? { ...e, remarks } : e));
   };
 
-  const generateDPRPDF = async (
-    snapshotData?: { project: any; subproject: any; activities: any[]; materials: any[]; labours: any[]; assets: any[]; safety: any[]; hindrance: any[]; teamMembers: any[] },
-    options?: { returnBlob?: boolean }
-  ): Promise<Blob | void> => {
-    const proj = snapshotData?.project ?? selectedProject;
-    const subproj = snapshotData?.subproject ?? selectedSubproject;
-    const rawActList = snapshotData?.activities ?? Array.from(selectedActivities.values());
-    const actList = rawActList.map((a: any) => {
-      const masterAct = activities.find((m) => m.id === a.id);
-      const totalQty = masterAct?.qty ?? (a.total_qty ?? a.qty) ?? 0;
-      const qty = Number(a.quantity ?? a.activities_history_qty ?? 0);
-      const completion = totalQty > 0 ? Math.round((qty / totalQty) * 100) : (a.completion ?? a.activities_history_completion ?? 0);
-      return { ...a, quantity: qty, completion };
-    });
-    const matList = snapshotData?.materials ?? Array.from(selectedMaterials.values());
-    const labList = snapshotData?.labours ?? Array.from(selectedLabours.values());
-    const astList = snapshotData?.assets ?? Array.from(selectedAssets.values());
-    const safeList = snapshotData?.safety ?? safetyEntries;
-    const hindList = snapshotData?.hindrance ?? hindranceEntries;
-    const tmList = snapshotData?.teamMembers ?? teamMembers;
-
-    const doc = new jsPDF();
-    let yPosition = 20;
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 20;
-    const lineHeight = 7;
-    const sectionSpacing = 12;
-    const rowPad = 3;
-
-    // A4 fixed table width: full content area (width does not resize; height varies with content)
-    const TABLE_CONTENT_WIDTH = pageWidth - 2 * margin;
-
-    // Normalize column widths so total equals TABLE_CONTENT_WIDTH (fixed to A4)
-    const normalizeColWidths = (colWidths: number[]): number[] => {
-      const sum = colWidths.reduce((a, b) => a + b, 0);
-      if (Math.abs(sum - TABLE_CONTENT_WIDTH) < 0.5) return colWidths;
-      const diff = TABLE_CONTENT_WIDTH - sum;
-      const out = [...colWidths];
-      out[out.length - 1] = Math.max(5, out[out.length - 1] + diff);
-      return out;
-    };
-
-    // Colors (RGB 0-255)
-    const colorAccent = [194, 214, 66] as [number, number, number];
-    const colorHeaderBg = [224, 238, 180] as [number, number, number];
-    const colorAltRow = [248, 249, 250] as [number, number, number];
-    const colorMetadataBg = [240, 245, 250] as [number, number, number];
-    const colorBorder = [180, 195, 210] as [number, number, number];
-
-    const drawTableHeader = (headers: string[], colWidths: number[], startY: number) => {
-      const tw = colWidths.reduce((a, b) => a + b, 0);
-      doc.setDrawColor(...colorBorder);
-      doc.setLineWidth(0.25);
-      doc.setFillColor(...colorHeaderBg);
-      doc.rect(margin, startY, tw, lineHeight + rowPad * 2, 'FD');
-      doc.setTextColor(30, 45, 60);
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(9);
-      let x = margin + 2;
-      headers.forEach((h, i) => {
-        doc.text(h, x, startY + lineHeight + rowPad - 1);
-        x += colWidths[i];
-      });
-      doc.setTextColor(0, 0, 0);
-      return startY + lineHeight + rowPad * 2;
-    };
-
-    const drawTableRowBg = (y: number, rowHeight: number, colWidths: number[], isAlt: boolean) => {
-      const tw = colWidths.reduce((a, b) => a + b, 0);
-      if (isAlt) {
-        doc.setFillColor(...colorAltRow);
-        doc.rect(margin, y, tw, rowHeight, 'F');
-      }
-      doc.setDrawColor(...colorBorder);
-      doc.rect(margin, y, tw, rowHeight);
-      let x = margin;
-      colWidths.forEach((w, i) => {
-        if (i < colWidths.length - 1) {
-          doc.line(x + w, y, x + w, y + rowHeight);
-          x += w;
-        }
-      });
-    };
-
-    // Helper: draw text wrapped to cell width, return number of lines
-    const drawWrappedCell = (text: string, x: number, y: number, cellWidth: number, align: 'left' | 'center' | 'right' = 'left') => {
-      const lines = doc.splitTextToSize(String(text || '-'), Math.max(cellWidth - 4, 10));
-      const pad = 2;
-      lines.forEach((line: string, i: number) => {
-        const lineY = y + rowPad + (i + 1) * lineHeight - 1;
-        if (align === 'center') {
-          doc.text(line, x + cellWidth / 2, lineY, { align: 'center' });
-        } else if (align === 'right') {
-          doc.text(line, x + cellWidth - pad, lineY, { align: 'right' });
-        } else {
-          doc.text(line, x + pad, lineY);
-        }
-      });
-      return lines.length;
-    };
-
-    // Helper: draw table header with alignment (alignments: 'left'|'center'|'right' per column)
-    const drawTableHeaderWithAlign = (headers: string[], colWidths: number[], startY: number, alignments?: ('left' | 'center' | 'right')[]) => {
-      const tw = colWidths.reduce((a, b) => a + b, 0);
-      doc.setDrawColor(...colorBorder);
-      doc.setLineWidth(0.25);
-      doc.setFillColor(...colorHeaderBg);
-      doc.rect(margin, startY, tw, lineHeight + rowPad * 2, 'FD');
-      doc.setTextColor(30, 45, 60);
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(9);
-      let x = margin;
-      headers.forEach((h, i) => {
-        const align = alignments?.[i] || 'left';
-        const cellW = colWidths[i];
-        const textY = startY + lineHeight + rowPad - 1;
-        if (align === 'center') {
-          doc.text(h, x + cellW / 2, textY, { align: 'center' });
-        } else if (align === 'right') {
-          doc.text(h, x + cellW - 2, textY, { align: 'right' });
-        } else {
-          doc.text(h, x + 2, textY);
-        }
-        x += cellW;
-      });
-      doc.setTextColor(0, 0, 0);
-      return startY + lineHeight + rowPad * 2;
-    };
-
-    // Helper function to add a new page if needed
-    const checkPageBreak = (requiredSpace: number) => {
-      if (yPosition + requiredSpace > pageHeight - margin) {
-        doc.addPage();
-        yPosition = margin;
-        return true;
-      }
-      return false;
-    };
-
-    // Helper function to add image to PDF (returns Promise)
-    const addImageToPDF = (imageData: string, x: number, y: number, maxWidth: number, maxHeight: number): Promise<number> => {
-      return new Promise((resolve) => {
-        try {
-          // Check if imageData is valid
-          if (!imageData || (!imageData.startsWith('data:image/') && !imageData.startsWith('http'))) {
-            console.error('Invalid image data');
-            doc.text('Invalid image data', x, yPosition);
-            resolve(lineHeight);
-            return;
-          }
-
-          const img = new Image();
-          
-          img.onload = () => {
-            try {
-              // Calculate dimensions maintaining aspect ratio
-              let imgWidth = maxWidth;
-              let imgHeight = (img.height / img.width) * imgWidth;
-              
-              if (imgHeight > maxHeight) {
-                imgHeight = maxHeight;
-                imgWidth = (img.width / img.height) * imgHeight;
-              }
-              
-              // Check if image needs to be on a new page
-              if (yPosition + imgHeight + 5 > pageHeight - margin) {
-                doc.addPage();
-                yPosition = margin;
-              }
-              
-              // Determine image format from data URL
-              let format = 'JPEG';
-              if (imageData.includes('data:image/png')) {
-                format = 'PNG';
-              } else if (imageData.includes('data:image/jpeg') || imageData.includes('data:image/jpg')) {
-                format = 'JPEG';
-              }
-              
-              // Add image to PDF - jsPDF can handle full data URLs
-              doc.addImage(imageData, format, x, yPosition, imgWidth, imgHeight);
-              resolve(imgHeight + 5);
-            } catch (error) {
-              console.error('Error adding image to PDF:', error);
-              // Try with full data URL as fallback
-              try {
-                let format = 'JPEG';
-                if (imageData.includes('data:image/png')) {
-                  format = 'PNG';
-                }
-                doc.addImage(imageData, format, x, yPosition, maxWidth, maxHeight);
-                resolve(maxHeight + 5);
-              } catch (fallbackError) {
-                console.error('Fallback image add also failed:', fallbackError);
-                doc.text('Image could not be loaded', x, yPosition);
-                resolve(lineHeight);
-              }
-            }
-          };
-          
-          img.onerror = (error) => {
-            console.error('Image load error:', error);
-            // Try to add image directly anyway
-            try {
-              let format = 'JPEG';
-              if (imageData.includes('data:image/png')) {
-                format = 'PNG';
-              }
-              doc.addImage(imageData, format, x, yPosition, maxWidth, maxHeight);
-              resolve(maxHeight + 5);
-            } catch (addError) {
-              console.error('Direct image add failed:', addError);
-              doc.text('Image could not be loaded', x, yPosition);
-              resolve(lineHeight);
-            }
-          };
-          
-          // Set image source
-          img.src = imageData;
-          
-          // If image is already loaded (cached), trigger onload immediately
-          if (img.complete && img.naturalHeight !== 0) {
-            img.onload(new Event('load') as any);
-          }
-        } catch (error) {
-          console.error('Error in addImageToPDF:', error);
-          doc.text('Image could not be loaded', x, yPosition);
-          resolve(lineHeight);
-        }
-      });
-    };
-
-    // Title
-    doc.setFontSize(22);
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(...colorAccent);
-    doc.text('Daily Progress Report (DPR)', pageWidth / 2, yPosition, { align: 'center' });
-    doc.setTextColor(0, 0, 0);
-    yPosition += 18;
-
-    // Project Information - styled metadata box
-    if (proj || subproj) {
-      const metaLines = 2 + (proj ? 1 : 0) + (subproj ? 1 : 0) + (proj?.code ? 1 : 0);
-      const metaBoxH = 8 + 10 + metaLines * lineHeight + 6;
-      checkPageBreak(metaBoxH + 10);
-      const metaBoxTop = yPosition;
-      doc.setFillColor(...colorMetadataBg);
-      doc.setDrawColor(...colorBorder);
-      doc.setLineWidth(0.5);
-      doc.rect(margin, metaBoxTop, pageWidth - 2 * margin, metaBoxH, 'FD');
-      doc.rect(margin, metaBoxTop, pageWidth - 2 * margin, metaBoxH);
-      yPosition = metaBoxTop + 8;
-      doc.setFontSize(11);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(40, 60, 80);
-      doc.text('Project Information', margin + 8, yPosition);
-      yPosition += 10;
-      doc.setFontSize(10);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(50, 50, 50);
-      const currentDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-      doc.text(`Date: ${currentDate}`, margin + 8, yPosition);
-      yPosition += lineHeight;
-      if (proj) { doc.text(`Project: ${proj.name}`, margin + 8, yPosition); yPosition += lineHeight; }
-      if (subproj) { doc.text(`Subproject: ${subproj.name}`, margin + 8, yPosition); yPosition += lineHeight; }
-      if (proj?.code) { doc.text(`Project Code: ${proj.code}`, margin + 8, yPosition); yPosition += lineHeight; }
-      doc.setTextColor(0, 0, 0);
-      yPosition = metaBoxTop + metaBoxH + sectionSpacing;
-    }
-
-    // Activities Section
-    if (actList.length > 0) {
-      checkPageBreak(40);
-      doc.setFontSize(13);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(40, 60, 80);
-      doc.text('Activities', margin, yPosition);
-      doc.setTextColor(0, 0, 0);
-      yPosition += lineHeight + 4;
-
-      const activitiesHeaders = ['Sr No', 'Activity', 'Unit', 'Qty', '% Completion', 'Contractor', 'Remarks'];
-      const colWidths = normalizeColWidths([12, 48, 16, 18, 18, 32, 28]);
-      const actAlignments: ('left' | 'center' | 'right')[] = ['center', 'left', 'center', 'center', 'center', 'left', 'left'];
-      yPosition = drawTableHeaderWithAlign(activitiesHeaders, colWidths, yPosition, actAlignments);
-
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(9);
-      let srNo = 1;
-      for (const activity of actList) {
-        const activityLines = doc.splitTextToSize(activity.name || '-', colWidths[1] - 4);
-        const contractorLines = doc.splitTextToSize(activity.contractor || '-', colWidths[5] - 4);
-        const remarksLines = doc.splitTextToSize(activity.remarks || '-', colWidths[6] - 4);
-        const maxLines = Math.max(1, activityLines.length, contractorLines.length, remarksLines.length);
-        const rowH = Math.max(lineHeight + rowPad, maxLines * lineHeight + rowPad * 2);
-        checkPageBreak(rowH + 5);
-        drawTableRowBg(yPosition, rowH, colWidths, (srNo - 1) % 2 === 1);
-        let xPos = margin;
-        drawWrappedCell(srNo.toString(), xPos, yPosition, colWidths[0], 'center');
-        xPos += colWidths[0];
-        drawWrappedCell(activity.name || '-', xPos, yPosition, colWidths[1], 'left');
-        xPos += colWidths[1];
-        drawWrappedCell(activity.unit || '-', xPos, yPosition, colWidths[2], 'center');
-        xPos += colWidths[2];
-        drawWrappedCell(activity.quantity.toString(), xPos, yPosition, colWidths[3], 'center');
-        xPos += colWidths[3];
-        drawWrappedCell(`${activity.completion ?? 0}%`, xPos, yPosition, colWidths[4], 'center');
-        xPos += colWidths[4];
-        drawWrappedCell(activity.contractor || '-', xPos, yPosition, colWidths[5], 'left');
-        xPos += colWidths[5];
-        drawWrappedCell(activity.remarks || '-', xPos, yPosition, colWidths[6], 'left');
-        yPosition += rowH;
-        
-        // Add images if any
-        const actImages = (activity as any)?.images;
-        if (actImages && actImages.length > 0) {
-          yPosition += lineHeight;
-          doc.setFontSize(9);
-          doc.text('Images:', margin, yPosition);
-          yPosition += lineHeight + 2;
-          
-          for (const image of actImages) {
-            const imageHeight = await addImageToPDF(image, margin, yPosition, pageWidth - 2 * margin, 40);
-            yPosition += imageHeight + 2;
-            checkPageBreak(50);
-          }
-          
-          doc.setFontSize(10);
-        }
-        
-        srNo++;
-      }
-      yPosition += sectionSpacing;
-    }
-
-    // Materials Section
-    if (matList.length > 0) {
-      checkPageBreak(40);
-      doc.setFontSize(13);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(40, 60, 80);
-      doc.text('Materials', margin, yPosition);
-      doc.setTextColor(0, 0, 0);
-      yPosition += lineHeight + 4;
-
-      const materialsHeaders = ['Sr No', 'Material', 'Unit', 'Qty', 'Activity', 'Remarks'];
-      const materialColWidths = normalizeColWidths([12, 48, 18, 20, 35, 30]);
-      const matAlignments: ('left' | 'center' | 'right')[] = ['center', 'left', 'center', 'center', 'left', 'left'];
-      yPosition = drawTableHeaderWithAlign(materialsHeaders, materialColWidths, yPosition, matAlignments);
-
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(9);
-      let srNo = 1;
-      matList.forEach((material) => {
-        const materialLines = doc.splitTextToSize(`${material.name} (${material.code})`, materialColWidths[1] - 4);
-        const activityLines = doc.splitTextToSize(material.activity || '-', materialColWidths[4] - 4);
-        const remarksLines = doc.splitTextToSize(material.remarks || '-', materialColWidths[5] - 4);
-        const maxLines = Math.max(1, materialLines.length, activityLines.length, remarksLines.length);
-        const rowH = Math.max(lineHeight + rowPad, maxLines * lineHeight + rowPad * 2);
-        checkPageBreak(rowH + 5);
-        drawTableRowBg(yPosition, rowH, materialColWidths, (srNo - 1) % 2 === 1);
-        let xPos = margin;
-        drawWrappedCell(srNo.toString(), xPos, yPosition, materialColWidths[0], 'center');
-        xPos += materialColWidths[0];
-        drawWrappedCell(`${material.name} (${material.code})`, xPos, yPosition, materialColWidths[1], 'left');
-        xPos += materialColWidths[1];
-        drawWrappedCell(material.unit, xPos, yPosition, materialColWidths[2], 'center');
-        xPos += materialColWidths[2];
-        drawWrappedCell(material.quantity.toString(), xPos, yPosition, materialColWidths[3], 'center');
-        xPos += materialColWidths[3];
-        drawWrappedCell(material.activity || '-', xPos, yPosition, materialColWidths[4], 'left');
-        xPos += materialColWidths[4];
-        drawWrappedCell(material.remarks || '-', xPos, yPosition, materialColWidths[5], 'left');
-        yPosition += rowH;
-        srNo++;
-      });
-      yPosition += sectionSpacing;
-    }
-
-    // Labours Section
-    if (labList.length > 0) {
-      checkPageBreak(40);
-      doc.setFontSize(13);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(40, 60, 80);
-      doc.text('Labours', margin, yPosition);
-      doc.setTextColor(0, 0, 0);
-      yPosition += lineHeight + 4;
-
-      const laboursHeaders = ['Sr No', 'Labour', 'Category', 'Qty', 'OT', 'Activity', 'Contractor', 'Rate', 'Remarks'];
-      const labourColWidths = normalizeColWidths([10, 28, 16, 10, 10, 24, 26, 16, 22]);
-      const labAlignments: ('left' | 'center' | 'right')[] = ['center', 'left', 'center', 'center', 'center', 'left', 'left', 'right', 'left'];
-      yPosition = drawTableHeaderWithAlign(laboursHeaders, labourColWidths, yPosition, labAlignments);
-
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(9);
-      let srNo = 1;
-      labList.forEach((labour) => {
-        const labourLines = doc.splitTextToSize(labour.type || '-', labourColWidths[1] - 4);
-        const activityLines = doc.splitTextToSize(labour.activity || '-', labourColWidths[5] - 4);
-        const contractorLines = doc.splitTextToSize(labour.contractor || '-', labourColWidths[6] - 4);
-        const remarksLines = doc.splitTextToSize(labour.remarks || '-', labourColWidths[8] - 4);
-        const maxLines = Math.max(1, labourLines.length, activityLines.length, contractorLines.length, remarksLines.length);
-        const rowH = Math.max(lineHeight + rowPad, maxLines * lineHeight + rowPad * 2);
-        checkPageBreak(rowH + 5);
-        drawTableRowBg(yPosition, rowH, labourColWidths, (srNo - 1) % 2 === 1);
-        let xPos = margin;
-        drawWrappedCell(srNo.toString(), xPos, yPosition, labourColWidths[0], 'center');
-        xPos += labourColWidths[0];
-        drawWrappedCell(labour.type || '-', xPos, yPosition, labourColWidths[1], 'left');
-        xPos += labourColWidths[1];
-        drawWrappedCell(labour.category || '-', xPos, yPosition, labourColWidths[2], 'center');
-        xPos += labourColWidths[2];
-        drawWrappedCell(labour.quantity.toString(), xPos, yPosition, labourColWidths[3], 'center');
-        xPos += labourColWidths[3];
-        drawWrappedCell(labour.overtimeQuantity.toString(), xPos, yPosition, labourColWidths[4], 'center');
-        xPos += labourColWidths[4];
-        drawWrappedCell(labour.activity || '-', xPos, yPosition, labourColWidths[5], 'left');
-        xPos += labourColWidths[5];
-        drawWrappedCell(labour.contractor || '-', xPos, yPosition, labourColWidths[6], 'left');
-        xPos += labourColWidths[6];
-        drawWrappedCell(labour.ratePerUnit.toString(), xPos, yPosition, labourColWidths[7], 'right');
-        xPos += labourColWidths[7];
-        drawWrappedCell(labour.remarks || '-', xPos, yPosition, labourColWidths[8], 'left');
-        yPosition += rowH;
-        srNo++;
-      });
-      yPosition += sectionSpacing;
-    }
-
-    // Assets Section
-    if (astList.length > 0) {
-      checkPageBreak(40);
-      doc.setFontSize(13);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(40, 60, 80);
-      doc.text('Assets & Equipments', margin, yPosition);
-      doc.setTextColor(0, 0, 0);
-      yPosition += lineHeight + 4;
-
-      const assetsHeaders = ['Sr No', 'Asset', 'Qty', 'Activity', 'Contractor', 'Rate', 'Remarks'];
-      const assetColWidths = normalizeColWidths([10, 45, 16, 26, 30, 16, 26]);
-      const assetAlignments: ('left' | 'center' | 'right')[] = ['center', 'left', 'center', 'left', 'left', 'right', 'left'];
-      yPosition = drawTableHeaderWithAlign(assetsHeaders, assetColWidths, yPosition, assetAlignments);
-
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(9);
-      let srNo = 1;
-      astList.forEach((asset) => {
-        const assetLines = doc.splitTextToSize(`${asset.name || ''} (${asset.code || ''})`, assetColWidths[1] - 4);
-        const activityLines = doc.splitTextToSize(asset.activity || '-', assetColWidths[3] - 4);
-        const contractorLines = doc.splitTextToSize(asset.contractor || '-', assetColWidths[4] - 4);
-        const remarksLines = doc.splitTextToSize(asset.remarks || '-', assetColWidths[6] - 4);
-        const maxLines = Math.max(1, assetLines.length, activityLines.length, contractorLines.length, remarksLines.length);
-        const rowH = Math.max(lineHeight + rowPad, maxLines * lineHeight + rowPad * 2);
-        checkPageBreak(rowH + 5);
-        drawTableRowBg(yPosition, rowH, assetColWidths, (srNo - 1) % 2 === 1);
-        let xPos = margin;
-        drawWrappedCell(srNo.toString(), xPos, yPosition, assetColWidths[0], 'center');
-        xPos += assetColWidths[0];
-        drawWrappedCell(`${asset.name || ''} (${asset.code || ''})`, xPos, yPosition, assetColWidths[1], 'left');
-        xPos += assetColWidths[1];
-        drawWrappedCell(asset.quantity.toString(), xPos, yPosition, assetColWidths[2], 'center');
-        xPos += assetColWidths[2];
-        drawWrappedCell(asset.activity || '-', xPos, yPosition, assetColWidths[3], 'left');
-        xPos += assetColWidths[3];
-        drawWrappedCell(asset.contractor || '-', xPos, yPosition, assetColWidths[4], 'left');
-        xPos += assetColWidths[4];
-        drawWrappedCell(asset.ratePerUnit.toString(), xPos, yPosition, assetColWidths[5], 'right');
-        xPos += assetColWidths[5];
-        drawWrappedCell(asset.remarks || '-', xPos, yPosition, assetColWidths[6], 'left');
-        yPosition += rowH;
-        srNo++;
-      });
-      yPosition += sectionSpacing;
-    }
-
-    // Safety Section - table structure
-    if (safeList.length > 0) {
-      checkPageBreak(40);
-      doc.setFontSize(13);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(40, 60, 80);
-      doc.text('Safety Issues', margin, yPosition);
-      doc.setTextColor(0, 0, 0);
-      yPosition += lineHeight + 4;
-
-      const safetyHeaders = ['Sr No', 'Problem Details', 'Team Members', 'Remarks'];
-      const safetyColWidths = normalizeColWidths([10, 60, 40, 65]);
-      const safetyAlignments: ('left' | 'center' | 'right')[] = ['center', 'left', 'left', 'left'];
-      yPosition = drawTableHeaderWithAlign(safetyHeaders, safetyColWidths, yPosition, safetyAlignments);
-
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(9);
-      let srNo = 1;
-      for (const entry of safeList) {
-        const teamMemberNames = (entry.teamMembers || []).map((mid: string) => {
-          const member = tmList.find((m: any) => m.id === mid);
-          return member ? member.name : mid;
-        }).join(', ');
-        const detailsLines = doc.splitTextToSize(entry.details || '—', safetyColWidths[1] - 4);
-        const teamLines = doc.splitTextToSize(teamMemberNames || '-', safetyColWidths[2] - 4);
-        const remarksLines = doc.splitTextToSize(entry.remarks || '-', safetyColWidths[3] - 4);
-        const textMaxLines = Math.max(1, detailsLines.length, teamLines.length, remarksLines.length);
-        const rowH = Math.max(lineHeight + rowPad, textMaxLines * lineHeight + rowPad * 2);
-        checkPageBreak(rowH + 5);
-        drawTableRowBg(yPosition, rowH, safetyColWidths, (srNo - 1) % 2 === 1);
-
-        let xPos = margin;
-        drawWrappedCell(srNo.toString(), xPos, yPosition, safetyColWidths[0], 'center');
-        xPos += safetyColWidths[0];
-        drawWrappedCell(entry.details || '—', xPos, yPosition, safetyColWidths[1], 'left');
-        xPos += safetyColWidths[1];
-        drawWrappedCell(teamMemberNames || '-', xPos, yPosition, safetyColWidths[2], 'left');
-        xPos += safetyColWidths[2];
-        drawWrappedCell(entry.remarks || '-', xPos, yPosition, safetyColWidths[3], 'left');
-        yPosition += rowH;
-
-        // Images below row (like Activities)
-        const safetyImgs = entry.images || (entry.image ? [entry.image] : []);
-        if (safetyImgs.length > 0) {
-          yPosition += lineHeight;
-          doc.setFontSize(9);
-          doc.text('Images:', margin, yPosition);
-          yPosition += lineHeight + 2;
-          for (const img of safetyImgs) {
-            const imageHeight = await addImageToPDF(img, margin, yPosition, pageWidth - 2 * margin, 40);
-            yPosition += imageHeight + 2;
-            checkPageBreak(50);
-          }
-          doc.setFontSize(9);
-        }
-        srNo++;
-      }
-      yPosition += sectionSpacing;
-    }
-
-    // Hindrance Section - table structure (same as Safety)
-    if (hindList.length > 0) {
-      checkPageBreak(40);
-      doc.setFontSize(13);
-      doc.setFont('helvetica', 'bold');
-      doc.setTextColor(40, 60, 80);
-      doc.text('Hindrance Issues', margin, yPosition);
-      doc.setTextColor(0, 0, 0);
-      yPosition += lineHeight + 4;
-
-      const hindranceHeaders = ['Sr No', 'Problem Details', 'Team Members', 'Remarks'];
-      const hindranceColWidths = normalizeColWidths([10, 60, 40, 65]);
-      const hindranceAlignments: ('left' | 'center' | 'right')[] = ['center', 'left', 'left', 'left'];
-      yPosition = drawTableHeaderWithAlign(hindranceHeaders, hindranceColWidths, yPosition, hindranceAlignments);
-
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(9);
-      let srNo = 1;
-      for (const entry of hindList) {
-        const teamMemberNames = (entry.teamMembers || []).map((mid: string) => {
-          const member = tmList.find((m: any) => m.id === mid);
-          return member ? member.name : mid;
-        }).join(', ');
-        const detailsLines = doc.splitTextToSize(entry.details || '—', hindranceColWidths[1] - 4);
-        const teamLines = doc.splitTextToSize(teamMemberNames || '-', hindranceColWidths[2] - 4);
-        const remarksLines = doc.splitTextToSize(entry.remarks || '-', hindranceColWidths[3] - 4);
-        const textMaxLines = Math.max(1, detailsLines.length, teamLines.length, remarksLines.length);
-        const rowH = Math.max(lineHeight + rowPad, textMaxLines * lineHeight + rowPad * 2);
-        checkPageBreak(rowH + 5);
-        drawTableRowBg(yPosition, rowH, hindranceColWidths, (srNo - 1) % 2 === 1);
-
-        let xPos = margin;
-        drawWrappedCell(srNo.toString(), xPos, yPosition, hindranceColWidths[0], 'center');
-        xPos += hindranceColWidths[0];
-        drawWrappedCell(entry.details || '—', xPos, yPosition, hindranceColWidths[1], 'left');
-        xPos += hindranceColWidths[1];
-        drawWrappedCell(teamMemberNames || '-', xPos, yPosition, hindranceColWidths[2], 'left');
-        xPos += hindranceColWidths[2];
-        drawWrappedCell(entry.remarks || '-', xPos, yPosition, hindranceColWidths[3], 'left');
-        yPosition += rowH;
-
-        // Images below row (like Activities)
-        const hindranceImgs = entry.images || (entry.image ? [entry.image] : []);
-        if (hindranceImgs.length > 0) {
-          yPosition += lineHeight;
-          doc.setFontSize(9);
-          doc.text('Images:', margin, yPosition);
-          yPosition += lineHeight + 2;
-          for (const img of hindranceImgs) {
-            const imageHeight = await addImageToPDF(img, margin, yPosition, pageWidth - 2 * margin, 40);
-            yPosition += imageHeight + 2;
-            checkPageBreak(50);
-          }
-          doc.setFontSize(9);
-        }
-        srNo++;
-      }
-      yPosition += sectionSpacing;
-    }
-
-    // Generate filename
-    const projectName = proj?.name || 'DPR';
-    const subprojectName = subproj?.name || '';
-    const filename = `DPR_${projectName}_${subprojectName}_${new Date().toLocaleDateString('en-CA')}.pdf`.replace(/[^a-z0-9]/gi, '_');
-
-    if (options?.returnBlob) {
-      return doc.output('blob');
-    }
-    doc.save(filename);
-  };
-
   const dataURLtoFile = (dataUrl: string, filename: string): File | null => {
     try {
       if (!dataUrl || typeof dataUrl !== 'string') return null;
@@ -2925,6 +2552,52 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     } catch (e) {
       return null;
     }
+  };
+
+  /** Build FormData for safety-add (single entry, multipart) */
+  const buildSafetyAddFormData = (entry: SafetyEntry): FormData | null => {
+    const projectId = selectedProject?.numericId ?? selectedProject?.id;
+    const subprojectId = selectedSubproject ? (selectedSubproject.numericId ?? selectedSubproject.id) : null;
+    const dprId = dprIdRes ?? editingDprId;
+    if (!projectId || !dprId) return null;
+    const fd = new FormData();
+    fd.append('projects_id', String(projectId));
+    fd.append('sub_projects_id', subprojectId != null ? String(subprojectId) : '');
+    fd.append('dprId', String(dprId));
+    fd.append('name', (entry.details || '').substring(0, 100) || 'Safety');
+    fd.append('details', entry.details || '');
+    fd.append('remarks', entry.remarks || '');
+    const imgs = entry.images || (entry.image ? [entry.image] : []);
+    imgs.forEach((dataUrl, j) => {
+      if (dataUrl && typeof dataUrl === 'string') {
+        const f = dataURLtoFile(dataUrl, `safety_${j}.jpg`);
+        if (f) fd.append(`safety_images[${j}]`, f);
+      }
+    });
+    return fd;
+  };
+
+  /** Build FormData for hinderance-add (single entry, multipart) */
+  const buildHindranceAddFormData = (entry: HindranceEntry): FormData | null => {
+    const projectId = selectedProject?.numericId ?? selectedProject?.id;
+    const subprojectId = selectedSubproject ? (selectedSubproject.numericId ?? selectedSubproject.id) : null;
+    const dprId = dprIdRes ?? editingDprId;
+    if (!projectId || !dprId) return null;
+    const fd = new FormData();
+    fd.append('projects_id', String(projectId));
+    fd.append('sub_projects_id', subprojectId != null ? String(subprojectId) : '');
+    fd.append('dprId', String(dprId));
+    fd.append('name', (entry.details || '').substring(0, 100) || 'Hindrance');
+    fd.append('details', entry.details || '');
+    fd.append('remarks', entry.remarks || '');
+    const imgs = entry.images || (entry.image ? [entry.image] : []);
+    imgs.forEach((dataUrl, j) => {
+      if (dataUrl && typeof dataUrl === 'string') {
+        const f = dataURLtoFile(dataUrl, `hinderance_${j}.jpg`);
+        if (f) fd.append(`hinderance_images[${j}]`, f);
+      }
+    });
+    return fd;
   };
 
   const buildDprFormData = (): FormData | null => {
@@ -2970,17 +2643,14 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         formData.append(`activities[${actIdx}][remaining_qty]`, '0');
         formData.append(`activities[${actIdx}][total_qty]`, String(totalQty > 0 ? totalQty : qty));
         formData.append(`activities[${actIdx}][activities_history_remarkes]`, a.remarks || '');
-        // Backend expects activities_history_img as base64 (per API ref: activities-history-add)
+      });
+      // Backend expects activities_images[actIdx] = single File per activity (one img column in DB)
+      validActivities.forEach((a, actIdx) => {
         const imgs = (a.images || []).filter((url): url is string => !!url && typeof url === 'string');
-        if (imgs.length > 0) {
-          const toBase64 = (dataUrl: string) => {
-            const idx = dataUrl.indexOf(',');
-            return idx >= 0 ? dataUrl.slice(idx + 1) : dataUrl;
-          };
-          formData.append(`activities[${actIdx}][activities_history_img]`, toBase64(imgs[0]));
-          imgs.slice(1).forEach((dataUrl, j) => {
-            formData.append(`activities[${actIdx}][images][${j}]`, toBase64(dataUrl));
-          });
+        const firstImg = imgs[0];
+        if (firstImg) {
+          const f = dataURLtoFile(firstImg, `activity_${actIdx}.jpg`);
+          if (f) formData.append(`activities_images[${actIdx}]`, f);
         }
       });
     }
@@ -3049,13 +2719,13 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         formData.append(`safety[${i}][name]`, (s.details || '').substring(0, 100) || 'Safety');
         formData.append(`safety[${i}][details]`, s.details || '');
         formData.append(`safety[${i}][remarks]`, s.remarks || '');
+        // Backend expects safety_images[i] = single File per entry (one img column in DB)
         const imgs = s.images || (s.image ? [s.image] : []);
-        imgs.forEach((dataUrl, j) => {
-          if (dataUrl && typeof dataUrl === 'string') {
-            const f = dataURLtoFile(dataUrl, `safety_${i}_${j}.jpg`);
-            if (f) formData.append(`safety_images[${i}][${j}]`, f);
-          }
-        });
+        const firstImg = imgs[0];
+        if (firstImg && typeof firstImg === 'string') {
+          const f = dataURLtoFile(firstImg, `safety_${i}.jpg`);
+          if (f) formData.append(`safety_images[${i}]`, f);
+        }
       });
     } else {
       // When skipped: send one empty item so backend gets array structure (avoids default string '[]' causing ->isNotEmpty() on string)
@@ -3069,13 +2739,13 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         formData.append(`hinderance[${i}][name]`, (h.details || '').substring(0, 100) || 'Hindrance');
         formData.append(`hinderance[${i}][details]`, h.details || '');
         formData.append(`hinderance[${i}][remarks]`, h.remarks || '');
+        // Backend expects hinderance_images[i] = single File per entry (one img column in DB)
         const imgs = h.images || (h.image ? [h.image] : []);
-        imgs.forEach((dataUrl, j) => {
-          if (dataUrl && typeof dataUrl === 'string') {
-            const f = dataURLtoFile(dataUrl, `hinderance_${i}_${j}.jpg`);
-            if (f) formData.append(`hinderance_images[${i}][${j}]`, f);
-          }
-        });
+        const firstImg = imgs[0];
+        if (firstImg && typeof firstImg === 'string') {
+          const f = dataURLtoFile(firstImg, `hinderance_${i}.jpg`);
+          if (f) formData.append(`hinderance_images[${i}]`, f);
+        }
       });
     } else {
       formData.append('hinderance[0][details]', '');
@@ -3088,6 +2758,29 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const handleHindranceNext = async () => {
     if (!selectedProject) return;
     setIsSubmittingHindrance(true);
+    // HinderenceDPR: hinderance-add POST FormData for each new entry (Create new → submit)
+    const newHindranceEntries = hindranceEntries.filter(e => e.serverId == null);
+    try {
+      for (const entry of newHindranceEntries) {
+        const fd = buildHindranceAddFormData(entry);
+        if (!fd) {
+          toast.showError('Missing project or DPR. Please go back and complete project selection.');
+          setIsSubmittingHindrance(false);
+          return;
+        }
+        const res = await hinderanceAPI.add(fd);
+        const createdId = res?.data?.id ?? res?.id ?? res?.results?.id;
+        if (createdId != null) {
+          setHindranceEntries(prev => prev.map(e =>
+            e.id === entry.id ? { ...e, serverId: createdId } : e
+          ));
+        }
+      }
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to save hindrance entries');
+      setIsSubmittingHindrance(false);
+      return;
+    }
     const formData = buildDprFormData();
     if (!formData) {
       toast.showError('Failed to build DPR data');
@@ -3160,22 +2853,6 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   }, [showDPRComplete, completedDprId]);
 
   const handleViewCompletedDpr = async () => {
-    // Prefer client-side PDF (includes activity images) when we have form data
-    const hasFormData = selectedActivities.size > 0 || selectedMaterials.size > 0 || selectedLabours.size > 0 || selectedAssets.size > 0 || safetyEntries.length > 0 || hindranceEntries.length > 0;
-    if (hasFormData) {
-      try {
-        const blob = await generateDPRPDF(undefined, { returnBlob: true });
-        if (blob) {
-          const url = URL.createObjectURL(blob);
-          window.open(url, '_blank');
-          setTimeout(() => URL.revokeObjectURL(url), 60000);
-          return;
-        }
-      } catch (err) {
-        console.warn('Client-side PDF failed, falling back to backend:', err);
-      }
-    }
-    // Fallback: backend PDF
     const dprId = completedDprId ?? dprIdRes ?? editingDprId;
     if (!dprId) {
       toast.showError('DPR ID not found. Please save the DPR first.');
@@ -3200,28 +2877,6 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   };
 
   const handleDownloadDPR = async () => {
-    // Prefer client-side PDF (includes activity images) when we have form data
-    const hasFormData = selectedActivities.size > 0 || selectedMaterials.size > 0 || selectedLabours.size > 0 || selectedAssets.size > 0 || safetyEntries.length > 0 || hindranceEntries.length > 0;
-    if (hasFormData) {
-      try {
-        const blob = await generateDPRPDF(undefined, { returnBlob: true });
-        if (blob) {
-          const blobUrl = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = blobUrl;
-          a.download = `dpr_${completedDprId ?? dprIdRes ?? editingDprId ?? 'report'}.pdf`;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(blobUrl);
-          toast.showSuccess('DPR downloaded');
-          return;
-        }
-      } catch (err) {
-        console.warn('Client-side PDF failed, falling back to backend:', err);
-      }
-    }
-    // Fallback: backend PDF
     const dprId = completedDprId ?? dprIdRes ?? editingDprId;
     if (!dprId) {
       toast.showError('DPR ID not found. Please save the DPR first.');
