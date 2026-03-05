@@ -3639,8 +3639,8 @@ export const teamsAPI = {
 // Backend routes: materials-request-list, materials-request-add, materials-request-edit,
 // materials-request-details-list, materials-request-details-add, materials-request-details-edit
 export const materialRequestAPI = {
-  /** POST /api/inventory/materials-request-add - Create (no id) or update (with id) Material Request header */
-  add: async (data: { projects_id: number | string; sub_projects_id?: number | string; id?: number | string; request_id?: string }): Promise<any> => {
+  /** POST /api/inventory/materials-request-add - Create (no id) or update (with id) Material Request header. Payload: { name, projects_id, sub_projects_id } */
+  add: async (data: { name?: string; projects_id: number | string; sub_projects_id?: number | string; id?: number | string; request_id?: string }): Promise<any> => {
     try {
       const response = await apiClient.post('/inventory/materials-request-add', data);
       return response.data?.data ?? response.data;
@@ -3651,7 +3651,7 @@ export const materialRequestAPI = {
       } as ApiError;
     }
   },
-  /** GET/POST /api/inventory/materials-request-list - List all Material Requests, optionally filtered by projectId */
+  /** POST /api/inventory/materials-request-list - List Material Requests. Spec: POST with { projectId } for SubmitQuotes. */
   list: async (filters?: { projectId?: number | string; subprojectId?: number | string }): Promise<any[]> => {
     try {
       let response;
@@ -3661,7 +3661,7 @@ export const materialRequestAPI = {
           subprojectId: filters.subprojectId,
         });
       } else if (filters?.projectId) {
-        response = await apiClient.get('/inventory/materials-request-list', { params: { projectId: filters.projectId } });
+        response = await apiClient.post('/inventory/materials-request-list', { projectId: filters.projectId });
       } else {
         response = await apiClient.get('/inventory/materials-request-list');
       }
@@ -3737,6 +3737,20 @@ export const materialRequestAPI = {
       } as ApiError;
     }
   },
+  /** POST /api/inventory/project-to-store-list - PR/context details (type: material_request) when MaterialsListInv loads. Pass inventoryId when editing to get current PR's req no. */
+  projectToStoreList: async (projectId: number | string, storeIds: (number | string)[] = [], type = 'material_request', inventoryId?: number | string): Promise<any> => {
+    try {
+      const payload: Record<string, unknown> = { type, project_id: projectId, store_id: storeIds };
+      if (inventoryId != null) payload.inventory_id = inventoryId;
+      const response = await apiClient.post('/inventory/project-to-store-list', payload);
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch project store',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
   /** POST /api/inventory/generate-pdf - Generate PDF for Material Request. Returns { pdf_url } - open in new tab. */
   generatePdf: async (requestId: number | string): Promise<{ pdf_url: string }> => {
     try {
@@ -3756,46 +3770,162 @@ export const materialRequestAPI = {
   },
 };
 
-// RFQ (Request for Quotation) APIs - uses existing endpoints only:
-// - materials-request-list, materials-request-edit, materials-request-add
-// - materials-request-details-list, materials-request-details-edit
-// - vendor-list (masterDataAPI.getVendors)
-// - inventory/generate-pdf (material_request type)
+// RFQ (Request for Quotation) APIs - Inventory > RFQ flow per spec
 export const rfqAPI = {
-  /** List RFQs - uses materials-request-list (MRs serve as RFQ list) */
+  /** GET /inventory/quote-details-list - List quotes for RFQ list */
   list: async (filters?: { projectId?: number | string }): Promise<any[]> => {
-    return materialRequestAPI.list(filters);
+    try {
+      const params = filters?.projectId ? { projectId: filters.projectId } : {};
+      const response = await apiClient.get('/inventory/quote-details-list', { params });
+      const data = response.data?.data ?? response.data;
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      if (error?.response?.status === 404) return [];
+      try {
+        return await materialRequestAPI.list(filters);
+      } catch {
+        return [];
+      }
+    }
   },
-  /** Get single RFQ for edit - uses materials-request-edit */
+  /** POST /inventory/quote-details-edit - Load quote for edit */
   get: async (id: number | string): Promise<any> => {
-    return materialRequestAPI.edit(id);
+    try {
+      const response = await apiClient.post('/inventory/quote-details-edit', { quotesId: id });
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      try {
+        return await materialRequestAPI.edit(id);
+      } catch {
+        throw { message: error.response?.data?.message || 'Failed to load RFQ', errors: error.response?.data?.errors || {} } as ApiError;
+      }
+    }
   },
-  /** Create or update RFQ - uses materials-request-add. When material_request_id provided, returns it (use existing MR). Else creates new MR header. */
+  /** POST /inventory/quote-add - Create RFQ header */
+  quoteAdd: async (data: { name: string; projects_id: number | string }): Promise<any> => {
+    try {
+      const response = await apiClient.post('/inventory/quote-add', data);
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw { message: error.response?.data?.message || 'Failed to create quote', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  /** POST /inventory/quote-details-add - Add quote details (image path or materials) */
+  quoteDetailsAdd: async (details: FormData | Record<string, any>[]): Promise<any> => {
+    if (details instanceof FormData) {
+      try {
+        const response = await apiClient.post('/inventory/quote-details-add', details, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        return response.data?.data ?? response.data;
+      } catch (error: any) {
+        const data = error?.response?.data;
+        const msg = typeof data === 'object' ? (data?.message ?? data?.error ?? 'Failed to add quote details') : 'Failed to add quote details';
+        throw { message: msg, response: error?.response, errors: data?.errors || {} } as ApiError;
+      }
+    }
+    let lastError: any;
+    const bodyAttempts = [
+      details,
+      { data: details },
+      { quote_details: details },
+      { details },
+      { items: details },
+    ];
+    for (const body of bodyAttempts) {
+      try {
+        const response = await apiClient.post('/inventory/quote-details-add', body);
+        return response.data?.data ?? response.data;
+      } catch (error: any) {
+        lastError = error;
+      }
+    }
+    // Fallback: try adding one item at a time (some backends accept only single item)
+    if (Array.isArray(details) && details.length > 0) {
+      const results: any[] = [];
+      for (const item of details) {
+        try {
+          const response = await apiClient.post('/inventory/quote-details-add', item);
+          const r = response.data?.data ?? response.data;
+          results.push(Array.isArray(r) ? r[0] : r);
+        } catch (_) {
+          try {
+            const response = await apiClient.post('/inventory/quote-details-add', { data: [item] });
+            const r = response.data?.data ?? response.data;
+            results.push(Array.isArray(r) ? r[0] : r);
+          } catch (e2: any) {
+            lastError = e2;
+            break;
+          }
+        }
+      }
+      if (results.length === details.length) return results;
+    }
+    const data = lastError?.response?.data;
+    const msg = typeof data === 'object' ? (data?.message ?? data?.error ?? 'Failed to add quote details') : 'Failed to add quote details';
+    const errList = data?.errors;
+    const errStr = errList && typeof errList === 'object' ? Object.entries(errList).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`).join('; ') : '';
+    throw { message: errStr ? `${msg} ${errStr}` : msg, response: lastError?.response, errors: data?.errors || {} } as ApiError;
+  },
+  /** POST /inventory/materials-request-no-wise-materials-list - Materials for selected PR */
+  getMaterialsByRequestNo: async (requestNo: string | number, materialRequestsId?: string | number): Promise<any[]> => {
+    try {
+      const reqNo = requestNo == null || String(requestNo).trim() === '' ? undefined : requestNo;
+      const mrId = materialRequestsId != null && String(materialRequestsId).trim() !== '' ? materialRequestsId : undefined;
+      if (!reqNo && !mrId) return [];
+      const payload: Record<string, unknown> = {};
+      if (reqNo) payload.request_no = reqNo;
+      if (mrId) payload.material_requests_id = mrId;
+      const response = await apiClient.post('/inventory/materials-request-no-wise-materials-list', payload);
+      const raw = response.data?.data ?? response.data;
+      const arr = Array.isArray(raw) ? raw
+        : Array.isArray(raw?.materials) ? raw.materials
+        : Array.isArray(raw?.material_request_details) ? raw.material_request_details
+        : Array.isArray(raw?.details) ? raw.details
+        : Array.isArray(raw?.items) ? raw.items
+        : Array.isArray(raw?.data) ? raw.data
+        : [];
+      return arr;
+    } catch (error: any) {
+      return [];
+    }
+  },
+  /** POST /inventory/project-to-store-list - Project/quote context (type: quote) */
+  projectToStoreList: async (projectId: number | string, type = 'quote'): Promise<any> => {
+    try {
+      const response = await apiClient.post('/inventory/project-to-store-list', { type, project_id: projectId, store_id: [] });
+      return response.data?.data ?? response.data;
+    } catch {
+      return null;
+    }
+  },
+  /** Create RFQ via quote-add. Returns { id } */
   save: async (data: {
     id?: number | string;
     projects_id: number | string;
-    sub_projects_id?: number | string;
     material_request_id?: number | string;
     image_url?: string;
     message?: string;
   }): Promise<any> => {
-    if (data.material_request_id) {
-      return { id: data.material_request_id, uuid: data.material_request_id };
-    }
-    const { material_request_id, image_url, message, ...rest } = data;
-    return materialRequestAPI.add(rest);
+    const projectsId = data.projects_id;
+    const name = new Date().toISOString().split('T')[0];
+    const response = await apiClient.post('/inventory/quote-add', { name, projects_id: projectsId });
+    const created = response.data?.data ?? response.data;
+    const quoteId = created?.id ?? created?.uuid ?? data.id;
+    if (!quoteId) throw new Error('No quote ID returned');
+    return { id: quoteId, uuid: quoteId };
   },
-  /** Get quote details - uses materials-request-edit (returns details) or empty */
+  /** Get quote details - uses quote-details-edit or materials-request-edit fallback */
   getQuoteDetails: async (rfqId: number | string): Promise<any[]> => {
     try {
-      const editResp = await materialRequestAPI.edit(rfqId);
-      const details = Array.isArray(editResp) ? editResp : editResp?.data ?? (editResp && Array.isArray(editResp.details) ? editResp.details : []);
+      const resp = await rfqAPI.get(rfqId);
+      const details = resp?.details ?? resp?.quote_details ?? (Array.isArray(resp) ? resp : resp?.data ?? []);
       return Array.isArray(details) ? details : [];
     } catch {
       return [];
     }
   },
-  /** Get vendors for quote - uses vendor-list */
+  /** Get vendors - vendor-list */
   getVendors: async (_rfqId?: number | string): Promise<any[]> => {
     try {
       return await masterDataAPI.getVendors();
@@ -3803,9 +3933,34 @@ export const rfqAPI = {
       return [];
     }
   },
-  /** Send quote to vendors - no dedicated endpoint; returns success */
-  sendToVendors: async (_rfqId: number | string, _vendorIds: (number | string)[]): Promise<any> => {
-    return { success: true };
+  /** POST /inventory/material-request-send-to-vendor - Send RFQ to vendors */
+  sendToVendors: async (
+    rfqId: number | string,
+    vendorIds: (number | string)[],
+    options?: { type?: 0 | 1; quotesDetailsId?: (number | string)[]; materialRequestDetailsId?: (number | string)[]; materialRequestsId?: (number | string)[]; materialsId?: (number | string)[] }
+  ): Promise<any> => {
+    try {
+      const isImagePath = (options?.type ?? 1) === 1;
+      const payload: Record<string, unknown> = {
+        type: options?.type ?? 1,
+        vendor_id: vendorIds,
+        quotes_id: [rfqId],
+      };
+      if (isImagePath) {
+        payload.quotes_details_id = null;
+        payload.material_request_details_id = null;
+        payload.material_requests_id = null;
+        payload.materials_id = null;
+      }
+      if (options?.quotesDetailsId) payload.quotes_details_id = options.quotesDetailsId;
+      if (options?.materialRequestDetailsId) payload.material_request_details_id = options.materialRequestDetailsId;
+      if (options?.materialRequestsId) payload.material_requests_id = options.materialRequestsId;
+      if (options?.materialsId) payload.materials_id = options.materialsId;
+      const response = await apiClient.post('/inventory/material-request-send-to-vendor', payload);
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw { message: error.response?.data?.message || 'Failed to send to vendors', errors: error.response?.data?.errors || {} } as ApiError;
+    }
   },
   /**
    * Send RFQ/quote email to vendor addresses
@@ -3852,9 +4007,18 @@ export const rfqAPI = {
       } as ApiError;
     }
   },
-  /** Generate quote PDF - uses inventory/generate-pdf (material_request type) */
-  generatePdf: async (rfqId: number | string): Promise<{ pdf_url: string }> => {
-    return materialRequestAPI.generatePdf(rfqId);
+  /** Generate RFQ PDF - inventory/generate-pdf with type: quotes (image path) */
+  generatePdf: async (rfqId: number | string): Promise<{ pdf_url: string; name?: string }> => {
+    try {
+      const response = await apiClient.post('/inventory/generate-pdf', {
+        requestId: rfqId,
+        type: 'quotes',
+      });
+      const data = response.data?.data ?? response.data;
+      return { pdf_url: data?.pdf_url ?? data?.url ?? response.data?.pdf_url ?? '', name: data?.name };
+    } catch (error: any) {
+      throw { message: error.response?.data?.message || 'Failed to generate RFQ PDF', errors: error.response?.data?.errors || {} } as ApiError;
+    }
   },
 };
 
