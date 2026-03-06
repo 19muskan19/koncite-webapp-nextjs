@@ -26,8 +26,7 @@ import { getTodayDateString } from '@/utils/dateUtils';
 import CreateVendorModal from '@/components/masters/Modals/CreateVendorModal';
 import CreateWarehouseModal from '@/components/masters/Modals/CreateWarehouseModal';
 import CreateProjectModal from '@/components/masters/Modals/CreateProjectModal';
-import { getAuthToken } from '@/services/apiClient';
-import { openPdfInNewTab, sharePdfAsFile } from '@/utils/pdfUtils';
+import { openPdfInNewTab, copyPdfUrl } from '@/utils/pdfUtils';
 
 type GoodsReceiptStep = 'stores' | 'inwardsList' | 'details' | 'success';
 
@@ -337,17 +336,29 @@ export default function GoodsReceiptFlow({
   }, [showAddNewGoodsModal]);
 
   // Generate PDF on success screen mount (after inward-goods-details-add saves data)
+  // requestId must be inv_inwards.id per API spec (POST /api/inventory/generate-pdf)
   useEffect(() => {
     if (step !== 'success') return;
-    const inwardHeaderId = inwardHeader?.id ?? inwardHeader?.inv_inwards_id ?? inwardHeader?.uuid ?? inwardGoodsList?.[0]?.id ?? editInwardId;
-    if (!inwardHeaderId) return;
+    const inwardRecordId =
+      inwardHeader?.id ??
+      inwardHeader?.inv_inwards_id ??
+      inwardHeader?.uuid ??
+      inwardGoodsList?.[0]?.inward_id ??
+      inwardGoodsList?.[0]?.inv_inwards_id ??
+      inwardGoodsList?.[0]?.id ??
+      editInwardId;
+    if (!inwardRecordId) return;
     setIsSubmitting(true);
     goodsReceiptAPI
-      .generatePdf(inwardHeaderId)
+      .generatePdf(inwardRecordId)
       .then(({ pdf_url, name }) => setPdfInfo({ url: pdf_url, name: name ?? `Inward-${inwardDate}.pdf` }))
-      .catch(() => setPdfInfo(null))
+      .catch((err: any) => {
+        setPdfInfo(null);
+        const msg = err?.message ?? err?.response?.data?.error ?? 'Failed to generate PDF';
+        toast.showWarning(msg);
+      })
       .finally(() => setIsSubmitting(false));
-  }, [step, inwardHeader?.id, inwardHeader?.inv_inwards_id, inwardHeader?.uuid, inwardGoodsList, editInwardId]);
+  }, [step, inwardHeader?.id, inwardHeader?.inv_inwards_id, inwardHeader?.uuid, inwardGoodsList, editInwardId, inwardDate]);
 
   const handleBackClick = () => {
     if (step === 'success') setStep('details');
@@ -546,17 +557,17 @@ export default function GoodsReceiptFlow({
     setIsSubmitting(true);
     try {
       const payload = details.map((d) => ({
+        id: d.id != null && d.id !== '' ? d.id : '',
         inward_goods_id: d.inward_goods_id ?? inwardGoodsId,
-        projects_id: pId,
-        store_warehouses_id: Array.isArray(storeNumericIds) ? storeNumericIds : [],
         materials_id: d.materials_id,
-        type: goodsType || 'materials',
+        po_qty: d.po_qty != null && d.po_qty !== '' ? d.po_qty : '',
         price: d.price != null && d.price !== '' ? Number(d.price) : 0,
-        id: d.id ?? null,
+        projects_id: String(pId),
         recipt_qty: Number(d.recipt_qty) || 0,
         reject_qty: Number(d.reject_qty) || 0,
         remarkes: d.remarkes ?? '',
-        po_qty: d.po_qty ?? 0,
+        store_warehouses_id: storeNumericIds.map((x) => (typeof x === 'number' ? x : Number(x))),
+        type: goodsType || 'materials',
       }));
       await goodsReceiptAPI.addInwardDetails(payload);
       setStep('success');
@@ -612,15 +623,12 @@ export default function GoodsReceiptFlow({
       toast.showWarning('No PDF available.');
       return;
     }
-    await sharePdfAsFile({
-      url: pdfInfo.url,
-      name: pdfInfo.name || 'Inward.pdf',
-      reportTitle: 'Inward Report',
-      getAuthToken,
-      onSuccess: () => toast.showSuccess('Shared successfully.'),
-      onCopyFallback: () => toast.showSuccess('PDF link copied to clipboard.'),
-      onError: (msg) => toast.showWarning(msg),
-    });
+    const copied = await copyPdfUrl(pdfInfo.url);
+    if (copied) {
+      toast.showSuccess('PDF URL copied to clipboard. Paste in browser to open.');
+    } else {
+      toast.showWarning('Could not copy. Open PDF in new tab and copy the URL from address bar.');
+    }
   };
 
   const getSupplierLabel = () => {
@@ -1037,17 +1045,17 @@ export default function GoodsReceiptFlow({
               <h2 className={`text-xl font-black mb-2 ${textPrimary}`}>Well done !!!</h2>
               <p className={`text-base ${textSecondary}`}>Inward of Goods is ready</p>
             </div>
-            <div className="flex flex-wrap justify-center gap-4 mb-6">
+            <div className="flex flex-wrap justify-center gap-4 mb-4">
               <button onClick={() => router.push('/inventory-reports/grn-mrn-slip')} className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold bg-[#6B8E23] text-white hover:bg-[#5a7a1e]`}><Plus className="w-4 h-4" /> Add Another</button>
             </div>
-            {pdfInfo?.url && (
+            <div className="flex flex-wrap justify-center gap-3 mb-6">
+              <button onClick={handleViewPdf} className="flex items-center gap-2 px-5 py-2 rounded-lg font-bold border border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10"><ExternalLink className="w-4 h-4" /> View</button>
+              <button onClick={handleSharePdf} className="flex items-center gap-2 px-5 py-2 rounded-lg font-bold border border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10"><Share2 className="w-4 h-4" /> Share</button>
+            </div>
+            {pdfInfo?.url && pdfInfo?.name && (
               <div className={`p-4 rounded-xl border ${isDark ? 'border-slate-600' : 'border-slate-200'}`}>
-                <p className={`text-sm font-bold mb-2 ${textSecondary}`}>PDF</p>
-                <p className={`font-mono text-sm mb-3 ${textPrimary}`}>{pdfInfo.name || 'Inward.pdf'}</p>
-                <div className="flex flex-wrap justify-center gap-2">
-                  <button onClick={handleViewPdf} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10"><ExternalLink className="w-4 h-4" /> View</button>
-                  <button onClick={handleSharePdf} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10"><Share2 className="w-4 h-4" /> Share</button>
-                </div>
+                <p className={`text-sm font-bold mb-1 ${textSecondary}`}>PDF</p>
+                <p className={`font-mono text-sm ${textPrimary}`}>{pdfInfo.name || 'Inward.pdf'}</p>
               </div>
             )}
           </div>

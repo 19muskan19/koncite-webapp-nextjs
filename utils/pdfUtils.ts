@@ -16,6 +16,18 @@ export function openPdfInNewTab(url: string): void {
   if (fullUrl) window.open(fullUrl, '_blank', 'noopener,noreferrer');
 }
 
+/** Copy PDF URL to clipboard. User can paste in browser to open the PDF. */
+export async function copyPdfUrl(url: string): Promise<boolean> {
+  const fullUrl = getFullPdfUrl(url) || url;
+  if (!fullUrl) return false;
+  try {
+    await navigator.clipboard.writeText(fullUrl);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export interface SharePdfOptions {
   url: string;
   name?: string;

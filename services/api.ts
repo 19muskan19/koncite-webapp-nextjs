@@ -4423,6 +4423,7 @@ export const goodsReceiptAPI = {
       throw { message: error.response?.data?.message || 'Failed to add inward goods', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
+  /** POST inventory/inward-goods-details-add - request body must be array of objects per spec */
   addInwardDetails: async (items: Array<{
     id?: number | string | null;
     inward_goods_id: number | string;
@@ -4442,36 +4443,39 @@ export const goodsReceiptAPI = {
       const payload = raw.map((item) => {
         const rec = Number(item.recipt_qty ?? 0) || 0;
         const rej = Number(item.reject_qty ?? 0) || 0;
+        const storeIds = (Array.isArray(item.store_warehouses_id) ? item.store_warehouses_id : [])
+          .map((x) => (typeof x === 'number' ? x : Number(x)));
         return {
-          id: item.id ?? null,
-          inward_goods_id: item.inward_goods_id ?? '',
-          projects_id: item.projects_id ?? '',
-          store_warehouses_id: Array.isArray(item.store_warehouses_id) ? item.store_warehouses_id : [],
-          materials_id: item.materials_id ?? '',
-          type: (item.type === 'machines' ? 'machines' : 'materials'),
+          id: item.id != null && item.id !== '' ? String(item.id) : '',
+          inward_goods_id: Number(item.inward_goods_id) || item.inward_goods_id,
+          materials_id: Number(item.materials_id) || item.materials_id,
+          po_qty: item.po_qty != null && item.po_qty !== '' ? item.po_qty : '',
+          price: item.price != null && item.price !== '' ? Number(item.price) : 0,
+          projects_id: String(item.projects_id ?? ''),
           recipt_qty: rec,
           reject_qty: rej,
-          po_qty: item.po_qty ?? 0,
-          price: item.price != null && item.price !== '' ? Number(item.price) : 0,
           remarkes: item.remarkes ?? '',
+          store_warehouses_id: storeIds,
+          type: item.type === 'machines' ? 'machines' : 'materials',
         };
       });
-      const body = { data: payload, items: payload };
-      const response = await apiClient.post('/inventory/inward-goods-details-add', body);
+      const response = await apiClient.post('/inventory/inward-goods-details-add', payload);
       return response.data?.data ?? response.data;
     } catch (error: any) {
       throw { message: error.response?.data?.message || 'Failed to update inward details', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
+  /** POST /api/inventory/generate-pdf - Generate Inward PDF. Body: { type: 'inward', requestId } (inv_inwards.id). Returns { pdf_url, name, data, message }. */
   generatePdf: async (requestId: number | string): Promise<{ pdf_url: string; name?: string }> => {
     try {
       const response = await apiClient.post('/inventory/generate-pdf', { type: 'inward', requestId });
       const data = response.data?.data ?? response.data;
       const pdfUrl = response.data?.pdf_url ?? data?.pdf_url;
       if (!pdfUrl) throw new Error('No PDF URL in response');
-      return { pdf_url: pdfUrl, name: data?.name ?? data?.filename };
+      return { pdf_url: pdfUrl, name: response.data?.name ?? data?.name ?? data?.filename };
     } catch (error: any) {
-      throw { message: error.response?.data?.message || 'Failed to generate PDF', errors: error.response?.data?.errors || {} } as ApiError;
+      const errMsg = error.response?.data?.error ?? error.response?.data?.message ?? 'Failed to generate PDF';
+      throw { message: errMsg, errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
 };

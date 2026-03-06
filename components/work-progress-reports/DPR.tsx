@@ -204,6 +204,14 @@ const PAGE_SIZE = 10;
 
 const DPR_BASE = '/work-progress-reports';
 
+/** Cache for DPR list auxiliary data to reduce API calls (project-list, project-subproject) */
+const DPR_LIST_CACHE = {
+  projects: null as { data: any[]; ts: number } | null,
+  subprojects: new Map<string, { data: Record<string, string>; ts: number }>(),
+  TTL_MS: 3 * 60 * 1000,
+  VISIBILITY_THROTTLE_MS: 30 * 1000,
+};
+
 const DPR: React.FC<DPRProps> = ({ theme }) => {
   const { isAuthenticated } = useUser();
   const toast = useToast();
@@ -952,14 +960,6 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const [activitiesRefreshKey, setActivitiesRefreshKey] = useState(0);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastFetchDprListAt = useRef<number>(0);
-
-  // Fetch project/subproject details via POST fetch-project-subproject when activity modal opens
-  useEffect(() => {
-    if (!showActivitySelection || !selectedProject) return;
-    const projectId = selectedProject.numericId ?? Number(selectedProject.id);
-    const subprojectId = selectedSubproject ? (selectedSubproject.numericId ?? Number(selectedSubproject.id)) : '';
-    masterDataAPI.fetchProjectSubproject({ project: projectId, subproject: subprojectId }).catch(() => {});
-  }, [showActivitySelection, selectedProject, selectedSubproject]);
 
   useEffect(() => {
     if (!showActivitySelection || !selectedProject) {
@@ -2338,52 +2338,95 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
 
   const fetchDprList = useCallback(async (opts?: { preserveOnEmpty?: boolean; force?: boolean; onFetched?: (list: any[]) => void }) => {
     if (typeof window === 'undefined') return;
+    const now = Date.now();
+    const useCache = !opts?.force && now - lastFetchDprListAt.current < 2000;
+    if (useCache) return;
+
     setIsLoadingDprList(true);
     setDprListError(null);
     try {
-      const [list, fetchedProjects] = await Promise.all([
-        dprAPI.getList({}),
-        masterDataAPI.getProjectsList().catch(() => [])
-      ]);
+      const list = await dprAPI.getList({});
       const arr = Array.isArray(list) ? list : [];
       if (arr.length > 0 || !opts?.preserveOnEmpty) setDprList(arr);
       else setDprList(prev => prev);
       opts?.onFetched?.(arr);
 
-      // Build project id -> name map for DPR list display
-      const projArr = Array.isArray(fetchedProjects) ? fetchedProjects : ((fetchedProjects as any)?.data ?? (fetchedProjects as any)?.projects ?? []);
-      const projMap: Record<string, string> = {};
-      for (const p of projArr) {
-        const rawId = p.id ?? p.project_id ?? p.projects_id;
-        const name = p.project_name || p.name || '';
-        if (rawId != null && name) {
-          projMap[String(rawId)] = name;
-          if (Number.isFinite(Number(rawId))) projMap[String(Number(rawId))] = name;
-        }
-      }
-      setProjectsMapForDprList(projMap);
-
-      // Fetch subprojects for unique project IDs in DPR list
-      const projectIds = [...new Set(arr.map((d: any) => {
+      const projectIds = arr.length === 0 ? [] : [...new Set(arr.map((d: any) => {
         const pid = d.projects_id;
         if (pid != null && typeof pid !== 'object') return String(pid);
         return pid?.id ?? pid;
       }).filter(Boolean))];
+
+      if (projectIds.length === 0) {
+        setProjectsMapForDprList({});
+        setSubprojectsMapForDprList({});
+        return;
+      }
+
+      let projMap: Record<string, string> = {};
+      const projectsCacheValid = DPR_LIST_CACHE.projects && now - DPR_LIST_CACHE.projects.ts < DPR_LIST_CACHE.TTL_MS;
+      if (projectsCacheValid && !opts?.force) {
+        for (const p of DPR_LIST_CACHE.projects!.data || []) {
+          const rawId = p.id ?? p.project_id ?? p.projects_id;
+          const name = p.project_name || p.name || '';
+          if (rawId != null && name) {
+            projMap[String(rawId)] = name;
+            if (Number.isFinite(Number(rawId))) projMap[String(Number(rawId))] = name;
+          }
+        }
+      } else {
+        try {
+          const fetchedProjects = await masterDataAPI.getProjectsList();
+          const projArr = Array.isArray(fetchedProjects) ? fetchedProjects : ((fetchedProjects as any)?.data ?? (fetchedProjects as any)?.projects ?? []);
+          for (const p of projArr) {
+            const rawId = p.id ?? p.project_id ?? p.projects_id;
+            const name = p.project_name || p.name || '';
+            if (rawId != null && name) {
+              projMap[String(rawId)] = name;
+              if (Number.isFinite(Number(rawId))) projMap[String(Number(rawId))] = name;
+            }
+          }
+          DPR_LIST_CACHE.projects = { data: projArr, ts: now };
+        } catch {
+          if (DPR_LIST_CACHE.projects) {
+            for (const p of DPR_LIST_CACHE.projects.data || []) {
+              const rawId = p.id ?? p.project_id ?? p.projects_id;
+              const name = p.project_name || p.name || '';
+              if (rawId != null && name) {
+                projMap[String(rawId)] = name;
+                if (Number.isFinite(Number(rawId))) projMap[String(Number(rawId))] = name;
+              }
+            }
+          }
+        }
+      }
+      setProjectsMapForDprList(projMap);
+
       const subMap: Record<string, string> = {};
-      await Promise.all(projectIds.map(async (projectId) => {
+      const toFetch = projectIds.filter((pid) => {
+        const cached = DPR_LIST_CACHE.subprojects.get(pid);
+        return !cached || now - cached.ts > DPR_LIST_CACHE.TTL_MS || opts?.force;
+      });
+      for (const projectId of toFetch) {
         try {
           const subs = await masterDataAPI.getProjectSubprojects(projectId);
           const subArr = Array.isArray(subs) ? subs : [];
+          const map: Record<string, string> = {};
           for (const s of subArr) {
             const rawId = s.id ?? s.subproject_id ?? s.sub_projects_id;
             const name = s.name || s.subproject_name || '';
             if (rawId != null && name) {
-              subMap[String(rawId)] = name;
-              if (Number.isFinite(Number(rawId))) subMap[String(Number(rawId))] = name;
+              map[String(rawId)] = name;
+              if (Number.isFinite(Number(rawId))) map[String(Number(rawId))] = name;
             }
           }
+          DPR_LIST_CACHE.subprojects.set(projectId, { data: map, ts: now });
         } catch { /* ignore */ }
-      }));
+      }
+      for (const pid of projectIds) {
+        const c = DPR_LIST_CACHE.subprojects.get(pid);
+        if (c) Object.assign(subMap, c.data);
+      }
       setSubprojectsMapForDprList(subMap);
     } catch (err: any) {
       setDprListError(err?.message || 'Failed to load DPR list');
@@ -2406,7 +2449,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     const handleVisibility = () => {
       if (document.visibilityState !== 'visible') return;
       const now = Date.now();
-      if (now - lastFetchDprListAt.current < 5000) return;
+      if (now - lastFetchDprListAt.current < DPR_LIST_CACHE.VISIBILITY_THROTTLE_MS) return;
       lastFetchDprListAt.current = now;
       fetchDprList({ force: true });
     };
@@ -2597,9 +2640,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     fd.append('details', entry.details || '');
     fd.append('remarks', entry.remarks || '');
     const imgs = entry.images || (entry.image ? [entry.image] : []);
-    const firstImg = imgs.find((u): u is string => !!u && typeof u === 'string');
-    if (firstImg) {
-      const f = dataURLtoFile(firstImg, 'safety_img.jpg');
+    const uploadableImg = imgs.find((u): u is string => typeof u === 'string' && u.startsWith('data:'));
+    if (uploadableImg) {
+      const f = dataURLtoFile(uploadableImg, 'safety_img.jpg');
       if (f) fd.append('img', f);
     }
     return fd;
@@ -2621,9 +2664,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     fd.append('details', entry.details || '');
     fd.append('remarks', entry.remarks || '');
     const imgs = entry.images || (entry.image ? [entry.image] : []);
-    const firstImg = imgs.find((u): u is string => !!u && typeof u === 'string');
-    if (firstImg) {
-      const f = dataURLtoFile(firstImg, 'hinderance_img.jpg');
+    const uploadableImg = imgs.find((u): u is string => typeof u === 'string' && u.startsWith('data:'));
+    if (uploadableImg) {
+      const f = dataURLtoFile(uploadableImg, 'hinderance_img.jpg');
       if (f) fd.append('img', f);
     }
     return fd;
