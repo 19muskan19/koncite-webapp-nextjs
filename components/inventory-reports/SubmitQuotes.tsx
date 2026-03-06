@@ -11,13 +11,12 @@ import {
   FileText,
   Image as ImageIcon,
   Send,
-  Download,
-  Copy,
   Package,
   Loader2,
   X,
   Building2,
-  Plus,
+  Eye,
+  Share2,
 } from 'lucide-react';
 import { masterDataAPI, materialRequestAPI, rfqAPI } from '@/services/api';
 
@@ -45,6 +44,8 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
   const projectNumericId = searchParams?.get('projectNumericId') ?? undefined;
   const editId = rfqId ?? searchParams?.get('rfqId');
   const stepParam = searchParams?.get('step') as RfqStep | null;
+  const urlMrId = searchParams?.get('mrId') ?? undefined;
+  const urlMrRequestNo = searchParams?.get('mrRequestNo') ?? undefined;
   // material_requests.projects_id expects integer - prefer projectNumericId, else pid if numeric, else project.id if numeric
   const getProjectsIdForApi = () => {
     if (projectNumericId) return projectNumericId;
@@ -61,11 +62,18 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
     }
   }, [stepParam]);
 
+  useEffect(() => {
+    if (urlMrId) setSelectedMrId(urlMrId);
+    if (urlMrRequestNo) setSelectedMrRequestNo(urlMrRequestNo);
+  }, [urlMrId, urlMrRequestNo]);
+
   const [project, setProject] = useState<{ id: string; name: string } | null>(
     projectId && projectName ? { id: projectId, name: projectName } : null
   );
   const [materialRequests, setMaterialRequests] = useState<any[]>([]);
   const [selectedMrId, setSelectedMrId] = useState<string | null>(null);
+  /** request_no from selected MR - for materials-request-no-wise-materials-list */
+  const [selectedMrRequestNo, setSelectedMrRequestNo] = useState<string | null>(null);
   const [quoteImage, setQuoteImage] = useState<string | null>(null);
   const [message, setMessage] = useState('');
   const [quoteDetails, setQuoteDetails] = useState<any[]>([]);
@@ -75,6 +83,16 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showMrSelectModal, setShowMrSelectModal] = useState(false);
   const [rfqData, setRfqData] = useState<any>(null);
+  /** type 0 = materials path, 1 = image path - for material-request-send-to-vendor */
+  const [rfqPathType, setRfqPathType] = useState<0 | 1>(1);
+  /** IDs from quote-details-add (materials path) for send-to-vendor */
+  const [quotesDetailsIds, setQuotesDetailsIds] = useState<(number | string)[]>([]);
+  /** User-edited qty/price/date for materials path (key = material id or index) */
+  const [materialsEdits, setMaterialsEdits] = useState<Record<string, { qty?: string; request_qty?: string; price?: string; date?: string }>>({});
+  /** Materials master list for name lookup when row lacks nested material name */
+  const [materialsMaster, setMaterialsMaster] = useState<any[]>([]);
+  /** PDF URL from generate-pdf API (doc step) */
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -88,6 +106,7 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
   useEffect(() => {
     if (mode === 'edit' && editId) {
       setIsLoading(true);
+      const hasUrlMrParams = Boolean(urlMrId || urlMrRequestNo);
       rfqAPI.get(editId).then((data) => {
         setRfqData(data);
         const projId = data?.projects_id;
@@ -97,8 +116,11 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
           id: String(projectIdVal ?? editId),
           name: projectNameVal || 'Project'
         });
-        setSelectedMrId(String(editId));
-        setMessage(data?.message ?? '');
+        if (!hasUrlMrParams) {
+          setSelectedMrId(data?.material_requests_id ? String(data.material_requests_id) : String(editId));
+          setSelectedMrRequestNo(data?.request_no ?? null);
+        }
+        setMessage(data?.message ?? data?.remarkes ?? '');
         setQuoteImage(data?.image_url ?? null);
       }).catch(() => {
         toast.showWarning('Failed to load RFQ. Redirecting...');
@@ -111,27 +133,62 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
     } else {
       setIsLoading(false);
     }
-  }, [mode, editId, pid, projectName]);
+  }, [mode, editId, pid, projectName, urlMrId, urlMrRequestNo]);
 
+  /** Fetch MR list + project context on SubmitQuotes load: materials-request-list, project-to-store-list */
   useEffect(() => {
-    const projectIdToUse = pid || (mode === 'edit' && project?.id) || undefined;
+    const projectIdToUse = getProjectsIdForApi() ?? pid ?? (mode === 'edit' && project?.id) ?? undefined;
     if (!projectIdToUse) return;
     materialRequestAPI.list({ projectId: projectIdToUse }).then(setMaterialRequests).catch(() => setMaterialRequests([]));
-  }, [pid, mode, project?.id]);
+    rfqAPI.projectToStoreList(projectIdToUse, 'quote').catch(() => null);
+  }, [pid, mode, project?.id, projectNumericId]);
 
   useEffect(() => {
-    if ((step === 'quotesDetails' || step === 'vendorList') && (selectedMrId || rfqId || editId)) {
-      const id = editId ?? rfqId;
-      if (id) {
-        rfqAPI.getQuoteDetails(id).then(setQuoteDetails).catch(() => setQuoteDetails([]));
-      } else if (selectedMrId) {
-        materialRequestAPI.edit(selectedMrId).then((edit: any) => {
-          const details = Array.isArray(edit) ? edit : edit?.data ?? [];
-          setQuoteDetails(details);
-        }).catch(() => setQuoteDetails([]));
+    if (step === 'quotesDetails' && (selectedMrId || selectedMrRequestNo || urlMrId || urlMrRequestNo || rfqId || editId)) {
+      const requestNo = selectedMrRequestNo ?? selectedMrId ?? urlMrRequestNo ?? urlMrId;
+      const mrId = selectedMrId ?? urlMrId;
+      if (requestNo || mrId) {
+        rfqAPI.getMaterialsByRequestNo(requestNo ?? mrId!, mrId || undefined).then((data) => {
+          const arr = Array.isArray(data) ? data : [];
+          if (arr.length === 0 && mrId) {
+            materialRequestAPI.edit(mrId).then((edit: any) => {
+              const details = Array.isArray(edit) ? edit
+                : Array.isArray(edit?.data) ? edit.data
+                : Array.isArray(edit?.details) ? edit.details
+                : Array.isArray(edit?.material_request_details) ? edit.material_request_details
+                : Array.isArray(edit?.materialsRequestDetails) ? edit.materialsRequestDetails
+                : Array.isArray(edit?.materials) ? edit.materials
+                : [];
+              setQuoteDetails(details);
+            }).catch(() => setQuoteDetails([]));
+          } else {
+            setQuoteDetails(arr);
+          }
+        }).catch(() => {
+          if (mrId) materialRequestAPI.edit(mrId).then((edit: any) => {
+            const details = Array.isArray(edit) ? edit
+              : Array.isArray(edit?.data) ? edit.data
+              : Array.isArray(edit?.details) ? edit.details
+              : Array.isArray(edit?.material_request_details) ? edit.material_request_details
+              : Array.isArray(edit?.materialsRequestDetails) ? edit.materialsRequestDetails
+              : Array.isArray(edit?.materials) ? edit.materials
+              : [];
+            setQuoteDetails(details);
+          }).catch(() => setQuoteDetails([]));
+          else setQuoteDetails([]);
+        });
+      } else {
+        const id = editId ?? rfqId;
+        if (id) rfqAPI.getQuoteDetails(id).then(setQuoteDetails).catch(() => setQuoteDetails([]));
       }
     }
-  }, [step, selectedMrId, rfqId, editId]);
+    if (step === 'vendorList' && (editId || rfqId)) {
+      rfqAPI.getQuoteDetails(editId ?? rfqId!).then(setQuoteDetails).catch(() => setQuoteDetails([]));
+    }
+    if (step === 'quotesDetails') {
+      masterDataAPI.getMaterials().then((m) => setMaterialsMaster(Array.isArray(m) ? m : [])).catch(() => setMaterialsMaster([]));
+    }
+  }, [step, selectedMrId, selectedMrRequestNo, urlMrRequestNo, urlMrId, rfqId, editId, mode]);
 
   useEffect(() => {
     if (step === 'vendorList') {
@@ -158,12 +215,79 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
       const saved = await rfqAPI.save(payload);
       const newId = saved?.id ?? saved?.uuid ?? saved?.data?.id ?? saved?.data?.uuid ?? editId;
       if (mode === 'create' && newId) {
-        router.replace(`/inventory-reports/rfq/${newId}/submit-quotes?step=${nextStep}`);
+        const params = new URLSearchParams();
+        params.set('step', nextStep);
+        if (pid) params.set('projectId', pid);
+        if (projectNumericId) params.set('projectNumericId', projectNumericId);
+        if (selectedMrId) params.set('mrId', selectedMrId);
+        if (selectedMrRequestNo) params.set('mrRequestNo', selectedMrRequestNo);
+        router.replace(`/inventory-reports/rfq/${newId}/submit-quotes?${params.toString()}`);
         return;
       }
       setStep(nextStep);
     } catch (e: any) {
       toast.showWarning(e?.message ?? 'Failed to save. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleQuotesDetailsContinue = async () => {
+    const id = editId ?? rfqId;
+    const projectsIdForApi = getProjectsIdForApi();
+    if (!id || !projectsIdForApi || !selectedMrId) {
+      toast.showWarning('Missing quote or project. Go back and try again.');
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const payload = quoteDetails.map((row: any, i: number) => {
+        const key = String(row.id ?? row.materials?.id ?? row.material_id ?? row.material_request_details_id ?? i);
+        const edits = materialsEdits[key] ?? {};
+        const materialsId = row.materials?.id ?? row.material?.id ?? row.material_id ?? row.materials_id;
+        const detailId = row.material_request_details_id ?? row.material_request_detail_id ?? row.materials_request_details_id ?? row.id;
+        const item: Record<string, any> = {
+          id: '',
+          projects_id: Number(projectsIdForApi) || projectsIdForApi,
+          quotes_id: Number(id) || id,
+          materials: materialsId != null ? (Number(materialsId) || materialsId) : undefined,
+          qty: edits.qty ?? row.qty ?? row.quantity ?? row.Quantity ?? '0',
+          request_qty: edits.request_qty ?? row.request_qty ?? row.request_quantity ?? row.qty ?? row.quantity ?? '0',
+          price: edits.price ?? row.price ?? row.unit_price ?? '0',
+          material_request_details_id: detailId != null && detailId !== '' ? (Number(detailId) || detailId) : undefined,
+          date: (() => {
+            const d = edits.date ?? row.date ?? row.required_date ?? row.requiredDate ?? today;
+            return typeof d === 'string' && d.includes('T') ? d.split('T')[0] : d || today;
+          })(),
+          material_requests_id: Number(selectedMrId) || selectedMrId,
+        };
+        Object.keys(item).forEach(k => { if (item[k] === undefined) delete item[k]; });
+        return item;
+      });
+      const validPayload = payload.filter((p) => p.materials != null);
+      if (validPayload.length === 0) {
+        toast.showWarning('No valid material data. Each row must have a material.');
+        setIsSubmitting(false);
+        return;
+      }
+      if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+        console.log('[SubmitQuotes] quote-details-add payload:', JSON.stringify(validPayload, null, 2));
+      }
+      const result = await rfqAPI.quoteDetailsAdd(validPayload);
+      const created = Array.isArray(result) ? result : result?.data ?? (result ? [result] : []);
+      const ids = created.map((r: any) => r.id ?? r.uuid).filter(Boolean);
+      setQuotesDetailsIds(ids);
+      setStep('vendorList');
+    } catch (e: any) {
+      const res = e?.response?.data;
+      const msg = res?.message ?? res?.error ?? e?.message ?? 'Failed to add quote details.';
+      const errs = res?.errors;
+      const detail = errs && typeof errs === 'object' ? Object.entries(errs).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`).join(' ') : '';
+      if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
+        console.error('[SubmitQuotes] quote-details-add error:', { response: res, fullError: e });
+      }
+      toast.showWarning(detail ? `${msg} ${detail}` : msg);
     } finally {
       setIsSubmitting(false);
     }
@@ -175,15 +299,50 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
       return;
     }
     setShowMrSelectModal(false);
+    setRfqPathType(0);
     handleSaveAndContinue('quotesDetails');
   };
 
-  const handleImageAndSend = () => {
-    if (!quoteImage && !message) {
-      toast.showWarning('Please add an image or message for the quote request.');
+  const handleImageAndSend = async () => {
+    if (!quoteImage) {
+      toast.showWarning('Please upload an image for the quote request.');
       return;
     }
-    handleSaveAndContinue('vendorList');
+    const projectsIdForApi = getProjectsIdForApi();
+    if (!project || !projectsIdForApi) {
+      toast.showWarning('Project numeric ID is required.');
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const saved = await rfqAPI.save({ projects_id: projectsIdForApi });
+      const newId = saved?.id ?? saved?.uuid;
+      if (!newId) throw new Error('No quote ID returned');
+      const fd = new FormData();
+      fd.append('id', '');
+      fd.append('projects_id', String(projectsIdForApi));
+      fd.append('quotes_id', String(newId));
+      fd.append('request_no', '201poiuytgfrds');
+      fd.append('date', new Date().toISOString().split('T')[0]);
+      fd.append('remarkes', message || '');
+      if (quoteImage && quoteImage.startsWith('data:')) {
+        const res = await fetch(quoteImage);
+        const blob = await res.blob();
+        const ext = quoteImage.includes('jpeg') || quoteImage.includes('jpg') ? 'jpg' : quoteImage.includes('webp') ? 'webp' : quoteImage.includes('gif') ? 'gif' : 'png';
+        fd.append('img', blob, `quote.${ext}`);
+      }
+      await rfqAPI.quoteDetailsAdd(fd);
+      setRfqPathType(1);
+      const params = new URLSearchParams();
+      params.set('step', 'vendorList');
+      if (pid) params.set('projectId', pid);
+      if (projectNumericId) params.set('projectNumericId', projectNumericId);
+      router.replace(`/inventory-reports/rfq/${newId}/submit-quotes?${params.toString()}`);
+    } catch (e: any) {
+      toast.showWarning(e?.message ?? 'Failed to save. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleSendToVendors = async () => {
@@ -199,8 +358,24 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
     }
     setIsSubmitting(true);
     try {
-      await rfqAPI.sendToVendors(id, ids);
+      const opts = rfqPathType === 0 && quotesDetailsIds.length > 0 && selectedMrId
+        ? {
+            type: 0 as const,
+            quotesDetailsId: quotesDetailsIds,
+            materialRequestDetailsId: quoteDetails.map((r: any) => r.material_request_details_id ?? r.id).filter(Boolean),
+            materialRequestsId: [selectedMrId],
+            materialsId: quoteDetails.map((r: any) => r.materials?.id ?? r.material_id ?? r.id).filter(Boolean),
+          }
+        : { type: 1 as const };
+      await rfqAPI.sendToVendors(id, ids, opts);
       toast.showSuccess('Quote sent to vendors.');
+      try {
+        const { pdf_url } = await rfqAPI.generatePdf(id);
+        const fullUrl = pdf_url ? getFullPdfUrl(pdf_url) : '';
+        setPdfUrl(fullUrl);
+      } catch {
+        setPdfUrl(null);
+      }
       setStep('doc');
     } catch (e: any) {
       toast.showWarning(e?.message ?? 'Failed to send to vendors.');
@@ -209,18 +384,63 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
     }
   };
 
+  const getFullPdfUrl = (url: string) => {
+    if (!url) return '';
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || '';
+    return url.startsWith('http') ? url : apiBase.replace(/\/api\/?$/, '') + (url.startsWith('/') ? url : '/' + url);
+  };
+
   const handleGeneratePdf = async () => {
     const id = editId ?? rfqId;
     if (!id) return;
     setIsSubmitting(true);
     try {
       const { pdf_url } = await rfqAPI.generatePdf(id);
-      window.open(pdf_url, '_blank');
-      toast.showSuccess('PDF opened in new tab.');
+      const fullUrl = pdf_url ? getFullPdfUrl(pdf_url) : '';
+      setPdfUrl(fullUrl);
+      if (fullUrl) window.open(fullUrl, '_blank');
+      toast.showSuccess(fullUrl ? 'PDF generated. You can View or Share below.' : 'PDF generated.');
     } catch (e: any) {
       toast.showWarning(e?.message ?? 'Failed to generate PDF.');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleViewPdf = () => {
+    if (pdfUrl) window.open(pdfUrl, '_blank');
+    else toast.showWarning('PDF not ready. Please try again.');
+  };
+
+  const handleSharePdf = async () => {
+    let urlToShare = pdfUrl;
+    if (!urlToShare) {
+      const id = editId ?? rfqId;
+      if (!id) {
+        toast.showWarning('RFQ not found.');
+        return;
+      }
+      setIsSubmitting(true);
+      try {
+        const { pdf_url } = await rfqAPI.generatePdf(id);
+        urlToShare = pdf_url ? getFullPdfUrl(pdf_url) : '';
+        if (urlToShare) setPdfUrl(urlToShare);
+      } catch (e: any) {
+        toast.showWarning(e?.message ?? 'Failed to generate share link.');
+        return;
+      } finally {
+        setIsSubmitting(false);
+      }
+    }
+    if (!urlToShare) {
+      toast.showWarning('Could not generate share link.');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(urlToShare);
+      toast.showSuccess('Link copied to clipboard.');
+    } catch {
+      toast.showWarning('Could not copy to clipboard.');
     }
   };
 
@@ -230,76 +450,6 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
-    });
-  };
-
-  const getSelectedVendorEmails = (): string[] => {
-    const ids = Array.from(selectedVendorIds);
-    if (ids.length === 0) return [];
-    const selectedVendors = vendors.filter((v: any) => ids.includes(String(v.id ?? v.uuid ?? '')));
-    return selectedVendors
-      .map((v: any) => (v.email ?? v.contact_person_email ?? v.contactPersonEmail ?? (v.contact?.email ?? '')).trim())
-      .filter((e: string) => e && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
-  };
-
-  const handleEmailToVendors = async () => {
-    const ids = Array.from(selectedVendorIds);
-    if (ids.length === 0) {
-      toast.showWarning('Please select at least one vendor.');
-      return;
-    }
-    const emails = getSelectedVendorEmails();
-    if (emails.length === 0) {
-      toast.showWarning('Selected vendors do not have valid email addresses. Add email in Masters > Vendors.');
-      return;
-    }
-    const requestId = editId ?? rfqId;
-    const emailBody = `Dear Vendor,\n\nPlease find our Request for Quotation attached.\n\nKindly submit your quote at your earliest convenience.\n\nBest regards`;
-
-    if (requestId) {
-      setIsSubmitting(true);
-      try {
-        const imageFilename = quoteImage
-          ? `quote-image-${Date.now()}.${quoteImage.startsWith('data:image/jpeg') || quoteImage.startsWith('data:image/jpg') ? 'jpg' : quoteImage.startsWith('data:image/webp') ? 'webp' : quoteImage.startsWith('data:image/gif') ? 'gif' : 'png'}`
-          : undefined;
-        await rfqAPI.sendEmailToVendors(requestId, emails, emailBody, quoteImage || undefined, imageFilename);
-        toast.showSuccess(`Email sent to ${emails.length} vendor(s).`);
-        setStep('doc');
-        return;
-      } catch (e: any) {
-        const is404 = e?.response?.status === 404;
-        if (!is404) {
-          toast.showWarning(e?.message ?? 'Failed to send email. Opening email client instead.');
-        }
-      } finally {
-        setIsSubmitting(false);
-      }
-    }
-
-    const subject = `RFQ / Quote Request - ${project?.name ?? 'Project'}`;
-    const mailto = `mailto:${emails.join(',')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(emailBody)}`;
-    const a = document.createElement('a');
-    a.href = mailto;
-    a.target = '_blank';
-    a.rel = 'noopener';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    toast.showSuccess(`Opened email client for ${emails.length} vendor(s). Paste recipient if needed, attach PDF, and send.`);
-    setStep('doc');
-  };
-
-  const handleCopyVendorEmails = () => {
-    const emails = getSelectedVendorEmails();
-    if (emails.length === 0) {
-      toast.showWarning('Select vendors with valid emails first.');
-      return;
-    }
-    const text = emails.join('; ');
-    navigator.clipboard?.writeText(text).then(() => {
-      toast.showSuccess(`Copied ${emails.length} email(s) to clipboard.`);
-    }).catch(() => {
-      toast.showWarning('Could not copy to clipboard.');
     });
   };
 
@@ -346,20 +496,22 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
               </div>
             </div>
 
+            <p className={`text-sm font-medium mb-4 ${textSecondary}`}>Choose one: select a material request or upload an image</p>
+
             {/* Material Request */}
             <div className="mb-6">
-              <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>Material Request (Optional)</label>
+              <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>Material Request</label>
               <div className="flex gap-2">
                 <button
                   onClick={() => setShowMrSelectModal(true)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg border-2 ${isDark ? 'border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10' : 'border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/5'}`}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg border-2 ${selectedMrId ? 'border-[#6B8E23] bg-[#6B8E23]/10' : isDark ? 'border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10' : 'border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/5'}`}
                 >
                   <FileText className="w-4 h-4" />
                   {selectedMrId ? `MR #${selectedMrId}` : 'Select MR'}
                 </button>
                 {selectedMrId && (
                   <button
-                    onClick={() => setSelectedMrId(null)}
+                    onClick={() => { setSelectedMrId(null); setSelectedMrRequestNo(null); }}
                     className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}
                   >
                     <X className="w-4 h-4" />
@@ -368,9 +520,11 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
               </div>
             </div>
 
+            <p className={`text-center text-sm font-bold my-4 ${textSecondary}`}>— or —</p>
+
             {/* Image upload */}
             <div className="mb-6">
-              <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>Image (Optional)</label>
+              <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>Image</label>
               <input
                 ref={imageInputRef}
                 type="file"
@@ -382,7 +536,7 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
                   const reader = new FileReader();
                   reader.onload = (ev) => {
                     const result = ev.target?.result as string;
-                    if (result) setQuoteImage(result);
+                    if (result) { setQuoteImage(result); setSelectedMrId(null); setSelectedMrRequestNo(null); }
                   };
                   reader.readAsDataURL(file);
                   e.target.value = '';
@@ -394,21 +548,6 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
                   <div className="absolute top-2 right-2 flex gap-2">
                     <button
                       type="button"
-                      onClick={() => {
-                        if (!quoteImage) return;
-                        const ext = quoteImage.startsWith('data:image/jpeg') || quoteImage.startsWith('data:image/jpg') ? 'jpg' : quoteImage.startsWith('data:image/webp') ? 'webp' : quoteImage.startsWith('data:image/gif') ? 'gif' : 'png';
-                        const a = document.createElement('a');
-                        a.href = quoteImage;
-                        a.download = `quote-image-${Date.now()}.${ext}`;
-                        a.click();
-                      }}
-                      className={`p-2 rounded-lg text-xs font-bold ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-white' : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'}`}
-                      title="Download image to attach in email"
-                    >
-                      <Download className="w-4 h-4" />
-                    </button>
-                    <button
-                      type="button"
                       onClick={() => imageInputRef.current?.click()}
                       className={`p-2 rounded-lg text-xs font-bold ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-white' : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'}`}
                     >
@@ -416,7 +555,7 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
                     </button>
                     <button
                       type="button"
-                      onClick={() => setQuoteImage(null)}
+                      onClick={() => { setQuoteImage(null); }}
                       className="p-2 rounded-lg bg-red-500/90 hover:bg-red-500 text-white"
                       title="Remove image"
                     >
@@ -453,18 +592,15 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
 
             <div className="flex flex-wrap gap-3">
               <button
-                onClick={handleSelectMrAndSubmit}
-                disabled={!selectedMrId || isSubmitting}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold ${selectedMrId && !isSubmitting ? 'bg-[#6B8E23] text-white hover:bg-[#5a7a1e]' : 'bg-slate-400 text-white cursor-not-allowed'}`}
+                onClick={() => {
+                  if (selectedMrId) handleSelectMrAndSubmit();
+                  else if (quoteImage) handleImageAndSend();
+                  else toast.showWarning('Please select a Material Request or upload an image.');
+                }}
+                disabled={(!selectedMrId && !quoteImage) || isSubmitting}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold ${(selectedMrId || quoteImage) && !isSubmitting ? 'bg-[#6B8E23] text-white hover:bg-[#5a7a1e]' : 'bg-slate-400 text-white cursor-not-allowed'}`}
               >
-                Select MR + Submit
-              </button>
-              <button
-                onClick={handleImageAndSend}
-                disabled={isSubmitting}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold border-2 border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10"
-              >
-                <Send className="w-4 h-4" /> Image + Send for quote
+                <ArrowRight className="w-4 h-4" /> Next
               </button>
             </div>
           </div>
@@ -473,7 +609,7 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
         {/* Step: Quotes Details */}
         {step === 'quotesDetails' && (
           <div className={`rounded-xl border p-6 ${cardClass}`}>
-            <h2 className={`text-lg font-bold mb-4 ${textPrimary}`}>Quote Details</h2>
+            <h2 className={`text-lg font-bold mb-4 ${textPrimary}`}>Quote Details — Enter qty, request qty, price, date</h2>
             {quoteDetails.length > 0 ? (
               <div className="overflow-x-auto">
                 <table className="w-full">
@@ -481,22 +617,69 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
                     <tr>
                       <th className={`px-4 py-3 text-left text-xs font-bold ${textSecondary}`}>Material</th>
                       <th className={`px-4 py-3 text-left text-xs font-bold ${textSecondary}`}>Qty</th>
+                      <th className={`px-4 py-3 text-left text-xs font-bold ${textSecondary}`}>Request Qty</th>
+                      <th className={`px-4 py-3 text-left text-xs font-bold ${textSecondary}`}>Price</th>
                       <th className={`px-4 py-3 text-left text-xs font-bold ${textSecondary}`}>Date</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {quoteDetails.map((row: any, i: number) => (
-                      <tr key={i} className={isDark ? 'border-slate-700' : 'border-slate-200'}>
-                        <td className={`px-4 py-3 text-sm ${textPrimary}`}>{row.materials?.name ?? row.material_name ?? '-'}</td>
-                        <td className={`px-4 py-3 text-sm ${textPrimary}`}>{row.qty ?? row.quantity ?? '-'}</td>
-                        <td className={`px-4 py-3 text-sm ${textPrimary}`}>{row.date ?? '-'}</td>
-                      </tr>
-                    ))}
+                    {quoteDetails.map((row: any, i: number) => {
+                      const key = String(row.id ?? row.materials?.id ?? row.material_id ?? row.material_request_details_id ?? i);
+                      const edits = materialsEdits[key] ?? {};
+                      const today = new Date().toISOString().split('T')[0];
+                      const rowDate = row.date ?? row.required_date ?? row.requiredDate ?? today;
+                      const dateVal = (typeof rowDate === 'string' && rowDate.includes('T')) ? rowDate.split('T')[0] : rowDate || today;
+                      const rowName = row.materials?.name ?? row.material?.name ?? row.name ?? row.material_name ?? row.materials_name ?? row.materials?.material_name ?? row.material?.material_name;
+                      const matId = row.materials?.id ?? row.material_id ?? row.materials_id ?? row.material?.id;
+                      const matchedMat = matId != null && materialsMaster.length > 0 ? materialsMaster.find((m: any) => String(m.id ?? m.uuid) === String(matId)) : null;
+                      const lookupName = matchedMat ? ((matchedMat as any)?.name ?? (matchedMat as any)?.material_name) : null;
+                      const materialName = rowName || lookupName || '-';
+                      return (
+                        <tr key={i} className={isDark ? 'border-slate-700' : 'border-slate-200'}>
+                          <td className={`px-4 py-3 text-sm ${textPrimary}`}>{materialName}</td>
+                          <td className="px-4 py-2">
+                            <input
+                              type="text"
+                              value={String(edits.qty ?? row.qty ?? row.quantity ?? row.Quantity ?? '')}
+                              onChange={(e) => setMaterialsEdits(prev => ({ ...prev, [key]: { ...prev[key], qty: e.target.value } }))}
+                              placeholder="Qty"
+                              className={`w-20 min-w-[4rem] rounded border px-2 py-1 text-sm ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}
+                            />
+                          </td>
+                          <td className="px-4 py-2">
+                            <input
+                              type="text"
+                              value={String(edits.request_qty ?? row.request_qty ?? row.request_quantity ?? row.qty ?? row.quantity ?? row.Quantity ?? '')}
+                              onChange={(e) => setMaterialsEdits(prev => ({ ...prev, [key]: { ...prev[key], request_qty: e.target.value } }))}
+                              placeholder="Request Qty"
+                              className={`w-24 min-w-[5rem] rounded border px-2 py-1 text-sm ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}
+                            />
+                          </td>
+                          <td className="px-4 py-2">
+                            <input
+                              type="text"
+                              value={String(edits.price ?? row.price ?? row.unit_price ?? row.UnitPrice ?? '')}
+                              onChange={(e) => setMaterialsEdits(prev => ({ ...prev, [key]: { ...prev[key], price: e.target.value } }))}
+                              placeholder="Price"
+                              className={`w-24 min-w-[5rem] rounded border px-2 py-1 text-sm ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}
+                            />
+                          </td>
+                          <td className="px-4 py-2">
+                            <input
+                              type="date"
+                              value={edits.date ?? dateVal ?? today}
+                              onChange={(e) => setMaterialsEdits(prev => ({ ...prev, [key]: { ...prev[key], date: e.target.value } }))}
+                              className={`w-36 min-w-[8rem] rounded border px-2 py-1 text-sm ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}
+                            />
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
             ) : (
-              <p className={`py-8 text-center ${textSecondary}`}>No quote details available.</p>
+              <p className={`py-8 text-center ${textSecondary}`}>No materials. Load materials from the selected Material Request.</p>
             )}
             <div className="flex gap-3 mt-6">
               <button
@@ -506,10 +689,12 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
                 <ArrowLeft className="w-4 h-4" /> Back
               </button>
               <button
-                onClick={() => setStep('vendorList')}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-[#6B8E23] text-white hover:bg-[#5a7a1e]"
+                onClick={handleQuotesDetailsContinue}
+                disabled={quoteDetails.length === 0 || isSubmitting}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-[#6B8E23] text-white hover:bg-[#5a7a1e] disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Continue to Vendors <ArrowRight className="w-4 h-4" />
+                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
+                Continue to Vendors
               </button>
             </div>
           </div>
@@ -556,23 +741,6 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
                 <ArrowLeft className="w-4 h-4" /> Back
               </button>
               <button
-                onClick={handleCopyVendorEmails}
-                disabled={selectedVendorIds.size === 0}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold border ${isDark ? 'border-slate-600 hover:bg-slate-800/50' : 'border-slate-300 hover:bg-slate-50'}`}
-                title="Copy selected vendor emails to clipboard"
-              >
-                <Copy className="w-4 h-4" /> Copy Emails
-              </button>
-              <button
-                onClick={handleEmailToVendors}
-                disabled={selectedVendorIds.size === 0 || isSubmitting}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold border-2 ${selectedVendorIds.size > 0 && !isSubmitting ? 'border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10' : 'border-slate-400 text-slate-400 cursor-not-allowed'}`}
-                title="Send email via backend, or open email client"
-              >
-                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                Email to Vendors
-              </button>
-              <button
                 onClick={handleSendToVendors}
                 disabled={selectedVendorIds.size === 0 || isSubmitting}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold ${selectedVendorIds.size > 0 && !isSubmitting ? 'bg-[#6B8E23] text-white hover:bg-[#5a7a1e]' : 'bg-slate-400 text-white cursor-not-allowed'}`}
@@ -591,17 +759,40 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
             <h2 className={`text-lg font-bold mb-4 ${textPrimary}`}>Quote Document</h2>
             <div className={`p-8 rounded-lg text-center ${isDark ? 'bg-slate-800/50' : 'bg-slate-50'}`}>
               <FileText className={`w-16 h-16 mx-auto mb-4 ${textSecondary}`} />
-              <p className={`mb-4 ${textSecondary}`}>Generate and download the quote PDF.</p>
-              <button
-                onClick={handleGeneratePdf}
-                disabled={isSubmitting}
-                className="flex items-center gap-2 px-6 py-3 rounded-lg font-bold bg-[#6B8E23] text-white hover:bg-[#5a7a1e] mx-auto"
-              >
-                {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Package className="w-5 h-5" />}
-                Generate PDF
-              </button>
+              <p className={`mb-6 ${textSecondary}`}>
+                {pdfUrl ? 'Your RFQ PDF is ready. View or share the link below.' : 'Quote sent to vendors. View or share the link below.'}
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <button
+                  onClick={handleViewPdf}
+                  disabled={!pdfUrl}
+                  className="flex items-center gap-2 px-6 py-3 rounded-lg font-bold bg-blue-500/20 text-blue-600 hover:bg-blue-500/30 dark:text-blue-400 transition-colors disabled:opacity-70"
+                  title="Open PDF in new tab"
+                >
+                  <Eye className="w-5 h-5" /> View
+                </button>
+                <button
+                  onClick={handleSharePdf}
+                  disabled={isSubmitting}
+                  className="flex items-center gap-2 px-6 py-3 rounded-lg font-bold bg-emerald-500/20 text-emerald-600 hover:bg-emerald-500/30 dark:text-emerald-400 transition-colors disabled:opacity-70"
+                  title="Copy share link to clipboard"
+                >
+                  {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Share2 className="w-5 h-5" />}
+                  Share
+                </button>
+              </div>
+              {!pdfUrl && (
+                <button
+                  onClick={handleGeneratePdf}
+                  disabled={isSubmitting}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium mt-4 mx-auto text-[#6B8E23] hover:bg-[#6B8E23]/10 disabled:opacity-70"
+                >
+                  {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
+                  Generate PDF
+                </button>
+              )}
             </div>
-            <div className="mt-6">
+            <div className="mt-6 flex gap-3">
               <button
                 onClick={() => router.push('/inventory-reports/rfq')}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold border-2 border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10"
@@ -625,11 +816,19 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
                     return (
                       <button
                         key={id}
-                        onClick={() => setSelectedMrId(id)}
+                        onClick={() => {
+                          setSelectedMrId(id);
+                          setSelectedMrRequestNo(mr.request_no ?? mr.request_id ?? id);
+                          setQuoteImage(null);
+                        }}
                         className={`w-full text-left p-3 rounded-lg border ${isSelected ? 'border-[#6B8E23] bg-[#6B8E23]/10' : isDark ? 'border-slate-600' : 'border-slate-200'}`}
                       >
-                        <span className={`font-medium ${textPrimary}`}>{mr.request_no ?? mr.request_id ?? `MR #${id}`}</span>
-                        <span className={`text-sm ${textSecondary} ml-2`}>{mr.date ?? ''}</span>
+                        <span className={`font-medium ${textPrimary}`}>
+                          {mr.request_no ?? mr.created_by ?? mr.date ?? `MR #${id}`}
+                        </span>
+                        {(mr.request_no || mr.created_by) && mr.date && (
+                          <span className={`text-sm ${textSecondary} ml-2`}>{mr.date}</span>
+                        )}
                       </button>
                     );
                   })}

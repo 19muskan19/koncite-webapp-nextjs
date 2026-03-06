@@ -22,6 +22,11 @@ import {
   Image as ImageIcon,
 } from 'lucide-react';
 import { masterDataAPI, goodsReceiptAPI } from '@/services/api';
+import { getTodayDateString } from '@/utils/dateUtils';
+import CreateVendorModal from '@/components/masters/Modals/CreateVendorModal';
+import CreateWarehouseModal from '@/components/masters/Modals/CreateWarehouseModal';
+import CreateProjectModal from '@/components/masters/Modals/CreateProjectModal';
+import { openPdfInNewTab, copyPdfUrl } from '@/utils/pdfUtils';
 
 type GoodsReceiptStep = 'stores' | 'inwardsList' | 'details' | 'success';
 
@@ -106,12 +111,13 @@ export default function GoodsReceiptFlow({
   const [isLoadingStores, setIsLoadingStores] = useState(false);
   const [inwardHeader, setInwardHeader] = useState<any>(null);
   const [isCreatingHeader, setIsCreatingHeader] = useState(false);
-  const [inwardDate, setInwardDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [inwardDate, setInwardDate] = useState(() => getTodayDateString());
   const [entryTypeId, setEntryTypeId] = useState<string | number>('');
   const [supplierProjectStoreId, setSupplierProjectStoreId] = useState<string | number>('');
   const [supplierOptions, setSupplierOptions] = useState<any[]>([]);
+  const [isLoadingSupplierOptions, setIsLoadingSupplierOptions] = useState(false);
   const [deliveryRefNo, setDeliveryRefNo] = useState('');
-  const [deliveryRefDate, setDeliveryRefDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [deliveryRefDate, setDeliveryRefDate] = useState(() => getTodayDateString());
   const [remarks, setRemarks] = useState('');
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -132,12 +138,18 @@ export default function GoodsReceiptFlow({
   const [materialsRefreshKey, setMaterialsRefreshKey] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [pdfInfo, setPdfInfo] = useState<{ url?: string; name?: string } | null>(null);
+  const [grnNoFromBackend, setGrnNoFromBackend] = useState<string | null>(null);
+  const [showCreateVendorModal, setShowCreateVendorModal] = useState(false);
+  const [showCreateWarehouseModal, setShowCreateWarehouseModal] = useState(false);
+  const [showCreateProjectModal, setShowCreateProjectModal] = useState(false);
   const imageInputRef = React.useRef<HTMLInputElement>(null);
+  const detailsSubmitInProgress = React.useRef(false);
 
   const projectIdForApi = () => (editProject?.numericId ?? editProject?.id ?? pNumId) || (pid && /^\d+$/.test(String(pid)) ? pid : undefined);
   const projectNameForDisplay = () => editProject?.name ?? pName;
 
   const [entryTypeList, setEntryTypeList] = useState<EntryType[]>([]);
+  const [isLoadingEntryTypes, setIsLoadingEntryTypes] = useState(false);
 
   useEffect(() => {
     if (mode === 'create') {
@@ -156,7 +168,7 @@ export default function GoodsReceiptFlow({
           if (projId) {
             setEditProject({ id: String(projId), name: projName || 'Project', numericId: String((proj as any)?.id ?? projId) });
             setInwardHeader(data);
-            setInwardDate(data?.date ?? data?.name ?? new Date().toISOString().split('T')[0]);
+            setInwardDate(data?.date ?? data?.name ?? getTodayDateString());
             setEntryTypeId(data?.entry_type ?? '');
             setSupplierProjectStoreId(data?.vendors_id ?? data?.supplier_id ?? '');
             setDeliveryRefNo(data?.delivery_ref_copy_no ?? '');
@@ -222,11 +234,49 @@ export default function GoodsReceiptFlow({
     }
   }, [mode, inwardHeader, stores, editLoadedStoreIds]);
 
+  // Entry types: load on focus (create) or when step inwardsList (edit mode needs list for display)
+  const [entryTypesLoadAttempted, setEntryTypesLoadAttempted] = useState(false);
   useEffect(() => {
-    if (step === 'inwardsList' || step === 'details') {
-      goodsReceiptAPI.getEntryTypeList().then((list: any[]) => setEntryTypeList(Array.isArray(list) ? list : []));
+    if (mode === 'edit' && step === 'inwardsList' && !entryTypesLoadAttempted) {
+      setEntryTypesLoadAttempted(true);
+      setIsLoadingEntryTypes(true);
+      goodsReceiptAPI
+        .getEntryTypeList()
+        .then((list: any[]) => setEntryTypeList(Array.isArray(list) ? list : []))
+        .catch(() => setEntryTypeList([]))
+        .finally(() => setIsLoadingEntryTypes(false));
     }
-  }, [step]);
+  }, [mode, step, entryTypesLoadAttempted]);
+  const handleEntryTypeFocus = () => {
+    if (entryTypesLoadAttempted) return;
+    setEntryTypesLoadAttempted(true);
+    setIsLoadingEntryTypes(true);
+    goodsReceiptAPI
+      .getEntryTypeList()
+      .then((list: any[]) => setEntryTypeList(Array.isArray(list) ? list : []))
+      .catch(() => setEntryTypeList([]))
+      .finally(() => setIsLoadingEntryTypes(false));
+  };
+
+  // Fetch GRN/MRN no from project-to-store-list when Inward Goods step loads (like issue no, return no)
+  useEffect(() => {
+    if (step !== 'inwardsList') return;
+    const pId = projectIdForApi();
+    const storeNumericIds = Array.from(selectedStoreIds)
+      .map((sid) => stores.find((x) => String(x.id) === sid)?.numericId ?? stores.find((x) => String(x.id) === sid)?.id)
+      .filter((x): x is string | number => x != null);
+    if (!pId || storeNumericIds.length === 0) {
+      setGrnNoFromBackend(null);
+      return;
+    }
+    goodsReceiptAPI
+      .projectToStoreList(pId, storeNumericIds, 'inward')
+      .then((data: any) => {
+        const no = data?.invInwardRegNo ?? data?.grn_no ?? data?.inv_inward_reg_no;
+        setGrnNoFromBackend(no ? String(no) : null);
+      })
+      .catch(() => setGrnNoFromBackend(null));
+  }, [step, projectIdForApi(), selectedStoreIds, stores]);
 
   useEffect(() => {
     if (entryTypeId && selectedStoreIds.size > 0) {
@@ -237,11 +287,19 @@ export default function GoodsReceiptFlow({
         .map((sid) => stores.find((x) => String(x.id) === sid)?.numericId ?? stores.find((x) => String(x.id) === sid)?.id)
         .filter((x): x is string | number => x != null);
       if (pId) {
+        setIsLoadingSupplierOptions(true);
         goodsReceiptAPI.getTypeWiseList(typeSlug || String(entryTypeId), pId, storeNumericIds)
           .then((list: any[]) => setSupplierOptions(Array.isArray(list) ? list : []))
-          .catch(() => setSupplierOptions([]));
-      } else setSupplierOptions([]);
-    } else setSupplierOptions([]);
+          .catch(() => setSupplierOptions([]))
+          .finally(() => setIsLoadingSupplierOptions(false));
+      } else {
+        setSupplierOptions([]);
+        setIsLoadingSupplierOptions(false);
+      }
+    } else {
+      setSupplierOptions([]);
+      setIsLoadingSupplierOptions(false);
+    }
   }, [entryTypeId, selectedStoreIds, stores, entryTypeList]);
 
   useEffect(() => {
@@ -250,14 +308,21 @@ export default function GoodsReceiptFlow({
     (goodsType === 'materials' ? masterDataAPI.getMaterials() : masterDataAPI.getAssetsEquipments())
       .then((res: any[]) => {
         const list = Array.isArray(res) ? res : [];
-        setMaterials(list.map((m: any) => ({
-          id: m.uuid ?? m.id,
-          numericId: Number.isFinite(Number(m.id)) ? Number(m.id) : undefined,
-          code: m.code ?? '',
-          name: m.name ?? '',
-          specification: m.specification ?? '',
-          unit: m.units?.unit ?? m.unit ?? '',
-        })));
+        setMaterials(list.map((m: any) => {
+          const name = goodsType === 'machines'
+            ? (m.assets?.name ?? (typeof m.assets === 'string' ? m.assets : null) ?? m.name ?? '')
+            : (m.name ?? '');
+          const unitObj = m.unit_id && typeof m.unit_id === 'object' ? m.unit_id : m.units ?? m.unit;
+          const unit = typeof unitObj === 'object' ? (unitObj?.unit ?? unitObj?.name) : (m.units?.unit ?? m.unit ?? unitObj ?? '');
+          return {
+            id: m.uuid ?? m.id,
+            numericId: Number.isFinite(Number(m.id)) ? Number(m.id) : undefined,
+            code: m.code ?? '',
+            name,
+            specification: m.specification ?? '',
+            unit,
+          };
+        }));
       })
       .catch(() => setMaterials([]))
       .finally(() => setIsLoadingMaterials(false));
@@ -269,6 +334,38 @@ export default function GoodsReceiptFlow({
       .then((u: any[]) => setAddGoodsUnits((Array.isArray(u) ? u : []).map((x: any) => ({ id: x.id, unit: x.unit ?? x.name ?? '' }))))
       .catch(() => setAddGoodsUnits([]));
   }, [showAddNewGoodsModal]);
+
+  // Generate PDF on success screen mount (after inward-goods-details-add saves data)
+  // requestId must be inv_inwards.id per API spec (POST /api/inventory/generate-pdf)
+  useEffect(() => {
+    if (step !== 'success') return;
+    const inwardRecordId =
+      inwardHeader?.id ??
+      inwardHeader?.inv_inwards_id ??
+      inwardHeader?.uuid ??
+      inwardGoodsList?.[0]?.inward_id ??
+      inwardGoodsList?.[0]?.inv_inwards_id ??
+      inwardGoodsList?.[0]?.id ??
+      editInwardId;
+    if (!inwardRecordId) return;
+    setIsSubmitting(true);
+    goodsReceiptAPI
+      .generatePdf(inwardRecordId)
+      .then(({ pdf_url, name }) => setPdfInfo({ url: pdf_url, name: name ?? `Inward-${inwardDate}.pdf` }))
+      .catch((err: any) => {
+        setPdfInfo(null);
+        const msg = err?.message ?? err?.response?.data?.error ?? 'Failed to generate PDF';
+        toast.showWarning(msg);
+      })
+      .finally(() => setIsSubmitting(false));
+  }, [step, inwardHeader?.id, inwardHeader?.inv_inwards_id, inwardHeader?.uuid, inwardGoodsList, editInwardId, inwardDate]);
+
+  const handleBackClick = () => {
+    if (step === 'success') setStep('details');
+    else if (step === 'details') setStep('inwardsList');
+    else if (step === 'inwardsList') setStep('stores');
+    else router.back();
+  };
 
   const toggleStore = (storeId: string) => {
     setSelectedStoreIds((prev) => {
@@ -282,7 +379,7 @@ export default function GoodsReceiptFlow({
   const handleStoresNext = async () => {
     const ids = Array.from(selectedStoreIds);
     if (ids.length === 0) {
-      toast.showWarning('Please select at least one store.');
+      toast.showWarning('Please Select Store to Continue');
       return;
     }
     const pId = projectIdForApi();
@@ -295,7 +392,7 @@ export default function GoodsReceiptFlow({
       .filter((x): x is string | number => x != null);
     setIsCreatingHeader(true);
     try {
-      const name = inwardDate || new Date().toISOString().split('T')[0];
+      const name = inwardDate || getTodayDateString();
       if (mode === 'edit' && inwardHeader?.id) {
         setStep('inwardsList');
       } else {
@@ -312,8 +409,28 @@ export default function GoodsReceiptFlow({
 
   const handleInwardsListNext = async () => {
     if (!inwardHeader) return;
+    if (!inwardDate || !String(inwardDate).trim()) {
+      toast.showWarning('Please Enter a Date');
+      return;
+    }
+    if (!entryTypeId) {
+      toast.showWarning('Please Select Entry Type');
+      return;
+    }
+    if (!supplierProjectStoreId) {
+      toast.showWarning(`Please select ${getSupplierLabel()}`);
+      return;
+    }
+    if (!deliveryRefNo.trim()) {
+      toast.showWarning('Please Enter Delivery Ref copy no');
+      return;
+    }
+    if (!deliveryRefDate || !String(deliveryRefDate).trim()) {
+      toast.showWarning('Please Select Delivery Ref copy Date');
+      return;
+    }
     const invInwardId = inwardHeader.id ?? inwardHeader.inv_inwards_id ?? inwardHeader.uuid;
-    const grnNo = inwardHeader.grn_no ?? inwardHeader.name ?? inwardDate;
+    const grnNo = mode === 'edit' ? (inwardHeader.grn_no ?? inwardHeader.name ?? inwardDate) : (grnNoFromBackend ?? inwardHeader.invInwardRegNo ?? inwardHeader.name ?? inwardDate);
     const pId = projectIdForApi();
     const storeNumericIds = Array.from(selectedStoreIds)
       .map((sid) => stores.find((x) => String(x.id) === sid)?.numericId ?? stores.find((x) => String(x.id) === sid)?.id)
@@ -323,25 +440,18 @@ export default function GoodsReceiptFlow({
       toast.showWarning('Please select at least one material/asset.');
       return;
     }
-    if (!entryTypeId) {
-      toast.showWarning('Entry Type is required.');
-      return;
-    }
-    if (!supplierProjectStoreId) {
-      toast.showWarning('Supplier/Project/Store is required.');
-      return;
-    }
-    if (!deliveryRefNo.trim()) {
-      toast.showWarning('Delivery Ref Copy No is required.');
-      return;
-    }
-    if (!deliveryRefDate) {
-      toast.showWarning('Delivery Ref Copy Date is required.');
-      return;
-    }
     const materialNumericIds = materialIdsArr
       .map((mid) => materials.find((x) => String(x.id) === mid)?.numericId ?? materials.find((x) => String(x.id) === mid)?.id)
       .filter((x): x is string | number => x != null);
+    if (materialNumericIds.length === 0) {
+      toast.showWarning('Could not resolve selected materials. Please try again.');
+      return;
+    }
+    if (storeNumericIds.length === 0) {
+      toast.showWarning('Store selection is required.');
+      return;
+    }
+    // Spec Step 1: inventory/inward-goods-add creates header and returns item list
     setIsSubmitting(true);
     try {
       const formData = new FormData();
@@ -356,27 +466,41 @@ export default function GoodsReceiptFlow({
       formData.append('delivery_ref_copy_date', deliveryRefDate);
       if (remarks) formData.append('remarkes', remarks);
       if (imageFile) formData.append('img', imageFile);
+      storeNumericIds.forEach((id) => formData.append('store_warehouses_id[]', String(id)));
       materialNumericIds.forEach((id) => formData.append('materials_id[]', String(id)));
       const addResult = await goodsReceiptAPI.addInwardGoods(formData);
-      const goodsListRaw = Array.isArray(addResult) ? addResult : addResult?.data ?? addResult?.inward_goods ?? [];
+      const goodsListRaw = Array.isArray(addResult)
+        ? addResult
+        : addResult?.data != null
+          ? (Array.isArray(addResult.data) ? addResult.data : [addResult.data])
+          : Array.isArray(addResult?.inward_goods)
+            ? addResult.inward_goods
+            : addResult != null && typeof addResult === 'object'
+              ? [addResult]
+              : [];
       const goodsList = Array.isArray(goodsListRaw) ? goodsListRaw : [];
       let detailItems: InwardDetailItem[];
+      // Spec: addInwardGoodsRes copied into local state; each item shown as expandable card
       if (goodsList.length > 0) {
-        detailItems = goodsList.map((g: any) => ({
-          inward_goods_id: g.id ?? g.inward_goods_id ?? invInwardId,
-          materials_id: g.materials_id ?? g.material_id ?? g.materials?.id,
-          materialCode: g.materials?.code ?? g.code ?? '',
-          materialName: g.materials?.name ?? g.name ?? '',
-          materialUnit: g.materials?.units?.unit ?? g.unit ?? '',
-          materialSpec: g.materials?.specification ?? g.specification ?? '',
-          recipt_qty: g.recipt_qty ?? g.receipt_qty ?? 0,
-          reject_qty: g.reject_qty ?? 0,
-          accepted_qty: g.accepted_qty ?? '',
-          po_qty: g.po_qty ?? '',
-          price: g.price ?? g.rate ?? '',
-          remarkes: g.remarkes ?? '',
-          id: g.id ?? null,
-        }));
+        detailItems = goodsList.map((g: any) => {
+          const unitObj = g.unit_id && typeof g.unit_id === 'object' ? g.unit_id : g.units ?? g.unit;
+          const unitLabel = typeof unitObj === 'object' ? (unitObj?.unit ?? unitObj?.name) : (g.unit ?? '');
+          return {
+            inward_goods_id: g.inward_id ?? g.inward_goods_id ?? g.id ?? invInwardId,
+            materials_id: g.materials_id ?? g.assets_id ?? g.material_id ?? g.materials?.id ?? g.assets?.id,
+            materialCode: g.materials?.code ?? g.assets?.code ?? g.code ?? '',
+            materialName: g.materials?.name ?? g.assets?.name ?? (typeof g.assets === 'string' ? g.assets : null) ?? g.name ?? '',
+            materialUnit: unitLabel ?? '',
+            materialSpec: g.materials?.specification ?? g.assets?.specification ?? g.specification ?? '',
+            recipt_qty: g.recipt_qty ?? g.receipt_qty ?? 0,
+            reject_qty: g.reject_qty ?? 0,
+            accepted_qty: g.accepted_qty ?? '',
+            po_qty: g.po_qty ?? '',
+            price: g.price ?? g.rate ?? '',
+            remarkes: g.remarkes ?? '',
+            id: g.InvInwardGoodDetails_id ?? g.inv_inward_goods_details_id ?? g.id ?? null,
+          };
+        });
       } else {
         detailItems = materialNumericIds.map((mid) => {
           const m = materials.find((x) => String(x.numericId ?? x.id) === String(mid));
@@ -399,7 +523,7 @@ export default function GoodsReceiptFlow({
       }
       setDetails(detailItems);
       setInwardGoodsList(goodsList);
-      setExpandedDetails(new Set(detailItems.map((d) => String(d.materials_id))));
+      setExpandedDetails(new Set(detailItems.map((_, i) => `detail-${i}`)));
       setStep('details');
     } catch (e: any) {
       toast.showWarning(e?.message ?? 'Failed to add inward goods.');
@@ -409,6 +533,7 @@ export default function GoodsReceiptFlow({
   };
 
   const handleDetailsNext = async () => {
+    if (detailsSubmitInProgress.current) return;
     const invalid = details.filter((d) => !d.recipt_qty || Number(d.recipt_qty) <= 0);
     if (invalid.length > 0) {
       toast.showWarning('Receipt quantity is required for all items.');
@@ -422,37 +547,42 @@ export default function GoodsReceiptFlow({
     const storeNumericIds = Array.from(selectedStoreIds)
       .map((sid) => stores.find((x) => String(x.id) === sid)?.numericId ?? stores.find((x) => String(x.id) === sid)?.id)
       .filter((x): x is string | number => x != null);
-    const inwardGoodsId = inwardGoodsList?.[0]?.id ?? inwardHeader?.id ?? details?.[0]?.inward_goods_id;
+    if (storeNumericIds.length === 0) {
+      toast.showWarning('Store selection is required.');
+      return;
+    }
+    const inwardGoodsId = inwardGoodsList?.[0]?.inward_id ?? inwardGoodsList?.[0]?.inward_goods_id ?? inwardGoodsList?.[0]?.id ?? inwardHeader?.id ?? details?.[0]?.inward_goods_id;
+    // Spec: Build array per item; POST inventory/inward-goods-details-add; on success → success screen; on failure → stay
+    detailsSubmitInProgress.current = true;
     setIsSubmitting(true);
     try {
       const payload = details.map((d) => ({
-        id: d.id ?? null,
+        id: d.id != null && d.id !== '' ? d.id : '',
         inward_goods_id: d.inward_goods_id ?? inwardGoodsId,
-        projects_id: pId,
-        store_warehouses_id: storeNumericIds,
         materials_id: d.materials_id,
-        type: goodsType,
-        recipt_qty: d.recipt_qty,
-        reject_qty: d.reject_qty || 0,
-        price: d.price || undefined,
-        remarkes: d.remarkes || undefined,
+        po_qty: d.po_qty != null && d.po_qty !== '' ? d.po_qty : '',
+        price: d.price != null && d.price !== '' ? Number(d.price) : 0,
+        projects_id: String(pId),
+        recipt_qty: Number(d.recipt_qty) || 0,
+        reject_qty: Number(d.reject_qty) || 0,
+        remarkes: d.remarkes ?? '',
+        store_warehouses_id: storeNumericIds.map((x) => (typeof x === 'number' ? x : Number(x))),
+        type: goodsType || 'materials',
       }));
       await goodsReceiptAPI.addInwardDetails(payload);
       setStep('success');
-      const inwardHeaderId = inwardHeader?.id ?? inwardHeader?.inv_inwards_id ?? inwardHeader?.uuid ?? inwardGoodsId ?? editInwardId;
-      const { pdf_url, name } = await goodsReceiptAPI.generatePdf(inwardHeaderId!);
-      setPdfInfo({ url: pdf_url, name: name ?? `Inward-${inwardDate}.pdf` });
     } catch (e: any) {
       toast.showWarning(e?.message ?? 'Failed to save inward details.');
     } finally {
+      detailsSubmitInProgress.current = false;
       setIsSubmitting(false);
     }
   };
 
-  const updateDetail = (materialsId: string, field: string, value: number | string) => {
+  const updateDetail = (index: number, field: string, value: number | string) => {
     setDetails((prev) =>
-      prev.map((d) => {
-        if (String(d.materials_id) !== materialsId) return d;
+      prev.map((d, i) => {
+        if (i !== index) return d;
         const upd = { ...d, [field]: value };
         if (field === 'recipt_qty' || field === 'reject_qty') {
           const rec = Number(field === 'recipt_qty' ? value : d.recipt_qty) || 0;
@@ -463,8 +593,8 @@ export default function GoodsReceiptFlow({
       })
     );
   };
-  const removeDetail = (materialsId: string) => {
-    setDetails((prev) => prev.filter((d) => String(d.materials_id) !== materialsId));
+  const removeDetail = (index: number) => {
+    setDetails((prev) => prev.filter((_, i) => i !== index));
   };
   const toggleMaterial = (id: string) => {
     setSelectedMaterialIds((prev) => {
@@ -474,22 +604,87 @@ export default function GoodsReceiptFlow({
       return next;
     });
   };
-  const toggleDetailExpand = (id: string) => {
+  const toggleDetailExpand = (indexKey: string) => {
     setExpandedDetails((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(indexKey)) next.delete(indexKey);
+      else next.add(indexKey);
       return next;
     });
+  };
+
+  const handleViewPdf = () => {
+    if (pdfInfo?.url) openPdfInNewTab(pdfInfo.url);
+    else toast.showWarning('No PDF available.');
+  };
+
+  const handleSharePdf = async () => {
+    if (!pdfInfo?.url) {
+      toast.showWarning('No PDF available.');
+      return;
+    }
+    const copied = await copyPdfUrl(pdfInfo.url);
+    if (copied) {
+      toast.showSuccess('PDF URL copied to clipboard. Paste in browser to open.');
+    } else {
+      toast.showWarning('Could not copy. Open PDF in new tab and copy the URL from address bar.');
+    }
   };
 
   const getSupplierLabel = () => {
     const t = entryTypeList.find((x) => String(x.id) === String(entryTypeId));
     const name = (t?.name ?? '').toLowerCase();
-    if (name.includes('direct')) return 'Supplier';
-    if (name.includes('other project')) return 'Project';
-    if (name.includes('same project') || name.includes('other store')) return 'Store';
-    return 'Supplier / Project / Store';
+    if (name.includes('from other project') || (name.includes('other project') && !name.includes('same'))) return 'Project';
+    if (name.includes('same project-other stores') || name.includes('same project') || name.includes('other store')) return 'Store';
+    return 'Supplier';
+  };
+
+  const getSupplierOptionDisplay = (item: any) => {
+    const t = entryTypeList.find((x) => String(x.id) === String(entryTypeId));
+    const name = (t?.name ?? '').toLowerCase();
+    if (name.includes('from other project') || (name.includes('other project') && !name.includes('same'))) {
+      return item?.project_name ?? item?.name ?? item?.registration_name ?? item?.store_name ?? item?.id ?? '';
+    }
+    return item?.name ?? item?.registration_name ?? item?.store_name ?? item?.project_name ?? item?.id ?? '';
+  };
+
+  const isSupplierEntryType = () => getSupplierLabel() === 'Supplier';
+
+  const refreshSupplierOptions = async () => {
+    if (!entryTypeId || selectedStoreIds.size === 0) return;
+    const t = entryTypeList.find((x) => String(x.id) === String(entryTypeId));
+    const typeSlug = ((t as any)?.slug ?? t?.name ?? '').toString().toLowerCase().replace(/\s+/g, '-');
+    const pId = projectIdForApi();
+    const storeNumericIds = Array.from(selectedStoreIds)
+      .map((sid) => stores.find((x) => String(x.id) === sid)?.numericId ?? stores.find((x) => String(x.id) === sid)?.id)
+      .filter((x): x is string | number => x != null);
+    if (!pId) return;
+    try {
+      const list = await goodsReceiptAPI.getTypeWiseList(typeSlug || String(entryTypeId), pId, storeNumericIds);
+      setSupplierOptions(Array.isArray(list) ? list : []);
+    } catch {
+      setSupplierOptions([]);
+    }
+  };
+
+  const refreshStores = async () => {
+    const pId = projectIdForApi();
+    if (!pId) return;
+    setIsLoadingStores(true);
+    try {
+      const res = await masterDataAPI.getProjectWiseWarehouses(pId);
+      const list = Array.isArray(res) ? res : [];
+      setStores(list.map((s: any) => ({
+        id: s.uuid ?? s.id,
+        numericId: Number.isFinite(Number(s.id)) ? Number(s.id) : undefined,
+        name: s.name ?? s.store_name ?? '',
+        code: s.code ?? '',
+      })));
+    } catch {
+      setStores([]);
+    } finally {
+      setIsLoadingStores(false);
+    }
   };
 
   const handleAddNewGoodsOpen = () => {
@@ -556,7 +751,7 @@ export default function GoodsReceiptFlow({
     <AppLayout>
       <div className="space-y-6 w-full max-w-4xl mx-auto">
         <div className="flex items-center gap-4">
-          <button onClick={() => router.push('/inventory-reports/grn-mrn-slip')} className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'}`} title="Back">
+          <button onClick={handleBackClick} className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'}`} title="Back">
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div className="flex-1">
@@ -582,21 +777,37 @@ export default function GoodsReceiptFlow({
             </div>
             {isLoadingStores ? (
               <div className="flex justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-[#6B8E23]" /></div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
-                {stores.map((store) => {
-                  const sid = String(store.id);
-                  const isSelected = selectedStoreIds.has(sid);
-                  return (
-                    <button key={sid} type="button" onClick={() => toggleStore(sid)} className={`p-4 rounded-xl border-2 text-left transition-all ${isSelected ? 'border-[#6B8E23] bg-[#6B8E23]/10' : isDark ? 'border-slate-600 hover:border-slate-500' : 'border-slate-200 hover:border-slate-300'}`}>
-                      <div className="flex items-center justify-between">
-                        <div><p className={`font-bold ${textPrimary}`}>{store.name}</p>{store.code && <p className={`text-sm ${textSecondary}`}>{store.code}</p>}</div>
-                        {isSelected && <Check className="w-5 h-5 text-[#6B8E23]" />}
-                      </div>
-                    </button>
-                  );
-                })}
+            ) : stores.length === 0 ? (
+              <div className="py-8 mb-6">
+                <p className={`text-center mb-4 ${textSecondary}`}>No stores available for this project. Add a store to continue.</p>
+                <div className="flex justify-center">
+                  <button type="button" onClick={() => setShowCreateWarehouseModal(true)} className={`flex items-center gap-2 px-6 py-3 rounded-lg font-bold bg-[#6B8E23] text-white hover:bg-[#5a7a1e]`}>
+                    <Plus className="w-5 h-5" /> Add Store
+                  </button>
+                </div>
               </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                  {stores.map((store) => {
+                    const sid = String(store.id);
+                    const isSelected = selectedStoreIds.has(sid);
+                    return (
+                      <button key={sid} type="button" onClick={() => toggleStore(sid)} className={`p-4 rounded-xl border-2 text-left transition-all ${isSelected ? 'border-[#6B8E23] bg-[#6B8E23]/10' : isDark ? 'border-slate-600 hover:border-slate-500' : 'border-slate-200 hover:border-slate-300'}`}>
+                        <div className="flex items-center justify-between">
+                          <div><p className={`font-bold ${textPrimary}`}>{store.name}</p>{store.code && <p className={`text-sm ${textSecondary}`}>{store.code}</p>}</div>
+                          {isSelected && <Check className="w-5 h-5 text-[#6B8E23]" />}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="mb-4">
+                  <button type="button" onClick={() => setShowCreateWarehouseModal(true)} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold border ${isDark ? 'border-slate-600 hover:bg-slate-800/50' : 'border-slate-300 hover:bg-slate-50'} ${textPrimary}`} title="Add new store">
+                    <Plus className="w-4 h-4" /> Add New Store
+                  </button>
+                </div>
+              </>
             )}
             <div className="flex justify-end">
               <button onClick={handleStoresNext} disabled={isCreatingHeader || selectedStoreIds.size === 0} className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold ${isCreatingHeader || selectedStoreIds.size === 0 ? 'opacity-50 cursor-not-allowed' : ''} bg-[#6B8E23] text-white hover:bg-[#5a7a1e]`}>
@@ -615,7 +826,7 @@ export default function GoodsReceiptFlow({
                 <button type="button" onClick={() => setShowHelpModal(true)} className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`} title="Help"><HelpCircle className="w-5 h-5" /></button>
               </div>
               <div><p className={`text-sm font-bold ${textSecondary}`}>Stores</p><p className={textPrimary}>{stores.filter((s) => selectedStoreIds.has(String(s.id))).map((s) => s.name).join(', ') || '-'}</p></div>
-              <div><p className={`text-sm font-bold ${textSecondary}`}>GRN/MRN no</p><p className={textPrimary}>{inwardHeader?.grn_no ?? inwardHeader?.name ?? inwardDate}</p></div>
+              <div><p className={`text-sm font-bold ${textSecondary}`}>GRN/MRN no</p><p className={textPrimary}>{mode === 'edit' ? (inwardHeader?.grn_no ?? inwardHeader?.name ?? inwardDate) : (grnNoFromBackend ?? inwardHeader?.name ?? inwardDate)}</p></div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
@@ -625,18 +836,52 @@ export default function GoodsReceiptFlow({
               </div>
               <div>
                 <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>Entry Type *</label>
-                <select value={entryTypeId} onChange={(e) => { setEntryTypeId(e.target.value); setSupplierProjectStoreId(''); }} className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}>
+                <select
+                  value={entryTypeId}
+                  onFocus={handleEntryTypeFocus}
+                  onChange={(e) => { setEntryTypeId(e.target.value); setSupplierProjectStoreId(''); }}
+                  disabled={isLoadingEntryTypes}
+                  className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}
+                >
                   <option value="">Select...</option>
                   {entryTypeList.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
                 </select>
+                {entryTypesLoadAttempted && !isLoadingEntryTypes && entryTypeList.length === 0 && (
+                  <p className={`mt-1 text-sm ${textSecondary}`}>No Data Found</p>
+                )}
               </div>
               {entryTypeId && (
                 <div className="sm:col-span-2">
                   <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>{getSupplierLabel()} *</label>
-                  <select value={supplierProjectStoreId} onChange={(e) => setSupplierProjectStoreId(e.target.value)} className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}>
-                    <option value="">Select...</option>
-                    {supplierOptions.map((o: any) => <option key={o.id} value={o.id}>{o.name ?? o.registration_name ?? o.project_name ?? o.store_name ?? o.id}</option>)}
-                  </select>
+                  <div className="flex gap-2">
+                    <select value={supplierProjectStoreId} onChange={(e) => setSupplierProjectStoreId(e.target.value)} disabled={isLoadingSupplierOptions} className={`flex-1 px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}>
+                      <option value="">Select...</option>
+                      {supplierOptions.map((o: any) => <option key={o.id} value={o.id}>{getSupplierOptionDisplay(o)}</option>)}
+                    </select>
+                    {isSupplierEntryType() && (
+                      <button type="button" onClick={() => setShowCreateVendorModal(true)} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold border ${isDark ? 'border-slate-600 hover:bg-slate-800/50' : 'border-slate-300 hover:bg-slate-50'} ${textPrimary}`} title="Add new supplier">
+                        <Plus className="w-5 h-5" /> Add New
+                      </button>
+                    )}
+                    {getSupplierLabel() === 'Store' && (
+                      <button type="button" onClick={() => setShowCreateWarehouseModal(true)} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold border ${isDark ? 'border-slate-600 hover:bg-slate-800/50' : 'border-slate-300 hover:bg-slate-50'} ${textPrimary}`} title="Add new store">
+                        <Plus className="w-5 h-5" /> Add New
+                      </button>
+                    )}
+                    {getSupplierLabel() === 'Project' && (
+                      <button type="button" onClick={() => setShowCreateProjectModal(true)} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold border ${isDark ? 'border-slate-600 hover:bg-slate-800/50' : 'border-slate-300 hover:bg-slate-50'} ${textPrimary}`} title="Add new project">
+                        <Plus className="w-5 h-5" /> Add New
+                      </button>
+                    )}
+                  </div>
+                  {!isLoadingSupplierOptions && supplierOptions.length === 0 && (
+                    <p className={`mt-1 text-sm ${textSecondary}`}>
+                      No {getSupplierLabel().toLowerCase()}s found.
+                      {isSupplierEntryType() && ' Add a supplier in Masters or use Add New.'}
+                      {getSupplierLabel() === 'Store' && ' Add a store using the Add New button above.'}
+                      {getSupplierLabel() === 'Project' && ' Add a project using the Add New button above.'}
+                    </p>
+                  )}
                 </div>
               )}
               <div>
@@ -708,7 +953,9 @@ export default function GoodsReceiptFlow({
                       const checked = selectedMaterialIds.has(mid);
                       return (
                         <tr key={mid} className={`cursor-pointer ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'} ${checked ? 'bg-[#6B8E23]/10' : ''}`} onClick={() => toggleMaterial(mid)}>
-                          <td className="px-4 py-3"><input type="checkbox" checked={checked} onChange={() => toggleMaterial(mid)} className="rounded" /></td>
+                          <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                            <input type="checkbox" checked={checked} onChange={() => toggleMaterial(mid)} className="rounded cursor-pointer" />
+                          </td>
                           <td className={`px-4 py-3 font-mono ${textPrimary}`}>{m.code}</td>
                           <td className={`px-4 py-3 ${textPrimary}`}>{m.name}</td>
                           <td className={`px-4 py-3 ${textSecondary}`}>{m.specification || '-'}</td>
@@ -731,19 +978,19 @@ export default function GoodsReceiptFlow({
 
         {step === 'details' && (
           <div className={`rounded-xl border p-6 ${cardClass}`}>
-            <h2 className={`text-lg font-bold mb-4 ${textPrimary}`}>Details for Goods</h2>
+            <h2 className={`text-lg font-bold mb-4 ${textPrimary}`}>Details of Goods</h2>
             <div className="space-y-3 mb-6">
-              {details.map((d) => {
-                const key = String(d.materials_id);
-                const isExpanded = expandedDetails.has(key);
+              {details.map((d, index) => {
+                const indexKey = `detail-${index}`;
+                const isExpanded = expandedDetails.has(indexKey);
                 const recQty = Number(d.recipt_qty) || 0;
                 const rejQty = Number(d.reject_qty) || 0;
                 const accepted = Math.max(0, recQty - rejQty);
                 return (
-                  <div key={key} className={`border rounded-lg overflow-hidden ${isDark ? 'border-slate-600' : 'border-slate-200'}`}>
-                    <button type="button" onClick={() => toggleDetailExpand(key)} className={`w-full flex items-center justify-between p-4 text-left ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}`}>
+                  <div key={indexKey} className={`border rounded-lg overflow-hidden ${isDark ? 'border-slate-600' : 'border-slate-200'}`}>
+                    <button type="button" onClick={() => toggleDetailExpand(indexKey)} className={`w-full flex items-center justify-between p-4 text-left ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}`}>
                       <div className="flex-1 min-w-0"><p className={`font-bold ${textPrimary}`}>{d.materialName}</p><p className={`text-sm ${textSecondary}`}>{d.materialCode} • {d.materialUnit || '-'} • {d.materialSpec || '-'}</p></div>
-                      <button type="button" onClick={(e) => { e.stopPropagation(); removeDetail(key); }} className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg"><Trash2 className="w-4 h-4" /></button>
+                      <button type="button" onClick={(e) => { e.stopPropagation(); removeDetail(index); }} className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg"><Trash2 className="w-4 h-4" /></button>
                       {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                     </button>
                     {isExpanded && (
@@ -751,11 +998,11 @@ export default function GoodsReceiptFlow({
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div>
                             <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>Receipt In Qty *</label>
-                            <input type="number" min={0} value={d.recipt_qty} onChange={(e) => updateDetail(key, 'recipt_qty', e.target.value)} className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`} />
+                            <input type="number" min={0} value={d.recipt_qty} onChange={(e) => updateDetail(index, 'recipt_qty', e.target.value)} className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`} />
                           </div>
                           <div>
                             <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>Reject Qty</label>
-                            <input type="number" min={0} value={d.reject_qty} onChange={(e) => updateDetail(key, 'reject_qty', e.target.value)} className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`} />
+                            <input type="number" min={0} value={d.reject_qty} onChange={(e) => updateDetail(index, 'reject_qty', e.target.value)} className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`} />
                           </div>
                           <div>
                             <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>Accepted Qty</label>
@@ -767,11 +1014,11 @@ export default function GoodsReceiptFlow({
                           </div>
                           <div>
                             <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>Rate per Unit</label>
-                            <input type="number" min={0} step="0.01" value={d.price} onChange={(e) => updateDetail(key, 'price', e.target.value)} className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`} />
+                            <input type="number" min={0} step="0.01" value={d.price} onChange={(e) => updateDetail(index, 'price', e.target.value)} className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`} />
                           </div>
                           <div className="sm:col-span-2">
                             <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>Overall Remarks</label>
-                            <input type="text" value={d.remarkes} onChange={(e) => updateDetail(key, 'remarkes', e.target.value)} className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`} />
+                            <input type="text" value={d.remarkes} onChange={(e) => updateDetail(index, 'remarkes', e.target.value)} className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`} />
                           </div>
                         </div>
                       </div>
@@ -780,7 +1027,10 @@ export default function GoodsReceiptFlow({
                 );
               })}
             </div>
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setStep('inwardsList')} className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold border ${isDark ? 'border-slate-600 hover:bg-slate-800/50' : 'border-slate-300 hover:bg-slate-50'} ${textPrimary}`}>
+                <Plus className="w-4 h-4" /> Add More
+              </button>
               <button onClick={handleDetailsNext} disabled={isSubmitting || details.length === 0} className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold ${isSubmitting || details.length === 0 ? 'opacity-50 cursor-not-allowed' : ''} bg-[#6B8E23] text-white hover:bg-[#5a7a1e]`}>
                 {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Next <ArrowRight className="w-4 h-4" />
               </button>
@@ -795,21 +1045,61 @@ export default function GoodsReceiptFlow({
               <h2 className={`text-xl font-black mb-2 ${textPrimary}`}>Well done !!!</h2>
               <p className={`text-base ${textSecondary}`}>Inward of Goods is ready</p>
             </div>
-            <div className="flex flex-wrap justify-center gap-4 mb-6">
+            <div className="flex flex-wrap justify-center gap-4 mb-4">
               <button onClick={() => router.push('/inventory-reports/grn-mrn-slip')} className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold bg-[#6B8E23] text-white hover:bg-[#5a7a1e]`}><Plus className="w-4 h-4" /> Add Another</button>
             </div>
-            {pdfInfo?.url && (
+            <div className="flex flex-wrap justify-center gap-3 mb-6">
+              <button onClick={handleViewPdf} className="flex items-center gap-2 px-5 py-2 rounded-lg font-bold border border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10"><ExternalLink className="w-4 h-4" /> View</button>
+              <button onClick={handleSharePdf} className="flex items-center gap-2 px-5 py-2 rounded-lg font-bold border border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10"><Share2 className="w-4 h-4" /> Share</button>
+            </div>
+            {pdfInfo?.url && pdfInfo?.name && (
               <div className={`p-4 rounded-xl border ${isDark ? 'border-slate-600' : 'border-slate-200'}`}>
-                <p className={`text-sm font-bold mb-2 ${textSecondary}`}>PDF</p>
-                <p className={`font-mono text-sm mb-3 ${textPrimary}`}>{pdfInfo.name || 'Inward.pdf'}</p>
-                <div className="flex flex-wrap justify-center gap-2">
-                  <button onClick={() => window.open(pdfInfo.url, '_blank')} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10"><ExternalLink className="w-4 h-4" /> View</button>
-                  <button onClick={() => navigator.share?.({ url: pdfInfo.url, title: pdfInfo.name })} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10"><Share2 className="w-4 h-4" /> Share</button>
-                </div>
+                <p className={`text-sm font-bold mb-1 ${textSecondary}`}>PDF</p>
+                <p className={`font-mono text-sm ${textPrimary}`}>{pdfInfo.name || 'Inward.pdf'}</p>
               </div>
             )}
           </div>
         )}
+
+        <CreateVendorModal
+          theme={theme}
+          isOpen={showCreateVendorModal}
+          onClose={() => setShowCreateVendorModal(false)}
+          defaultVendorType="supplier"
+          onSuccess={async (createdVendor) => {
+            await refreshSupplierOptions();
+            const id = createdVendor?.id ?? createdVendor?.uuid ?? createdVendor?.numericId;
+            if (id != null) setSupplierProjectStoreId(String(id));
+          }}
+        />
+
+        <CreateWarehouseModal
+          theme={theme}
+          isOpen={showCreateWarehouseModal}
+          onClose={() => setShowCreateWarehouseModal(false)}
+          selectedProjectId={projectIdForApi() ?? undefined}
+          onSuccess={async () => {
+            if (step === 'stores') {
+              await refreshStores();
+            } else {
+              await refreshSupplierOptions();
+              await refreshStores();
+            }
+          }}
+        />
+
+        <CreateProjectModal
+          theme={theme}
+          isOpen={showCreateProjectModal}
+          onClose={() => setShowCreateProjectModal(false)}
+          onSuccess={async () => {
+            await refreshSupplierOptions();
+          }}
+          onProjectCreated={(project) => {
+            const id = (project as any)?.id ?? (project as any)?.uuid;
+            if (id != null) setSupplierProjectStoreId(String(id));
+          }}
+        />
 
         {showHelpModal && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
