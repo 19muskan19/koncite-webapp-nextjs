@@ -124,9 +124,13 @@ apiClient.interceptors.response.use(
             }
           }
           break;
-        case 403:
-          console.error('Forbidden: You do not have permission');
+        case 403: {
+          const url = error.config?.url || '';
+          const data = (error.response?.data as ErrorResponseData) || {};
+          const msg = data?.message || data?.error || 'You do not have permission';
+          console.error('Forbidden (403):', msg, { url, method: error.config?.method });
           break;
+        }
         case 404:
           // Suppress 404 logs for known endpoints that may not exist or return 404 during normal use
           const url = error.config?.url || '';

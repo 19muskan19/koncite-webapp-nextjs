@@ -11,7 +11,6 @@ import {
   FileText,
   Image as ImageIcon,
   Send,
-  Copy,
   Package,
   Loader2,
   X,
@@ -410,39 +409,38 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
 
   const handleViewPdf = () => {
     if (pdfUrl) window.open(pdfUrl, '_blank');
-    else toast.showWarning('Generate PDF first.');
+    else toast.showWarning('PDF not ready. Please try again.');
   };
 
   const handleSharePdf = async () => {
-    if (!pdfUrl) {
-      toast.showWarning('Generate PDF first.');
+    let urlToShare = pdfUrl;
+    if (!urlToShare) {
+      const id = editId ?? rfqId;
+      if (!id) {
+        toast.showWarning('RFQ not found.');
+        return;
+      }
+      setIsSubmitting(true);
+      try {
+        const { pdf_url } = await rfqAPI.generatePdf(id);
+        urlToShare = pdf_url ? getFullPdfUrl(pdf_url) : '';
+        if (urlToShare) setPdfUrl(urlToShare);
+      } catch (e: any) {
+        toast.showWarning(e?.message ?? 'Failed to generate share link.');
+        return;
+      } finally {
+        setIsSubmitting(false);
+      }
+    }
+    if (!urlToShare) {
+      toast.showWarning('Could not generate share link.');
       return;
     }
     try {
-      const res = await fetch(pdfUrl, { mode: 'cors' });
-      const blob = await res.blob();
-      const file = new File([blob], `rfq-quote-${editId ?? rfqId}.pdf`, { type: 'application/pdf' });
-      const canShareFiles = 'share' in navigator && ('canShare' in navigator ? navigator.canShare({ files: [file] }) : true);
-      if (canShareFiles) {
-        await navigator.share({
-          title: 'RFQ Quote',
-          text: 'Request for Quotation',
-          files: [file],
-        });
-        toast.showSuccess('Shared successfully.');
-      } else {
-        await navigator.clipboard.writeText(pdfUrl);
-        toast.showSuccess('PDF link copied to clipboard.');
-      }
-    } catch (e: any) {
-      if (e?.name !== 'AbortError') {
-        try {
-          await navigator.clipboard.writeText(pdfUrl);
-          toast.showSuccess('Link copied to clipboard.');
-        } catch {
-          toast.showWarning('Could not share. Open PDF in new tab and use browser Share.');
-        }
-      }
+      await navigator.clipboard.writeText(urlToShare);
+      toast.showSuccess('Link copied to clipboard.');
+    } catch {
+      toast.showWarning('Could not copy to clipboard.');
     }
   };
 
@@ -452,76 +450,6 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
-    });
-  };
-
-  const getSelectedVendorEmails = (): string[] => {
-    const ids = Array.from(selectedVendorIds);
-    if (ids.length === 0) return [];
-    const selectedVendors = vendors.filter((v: any) => ids.includes(String(v.id ?? v.uuid ?? '')));
-    return selectedVendors
-      .map((v: any) => (v.email ?? v.contact_person_email ?? v.contactPersonEmail ?? (v.contact?.email ?? '')).trim())
-      .filter((e: string) => e && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
-  };
-
-  const handleEmailToVendors = async () => {
-    const ids = Array.from(selectedVendorIds);
-    if (ids.length === 0) {
-      toast.showWarning('Please select at least one vendor.');
-      return;
-    }
-    const emails = getSelectedVendorEmails();
-    if (emails.length === 0) {
-      toast.showWarning('Selected vendors do not have valid email addresses. Add email in Masters > Vendors.');
-      return;
-    }
-    const requestId = editId ?? rfqId;
-    const emailBody = `Dear Vendor,\n\nPlease find our Request for Quotation attached.\n\nKindly submit your quote at your earliest convenience.\n\nBest regards`;
-
-    if (requestId) {
-      setIsSubmitting(true);
-      try {
-        const imageFilename = quoteImage
-          ? `quote-image-${Date.now()}.${quoteImage.startsWith('data:image/jpeg') || quoteImage.startsWith('data:image/jpg') ? 'jpg' : quoteImage.startsWith('data:image/webp') ? 'webp' : quoteImage.startsWith('data:image/gif') ? 'gif' : 'png'}`
-          : undefined;
-        await rfqAPI.sendEmailToVendors(requestId, emails, emailBody, quoteImage || undefined, imageFilename);
-        toast.showSuccess(`Email sent to ${emails.length} vendor(s).`);
-        setStep('doc');
-        return;
-      } catch (e: any) {
-        const is404 = e?.response?.status === 404;
-        if (!is404) {
-          toast.showWarning(e?.message ?? 'Failed to send email. Opening email client instead.');
-        }
-      } finally {
-        setIsSubmitting(false);
-      }
-    }
-
-    const subject = `RFQ / Quote Request - ${project?.name ?? 'Project'}`;
-    const mailto = `mailto:${emails.join(',')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(emailBody)}`;
-    const a = document.createElement('a');
-    a.href = mailto;
-    a.target = '_blank';
-    a.rel = 'noopener';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    toast.showSuccess(`Opened email client for ${emails.length} vendor(s). Paste recipient if needed, attach PDF, and send.`);
-    setStep('doc');
-  };
-
-  const handleCopyVendorEmails = () => {
-    const emails = getSelectedVendorEmails();
-    if (emails.length === 0) {
-      toast.showWarning('Select vendors with valid emails first.');
-      return;
-    }
-    const text = emails.join('; ');
-    navigator.clipboard?.writeText(text).then(() => {
-      toast.showSuccess(`Copied ${emails.length} email(s) to clipboard.`);
-    }).catch(() => {
-      toast.showWarning('Could not copy to clipboard.');
     });
   };
 
@@ -813,23 +741,6 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
                 <ArrowLeft className="w-4 h-4" /> Back
               </button>
               <button
-                onClick={handleCopyVendorEmails}
-                disabled={selectedVendorIds.size === 0}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold border ${isDark ? 'border-slate-600 hover:bg-slate-800/50' : 'border-slate-300 hover:bg-slate-50'}`}
-                title="Copy selected vendor emails to clipboard"
-              >
-                <Copy className="w-4 h-4" /> Copy Emails
-              </button>
-              <button
-                onClick={handleEmailToVendors}
-                disabled={selectedVendorIds.size === 0 || isSubmitting}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold border-2 ${selectedVendorIds.size > 0 && !isSubmitting ? 'border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10' : 'border-slate-400 text-slate-400 cursor-not-allowed'}`}
-                title="Send email via backend, or open email client"
-              >
-                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                Email to Vendors
-              </button>
-              <button
                 onClick={handleSendToVendors}
                 disabled={selectedVendorIds.size === 0 || isSubmitting}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold ${selectedVendorIds.size > 0 && !isSubmitting ? 'bg-[#6B8E23] text-white hover:bg-[#5a7a1e]' : 'bg-slate-400 text-white cursor-not-allowed'}`}
@@ -848,34 +759,37 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
             <h2 className={`text-lg font-bold mb-4 ${textPrimary}`}>Quote Document</h2>
             <div className={`p-8 rounded-lg text-center ${isDark ? 'bg-slate-800/50' : 'bg-slate-50'}`}>
               <FileText className={`w-16 h-16 mx-auto mb-4 ${textSecondary}`} />
-              <p className={`mb-4 ${textSecondary}`}>
-                {pdfUrl ? 'Your RFQ PDF is ready. View or share below.' : 'Generate the quote PDF to view or share.'}
+              <p className={`mb-6 ${textSecondary}`}>
+                {pdfUrl ? 'Your RFQ PDF is ready. View or share the link below.' : 'Quote sent to vendors. View or share the link below.'}
               </p>
-              <button
-                onClick={handleGeneratePdf}
-                disabled={isSubmitting}
-                className="flex items-center gap-2 px-6 py-3 rounded-lg font-bold bg-[#6B8E23] text-white hover:bg-[#5a7a1e] mx-auto disabled:opacity-70"
-              >
-                {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Package className="w-5 h-5" />}
-                {pdfUrl ? 'Regenerate PDF' : 'Generate PDF'}
-              </button>
-              {pdfUrl && (
-                <div className="flex flex-wrap items-center justify-center gap-3 mt-6">
-                  <button
-                    onClick={handleViewPdf}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-blue-500/20 text-blue-600 hover:bg-blue-500/30 dark:text-blue-400 transition-colors"
-                    title="Open PDF in new tab"
-                  >
-                    <Eye className="w-4 h-4" /> View
-                  </button>
-                  <button
-                    onClick={handleSharePdf}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-emerald-500/20 text-emerald-600 hover:bg-emerald-500/30 dark:text-emerald-400 transition-colors"
-                    title="Share PDF"
-                  >
-                    <Share2 className="w-4 h-4" /> Share
-                  </button>
-                </div>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <button
+                  onClick={handleViewPdf}
+                  disabled={!pdfUrl}
+                  className="flex items-center gap-2 px-6 py-3 rounded-lg font-bold bg-blue-500/20 text-blue-600 hover:bg-blue-500/30 dark:text-blue-400 transition-colors disabled:opacity-70"
+                  title="Open PDF in new tab"
+                >
+                  <Eye className="w-5 h-5" /> View
+                </button>
+                <button
+                  onClick={handleSharePdf}
+                  disabled={isSubmitting}
+                  className="flex items-center gap-2 px-6 py-3 rounded-lg font-bold bg-emerald-500/20 text-emerald-600 hover:bg-emerald-500/30 dark:text-emerald-400 transition-colors disabled:opacity-70"
+                  title="Copy share link to clipboard"
+                >
+                  {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Share2 className="w-5 h-5" />}
+                  Share
+                </button>
+              </div>
+              {!pdfUrl && (
+                <button
+                  onClick={handleGeneratePdf}
+                  disabled={isSubmitting}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium mt-4 mx-auto text-[#6B8E23] hover:bg-[#6B8E23]/10 disabled:opacity-70"
+                >
+                  {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
+                  Generate PDF
+                </button>
               )}
             </div>
             <div className="mt-6 flex gap-3">

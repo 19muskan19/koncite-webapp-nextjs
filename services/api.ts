@@ -819,7 +819,12 @@ export const masterDataAPI = {
   // Returns: SubProjectResources collection - subprojects for the project (filtered by company_id)
   getProjectSubprojects: async (projectId: number | string): Promise<any[]> => {
     try {
+      // Backend typically expects numeric project_id; sending UUID may cause 500
       const payload = { project_id: projectId };
+      const isNumeric = projectId != null && !isNaN(Number(projectId)) && String(projectId).trim() !== '';
+      if (!isNumeric) {
+        console.warn('⚠️ /project-subproject: project_id may not be numeric. Backend expects numeric ID. Payload:', payload);
+      }
       console.log('📦 Calling POST /project-subproject with payload:', payload);
       const response = await apiClient.post('/project-subproject', payload);
       console.log('✅ /project-subproject response:', response.data);
@@ -836,9 +841,36 @@ export const masterDataAPI = {
       console.log('✅ Extracted subprojects:', subprojects.length);
       return subprojects;
     } catch (error: any) {
-      console.error('❌ /project-subproject error:', error);
+      const status = error.response?.status;
+      const errData = error.response?.data ?? {};
+      const backendMsg = errData?.message ?? errData?.error ?? errData?.exception ?? (typeof errData === 'string' ? errData : errData?.message);
+      const hasResponse = !!error.response;
+      console.error('❌ /project-subproject error:', {
+        hasResponse,
+        status: status ?? 'no response',
+        message: error.message ?? 'unknown',
+        backendMessage: backendMsg ?? 'none',
+        projectId,
+        code: error.code,
+        url: error.config?.url,
+      });
+      if (!hasResponse) {
+        console.error('❌ Likely network/CORS error - no response from server. Check API URL and connectivity.');
+      }
+      // Fallback: try /sub-project-list when /project-subproject fails (500, 404, or network error)
+      if (projectId != null && projectId !== '') {
+        const tryFallback = !error.response || error.response?.status === 500 || error.response?.status === 404;
+        if (tryFallback) {
+          console.warn('⚠️ Falling back to /sub-project-list');
+          try {
+            return await masterDataAPI.getSubprojects(projectId);
+          } catch (fallbackErr: any) {
+            console.error('❌ Fallback /sub-project-list failed:', fallbackErr?.message ?? fallbackErr?.response?.data ?? fallbackErr);
+          }
+        }
+      }
       throw {
-        message: error.response?.data?.message || 'Failed to fetch project subprojects',
+        message: backendMsg || error.response?.data?.message || 'Failed to fetch project subprojects',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
@@ -4108,7 +4140,26 @@ export const goodsReturnAPI = {
   }): Promise<any> => {
     try {
       const response = await apiClient.post('/inventory/return-goods-add', payload);
-      return response.data?.data ?? response.data;
+      const res = response.data;
+      // Extract array of items from common response structures
+      const toArr = (x: any) => (Array.isArray(x) ? x : []);
+      let arr =
+        toArr(res).length > 0 ? res
+        : toArr(res?.data).length > 0 ? res.data
+        : toArr(res?.return_goods).length > 0 ? res.return_goods
+        : toArr(res?.data?.return_goods).length > 0 ? res.data.return_goods
+        : toArr(res?.data?.data).length > 0 ? res.data.data
+        : toArr(res?.materials).length > 0 ? res.materials
+        : toArr(res?.data?.materials).length > 0 ? res.data.materials
+        : [];
+      // Single object (e.g. { id, name, code, stock_qty }) - wrap in array
+      if (arr.length === 0) {
+        const obj = res?.data ?? res;
+        if (obj && typeof obj === 'object' && (obj.stock_qty != null || obj.code != null || obj.name != null)) {
+          arr = [obj];
+        }
+      }
+      return arr.length > 0 ? arr : (res?.data ?? res);
     } catch (error: any) {
       throw { message: error.response?.data?.message || 'Failed to add return goods', errors: error.response?.data?.errors || {} } as ApiError;
     }
@@ -4131,9 +4182,46 @@ export const goodsReturnAPI = {
       throw { message: error.response?.data?.message || 'Failed to update return details', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
-  generatePdf: async (requestId: number | string): Promise<{ pdf_url: string; name?: string }> => {
+  generatePdf: async (
+    requestId: number | string,
+    returnGoodsDetails?: Array<{
+      id?: number | string;
+      inv_return_goods_id?: number | string;
+      materials_id?: number | string;
+      type?: string;
+      return_qty?: number | string;
+      stock_qty?: number | string;
+      materialCode?: string;
+      materialName?: string;
+      materialSpec?: string;
+      materialUnit?: string;
+    }>
+  ): Promise<{ pdf_url: string; name?: string }> => {
     try {
-      const response = await apiClient.post('/inventory/generate-pdf', { type: 'return', requestId });
+      const payload: Record<string, unknown> = { type: 'return', requestId };
+      if (returnGoodsDetails != null && returnGoodsDetails.length > 0) {
+        payload.return_goods_details = returnGoodsDetails;
+        // Shape matching backend data.inv_returns_goods[].inv_return_details for PDF template
+        payload.inv_return_details = returnGoodsDetails.map((d) => ({
+          id: d.id,
+          inv_return_goods_id: d.inv_return_goods_id,
+          materials_id: d.materials_id,
+          type: d.type ?? 'materials',
+          return_qty: d.return_qty,
+          stock_qty: d.stock_qty,
+          materials: {
+            code: d.materialCode ?? '',
+            name: d.materialName ?? '',
+            specification: d.materialSpec ?? '',
+            unit: d.materialUnit ?? '',
+          },
+        }));
+        const firstInvReturnGoodsId = returnGoodsDetails[0]?.inv_return_goods_id;
+        if (firstInvReturnGoodsId != null) {
+          payload.inv_return_goods_id = firstInvReturnGoodsId;
+        }
+      }
+      const response = await apiClient.post('/inventory/generate-pdf', payload);
       const data = response.data?.data ?? response.data;
       const pdfUrl = response.data?.pdf_url ?? data?.pdf_url;
       if (!pdfUrl) throw new Error('No PDF URL in response');
@@ -4253,9 +4341,12 @@ export const goodsIssueAPI = {
       throw { message: error.response?.data?.message || 'Failed to update issue details', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
-  generatePdf: async (requestId: number | string): Promise<{ pdf_url: string; name?: string }> => {
+  generatePdf: async (requestId: number | string, invIssueListsId?: number | string, details?: Array<{ materials_id?: number | string; materialCode?: string; materialName?: string; materialSpec?: string; materialUnit?: string; issue_qty?: number | string; stock_qty?: number | string; activityName?: string }>): Promise<{ pdf_url: string; name?: string }> => {
     try {
-      const response = await apiClient.post('/inventory/generate-pdf', { type: 'issue', requestId });
+      const payload: Record<string, unknown> = { type: 'issue', requestId };
+      if (invIssueListsId != null) payload.inv_issue_lists_id = invIssueListsId;
+      if (details != null && details.length > 0) payload.issue_goods_details = details;
+      const response = await apiClient.post('/inventory/generate-pdf', payload);
       const data = response.data?.data ?? response.data;
       const pdfUrl = response.data?.pdf_url ?? data?.pdf_url;
       if (!pdfUrl) throw new Error('No PDF URL in response');
@@ -4338,14 +4429,35 @@ export const goodsReceiptAPI = {
     projects_id: number | string;
     store_warehouses_id: (number | string)[];
     materials_id: number | string;
-    type: 'materials' | 'machines';
-    recipt_qty: number | string;
+    type?: 'materials' | 'machines';
+    recipt_qty?: number | string;
     reject_qty?: number | string;
     price?: number | string;
     remarkes?: string;
+    po_qty?: number | string;
+    accepted_qty?: number | string;
   }>): Promise<any> => {
     try {
-      const response = await apiClient.post('/inventory/inward-goods-details-add', items);
+      const raw = Array.isArray(items) ? items : [];
+      const payload = raw.map((item) => {
+        const rec = Number(item.recipt_qty ?? 0) || 0;
+        const rej = Number(item.reject_qty ?? 0) || 0;
+        return {
+          id: item.id ?? null,
+          inward_goods_id: item.inward_goods_id ?? '',
+          projects_id: item.projects_id ?? '',
+          store_warehouses_id: Array.isArray(item.store_warehouses_id) ? item.store_warehouses_id : [],
+          materials_id: item.materials_id ?? '',
+          type: (item.type === 'machines' ? 'machines' : 'materials'),
+          recipt_qty: rec,
+          reject_qty: rej,
+          po_qty: item.po_qty ?? 0,
+          price: item.price != null && item.price !== '' ? Number(item.price) : 0,
+          remarkes: item.remarkes ?? '',
+        };
+      });
+      const body = { data: payload, items: payload };
+      const response = await apiClient.post('/inventory/inward-goods-details-add', body);
       return response.data?.data ?? response.data;
     } catch (error: any) {
       throw { message: error.response?.data?.message || 'Failed to update inward details', errors: error.response?.data?.errors || {} } as ApiError;

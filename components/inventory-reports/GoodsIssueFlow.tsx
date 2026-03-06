@@ -22,6 +22,9 @@ import {
   X,
 } from 'lucide-react';
 import { masterDataAPI, goodsIssueAPI } from '@/services/api';
+import { getTodayDateString } from '@/utils/dateUtils';
+import { getAuthToken } from '@/services/apiClient';
+import { openPdfInNewTab, sharePdfAsFile } from '@/utils/pdfUtils';
 
 type GoodsIssueStep = 'stores' | 'goodsInv' | 'details' | 'success';
 
@@ -55,6 +58,7 @@ interface MaterialItem {
   specification?: string;
   unit?: string;
   stock?: string | number;
+  stock_qty?: string | number;
 }
 
 interface IssueDetailItem {
@@ -109,7 +113,7 @@ export default function GoodsIssueFlow({
   const [isLoadingStores, setIsLoadingStores] = useState(false);
   const [issueHeader, setIssueHeader] = useState<any>(null);
   const [isCreatingHeader, setIsCreatingHeader] = useState(false);
-  const [issueDate, setIssueDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [issueDate, setIssueDate] = useState(() => getTodayDateString());
   const [issueToId, setIssueToId] = useState<string | number>('');
   const [tagId, setTagId] = useState<string | number>('');
   const [tagOptions, setTagOptions] = useState<any[]>([]);
@@ -124,9 +128,10 @@ export default function GoodsIssueFlow({
   const [expandedDetails, setExpandedDetails] = useState<Set<string>>(new Set());
   const [activities, setActivities] = useState<any[]>([]);
   const [showHelpModal, setShowHelpModal] = useState(false);
-  const [showTagActivityModal, setShowTagActivityModal] = useState<string | null>(null);
+  const [showTagActivityModal, setShowTagActivityModal] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [pdfInfo, setPdfInfo] = useState<{ url?: string; name?: string } | null>(null);
+  const [issueNoFromBackend, setIssueNoFromBackend] = useState<string | null>(null);
 
   const projectIdForApi = () => (editProject?.numericId ?? editProject?.id ?? pNumId) || (pid && /^\d+$/.test(String(pid)) ? pid : undefined);
   const projectNameForDisplay = () => editProject?.name ?? pName;
@@ -153,7 +158,7 @@ export default function GoodsIssueFlow({
               numericId: typeof proj === 'object' && proj != null ? String((proj as any).id ?? projId) : String(projId),
             });
             setIssueHeader(data);
-            setIssueDate(data?.date ?? data?.name ?? new Date().toISOString().split('T')[0]);
+            setIssueDate(data?.date ?? data?.name ?? getTodayDateString());
             setIssueToId(data?.issue_to ?? data?.type ?? '');
             setTagId(data?.entry_type ?? data?.tag ?? '');
             const storeIds = data?.store_warehouses_id ?? data?.store_warehouses ?? [];
@@ -277,7 +282,7 @@ export default function GoodsIssueFlow({
           name: m.name ?? '',
           specification: m.specification ?? '',
           unit: m.units?.unit ?? m.unit ?? '',
-          stock: m.stock ?? m.stock_qty ?? '',
+          stock: m.total_stk_qty ?? m.stock ?? m.stock_qty ?? m.available_stock ?? '',
         })));
       })
       .catch(() => setMaterials([]))
@@ -286,12 +291,63 @@ export default function GoodsIssueFlow({
 
   useEffect(() => {
     if (step === 'goodsInv' || step === 'details') {
-      masterDataAPI.getActivities().then((res: any) => {
+      const pId = projectIdForApi();
+      masterDataAPI.getActivities(pId).then((res: any) => {
         const list = res?.data ?? res ?? [];
         setActivities(Array.isArray(list) ? list : []);
       }).catch(() => setActivities([]));
     }
-  }, [step]);
+  }, [step, pid, pNumId, editProject]);
+
+  useEffect(() => {
+    if (step !== 'goodsInv') return;
+    const pId = projectIdForApi();
+    const storeNumericIds = Array.from(selectedStoreIds)
+      .map((sid) => stores.find((x) => String(x.id) === sid)?.numericId ?? stores.find((x) => String(x.id) === sid)?.id)
+      .filter((x): x is string | number => x != null);
+    if (!pId || storeNumericIds.length === 0) {
+      setIssueNoFromBackend(null);
+      return;
+    }
+    goodsIssueAPI
+      .projectToStoreList(pId, storeNumericIds, 'issue')
+      .then((data: any) => {
+        const no = data?.invInwardRegNo ?? data?.issue_no ?? data?.inv_issue_reg_no;
+        setIssueNoFromBackend(no ? String(no) : null);
+      })
+      .catch(() => setIssueNoFromBackend(null));
+  }, [step, selectedStoreIds, stores]);
+
+  // Generate PDF on success screen mount (after issue-goods-details-add saves data)
+  useEffect(() => {
+    if (step !== 'success') return;
+    const issueHeaderId = issueHeader?.id ?? issueHeader?.inv_issues_id ?? issueHeader?.uuid ?? issueGoodsList?.[0]?.id ?? editIssueId;
+    if (!issueHeaderId) return;
+    setIsSubmitting(true);
+    const invIssueListsId = issueGoodsList?.[0]?.id ?? details?.[0]?.inv_issue_goods_id ?? issueHeaderId;
+    const detailsForPdf = details.map((d) => ({
+      materials_id: d.materials_id ?? d.materialNumericId,
+      materialCode: d.materialCode,
+      materialName: d.materialName,
+      materialSpec: d.materialSpec,
+      materialUnit: d.materialUnit,
+      issue_qty: d.issue_qty,
+      stock_qty: d.stock_qty,
+      activityName: d.activityName,
+    }));
+    goodsIssueAPI
+      .generatePdf(issueHeaderId, invIssueListsId, detailsForPdf)
+      .then(({ pdf_url, name }) => setPdfInfo({ url: pdf_url, name: name ?? `Issue-${issueDate}.pdf` }))
+      .catch(() => setPdfInfo(null))
+      .finally(() => setIsSubmitting(false));
+  }, [step, issueHeader?.id, issueHeader?.inv_issues_id, issueHeader?.uuid, issueGoodsList, details, editIssueId]);
+
+  const handleBackClick = () => {
+    if (step === 'success') setStep('details');
+    else if (step === 'details') setStep('goodsInv');
+    else if (step === 'goodsInv') setStep('stores');
+    else router.back();
+  };
 
   const toggleStore = (storeId: string) => {
     setSelectedStoreIds((prev) => {
@@ -313,7 +369,7 @@ export default function GoodsIssueFlow({
       .filter((x): x is string | number => x != null);
     setIsCreatingHeader(true);
     try {
-      const name = issueDate || new Date().toISOString().split('T')[0];
+      const name = issueDate || getTodayDateString();
       if (mode === 'edit' && issueHeader?.id) {
         setStep('goodsInv');
       } else {
@@ -331,7 +387,7 @@ export default function GoodsIssueFlow({
   const handleGoodsInvNext = async () => {
     if (!issueHeader) return;
     const invIssueId = issueHeader.id ?? issueHeader.inv_issues_id ?? issueHeader.uuid;
-    const issueNo = issueHeader.issue_no ?? issueHeader.name ?? issueDate;
+    const issueNo = issueHeader.issue_no ?? issueNoFromBackend ?? issueHeader.name ?? issueDate;
     const pId = projectIdForApi();
     const storeNumericIds = Array.from(selectedStoreIds)
       .map((sid) => stores.find((x) => String(x.id) === sid)?.numericId ?? stores.find((x) => String(x.id) === sid)?.id)
@@ -362,29 +418,14 @@ export default function GoodsIssueFlow({
         issue_to: issueToId,
         materials_id: materialNumericIds,
       });
-      const goodsListRaw = Array.isArray(addResult) ? addResult : addResult?.data ?? addResult?.issue_goods ?? [];
-      const goodsList = Array.isArray(goodsListRaw) ? goodsListRaw : [];
-      let detailItems: IssueDetailItem[];
-      if (goodsList.length > 0) {
-        detailItems = goodsList.map((g: any) => ({
-          inv_issue_goods_id: g.id ?? g.inv_issue_goods_id ?? invIssueId,
-          materials_id: g.materials_id ?? g.material_id ?? g.materials?.id,
-          materialNumericId: g.materials?.id ?? g.materials_id,
-          materialCode: g.materials?.code ?? g.code ?? '',
-          materialName: g.materials?.name ?? g.name ?? '',
-          materialUnit: g.materials?.units?.unit ?? g.unit ?? '',
-          materialSpec: g.materials?.specification ?? g.specification ?? '',
-          issue_qty: g.issue_qty ?? 0,
-          stock_qty: g.stock_qty ?? 0,
-          activities_id: g.activities_id,
-          activityName: g.activities?.name ?? '',
-          id: g.id ?? null,
-        }));
-      } else {
-        detailItems = materialNumericIds.map((mid) => {
+      const goodsListRaw = Array.isArray(addResult) ? addResult : addResult?.data ?? addResult?.issue_goods ?? addResult;
+      const goodsList = Array.isArray(goodsListRaw) ? goodsListRaw : (goodsListRaw && typeof goodsListRaw === 'object' ? [goodsListRaw] : []);
+      const firstGoodsId = goodsList[0]?.id ?? goodsList[0]?.inv_issue_goods_id ?? (typeof addResult === 'object' && addResult !== null ? (addResult as any).id ?? (addResult as any).inv_issue_goods_id : null) ?? invIssueId;
+      const buildDetailsFromMaterials = () =>
+        materialNumericIds.map((mid) => {
           const m = materials.find((x) => String(x.numericId ?? x.id) === String(mid));
           return {
-            inv_issue_goods_id: invIssueId,
+            inv_issue_goods_id: firstGoodsId,
             materials_id: mid,
             materialNumericId: m?.numericId,
             materialCode: m?.code ?? '',
@@ -392,16 +433,40 @@ export default function GoodsIssueFlow({
             materialUnit: m?.unit ?? '',
             materialSpec: m?.specification ?? '',
             issue_qty: 0,
-            stock_qty: '0',
+            stock_qty: m?.stock ?? m?.stock_qty ?? '0',
             activities_id: undefined as string | number | undefined,
             activityName: '',
             id: null as string | number | null,
           };
         });
+      let detailItems: IssueDetailItem[];
+      if (goodsList.length > 0) {
+        detailItems = goodsList.flatMap((g: any) => {
+          const matId = g.materials_id ?? g.material_id ?? g.materials?.id;
+          if (matId == null) return [];
+          const item: IssueDetailItem = {
+            inv_issue_goods_id: g.id ?? g.inv_issue_goods_id ?? invIssueId,
+            materials_id: matId,
+            materialNumericId: g.materials?.id ?? g.materials_id ?? matId,
+            materialCode: g.materials?.code ?? g.code ?? '',
+            materialName: g.materials?.name ?? g.name ?? '',
+            materialUnit: g.materials?.units?.unit ?? g.unit ?? '',
+            materialSpec: g.materials?.specification ?? g.specification ?? '',
+            issue_qty: g.issue_qty ?? 0,
+            stock_qty: g.stock_qty ?? g.stock ?? g.available_stock ?? 0,
+            activities_id: g.activities_id,
+            activityName: g.activities?.name ?? '',
+            id: g.id ?? null,
+          };
+          return [item];
+        });
+        if (detailItems.length === 0) detailItems = buildDetailsFromMaterials();
+      } else {
+        detailItems = buildDetailsFromMaterials();
       }
       setDetails(detailItems);
       setIssueGoodsList(goodsList);
-      setExpandedDetails(new Set(detailItems.map((d) => String(d.materials_id))));
+      setExpandedDetails(new Set(detailItems.map((_, i) => String(i))));
       setStep('details');
     } catch (e: any) {
       toast.showWarning(e?.message ?? 'Failed to add issue goods.');
@@ -427,22 +492,25 @@ export default function GoodsIssueFlow({
     const invIssueGoodsId = issueGoodsList?.[0]?.id ?? issueHeader?.id ?? details?.[0]?.inv_issue_goods_id;
     setIsSubmitting(true);
     try {
-      const payload = details.map((d) => ({
-        id: d.id ?? null,
-        inv_issue_goods_id: d.inv_issue_goods_id ?? invIssueGoodsId,
-        projects_id: pId,
-        store_warehouses_id: storeNumericIds,
-        materials_id: d.materials_id,
-        type: goodsType,
-        issue_qty: d.issue_qty,
-        stock_qty: d.stock_qty,
-        activities_id: d.activities_id || undefined,
-      }));
+      const payload = details
+        .filter((d) => d.materials_id != null || d.materialNumericId != null)
+        .map((d) => ({
+          id: d.id ?? null,
+          inv_issue_goods_id: d.inv_issue_goods_id ?? invIssueGoodsId,
+          projects_id: pId,
+          store_warehouses_id: storeNumericIds,
+          materials_id: d.materials_id ?? d.materialNumericId,
+          type: goodsType,
+          issue_qty: d.issue_qty,
+          stock_qty: d.stock_qty,
+          activities_id: d.activities_id || undefined,
+        }));
+      if (payload.length === 0) {
+        toast.showWarning('No valid items to save.');
+        return;
+      }
       await goodsIssueAPI.addIssueDetails(payload);
       setStep('success');
-      const issueHeaderId = issueHeader?.id ?? issueHeader?.inv_issues_id ?? issueHeader?.uuid ?? invIssueGoodsId ?? editIssueId;
-      const { pdf_url, name } = await goodsIssueAPI.generatePdf(issueHeaderId!);
-      setPdfInfo({ url: pdf_url, name: name ?? `Issue-${issueDate}.pdf` });
     } catch (e: any) {
       toast.showWarning(e?.message ?? 'Failed to save issue details.');
     } finally {
@@ -450,14 +518,14 @@ export default function GoodsIssueFlow({
     }
   };
 
-  const updateDetailQty = (materialsId: string, qty: number | string) => {
-    setDetails((prev) => prev.map((d) => (String(d.materials_id) === materialsId ? { ...d, issue_qty: qty } : d)));
+  const updateDetailQty = (index: number, qty: number | string) => {
+    setDetails((prev) => prev.map((d, i) => (i === index ? { ...d, issue_qty: qty } : d)));
   };
-  const updateDetailActivity = (materialsId: string, activityId: string | number, activityName: string) => {
-    setDetails((prev) => prev.map((d) => (String(d.materials_id) === materialsId ? { ...d, activities_id: activityId, activityName } : d)));
+  const updateDetailActivity = (index: number, activityId: string | number, activityName: string) => {
+    setDetails((prev) => prev.map((d, i) => (i === index ? { ...d, activities_id: activityId, activityName } : d)));
   };
-  const removeDetail = (materialsId: string) => {
-    setDetails((prev) => prev.filter((d) => String(d.materials_id) !== materialsId));
+  const removeDetail = (index: number) => {
+    setDetails((prev) => prev.filter((_, i) => i !== index));
   };
   const toggleMaterial = (id: string) => {
     setSelectedMaterialIds((prev) => {
@@ -467,12 +535,34 @@ export default function GoodsIssueFlow({
       return next;
     });
   };
-  const toggleDetailExpand = (id: string) => {
+  const toggleDetailExpand = (index: number) => {
     setExpandedDetails((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      const key = String(index);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
+    });
+  };
+
+  const handleViewPdf = () => {
+    if (pdfInfo?.url) openPdfInNewTab(pdfInfo.url);
+    else toast.showWarning('No PDF available.');
+  };
+
+  const handleSharePdf = async () => {
+    if (!pdfInfo?.url) {
+      toast.showWarning('No PDF available.');
+      return;
+    }
+    await sharePdfAsFile({
+      url: pdfInfo.url,
+      name: pdfInfo.name || 'Issue.pdf',
+      reportTitle: 'Issue Report',
+      getAuthToken,
+      onSuccess: () => toast.showSuccess('Shared successfully.'),
+      onCopyFallback: () => toast.showSuccess('PDF link copied to clipboard.'),
+      onError: (msg) => toast.showWarning(msg),
     });
   };
 
@@ -496,7 +586,7 @@ export default function GoodsIssueFlow({
     <AppLayout>
       <div className="space-y-6 w-full max-w-4xl mx-auto">
         <div className="flex items-center gap-4">
-          <button onClick={() => router.push('/inventory-reports/issue-slip')} className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'}`} title="Back">
+          <button onClick={handleBackClick} className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'}`} title="Back">
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div className="flex-1">
@@ -528,12 +618,14 @@ export default function GoodsIssueFlow({
                   const sid = String(store.id);
                   const isSelected = selectedStoreIds.has(sid);
                   return (
-                    <button key={sid} type="button" onClick={() => toggleStore(sid)} className={`p-4 rounded-xl border-2 text-left transition-all ${isSelected ? 'border-[#6B8E23] bg-[#6B8E23]/10' : isDark ? 'border-slate-600 hover:border-slate-500' : 'border-slate-200 hover:border-slate-300'}`}>
-                      <div className="flex items-center justify-between">
-                        <div><p className={`font-bold ${textPrimary}`}>{store.name}</p>{store.code && <p className={`text-sm ${textSecondary}`}>{store.code}</p>}</div>
-                        {isSelected && <Check className="w-5 h-5 text-[#6B8E23]" />}
-                      </div>
-                    </button>
+                    <label
+                      key={sid}
+                      className={`flex items-start gap-3 p-4 rounded-xl border-2 text-left transition-all cursor-pointer ${isSelected ? 'border-[#6B8E23] bg-[#6B8E23]/10' : isDark ? 'border-slate-600 hover:border-slate-500' : 'border-slate-200 hover:border-slate-300'}`}
+                    >
+                      <input type="checkbox" checked={isSelected} onChange={() => toggleStore(sid)} className="rounded mt-1 shrink-0" />
+                      <div className="flex-1 min-w-0"><p className={`font-bold ${textPrimary}`}>{store.name}</p>{store.code && <p className={`text-sm ${textSecondary}`}>{store.code}</p>}</div>
+                      {isSelected && <Check className="w-5 h-5 shrink-0 text-[#6B8E23]" />}
+                    </label>
                   );
                 })}
               </div>
@@ -555,7 +647,7 @@ export default function GoodsIssueFlow({
                 <button type="button" onClick={() => setShowHelpModal(true)} className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`} title="Help"><HelpCircle className="w-5 h-5" /></button>
               </div>
               <div><p className={`text-sm font-bold ${textSecondary}`}>Stores</p><p className={textPrimary}>{stores.filter((s) => selectedStoreIds.has(String(s.id))).map((s) => s.name).join(', ') || '-'}</p></div>
-              <div><p className={`text-sm font-bold ${textSecondary}`}>Issue note no</p><p className={textPrimary}>{issueHeader?.issue_no ?? issueHeader?.name ?? issueDate}</p></div>
+              <div><p className={`text-sm font-bold ${textSecondary}`}>Issue note no</p><p className={textPrimary}>{issueHeader?.issue_no ?? issueNoFromBackend ?? issueHeader?.name ?? issueDate}</p></div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
               <div>
@@ -611,7 +703,9 @@ export default function GoodsIssueFlow({
                       const checked = selectedMaterialIds.has(mid);
                       return (
                         <tr key={mid} className={`cursor-pointer ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'} ${checked ? 'bg-[#6B8E23]/10' : ''}`} onClick={() => toggleMaterial(mid)}>
-                          <td className="px-4 py-3"><input type="checkbox" checked={checked} onChange={() => toggleMaterial(mid)} className="rounded" /></td>
+                          <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                            <input type="checkbox" checked={checked} onChange={() => toggleMaterial(mid)} className="rounded cursor-pointer" />
+                          </td>
                           <td className={`px-4 py-3 font-mono ${textPrimary}`}>{m.code}</td>
                           <td className={`px-4 py-3 ${textPrimary}`}>{m.name}</td>
                           <td className={`px-4 py-3 ${textSecondary}`}>{m.stock ?? '-'}</td>
@@ -636,14 +730,14 @@ export default function GoodsIssueFlow({
           <div className={`rounded-xl border p-6 ${cardClass}`}>
             <h2 className={`text-lg font-bold mb-4 ${textPrimary}`}>Details of Issue Goods</h2>
             <div className="space-y-3 mb-6">
-              {details.map((d) => {
-                const key = String(d.materials_id);
-                const isExpanded = expandedDetails.has(key);
+              {details.map((d, i) => {
+                const detailKey = `detail-${i}-${d.materials_id}`;
+                const isExpanded = expandedDetails.has(String(i));
                 return (
-                  <div key={key} className={`border rounded-lg overflow-hidden ${isDark ? 'border-slate-600' : 'border-slate-200'}`}>
-                    <button type="button" onClick={() => toggleDetailExpand(key)} className={`w-full flex items-center justify-between p-4 text-left ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}`}>
+                  <div key={detailKey} className={`border rounded-lg overflow-hidden ${isDark ? 'border-slate-600' : 'border-slate-200'}`}>
+                    <button type="button" onClick={() => toggleDetailExpand(i)} className={`w-full flex items-center justify-between p-4 text-left ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}`}>
                       <div className="flex-1 min-w-0"><p className={`font-bold ${textPrimary}`}>{d.materialName}</p><p className={`text-sm ${textSecondary}`}>{d.materialCode} • {d.materialUnit || '-'} • {d.materialSpec || '-'}</p></div>
-                      <button type="button" onClick={(e) => { e.stopPropagation(); removeDetail(key); }} className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg"><Trash2 className="w-4 h-4" /></button>
+                      <button type="button" onClick={(e) => { e.stopPropagation(); removeDetail(i); }} className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg"><Trash2 className="w-4 h-4" /></button>
                       {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                     </button>
                     {isExpanded && (
@@ -651,7 +745,18 @@ export default function GoodsIssueFlow({
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div>
                             <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>Issue (Out) Qty *</label>
-                            <input type="number" min={0} value={d.issue_qty} onChange={(e) => updateDetailQty(key, e.target.value)} className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`} />
+                            <input
+                              type="number"
+                              min={0}
+                              value={d.issue_qty}
+                              onChange={(e) => updateDetailQty(i, e.target.value)}
+                              onFocus={() => {
+                                if (d.issue_qty === 0 || d.issue_qty === '0' || d.issue_qty === '') {
+                                  updateDetailQty(i, '');
+                                }
+                              }}
+                              className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}
+                            />
                           </div>
                           <div>
                             <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>Stock Qty</label>
@@ -659,7 +764,7 @@ export default function GoodsIssueFlow({
                           </div>
                           <div className="sm:col-span-2">
                             <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>Tag activity</label>
-                            <button type="button" onClick={() => setShowTagActivityModal(key)} className={`flex items-center gap-2 px-4 py-2 rounded-lg border ${isDark ? 'border-slate-600 hover:bg-slate-700' : 'border-slate-200 hover:bg-slate-100'}`}><Package className="w-4 h-4" />{d.activityName || 'Select activity'}</button>
+                            <button type="button" onClick={() => setShowTagActivityModal(i)} className={`flex items-center gap-2 px-4 py-2 rounded-lg border ${isDark ? 'border-slate-600 hover:bg-slate-700' : 'border-slate-200 hover:bg-slate-100'}`}><Package className="w-4 h-4" />{d.activityName || 'Tag activity'}</button>
                           </div>
                         </div>
                       </div>
@@ -691,8 +796,8 @@ export default function GoodsIssueFlow({
                 <p className={`text-sm font-bold mb-2 ${textSecondary}`}>PDF</p>
                 <p className={`font-mono text-sm mb-3 ${textPrimary}`}>{pdfInfo.name || 'Issue.pdf'}</p>
                 <div className="flex flex-wrap justify-center gap-2">
-                  <button onClick={() => window.open(pdfInfo.url, '_blank')} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10"><ExternalLink className="w-4 h-4" /> View</button>
-                  <button onClick={() => navigator.share?.({ url: pdfInfo.url, title: pdfInfo.name })} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10"><Share2 className="w-4 h-4" /> Share</button>
+                  <button onClick={handleViewPdf} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10"><ExternalLink className="w-4 h-4" /> View</button>
+                  <button onClick={handleSharePdf} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10"><Share2 className="w-4 h-4" /> Share</button>
                 </div>
               </div>
             )}
@@ -718,14 +823,18 @@ export default function GoodsIssueFlow({
           </div>
         )}
 
-        {showTagActivityModal && (
+        {showTagActivityModal !== null && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
             <div className={`${cardClass} rounded-xl p-6 max-w-md w-full max-h-[80vh] overflow-y-auto`}>
               <h3 className={`text-lg font-bold mb-4 ${textPrimary}`}>Select Activity</h3>
               <div className="space-y-2">
-                {activities.map((a) => (
-                  <button key={a.id ?? a.uuid} type="button" onClick={() => { updateDetailActivity(showTagActivityModal, a.id ?? a.uuid, a.name ?? a.activity_name ?? ''); setShowTagActivityModal(null); }} className={`w-full text-left px-4 py-2 rounded-lg ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}>{a.name ?? a.activity_name ?? a.id}</button>
-                ))}
+                {activities.length === 0 ? (
+                  <p className={`py-4 text-center ${textSecondary}`}>No activities found</p>
+                ) : (
+                  activities.map((a) => (
+                    <button key={a.id ?? a.uuid} type="button" onClick={() => { updateDetailActivity(showTagActivityModal, a.id ?? a.uuid, a.name ?? a.activity_name ?? ''); setShowTagActivityModal(null); }} className={`w-full text-left px-4 py-2 rounded-lg ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}>{a.name ?? a.activity_name ?? a.id}</button>
+                  ))
+                )}
               </div>
               <button onClick={() => setShowTagActivityModal(null)} className={`mt-4 w-full py-2 rounded-lg font-bold border ${isDark ? 'border-slate-600' : 'border-slate-200'}`}>Cancel</button>
             </div>
