@@ -153,7 +153,7 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
           const time = formatSessionTime(s.created_at as string) || '--';
           const rawMessages = s.messages ?? s.chat_history ?? [];
           const msgs: ChatMessage[] = Array.isArray(rawMessages)
-            ? rawMessages.map((m: { role?: string; content?: string }, i: number) => ({
+            ? (rawMessages as { role?: string; content?: string }[]).map((m, i) => ({
                 id: `msg-${id}-${i}`,
                 role: (m.role === 'user' ? 'user' : 'assistant') as 'user' | 'assistant',
                 content: (m.content ?? '') as string,
@@ -342,11 +342,22 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
 
   const handleVoiceClick = () => (isRecording ? stopRecording() : startRecording());
 
-  const handleSendChatMessage = async () => {
-    if ((!chatInput.trim() && attachedFiles.length === 0) || chatSending || isRecording) return;
+  const handleEditUserMessage = (messageId: string) => {
+    const idx = chatMessages.findIndex((m) => m.id === messageId);
+    if (idx < 0 || chatMessages[idx].role !== 'user') return;
+    const msg = chatMessages[idx];
+    const textOnly = msg.content.replace(/^Files attached:\s*\n?/i, '').replace(/\n?📎[^\n]+(\n|$)/g, '').trim() || msg.content;
+    setChatInput(textOnly);
+    setChatMessages((prev) => prev.slice(0, idx));
+    setAttachedFiles([]);
+    chatMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  };
 
-    const messageContent = chatInput.trim();
-    const hasFiles = attachedFiles.length > 0;
+  const handleSendChatMessage = async (optionContent?: string) => {
+    const raw = optionContent ?? chatInput;
+    const messageContent = (typeof raw === 'string' ? raw : '').trim();
+    const hasFiles = !optionContent && attachedFiles.length > 0;
+    if ((!messageContent && !hasFiles) || chatSending || isRecording) return;
     let fullContent = messageContent;
     if (hasFiles) {
       const fileList = attachedFiles
@@ -363,8 +374,8 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
     };
     const filesToSend = hasFiles ? [...attachedFiles] : undefined;
     setChatMessages((prev) => [...prev, userMessage]);
-    setChatInput('');
-    setAttachedFiles([]);
+    if (!optionContent) setChatInput('');
+    if (!optionContent) setAttachedFiles([]);
     setChatError(null);
     setChatSending(true);
 
@@ -506,15 +517,15 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
           sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         }`}
       >
-        <div className={`p-3 sm:p-4 md:p-6 border-b ${isDark ? 'border-[#404040]' : 'border-gray-200'} flex-shrink-0`}>
-          <div className="flex items-center justify-between gap-2 mb-3 sm:mb-4">
-            <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
-              <div className="w-7 h-7 sm:w-8 sm:h-8 bg-[#C2D642] rounded-lg flex items-center justify-center flex-shrink-0">
-                <Bot className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
+        <div className={`p-2.5 sm:p-3 md:p-4 border-b ${isDark ? 'border-[#404040]' : 'border-gray-200'} flex-shrink-0`}>
+          <div className="flex items-center justify-between gap-2 mb-2 sm:mb-3">
+            <div className="flex items-center gap-2 min-w-0 flex-1">
+              <div className="w-6 h-6 sm:w-7 sm:h-7 bg-[#C2D642] rounded-lg flex items-center justify-center flex-shrink-0">
+                <Bot className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" />
               </div>
               <div className="min-w-0 flex-1">
-                <h2 className={`text-xs sm:text-sm font-black truncate ${textPrimary}`}>DMS Agent</h2>
-                <p className={`text-[9px] sm:text-[10px] font-bold uppercase tracking-wider truncate ${textSecondary}`}>
+                <h2 className={`text-[11px] sm:text-xs font-black truncate ${textPrimary}`}>DMS Agent</h2>
+                <p className={`text-[8px] sm:text-[9px] font-bold uppercase tracking-wider truncate ${textSecondary}`}>
                   DOCUMENT ASSISTANT
                 </p>
               </div>
@@ -530,24 +541,24 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
           <button
             onClick={handleNewChatSession}
             disabled={chatCreatingSession}
-            className={`w-full flex items-center justify-center gap-2 px-3 sm:px-4 py-2.5 rounded-lg text-xs sm:text-sm font-bold transition-all min-h-[44px] touch-manipulation ${isDark ? 'bg-[#C2D642] hover:bg-[#A8B838] text-white' : 'bg-[#C2D642] hover:bg-[#A8B838] text-white'} shadow-md disabled:opacity-60 disabled:cursor-not-allowed`}
+            className={`w-full flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-2 rounded-lg text-[11px] sm:text-xs font-bold transition-all min-h-[38px] touch-manipulation ${isDark ? 'bg-[#C2D642] hover:bg-[#A8B838] text-white' : 'bg-[#C2D642] hover:bg-[#A8B838] text-white'} shadow-md disabled:opacity-60 disabled:cursor-not-allowed`}
           >
-            <Plus className="w-4 h-4 flex-shrink-0" /> <span className="truncate">New Chat</span>
+            <Plus className="w-3.5 h-3.5 flex-shrink-0" /> <span className="truncate">New Chat</span>
           </button>
         </div>
 
-        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-          <p className={`text-[10px] font-bold uppercase tracking-wider mb-3 px-2 sm:px-3 md:px-4 flex-shrink-0 ${textSecondary}`}>RECENT SESSIONS</p>
-          <div className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-2 sm:p-3 md:p-4 pt-0 custom-scrollbar ${chatSessionsLoading ? 'opacity-60' : ''}`}>
-          <div className="space-y-2">
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden pt-2 sm:pt-3">
+          <p className={`text-[9px] font-bold uppercase tracking-wider mb-1.5 px-2 sm:px-3 flex-shrink-0 ${textSecondary}`}>RECENT SESSIONS</p>
+          <div className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-1.5 sm:p-2 md:p-3 pt-0 custom-scrollbar ${chatSessionsLoading ? 'opacity-60' : ''}`}>
+          <div className="space-y-1.5">
             {chatSessions.length === 0 && !chatSessionsLoading && (
-              <p className={`text-[10px] px-2 py-1 ${textSecondary}`}>No sessions yet</p>
+              <p className={`text-[9px] px-2 py-1 ${textSecondary}`}>No sessions yet</p>
             )}
             {chatSessions.map((session) => (
               <div
                 key={session.id}
                 onClick={() => handleDmsSessionClick(session.id)}
-                className={`p-2.5 sm:p-3 rounded-lg cursor-pointer transition-colors touch-manipulation ${
+                className={`p-2 sm:p-2.5 rounded-lg cursor-pointer transition-colors touch-manipulation ${
                   session.id === dmsSessionId
                     ? isDark
                       ? 'bg-[#C2D642]/20 border-[#C2D642]/50'
@@ -557,9 +568,9 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
                     : 'bg-white hover:bg-gray-50 border-gray-200'
                 } border`}
               >
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center justify-between gap-1.5">
                   <p
-                    className={`text-sm font-bold flex-1 min-w-0 truncate ${
+                    className={`text-xs font-bold flex-1 min-w-0 truncate ${
                       session.id === dmsSessionId ? 'text-[#C2D642]' : textPrimary
                     }`}
                   >
@@ -568,13 +579,13 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
                   <div className="flex items-center gap-1 flex-shrink-0">
                     <button
                       onClick={(e) => handleRenameDmsSession(e, session.id, session.preview)}
-                      className={`p-1.5 rounded hover:opacity-80 transition-opacity min-w-[32px] min-h-[32px] flex items-center justify-center ${textSecondary} hover:text-[#C2D642] touch-manipulation`}
+                      className={`p-1 rounded hover:opacity-80 transition-opacity min-w-[28px] min-h-[28px] flex items-center justify-center ${textSecondary} hover:text-[#C2D642] touch-manipulation`}
                       title="Rename session"
                       aria-label="Rename session"
                     >
-                      <Pencil className="w-3 h-3" />
+                      <Pencil className="w-2.5 h-2.5" />
                     </button>
-                    <span className={`text-[10px] font-bold ${textSecondary}`}>{session.time}</span>
+                    <span className={`text-[9px] font-bold ${textSecondary}`}>{session.time}</span>
                   </div>
                 </div>
               </div>
@@ -584,14 +595,14 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
         </div>
 
         {/* AI Status Indicator */}
-        <div className={`p-2 sm:p-3 md:p-4 border-t flex-shrink-0 ${isDark ? 'border-[#404040]' : 'border-gray-200'}`}>
-          <div className={`w-full flex items-center gap-2 md:gap-3 px-3 py-2 rounded-lg ${isDark ? 'bg-[#2d2d2d]/50' : 'bg-white'}`}>
-            <div className={`w-2 h-2 md:w-2.5 md:h-2.5 rounded-full flex-shrink-0 ${
+        <div className={`p-2 sm:p-2.5 md:p-3 border-t flex-shrink-0 ${isDark ? 'border-[#404040]' : 'border-gray-200'}`}>
+          <div className={`w-full flex items-center gap-1.5 md:gap-2 px-2.5 py-1.5 rounded-lg ${isDark ? 'bg-[#2d2d2d]/50' : 'bg-white'}`}>
+            <div className={`w-1.5 h-1.5 md:w-2 md:h-2 rounded-full flex-shrink-0 ${
               chatSending ? 'bg-orange-500 animate-pulse' : chatError ? 'bg-red-500 animate-pulse' : 'bg-[#C2D642]'
             }`} />
             <div className="flex-1 min-w-0">
-              <p className={`text-[10px] font-bold uppercase tracking-wider mb-0.5 ${textSecondary}`}>AI Status</p>
-              <p className={`text-xs md:text-sm font-bold truncate ${
+              <p className={`text-[9px] font-bold uppercase tracking-wider mb-0 ${textSecondary}`}>AI Status</p>
+              <p className={`text-[11px] md:text-xs font-bold truncate ${
                 chatSending ? 'text-orange-500' : chatError ? 'text-red-500' : 'text-[#C2D642]'
               }`}>
                 {chatSending ? 'Thinking' : chatError ? 'Error' : 'Ready'}
@@ -638,7 +649,7 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
           </div>
         </div>
 
-        <div className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-2 py-3 sm:px-4 sm:py-5 md:px-6 md:py-6 space-y-2 sm:space-y-3 md:space-y-4 custom-scrollbar pb-6 sm:pb-8 md:pb-10 lg:pb-6 ${chatAreaBg}`}>
+        <div className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-2 py-3 sm:px-4 sm:py-5 md:px-6 md:py-6 space-y-1.5 sm:space-y-2 custom-scrollbar pb-6 sm:pb-8 md:pb-10 lg:pb-6 ${chatAreaBg}`}>
           {chatMessages.length === 1 && chatMessages[0].role === 'assistant' && chatMessages[0].content.includes("Hello! I'm your AI assistant") ? (
             <div className="flex flex-col items-center justify-center min-h-[160px] sm:min-h-[200px] md:min-h-[280px] text-center px-3 sm:px-4">
               <div className="w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 bg-[#C2D642] rounded-xl sm:rounded-2xl flex items-center justify-center mb-3 sm:mb-4">
@@ -663,9 +674,9 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
                   <Bot className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
                 </div>
               )}
-              <div className={`max-w-[90%] sm:max-w-[75%] md:max-w-[70%] lg:max-w-[65%] min-w-0 ${message.role === 'user' ? 'order-2' : ''}`}>
+              <div className={`max-w-[85%] sm:max-w-[65%] md:max-w-[60%] lg:max-w-[55%] min-w-0 ${message.role === 'user' ? 'order-2' : ''}`}>
                 <div
-                  className={`rounded-lg sm:rounded-xl p-2.5 sm:p-3 md:p-4 ${
+                  className={`rounded-lg sm:rounded-xl p-2 sm:p-2.5 md:p-3 ${
                     message.role === 'user'
                       ? isDark
                         ? 'bg-slate-700/50 text-slate-100 border border-slate-600/50'
@@ -679,14 +690,25 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
                     content={message.content}
                     isDark={isDark}
                     role={message.role}
-                    className={`text-xs sm:text-sm md:text-base font-normal break-words leading-relaxed ${
+                    onOptionClick={message.role === 'assistant' ? (text) => handleSendChatMessage(text) : undefined}
+                    className={`text-xs sm:text-xs md:text-sm font-normal break-words leading-relaxed ${
                       message.role === 'user' ? `font-chat-user ${textPrimary}` : `font-chat-ai ${textPrimary}`
                     }`}
                   />
                 </div>
-                <p className={`text-[9px] md:text-[10px] font-bold mt-1 ${textSecondary} ${message.role === 'user' ? 'text-right' : 'text-left'}`}>
-                  {message.timestamp}
-                </p>
+                <div className={`flex items-center justify-between gap-2 mt-0.5 ${message.role === 'user' ? 'flex-row-reverse' : ''}`}>
+                  <p className={`text-[9px] md:text-[10px] font-bold ${textSecondary}`}>{message.timestamp}</p>
+                  {message.role === 'user' && (
+                    <button
+                      onClick={() => handleEditUserMessage(message.id)}
+                      className={`p-1.5 rounded-lg transition-colors ${isDark ? 'hover:bg-slate-600/50 text-slate-400 hover:text-slate-200' : 'hover:bg-slate-200 text-slate-500 hover:text-slate-700'}`}
+                      title="Edit and resend"
+                      aria-label="Edit message"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
               </div>
               {message.role === 'user' && (
                 <div
@@ -704,9 +726,11 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
           )}
         </div>
 
-        {/* Attached Files */}
+        {/* Input bar - fixed at bottom, stays visible while messages scroll */}
+        <div className={`sticky bottom-0 left-0 right-0 z-10 flex-shrink-0 shadow-[0_-2px_8px_rgba(0,0,0,0.08)] ${bgSecondary}`}>
+        {/* Attached Files - above input, inside sticky container */}
         {attachedFiles.length > 0 && (
-          <div className="px-2 sm:px-3 md:px-4 pb-1.5 flex flex-wrap gap-1.5 sm:gap-2">
+          <div className="px-2 sm:px-3 md:px-4 pb-1.5 flex flex-wrap gap-1.5 sm:gap-2 border-t border-transparent">
             {attachedFiles.map((file, index) => (
               <div
                 key={index}
@@ -725,7 +749,7 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
         )}
 
         {/* Input */}
-        <div className={`px-2 sm:px-3 md:px-4 py-2.5 sm:py-3 border-t flex-shrink-0 ${isDark ? 'border-[#404040]' : 'border-gray-200'} ${bgSecondary}`}>
+        <div className={`px-2 sm:px-3 md:px-4 py-2.5 sm:py-3 border-t ${isDark ? 'border-[#404040]' : 'border-gray-200'}`}>
           <div
             className={`flex items-center gap-1.5 sm:gap-2 p-2 sm:p-2.5 rounded-2xl border-2 ${
               isDark ? 'bg-[#2d2d2d] border-[#C2D642]/30' : 'bg-white border-[#C2D642]/30'
@@ -780,7 +804,7 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
               </button>
             )}
             <button
-              onClick={handleSendChatMessage}
+              onClick={() => handleSendChatMessage()}
               disabled={(!chatInput.trim() && attachedFiles.length === 0) || chatSending || isRecording}
               className={`p-1.5 sm:p-2 rounded-lg transition-colors flex-shrink-0 min-w-[36px] min-h-[36px] sm:min-w-[40px] sm:min-h-[40px] flex items-center justify-center touch-manipulation ${
                 (chatInput.trim() || attachedFiles.length > 0) && !chatSending && !isRecording
@@ -804,6 +828,7 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
               </span>
             </div>
           )}
+        </div>
         </div>
       </div>
     </div>

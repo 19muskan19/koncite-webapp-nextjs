@@ -15,9 +15,14 @@ module.exports = {
     'header-light',
     'card-dark',
     'card-light',
+    'dropdown-panel-bg',
   ],
   theme: {
     extend: {
+      colors: {
+        'dropdown-panel': '#2e343d',
+        'dropdown-panel-hover': '#3f4756',
+      },
       screens: {
         xs: '475px',
       },

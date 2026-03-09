@@ -38,12 +38,8 @@ export default function TeamMembersDropdown({
   );
 
   const selectedMembers = teamMembers.filter((m) => value.includes(m.id));
-  const displayText =
-    selectedMembers.length === 0
-      ? placeholder
-      : selectedMembers.length === 1
-        ? `${selectedMembers[0].name} (${selectedMembers[0].email})`
-        : `${selectedMembers.length} selected`;
+  // Always show placeholder in dropdown trigger; selected names appear only in tags below
+  const displayText = placeholder;
 
   useLayoutEffect(() => {
     if (isOpen && triggerRef.current) {
@@ -125,7 +121,7 @@ export default function TeamMembersDropdown({
           <div
             data-team-members-dropdown
             className={`fixed z-[9999] rounded-lg border shadow-lg overflow-hidden ${
-              isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'
+              isDark ? 'bg-dropdown-panel border-slate-700' : 'bg-white border-slate-200'
             }`}
             style={{
               top: dropdownStyle.top,
@@ -164,7 +160,7 @@ export default function TeamMembersDropdown({
                         ? 'bg-[#C2D642]/20 text-[#C2D642]'
                         : 'bg-[#C2D642]/10 text-[#C2D642]'
                       : isDark
-                        ? 'hover:bg-slate-700/50 text-slate-100'
+                        ? 'hover:bg-dropdown-panel-hover text-slate-100'
                         : 'hover:bg-slate-100 text-slate-900'
                   }`}
                 >

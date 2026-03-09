@@ -1567,7 +1567,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform ${labourEntryProjectDropdownOpen ? 'rotate-180' : ''}`} />
                 </div>
                 {labourEntryProjectDropdownOpen && (
-                  <div className={`absolute left-0 right-0 top-full mt-1 rounded-lg border ${borderClass} ${isDark ? 'bg-slate-800' : 'bg-white'} shadow-lg z-50 overflow-hidden max-h-64 flex flex-col`}>
+                  <div className={`absolute left-0 right-0 top-full mt-1 rounded-lg border ${borderClass} ${isDark ? 'bg-dropdown-panel' : 'bg-white'} shadow-lg z-50 overflow-hidden max-h-64 flex flex-col`}>
                     <div className="flex items-center gap-1 p-2 border-b border-inherit">
                       <Search className="w-4 h-4 flex-shrink-0 text-slate-400" />
                       <input
@@ -1628,7 +1628,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform ${labourEntryContractorDropdownOpen ? 'rotate-180' : ''}`} />
                 </div>
                 {labourEntryContractorDropdownOpen && (
-                  <div className={`absolute left-0 right-0 top-full mt-1 rounded-lg border ${borderClass} ${isDark ? 'bg-slate-800' : 'bg-white'} shadow-lg z-50 overflow-hidden max-h-64 flex flex-col`}>
+                  <div className={`absolute left-0 right-0 top-full mt-1 rounded-lg border ${borderClass} ${isDark ? 'bg-dropdown-panel' : 'bg-white'} shadow-lg z-50 overflow-hidden max-h-64 flex flex-col`}>
                     <div className="flex items-center gap-1 p-2 border-b border-inherit">
                       <Search className="w-4 h-4 flex-shrink-0 text-slate-400" />
                       <input

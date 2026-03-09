@@ -844,30 +844,16 @@ export const masterDataAPI = {
       const status = error.response?.status;
       const errData = error.response?.data ?? {};
       const backendMsg = errData?.message ?? errData?.error ?? errData?.exception ?? (typeof errData === 'string' ? errData : errData?.message);
-      const hasResponse = !!error.response;
-      console.error('❌ /project-subproject error:', {
-        hasResponse,
-        status: status ?? 'no response',
-        message: error.message ?? 'unknown',
-        backendMessage: backendMsg ?? 'none',
-        projectId,
-        code: error.code,
-        url: error.config?.url,
-      });
-      if (!hasResponse) {
-        console.error('❌ Likely network/CORS error - no response from server. Check API URL and connectivity.');
-      }
-      // Fallback: try /sub-project-list when /project-subproject fails (500, 404, or network error)
-      if (projectId != null && projectId !== '') {
-        const tryFallback = !error.response || error.response?.status === 500 || error.response?.status === 404;
-        if (tryFallback) {
-          console.warn('⚠️ Falling back to /sub-project-list');
-          try {
-            return await masterDataAPI.getSubprojects(projectId);
-          } catch (fallbackErr: any) {
-            console.error('❌ Fallback /sub-project-list failed:', fallbackErr?.message ?? fallbackErr?.response?.data ?? fallbackErr);
-          }
+      const tryFallback = projectId != null && projectId !== '' && (!error.response || error.response?.status === 500 || error.response?.status === 404);
+      if (tryFallback) {
+        try {
+          return await masterDataAPI.getSubprojects(projectId);
+        } catch (fallbackErr: any) {
+          const fallbackMsg = fallbackErr?.message ?? (typeof fallbackErr?.response?.data === 'string' ? fallbackErr.response.data : 'Unknown');
+          console.error('❌ /project-subproject and fallback failed:', String(fallbackMsg));
         }
+      } else {
+        console.error('❌ /project-subproject error:', `status=${status ?? 'none'}`, `msg=${String(error?.message ?? 'unknown')}`, `projectId=${projectId}`);
       }
       throw {
         message: backendMsg || error.response?.data?.message || 'Failed to fetch project subprojects',
@@ -3040,7 +3026,9 @@ export const dprAPI = {
   },
   dprHistoryEdit: async (data: { type: string; dprId: number }): Promise<any> => {
     try {
-      const response = await apiClient.post('/fetch-dpr-history-edit', data);
+      // Send both dprId and dpr_id for backend compatibility (Laravel may expect snake_case)
+      const payload = { ...data, dpr_id: data.dprId };
+      const response = await apiClient.post('/fetch-dpr-history-edit', payload);
       return response.data;
     } catch (error: any) {
       throw {
@@ -3581,10 +3569,9 @@ export const commonAPI = {
 };
 
 // Teams / Staff API - Admin > User Management > Teams (TeamsController)
-// Backend: teamsList, teamsAdd, edit, details, delete, search
+// Routes: teams-list, teams-add, teams-search, teams-edit/{uuid}, teams-details, teams-delete/{uuid}, teams-password-update/{uuid}, teams-chat
 export const teamsAPI = {
   /**
-   * Get staff/teams list
    * GET /teams-list -> teamsList()
    */
   getTeamsList: async (): Promise<any[]> => {
@@ -3601,7 +3588,6 @@ export const teamsAPI = {
   },
 
   /**
-   * Create or update staff
    * POST /teams-add -> teamsAdd()
    */
   createOrUpdateStaff: async (formData: FormData | Record<string, any>): Promise<any> => {
@@ -3617,40 +3603,8 @@ export const teamsAPI = {
   },
 
   /**
-   * Get staff by uuid
-   * GET /teams-edit/{uuid} -> edit()
-   */
-  getStaff: async (uuid: string): Promise<any> => {
-    try {
-      const response = await apiClient.get(`/teams-edit/${encodeURIComponent(uuid)}`);
-      return response.data?.data ?? response.data;
-    } catch (error: any) {
-      throw {
-        message: error.response?.data?.message || 'Failed to fetch staff',
-        errors: error.response?.data?.errors || {},
-      } as ApiError;
-    }
-  },
-
-  /**
-   * Delete staff
-   * DELETE /teams-delete/{uuid} -> delete()
-   */
-  deleteStaff: async (uuid: string): Promise<any> => {
-    try {
-      const response = await apiClient.delete(`/teams-delete/${encodeURIComponent(uuid)}`);
-      return response.data;
-    } catch (error: any) {
-      throw {
-        message: error.response?.data?.message || 'Failed to delete staff',
-        errors: error.response?.data?.errors || {},
-      } as ApiError;
-    }
-  },
-
-  /**
-   * Search staff
    * POST /teams-search -> search()
+   * Payload: { search_keyword?: string }
    */
   searchStaff: async (searchKeyword?: string): Promise<any[]> => {
     try {
@@ -3661,6 +3615,87 @@ export const teamsAPI = {
     } catch (error: any) {
       throw {
         message: error.response?.data?.message || 'Failed to search staff',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * GET /teams-edit/{uuid} -> edit()
+   * Note: Backend uses where('id', $uuid) - pass numeric id
+   */
+  getStaff: async (idOrUuid: string): Promise<any> => {
+    try {
+      const response = await apiClient.get(`/teams-edit/${encodeURIComponent(idOrUuid)}`);
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch staff',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * POST /teams-details -> details()
+   * Payload: { details_search_id: string|number }
+   */
+  getStaffDetails: async (detailsSearchId: string | number): Promise<any> => {
+    try {
+      const response = await apiClient.post('/teams-details', { details_search_id: detailsSearchId });
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch staff details',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * DELETE /teams-delete/{uuid} -> delete()
+   * Note: Backend uses where('id', $uuid) - pass numeric id
+   * Request body: { id: string }
+   */
+  deleteStaff: async (id: string): Promise<any> => {
+    try {
+      const response = await apiClient.delete(`/teams-delete/${encodeURIComponent(id)}`, {
+        data: { id },
+      });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to delete staff',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * POST /teams-password-update/{uuid} -> teamsPasswordUpdate()
+   */
+  updatePassword: async (idOrUuid: string, passwordData: Record<string, any>): Promise<any> => {
+    try {
+      const response = await apiClient.post(`/teams-password-update/${encodeURIComponent(idOrUuid)}`, passwordData);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to update password',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * GET /teams-chat -> teamsChat()
+   */
+  getTeamsChat: async (): Promise<any> => {
+    try {
+      const response = await apiClient.get('/teams-chat');
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch teams chat',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }

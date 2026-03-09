@@ -679,7 +679,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                 )}
               </button>
               {showFilterDropdown && (
-                <div className={`absolute right-0 top-full mt-2 w-52 rounded-lg border shadow-lg z-20 filter-dropdown ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                <div className={`absolute right-0 top-full mt-2 w-52 rounded-lg border shadow-lg z-20 filter-dropdown ${isDark ? 'bg-dropdown-panel border-slate-700' : 'bg-white border-slate-200'}`}>
                   <div className="py-1">
                     <button
                       type="button"

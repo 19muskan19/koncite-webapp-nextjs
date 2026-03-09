@@ -664,7 +664,7 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
                           <MoreVertical className={`w-4 h-4 ${textSecondary}`} />
                         </button>
                         {openDropdownId === row.id && row.status !== 'Inactive' && (
-                          <div className={`dropdown-menu absolute right-0 w-32 rounded-lg border shadow-xl z-[100] ${index === paginatedLabours.length - 1 ? 'bottom-full mb-1' : 'top-full mt-1'} ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                          <div className={`dropdown-menu absolute right-0 w-32 rounded-lg border shadow-xl z-[100] ${index === paginatedLabours.length - 1 ? 'bottom-full mb-1' : 'top-full mt-1'} ${isDark ? 'bg-dropdown-panel border-slate-700' : 'bg-white border-slate-200'}`}>
                             <div className="py-1">
                               <button
                                 onClick={() => {

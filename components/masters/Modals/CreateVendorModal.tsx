@@ -451,7 +451,7 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
                         {isCountryDropdownOpen && (
                           <>
                             <div className="fixed inset-0 z-40" onClick={() => { setIsCountryDropdownOpen(false); setCountrySearchQuery(''); }} />
-                            <div className={`absolute top-full left-0 mt-1 z-[60] w-72 max-h-72 overflow-hidden ${inputBg} border ${borderClass} rounded-lg shadow-xl flex flex-col`}>
+                            <div className={`absolute top-full left-0 mt-1 z-[60] w-72 max-h-72 overflow-hidden ${isDark ? 'bg-dropdown-panel' : inputBg} border ${borderClass} rounded-lg shadow-xl flex flex-col`}>
                               <div className="p-2 border-b border-inherit flex-shrink-0">
                                 <div className="relative">
                                   <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />

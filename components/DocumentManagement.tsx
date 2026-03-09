@@ -97,6 +97,41 @@ function isUuid(s: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 }
 
+/** Format API date string to user's local timezone. Handles ISO, "YYYY-MM-DD HH:mm:ss", and pre-formatted dates like "Mar 09, 2026". */
+function formatFileDate(value: string | null | undefined): string {
+  if (!value || typeof value !== 'string') return '—';
+  const trimmed = value.trim();
+  if (!trimmed) return '—';
+  // Date-only strings (e.g. "Mar 09, 2026") – show as date only, avoid misleading "12:00 AM"
+  const hasTimeComponent = /\d{1,2}:\d{2}/.test(trimmed) || /[Tt]\d|Z|[+-]\d{2}:?\d{2}$/i.test(trimmed);
+  const dateOnlyOpts = { year: 'numeric', month: '2-digit', day: '2-digit' } as const;
+  const dateTimeOpts = { ...dateOnlyOpts, hour: '2-digit' as const, minute: '2-digit' as const, hour12: true };
+  // Backend may send pre-formatted date (e.g. "Mar 09, 2026") – don't mangle it with ISO logic
+  const looksLikeIso = /^\d{4}-\d{2}-\d{2}/.test(trimmed) || /[Zz]|[+-]\d{2}:?\d{2}$/.test(trimmed);
+  if (!looksLikeIso) {
+    const d = new Date(trimmed);
+    if (!isNaN(d.getTime())) {
+      return hasTimeComponent ? d.toLocaleString(undefined, dateTimeOpts) : d.toLocaleDateString(undefined, dateOnlyOpts);
+    }
+    return trimmed.length >= 8 && /\d/.test(trimmed) ? trimmed : '—';
+  }
+  let toParse = trimmed;
+  if (!/[Zz]|[+-]\d{2}:?\d{2}$/.test(trimmed)) {
+    toParse = trimmed.replace(/\s+/, 'T') + 'Z';
+  }
+  const d = new Date(toParse);
+  if (isNaN(d.getTime())) return '—';
+  return hasTimeComponent ? d.toLocaleString(undefined, dateTimeOpts) : d.toLocaleDateString(undefined, dateOnlyOpts);
+}
+
+/** Extract upload/create timestamp from document. Tries common backend and Azure Blob field names. */
+function getDocTimestamp(doc: any): string | null | undefined {
+  const v = doc?.uploaded_at ?? doc?.created_at ?? doc?.last_modified ?? doc?.LastModified ?? doc?.updated_at ?? doc?.createdAt ?? doc?.lastModified ?? doc?.uploadedAt
+    ?? doc?.properties?.lastModified ?? doc?.properties?.LastModified;
+  if (v instanceof Date) return v.toISOString();
+  return v;
+}
+
 /** Convert URL segments to currentPath (internal state). projects needed to resolve slug to ID. */
 function urlSegmentsToPath(segments: string[], projects?: Project[]): string[] {
   if (segments.length === 0) return ['office'];
@@ -328,10 +363,11 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
         if (projectSegment.startsWith('project_')) {
           const projectIdStr = projectSegment.replace('project_', '');
           // Find project by ID to get numeric ID and azure_folder_path
-          const project = projects.find(p => p.id === projectIdStr || String(p.id) === projectIdStr);
+          const project = projects.find(p => p.id === projectIdStr || String(p.id) === projectIdStr || String(p.numericId) === projectIdStr);
           if (project) {
-            // Use numericId if available, otherwise try to parse the ID
-            projectId = project.numericId || (typeof project.id === 'number' ? project.id : parseInt(projectIdStr));
+            // Use numericId if available (backend expects numeric). Fallback to id for UUID projects.
+            const numId = project.numericId ?? (typeof project.id === 'number' ? project.id : parseInt(projectIdStr, 10));
+            projectId = Number.isFinite(numId) ? numId : (project.id as any);
             
             // If project has azure_folder_path, use it as base path
             // Backend will use this to list blobs directly from Azure
@@ -359,17 +395,24 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
             folder_uuid: sharedFolderUuid,
           });
           if (response.status && response.data) {
-            const fileItems: FileItem[] = response.data.map((doc: any) => ({
-              id: doc.uuid,
-              name: doc.original_name ?? doc.name,
-              size: doc.file_size ? `${(doc.file_size / 1024).toFixed(2)} KB` : '0 KB',
-              lastModified: doc.uploaded_at || new Date().toLocaleDateString(),
-              owner: doc.uploaded_by || 'Unknown',
-              type: doc.is_folder ? 'folder' : 'file',
-              path: doc.file_path || doc.item_path || doc.full_path,
-              fileData: doc.file_url,
-              mimeType: doc.mime_type,
-            }));
+            const arr = Array.isArray(response.data) ? response.data : (response.data?.data ?? []);
+            const fileItems: FileItem[] = arr.map((doc: any) => {
+              const ts = getDocTimestamp(doc);
+              const isFolder = doc.is_folder ?? false;
+              const sizeBytes = doc.file_size ?? doc.size ?? doc.properties?.contentLength ?? 0;
+              const sizeStr = sizeBytes ? `${(Number(sizeBytes) / 1024).toFixed(2)} KB` : (isFolder ? '—' : '0 KB');
+              return {
+                id: doc.uuid ?? doc.name,
+                name: doc.original_name ?? doc.name,
+                size: sizeStr,
+                lastModified: ts ? formatFileDate(ts) : '—',
+                owner: doc.uploaded_by || 'Unknown',
+                type: doc.is_folder ? 'folder' : 'file',
+                path: doc.file_path || doc.item_path || doc.full_path,
+                fileData: doc.file_url,
+                mimeType: doc.mime_type,
+              };
+            });
             setDocuments(fileItems);
             setDocumentsError(null);
             setFolderDisplayNames(prev => {
@@ -386,15 +429,18 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
           // Shared root: dedicated endpoint returns top-level shared items only.
           const response = await documentAPI.getSharedItems();
           if (response.status && response.data) {
-            const fileItems: FileItem[] = response.data.map((item: any) => ({
-              id: item.uuid,
-              name: item.item_name || 'Untitled',
-              size: '—',
-              lastModified: item.shared_date && item.shared_time ? `${item.shared_date} ${item.shared_time}` : (item.shared_at || '—'),
-              owner: item.shared_by || 'Unknown',
-              type: (item.item_type === 'folder' ? 'folder' : 'file') as 'file' | 'folder',
-              path: item.file_path || item.item_path || item.full_path,
-            }));
+            const fileItems: FileItem[] = response.data.map((item: any) => {
+              const rawDate = item.shared_at ?? (item.shared_date && item.shared_time ? `${item.shared_date} ${item.shared_time}` : null);
+              return {
+                id: item.uuid,
+                name: item.item_name || 'Untitled',
+                size: '—',
+                lastModified: formatFileDate(rawDate),
+                owner: item.shared_by || 'Unknown',
+                type: (item.item_type === 'folder' ? 'folder' : 'file') as 'file' | 'folder',
+                path: item.file_path || item.item_path || item.full_path,
+              };
+            });
             setDocuments(fileItems);
             setDocumentsError(null);
           } else {
@@ -413,7 +459,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
               id: item.uuid,
               name: item.name || item.original_name || 'Untitled',
               size: item.file_size ? `${(item.file_size / 1024).toFixed(2)} KB` : '—',
-              lastModified: item.deleted_at ? new Date(item.deleted_at).toLocaleString() : '—',
+              lastModified: formatFileDate(item.deleted_at),
               owner: item.uploaded_by || 'Unknown',
               type: item.is_folder ? 'folder' : 'file',
               path: item.file_path || item.item_path || item.full_path,
@@ -463,17 +509,20 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
           });
           
           if (response.status && response.data) {
-            const galleryImages: FileItem[] = response.data.map((img: any) => ({
-              id: img.uuid || img.id,
-              name: img.original_name ?? img.name,
-              size: img.file_size ? `${(img.file_size / 1024).toFixed(2)} KB` : '0 KB',
-              lastModified: img.uploaded_at || new Date().toLocaleDateString(),
-              owner: img.uploaded_by || 'Unknown',
-              type: 'file' as const,
-              path: img.blob_path,
-              fileData: img.url,
-              mimeType: img.mime_type,
-            }));
+            const galleryImages: FileItem[] = response.data.map((img: any) => {
+              const ts = getDocTimestamp(img);
+              return {
+                id: img.uuid || img.id,
+                name: img.original_name ?? img.name,
+                size: img.file_size ? `${(img.file_size / 1024).toFixed(2)} KB` : '0 KB',
+                lastModified: ts ? formatFileDate(ts) : '—',
+                owner: img.uploaded_by || 'Unknown',
+                type: 'file' as const,
+                path: img.blob_path,
+                fileData: img.url,
+                mimeType: img.mime_type,
+              };
+            });
             setDocuments(galleryImages);
             setDocumentsError(null);
             setSelectedFiles(new Set());
@@ -502,8 +551,8 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
         category,
       };
       
-      if (projectId) {
-        params.project_id = projectId;
+      if (projectId != null) {
+        params.project_id = Number.isFinite(Number(projectId)) ? Number(projectId) : projectId;
       }
       
       if (folderUuid) {
@@ -517,18 +566,31 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
       console.log('📄 Loading documents with params:', params);
       const response = await documentAPI.getDocuments(params);
       
-      if (response.status && response.data) {
-        const fileItems: FileItem[] = response.data.map((doc: any) => ({
-          id: doc.uuid,
-          name: doc.original_name ?? doc.name,
-          size: doc.file_size ? `${(doc.file_size / 1024).toFixed(2)} KB` : '0 KB',
-          lastModified: doc.uploaded_at || new Date().toLocaleDateString(),
-          owner: doc.uploaded_by || 'Unknown',
-          type: doc.is_folder ? 'folder' : 'file',
-          path: doc.file_path || doc.item_path || doc.full_path,
-          fileData: doc.file_url,
-          mimeType: doc.mime_type,
-        }));
+      // Robust extraction: backend/Azure may return { status, data: [...] } or { data: { data: [...] } } or { documents: [...] }
+      let docArray: any[] = [];
+      if (Array.isArray(response?.data)) docArray = response.data;
+      else if (Array.isArray(response?.documents)) docArray = response.documents;
+      else if (response?.data?.data && Array.isArray(response.data.data)) docArray = response.data.data;
+      else if (Array.isArray(response)) docArray = response;
+      
+      if (docArray.length > 0) {
+        const fileItems: FileItem[] = docArray.map((doc: any) => {
+          const ts = getDocTimestamp(doc);
+          const isFolder = doc.is_folder ?? doc.isFolder ?? false;
+          const sizeBytes = doc.file_size ?? doc.size ?? doc.properties?.contentLength ?? 0;
+          const sizeStr = sizeBytes ? `${(Number(sizeBytes) / 1024).toFixed(2)} KB` : (isFolder ? '—' : '0 KB');
+          return {
+            id: doc.uuid ?? doc.name ?? doc.id ?? `doc-${Math.random().toString(36).slice(2)}`,
+            name: doc.original_name ?? doc.name ?? 'Untitled',
+            size: sizeStr,
+            lastModified: ts ? formatFileDate(ts) : '—',
+            owner: doc.uploaded_by ?? doc.owner ?? 'Unknown',
+            type: (doc.is_folder ?? doc.isFolder ?? false) ? 'folder' : 'file',
+            path: doc.file_path ?? doc.item_path ?? doc.full_path ?? doc.name,
+            fileData: doc.file_url ?? doc.url ?? doc.fileUrl,
+            mimeType: doc.mime_type ?? doc.mimeType,
+          };
+        });
         setDocuments(fileItems);
         setDocumentsError(null);
         // Store folder names for breadcrumb display (no extra API calls)
@@ -1089,12 +1151,13 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
       const response = await documentAPI.createFolder(folderData);
 
       if (response.status && response.data) {
+        const ts = getDocTimestamp(response.data);
         // Transform API response to FileItem format
         const newFolder: FileItem = {
           id: response.data.uuid,
           name: response.data.name,
           size: '-',
-          lastModified: response.data.created_at || new Date().toLocaleDateString(),
+          lastModified: ts ? formatFileDate(ts) : formatFileDate(new Date().toISOString()),
           owner: 'You',
           type: 'folder',
           path: response.data.name,
@@ -1446,17 +1509,20 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
         const uploadedFiles = response.data;
         
         // Transform API response to FileItem format
-        const fileItems: FileItem[] = uploadedFiles.map((doc: any) => ({
-          id: doc.uuid,
-          name: doc.original_name ?? doc.name,
-          size: doc.file_size ? `${(doc.file_size / 1024).toFixed(2)} KB` : '0 KB',
-          lastModified: doc.uploaded_at || new Date().toLocaleDateString(),
-          owner: doc.uploaded_by || 'You',
-          type: 'file' as const,
-          path: doc.file_path,
-          fileData: doc.file_url, // Signed URL from Azure
-          mimeType: doc.mime_type,
-        }));
+        const fileItems: FileItem[] = uploadedFiles.map((doc: any) => {
+          const ts = getDocTimestamp(doc);
+          return {
+            id: doc.uuid,
+            name: doc.original_name ?? doc.name,
+            size: doc.file_size ? `${(doc.file_size / 1024).toFixed(2)} KB` : '0 KB',
+            lastModified: ts ? formatFileDate(ts) : formatFileDate(new Date().toISOString()),
+            owner: doc.uploaded_by || 'You',
+            type: 'file' as const,
+            path: doc.file_path,
+            fileData: doc.file_url, // Signed URL from Azure
+            mimeType: doc.mime_type,
+          };
+        });
 
         // Update UI with uploaded files
         setDocuments(prev => [...prev, ...fileItems]);
@@ -2270,7 +2336,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
   }, [selectedFiles, filteredFiles]);
 
   return (
-    <div className={`flex flex-col md:flex-row h-[calc(100vh-3.5rem-2rem)] sm:h-[calc(100vh-4rem-2rem)] md:h-[calc(100vh-3.5rem-2rem)] ${bgPrimary} rounded-xl border overflow-hidden ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
+    <div className={`flex flex-col md:flex-row w-full min-h-0 h-[calc(100vh-3.5rem-2rem)] sm:h-[calc(100vh-4rem-2rem)] md:h-[calc(100vh-3.5rem-2rem)] lg:h-[calc(100vh-4rem-2rem)] max-h-[100dvh] ${bgPrimary} rounded-xl border overflow-hidden ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
       {/* Mobile Sidebar Overlay */}
       {sidebarOpen && (
         <div 
@@ -2280,7 +2346,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
       )}
 
       {/* Left Sidebar */}
-      <div className={`fixed md:static inset-y-0 left-0 z-[101] md:z-auto w-full sm:w-72 md:w-56 border-r ${isDark ? 'bg-[#0a0a0a] border-slate-700' : 'bg-white border-slate-200'} flex flex-col transform transition-transform duration-300 ease-in-out shadow-xl md:shadow-none ${
+      <div className={`fixed md:static inset-y-0 left-0 z-[101] md:z-auto w-[min(100%,20rem)] max-w-[85vw] sm:w-72 md:w-56 lg:w-64 border-r ${isDark ? 'bg-[#0a0a0a] border-slate-700' : 'bg-white border-slate-200'} flex flex-col transform transition-transform duration-300 ease-in-out shadow-xl md:shadow-none md:max-w-none ${
         sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
       }`}>
         {/* Mobile Close Button */}
@@ -2436,7 +2502,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Page Header - aligned with masters */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-3 md:px-4 py-3 flex-shrink-0">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3 px-2 sm:px-3 md:px-4 py-2 sm:py-3 flex-shrink-0">
           <div className="flex items-center gap-3 min-w-0">
             <div className={`p-2.5 sm:p-3 rounded-xl flex-shrink-0 ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
               <FolderOpen className="w-5 h-5 sm:w-6 sm:h-6 text-[#C2D642]" />
@@ -2451,11 +2517,11 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
         </div>
 
         {/* Actions Bar */}
-        <div className={`px-3 md:px-4 pb-2 flex-shrink-0`}>
+        <div className={`px-2 sm:px-3 md:px-4 pb-2 flex-shrink-0`}>
           <div className={`p-2 sm:p-3 rounded-xl border ${cardClass} flex flex-wrap items-center justify-between gap-2`}>
             <button
               onClick={() => setSidebarOpen(true)}
-              className="md:hidden p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 flex-shrink-0"
+              className="md:hidden p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/5 flex-shrink-0 touch-manipulation min-h-[44px] min-w-[44px]"
             >
               <Menu className={`w-5 h-5 ${textSecondary}`} />
             </button>
@@ -2498,7 +2564,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
                   <Plus className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> <span className="hidden sm:inline">New</span>
                 </button>
                 {showNewDropdown && (
-                  <div className={`absolute right-0 top-full mt-2 w-44 sm:w-48 rounded-lg border shadow-lg z-20 ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                  <div className={`absolute right-0 top-full mt-2 w-44 sm:w-48 rounded-lg border shadow-lg z-20 ${isDark ? 'bg-dropdown-panel border-slate-700' : 'bg-white border-slate-200'}`}>
                     <div className="py-1">
                       <button
                         onClick={() => {
@@ -2554,8 +2620,8 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
         </div>
 
         {/* Breadcrumb Navigation */}
-        <div className={`px-3 md:px-4 py-2 flex-shrink-0 border-b ${isDark ? 'border-slate-700/50' : 'border-slate-200/80'}`}>
-          <div className="flex items-center gap-1 sm:gap-2 flex-wrap">
+        <div className={`px-2 sm:px-3 md:px-4 py-2 flex-shrink-0 border-b overflow-x-auto ${isDark ? 'border-slate-700/50' : 'border-slate-200/80'}`}>
+          <div className="flex items-center gap-1 sm:gap-2 flex-wrap min-w-0">
             {currentPath.map((pathSegment, index) => {
               const isLast = index === currentPath.length - 1;
               let segmentLabel = '';
@@ -2647,7 +2713,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
                     <ChevronDown className={`w-4 h-4 transition-transform ${showProjectDropdown ? 'rotate-180' : ''}`} />
                   </button>
                   {showProjectDropdown && (
-                    <div className={`absolute top-full left-0 right-0 mt-2 rounded-lg border shadow-lg z-30 max-h-60 overflow-y-auto ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                    <div className={`absolute top-full left-0 right-0 mt-2 rounded-lg border shadow-lg z-30 max-h-60 overflow-y-auto ${isDark ? 'bg-dropdown-panel border-slate-700' : 'bg-white border-slate-200'}`}>
                       <button
                         onClick={() => {
                           setSelectedProjectFilter('all');
@@ -2746,14 +2812,20 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
           {viewMode === 'list' ? (
             <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[600px]">
+                <table className={`w-full ${currentPath[0] === 'image-gallery' ? 'min-w-0' : 'min-w-[320px] sm:min-w-[480px] md:min-w-[600px]'}`}>
                   <thead className={isDark ? 'bg-slate-700/50' : 'bg-slate-50'}>
                     <tr>
                       <th className={`px-3 sm:px-4 md:px-6 py-2 sm:py-3 w-12`} />
                       <th className={`px-3 sm:px-4 md:px-6 py-2 sm:py-3 text-left text-[10px] sm:text-xs font-black uppercase tracking-wider ${textSecondary}`}>Name</th>
-                      <th className={`px-3 sm:px-4 md:px-6 py-2 sm:py-3 text-left text-[10px] sm:text-xs font-black uppercase tracking-wider ${textSecondary} hidden sm:table-cell`}>Size</th>
-                      <th className={`px-3 sm:px-4 md:px-6 py-2 sm:py-3 text-left text-[10px] sm:text-xs font-black uppercase tracking-wider ${textSecondary} hidden md:table-cell`}>Last Modified</th>
-                      <th className={`px-3 sm:px-4 md:px-6 py-2 sm:py-3 text-left text-[10px] sm:text-xs font-black uppercase tracking-wider ${textSecondary} hidden lg:table-cell`}>Owner</th>
+                      {currentPath[0] !== 'image-gallery' && (
+                        <>
+                          {currentPath[0] !== 'shared' && (
+                            <th className={`px-3 sm:px-4 md:px-6 py-2 sm:py-3 text-left text-[10px] sm:text-xs font-black uppercase tracking-wider ${textSecondary} hidden sm:table-cell`}>Size</th>
+                          )}
+                          <th className={`px-3 sm:px-4 md:px-6 py-2 sm:py-3 text-left text-[10px] sm:text-xs font-black uppercase tracking-wider ${textSecondary} hidden md:table-cell`}>Last Modified</th>
+                          <th className={`px-3 sm:px-4 md:px-6 py-2 sm:py-3 text-left text-[10px] sm:text-xs font-black uppercase tracking-wider ${textSecondary} hidden lg:table-cell`}>Owner</th>
+                        </>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-inherit">
@@ -2791,12 +2863,22 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
                             </div>
                             <div className="min-w-0 flex-1">
                               <span className={`text-xs sm:text-sm font-bold ${textPrimary} block truncate`} title={file.name}>{file.name}</span>
-                              <span className={`text-[10px] sm:text-xs font-bold ${textSecondary} sm:hidden`}>{file.size}</span>
+                              {currentPath[0] === 'image-gallery' ? (
+                                <span className={`text-[10px] sm:text-xs font-bold ${textSecondary} block mt-0.5`}>{file.size} • {file.lastModified} • {file.owner}</span>
+                              ) : currentPath[0] !== 'shared' ? (
+                                <span className={`text-[10px] sm:text-xs font-bold ${textSecondary} sm:hidden`}>{file.size}</span>
+                              ) : null}
                             </div>
                           </td>
-                          <td className={`px-3 sm:px-4 md:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${textSecondary} hidden sm:table-cell`}>{file.size}</td>
-                          <td className={`px-3 sm:px-4 md:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${textSecondary} hidden md:table-cell`}>{file.lastModified}</td>
-                          <td className={`px-3 sm:px-4 md:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${textSecondary} hidden lg:table-cell`}>{file.owner}</td>
+                          {currentPath[0] !== 'image-gallery' && (
+                            <>
+                              {currentPath[0] !== 'shared' && (
+                                <td className={`px-3 sm:px-4 md:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${textSecondary} hidden sm:table-cell`}>{file.size}</td>
+                              )}
+                              <td className={`px-3 sm:px-4 md:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${textSecondary} hidden md:table-cell`}>{file.lastModified}</td>
+                              <td className={`px-3 sm:px-4 md:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${textSecondary} hidden lg:table-cell`}>{file.owner}</td>
+                            </>
+                          )}
                         </tr>
                       );
                     })}
@@ -2805,7 +2887,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2 sm:gap-3 md:gap-4">
               {(currentPath[0] === 'image-gallery' ? paginatedGalleryFiles : filteredFiles).map((file) => {
                 const isSelected = selectedFiles.has(file.id);
                 return (
@@ -2852,7 +2934,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
 
           {/* Image Gallery Pagination (below grid/list) */}
           {currentPath[0] === 'image-gallery' && galleryTotalPages > 1 && filteredFiles.length > 0 && (
-            <div className={`mt-6 flex flex-col sm:flex-row items-center justify-between gap-4 p-4 rounded-xl border ${cardClass}`}>
+            <div className={`mt-4 sm:mt-6 flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4 p-3 sm:p-4 rounded-xl border ${cardClass}`}>
               <div className={`text-sm font-bold ${textSecondary}`}>
                 Showing {galleryStart} - {galleryEnd} of {filteredFiles.length} image{filteredFiles.length !== 1 ? 's' : ''}
               </div>
@@ -2995,8 +3077,8 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
 
       {/* View File Modal */}
       {viewFile && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[120] p-4" onClick={() => { setViewFile(null); setViewFileExcelData(null); setViewFileActiveSheet(''); }}>
-          <div className={`w-full max-w-4xl max-h-[90vh] rounded-xl border overflow-hidden flex flex-col ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'} shadow-2xl`} onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[120] p-2 sm:p-4" onClick={() => { setViewFile(null); setViewFileExcelData(null); setViewFileActiveSheet(''); }}>
+          <div className={`w-full max-w-4xl max-h-[85vh] sm:max-h-[90vh] rounded-xl border overflow-hidden flex flex-col ${isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'} shadow-2xl`} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between p-3 sm:p-4 border-b shrink-0 border-inherit">
               <h3 className={`text-sm sm:text-base font-bold truncate flex-1 min-w-0 ${textPrimary}`} title={viewFile.name}>{viewFile.name}</h3>
               <button
@@ -3054,8 +3136,8 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
 
       {/* Share Modal */}
       {showShareModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[110] p-4" onClick={() => setShowShareModal(false)}>
-          <div className={`w-full max-w-lg rounded-xl border ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'} shadow-2xl`} onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[110] p-3 sm:p-4 overflow-y-auto" onClick={() => setShowShareModal(false)}>
+          <div className={`w-full max-w-lg my-auto rounded-xl border ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'} shadow-2xl`} onClick={(e) => e.stopPropagation()}>
             {/* Modal Header */}
             <div className="flex items-center justify-between p-4 sm:p-6 border-b border-inherit">
               <div className="flex items-center gap-3">
@@ -3417,7 +3499,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
 
       {/* Floating Action Bar */}
       {selectedFiles.size > 0 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[102] rounded-xl px-2.5 sm:px-3 py-1.5 sm:py-2 shadow-2xl border-2 border-[#C2D642]/70 bg-transparent backdrop-blur-md max-w-xl">
+        <div className="fixed bottom-4 sm:bottom-6 left-1/2 -translate-x-1/2 z-[102] rounded-xl px-2.5 sm:px-3 py-1.5 sm:py-2 shadow-2xl border-2 border-[#C2D642]/70 bg-transparent backdrop-blur-md max-w-[calc(100vw-1rem)] sm:max-w-xl">
           <div className="flex items-center gap-1.5 sm:gap-2 md:gap-3">
             <button
               onClick={clearSelection}

@@ -946,7 +946,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
             )}
           </button>
           {showFilterDropdown && (
-            <div className={`absolute right-0 top-full mt-2 w-52 rounded-lg border shadow-lg z-20 filter-dropdown ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+            <div className={`absolute right-0 top-full mt-2 w-52 rounded-lg border shadow-lg z-20 filter-dropdown ${isDark ? 'bg-dropdown-panel border-slate-700' : 'bg-white border-slate-200'}`}>
               <div className="py-1">
                 <button
                   type="button"
@@ -959,7 +959,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                   className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
                     sortFilter === 'none'
                       ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
-                      : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
+                      : isDark ? 'hover:bg-dropdown-panel-hover text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                   }`}
                 >
                   None
@@ -975,7 +975,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                   className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
                     sortFilter === 'recent_created'
                       ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
-                      : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
+                      : isDark ? 'hover:bg-dropdown-panel-hover text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                   }`}
                 >
                   Recent (by Created)
@@ -991,7 +991,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                   className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
                     sortFilter === 'oldest_created'
                       ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
-                      : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
+                      : isDark ? 'hover:bg-dropdown-panel-hover text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                   }`}
                 >
                   Oldest (by Created)
@@ -1007,7 +1007,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                   className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
                     sortFilter === 'recent_updated'
                       ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
-                      : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
+                      : isDark ? 'hover:bg-dropdown-panel-hover text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                   }`}
                 >
                   Recent (by Updated)
@@ -1023,7 +1023,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                   className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
                     sortFilter === 'oldest_updated'
                       ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
-                      : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
+                      : isDark ? 'hover:bg-dropdown-panel-hover text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                   }`}
                 >
                   Oldest (by Updated)
@@ -1102,7 +1102,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                   </button>
                   {openStatusDropdownId === company.id && (
                     <div className={`absolute right-0 top-full mt-1 w-32 rounded-lg border shadow-lg z-20 py-1 status-dropdown ${
-                      isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'
+                      isDark ? 'bg-dropdown-panel border-slate-700' : 'bg-white border-slate-200'
                     }`}>
                       {['Closed', 'Pending', 'Completed', 'Ongoing'].map((opt) => (
                         <button
@@ -1116,7 +1116,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                           className={`w-full flex items-center px-4 py-2 text-sm font-bold transition-colors text-left ${
                             (company.status || 'Pending').toLowerCase() === opt.toLowerCase()
                               ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
-                              : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
+                              : isDark ? 'hover:bg-dropdown-panel-hover text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                           }`}
                         >
                           {opt}

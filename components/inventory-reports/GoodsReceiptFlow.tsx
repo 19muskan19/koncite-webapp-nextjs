@@ -354,7 +354,7 @@ export default function GoodsReceiptFlow({
     setIsSubmitting(true);
     const inwardDetailsForPdf = details.length > 0
       ? details.map((d) => ({
-          id: d.id,
+          id: d.id ?? undefined,
           materials_id: d.materials_id,
           materialCode: d.materialCode,
           materialName: d.materialName,
