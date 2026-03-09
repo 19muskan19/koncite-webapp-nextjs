@@ -40,6 +40,7 @@ import { useUser } from '../../contexts/UserContext';
 import { useToast } from '../../contexts/ToastContext';
 import { useSidebar } from '../../contexts/SidebarContext';
 import { masterDataAPI, teamsAPI, safetyAPI, hinderanceAPI, dprAPI, activitiesHistoryAPI, labourHistoryAPI, materialsHistoryAPI, assetsHistoryAPI } from '../../services/api';
+import { getLogoUrl } from '@/utils/imageUtils';
 
 interface Project {
   id: string;
@@ -204,10 +205,9 @@ const PAGE_SIZE = 10;
 
 const DPR_BASE = '/work-progress-reports';
 
-/** Cache for DPR list auxiliary data to reduce API calls (project-list, project-subproject) */
+/** Cache for DPR list auxiliary data (project-list only; names from dpr-list response, no project-subproject calls) */
 const DPR_LIST_CACHE = {
   projects: null as { data: any[]; ts: number } | null,
-  subprojects: new Map<string, { data: Record<string, string>; ts: number }>(),
   TTL_MS: 3 * 60 * 1000,
   VISIBILITY_THROTTLE_MS: 30 * 1000,
 };
@@ -328,6 +328,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const [assetPage, setAssetPage] = useState(1);
   const [safetyPage, setSafetyPage] = useState(1);
   const [hindrancePage, setHindrancePage] = useState(1);
+  const [dprListPage, setDprListPage] = useState(1);
 
   // When focused and value is 0, show empty so user can type without deleting
   const [focusedQuantityField, setFocusedQuantityField] = useState<string | null>(null);
@@ -490,7 +491,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             id: uuid || String(rawId),
             numericId,
             name: p.project_name || p.name || '',
-            logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name || p.name || '')}&background=C2D642&color=fff&size=128`,
+            logo: getLogoUrl(p.logo, p.project_name || p.name || '', 'C2D642'),
             code: p.code || '',
             company: companyName,
             location: p.address || p.location || ''
@@ -755,7 +756,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             id: uuid || String(rawId),
             numericId,
             name: p.project_name || p.name || '',
-            logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name || p.name || '')}&background=C2D642&color=fff&size=128`,
+            logo: getLogoUrl(p.logo, p.project_name || p.name || '', 'C2D642'),
             code: p.code || '',
             company: companyName,
             location: p.address || p.location || ''
@@ -1865,6 +1866,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     return hindranceEntries.slice(start, start + PAGE_SIZE);
   }, [hindranceEntries, hindrancePage]);
 
+  const paginatedDprList = useMemo(() => {
+    const start = (dprListPage - 1) * PAGE_SIZE;
+    return dprList.slice(start, start + PAGE_SIZE);
+  }, [dprList, dprListPage]);
+
   const handleToggleLabour = (labour: Labour) => {
     setSelectedLabours(prev => {
       const newMap = new Map(prev);
@@ -2349,36 +2355,57 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       const arr = Array.isArray(list) ? list : [];
       if (arr.length > 0 || !opts?.preserveOnEmpty) setDprList(arr);
       else setDprList(prev => prev);
+      setDprListPage(1);
       opts?.onFetched?.(arr);
 
-      const projectIds = arr.length === 0 ? [] : [...new Set(arr.map((d: any) => {
-        const pid = d.projects_id;
-        if (pid != null && typeof pid !== 'object') return String(pid);
-        return pid?.id ?? pid;
-      }).filter(Boolean))];
+      // Build project and subproject name maps from dpr-list response (avoid project-subproject API)
+      let projMap: Record<string, string> = {};
+      let subMap: Record<string, string> = {};
 
-      if (projectIds.length === 0) {
-        setProjectsMapForDprList({});
-        setSubprojectsMapForDprList({});
-        return;
+      for (const d of arr) {
+        // Project name from response: nested object or top-level
+        const pid = d.projects_id;
+        if (pid != null && typeof pid === 'object') {
+          const id = pid?.id ?? pid;
+          const name = pid?.project_name ?? pid?.name ?? d.project_name;
+          if (id != null && name) {
+            projMap[String(id)] = name;
+            if (Number.isFinite(Number(id))) projMap[String(Number(id))] = name;
+          }
+        } else if (pid != null && (d.project_name ?? d.projects?.project_name ?? d.projects?.name)) {
+          const name = d.project_name ?? d.projects?.project_name ?? d.projects?.name;
+          projMap[String(pid)] = name;
+          if (Number.isFinite(Number(pid))) projMap[String(Number(pid))] = name;
+        }
+        // Subproject name from response: nested object or top-level
+        const sid = d.sub_projects_id;
+        if (sid != null && typeof sid === 'object') {
+          const id = sid?.id ?? sid;
+          const name = sid?.name ?? d.sub_project_name ?? d.subproject_name;
+          if (id != null && name) {
+            subMap[String(id)] = name;
+            if (Number.isFinite(Number(id))) subMap[String(Number(id))] = name;
+          }
+        } else if (sid != null && (d.sub_project_name ?? d.subproject_name ?? d.sub_projects?.name ?? d.subProjects?.name)) {
+          const name = d.sub_project_name ?? d.subproject_name ?? d.sub_projects?.name ?? d.subProjects?.name;
+          subMap[String(sid)] = name;
+          if (Number.isFinite(Number(sid))) subMap[String(Number(sid))] = name;
+        }
       }
 
-      let projMap: Record<string, string> = {};
-      const projectsCacheValid = DPR_LIST_CACHE.projects && now - DPR_LIST_CACHE.projects.ts < DPR_LIST_CACHE.TTL_MS;
-      if (projectsCacheValid && !opts?.force) {
-        for (const p of DPR_LIST_CACHE.projects!.data || []) {
-          const rawId = p.id ?? p.project_id ?? p.projects_id;
-          const name = p.project_name || p.name || '';
-          if (rawId != null && name) {
-            projMap[String(rawId)] = name;
-            if (Number.isFinite(Number(rawId))) projMap[String(Number(rawId))] = name;
-          }
-        }
-      } else {
-        try {
-          const fetchedProjects = await masterDataAPI.getProjectsList();
-          const projArr = Array.isArray(fetchedProjects) ? fetchedProjects : ((fetchedProjects as any)?.data ?? (fetchedProjects as any)?.projects ?? []);
-          for (const p of projArr) {
+      // Only call project-list for project IDs we don't have names for (no project-subproject calls)
+      const missingProjectIds = [...new Set(arr.map((d: any) => {
+        const pid = d.projects_id;
+        if (pid == null) return null;
+        const id = typeof pid === 'object' ? (pid?.id ?? pid) : pid;
+        if (id == null) return null;
+        return projMap[String(id)] ? null : String(id);
+      }).filter(Boolean))] as string[];
+
+      if (missingProjectIds.length > 0) {
+        const projectsCacheValid = DPR_LIST_CACHE.projects && now - DPR_LIST_CACHE.projects.ts < DPR_LIST_CACHE.TTL_MS;
+        if (projectsCacheValid && !opts?.force) {
+          for (const p of DPR_LIST_CACHE.projects!.data || []) {
             const rawId = p.id ?? p.project_id ?? p.projects_id;
             const name = p.project_name || p.name || '';
             if (rawId != null && name) {
@@ -2386,10 +2413,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
               if (Number.isFinite(Number(rawId))) projMap[String(Number(rawId))] = name;
             }
           }
-          DPR_LIST_CACHE.projects = { data: projArr, ts: now };
-        } catch {
-          if (DPR_LIST_CACHE.projects) {
-            for (const p of DPR_LIST_CACHE.projects.data || []) {
+        } else {
+          try {
+            const fetchedProjects = await masterDataAPI.getProjectsList();
+            const projArr = Array.isArray(fetchedProjects) ? fetchedProjects : ((fetchedProjects as any)?.data ?? (fetchedProjects as any)?.projects ?? []);
+            for (const p of projArr) {
               const rawId = p.id ?? p.project_id ?? p.projects_id;
               const name = p.project_name || p.name || '';
               if (rawId != null && name) {
@@ -2397,36 +2425,23 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                 if (Number.isFinite(Number(rawId))) projMap[String(Number(rawId))] = name;
               }
             }
+            DPR_LIST_CACHE.projects = { data: projArr, ts: now };
+          } catch {
+            if (DPR_LIST_CACHE.projects) {
+              for (const p of DPR_LIST_CACHE.projects.data || []) {
+                const rawId = p.id ?? p.project_id ?? p.projects_id;
+                const name = p.project_name || p.name || '';
+                if (rawId != null && name) {
+                  projMap[String(rawId)] = name;
+                  if (Number.isFinite(Number(rawId))) projMap[String(Number(rawId))] = name;
+                }
+              }
+            }
           }
         }
       }
-      setProjectsMapForDprList(projMap);
 
-      const subMap: Record<string, string> = {};
-      const toFetch = projectIds.filter((pid) => {
-        const cached = DPR_LIST_CACHE.subprojects.get(pid);
-        return !cached || now - cached.ts > DPR_LIST_CACHE.TTL_MS || opts?.force;
-      });
-      for (const projectId of toFetch) {
-        try {
-          const subs = await masterDataAPI.getProjectSubprojects(projectId);
-          const subArr = Array.isArray(subs) ? subs : [];
-          const map: Record<string, string> = {};
-          for (const s of subArr) {
-            const rawId = s.id ?? s.subproject_id ?? s.sub_projects_id;
-            const name = s.name || s.subproject_name || '';
-            if (rawId != null && name) {
-              map[String(rawId)] = name;
-              if (Number.isFinite(Number(rawId))) map[String(Number(rawId))] = name;
-            }
-          }
-          DPR_LIST_CACHE.subprojects.set(projectId, { data: map, ts: now });
-        } catch { /* ignore */ }
-      }
-      for (const pid of projectIds) {
-        const c = DPR_LIST_CACHE.subprojects.get(pid);
-        if (c) Object.assign(subMap, c.data);
-      }
+      setProjectsMapForDprList(projMap);
       setSubprojectsMapForDprList(subMap);
     } catch (err: any) {
       setDprListError(err?.message || 'Failed to load DPR list');
@@ -3130,6 +3145,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
               <p className="text-xs mt-1">Create your first DPR using the button above</p>
             </div>
           ) : (
+            <>
             <table className="w-full">
               <thead>
                 <tr className={`border-b ${isDark ? 'border-slate-700 bg-slate-800/50' : 'border-slate-200 bg-slate-50/50'}`}>
@@ -3141,19 +3157,19 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                 </tr>
               </thead>
               <tbody className={`divide-y ${isDark ? 'divide-slate-700' : 'divide-slate-200'}`}>
-                {dprList.map((dpr: any, index: number) => (
+                {paginatedDprList.map((dpr: any, index: number) => (
                   <tr key={dpr.id != null ? `dpr-${dpr.id}-${index}` : `dpr-${index}`} className={isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'}>
                     <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{dpr.dpr_no ?? '-'}</td>
                     <td className={`px-4 py-3 text-sm ${textPrimary}`}>{formatDprListDate(dpr)}</td>
                     <td className={`px-4 py-3 text-sm ${textPrimary}`}>
                       {typeof dpr.projects_id === 'object' && dpr.projects_id
                         ? (dpr.projects_id?.project_name ?? dpr.projects_id?.name ?? '-')
-                        : (dpr.projects?.project_name ?? dpr.projects?.name ?? (dpr.projects_id ? (projectsMapForDprList[String(dpr.projects_id)] ?? `Project #${dpr.projects_id}`) : '-'))}
+                        : (dpr.project_name ?? dpr.projects?.project_name ?? dpr.projects?.name ?? (dpr.projects_id ? (projectsMapForDprList[String(dpr.projects_id)] ?? `Project #${dpr.projects_id}`) : '-'))}
                     </td>
                     <td className={`px-4 py-3 text-sm ${textPrimary}`}>
                       {typeof dpr.sub_projects_id === 'object' && dpr.sub_projects_id
                         ? (dpr.sub_projects_id?.name ?? '-')
-                        : (dpr.sub_projects?.name ?? dpr.subProjects?.name ?? (dpr.sub_projects_id ? (subprojectsMapForDprList[String(dpr.sub_projects_id)] ?? `#${dpr.sub_projects_id}`) : '-'))}
+                        : (dpr.sub_project_name ?? dpr.subproject_name ?? dpr.sub_projects?.name ?? dpr.subProjects?.name ?? (dpr.sub_projects_id ? (subprojectsMapForDprList[String(dpr.sub_projects_id)] ?? `#${dpr.sub_projects_id}`) : '-'))}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1">
@@ -3226,6 +3242,14 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                 ))}
               </tbody>
             </table>
+            {dprList.length > PAGE_SIZE && (
+              <PaginationBar
+                currentPage={dprListPage}
+                totalItems={dprList.length}
+                onPageChange={setDprListPage}
+              />
+            )}
+            </>
           )}
         </div>
       </div>
@@ -3369,9 +3393,10 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                       <div className="flex flex-col items-center text-center">
                         <div className={`w-20 h-20 rounded-xl overflow-hidden border-2 border-[#C2D642]/20 mb-3 flex-shrink-0 group-hover:border-[#C2D642]/50 transition-colors`}>
                           <img 
-                            src={project.logo} 
+                            src={getLogoUrl(project.logo, project.name, 'C2D642')} 
                             alt={project.name}
                             className="w-full h-full object-cover"
+                            loading="lazy"
                             onError={(e) => {
                               const target = e.target as HTMLImageElement;
                               target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(project.name)}&background=C2D642&color=fff&size=128`;

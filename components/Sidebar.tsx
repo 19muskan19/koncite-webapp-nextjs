@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { ViewType, ThemeType } from '@/types';
 import { useUser } from '@/contexts/UserContext';
+import { getLogoUrl } from '@/utils/imageUtils';
 import { authAPI } from '@/services/api';
 
 interface NavItemChild {
@@ -370,7 +371,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
                 <div className="relative w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 bg-[#C2D642]/20 border-2 border-[#C2D642]/30 overflow-hidden">
                   {(company?.logo || user?.company_logo) ? (
                     <img 
-                      src={company?.logo || user?.company_logo || ''} 
+                      src={getLogoUrl(company?.logo || user?.company_logo, company?.name || user?.company_name || 'Company', 'C2D642')} 
                       alt="Company" 
                       className="w-full h-full object-cover"
                       onError={(e) => {

@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import CreateCompanyModal from './Modals/CreateCompanyModal';
 import { masterDataAPI } from '../../services/api';
+import { getLogoUrl } from '@/utils/imageUtils';
 import { useUser } from '../../contexts/UserContext';
 import * as XLSX from 'xlsx';
 
@@ -141,8 +142,6 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
       const transformedCompanies = fetchedCompanies.map((company: any) => {
         const companyName = company.registration_name || company.name || '';
         const logoUrl = company.logo || company.logo_url;
-        // Use default avatar if no logo is provided
-        const defaultLogo = `https://ui-avatars.com/api/?name=${encodeURIComponent(companyName)}&background=6366f1&color=fff&size=128`;
         
         // Preserve original numeric ID for API calls (backend expects numeric id)
         // API returns: { id: 107, uuid: "ecfa3c96-..." }
@@ -162,7 +161,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
           code: company.code || '',
           address: company.registered_address || company.address || '',
           registrationNo: company.company_registration_no || company.registration_no || company.registrationNo || '',
-          logo: logoUrl || defaultLogo,
+          logo: getLogoUrl(logoUrl, companyName, '6366f1'),
           contact: company.phone || company.contact || '',
           email: company.email || '',
           status: company.status || (company.is_active === 1 || company.is_active === true ? 'Pending' : 'Closed'),
@@ -1074,9 +1073,10 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                   <span className={`text-xs font-bold ${textSecondary} flex-shrink-0 w-6`}>{idx + 1}</span>
                   <div className="w-12 h-12 rounded-lg overflow-hidden border-2 border-[#C2D642]/20 flex-shrink-0">
                     <img 
-                      src={company.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=6366f1&color=fff&size=128`}
+                      src={getLogoUrl(company.logo, company.name, '6366f1')}
                       alt={company.name}
                       className="w-full h-full object-cover"
+                      loading="lazy"
                       onError={(e) => {
                         const target = e.target as HTMLImageElement;
                         target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=6366f1&color=fff&size=128`;
@@ -1200,7 +1200,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                 <div className="flex items-center gap-4 mb-6">
                   <div className="w-20 h-20 rounded-xl overflow-hidden border-2 border-[#C2D642]/20 flex-shrink-0">
                     <img 
-                      src={viewingCompany.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(viewingCompany.name)}&background=6366f1&color=fff&size=128`}
+                      src={getLogoUrl(viewingCompany.logo, viewingCompany.name, '6366f1')}
                       alt={viewingCompany.name}
                       className="w-full h-full object-cover"
                       onError={(e) => {

@@ -432,11 +432,10 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     if (!formData.planned_end_date) missingFields.push('Planned End Date');
     if (!formData.companies_id) missingFields.push('Tag Company');
     
-    // 2. Validate client fields if own_project_or_contractor = 'yes'
+    // 2. Validate client fields if own_project_or_contractor = 'yes' (only Client Name, Client Address, and Point of Contact)
     if (formData.own_project_or_contractor === 'yes') {
       if (!formData.client_name.trim()) missingFields.push('Client Name');
-      if (!formData.client_company_name.trim()) missingFields.push('Client Company Name');
-      if (!formData.client_company_address.trim()) missingFields.push('Client Company Address');
+      if (!formData.client_address.trim()) missingFields.push('Client Address');
       if (!formData.client_designation.trim()) missingFields.push('Client Designation');
       if (!formData.client_email.trim()) missingFields.push('Client Email');
       if (!formData.client_phone.trim()) missingFields.push('Client Phone');
@@ -487,23 +486,15 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         projectFormData.append('tag_project_incharge', formData.project_incharge);
       }
       
-      // Client data (required if own_project_or_contractor = 'yes')
+      // Client data (only when own_project_or_contractor = 'yes'): Client Name, Client Address, and Point of Contact
       if (formData.own_project_or_contractor === 'yes') {
         projectFormData.append('client_name', formData.client_name.trim());
-        projectFormData.append('client_company_name', formData.client_company_name.trim());
-        projectFormData.append('client_company_address', formData.client_company_address.trim());
+        projectFormData.append('client_address', formData.client_address.trim());
         projectFormData.append('client_designation', formData.client_designation.trim());
         projectFormData.append('client_email', formData.client_email.trim().toLowerCase());
         projectFormData.append('client_phone', formData.client_phone.trim());
-        
         if (formData.client_mobile) {
           projectFormData.append('client_mobile', formData.client_mobile.trim());
-        }
-        if (formData.country_code) {
-          projectFormData.append('country_code', formData.country_code);
-        }
-        if (formData.company_country_code) {
-          projectFormData.append('company_country_code', formData.company_country_code);
         }
       }
       
@@ -718,44 +709,6 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                 />
               </div>
 
-              {/* Client Company Name */}
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Client Company Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  name="client_company_name"
-                  value={formData.client_company_name}
-                  onChange={handleInputChange}
-                  placeholder="Enter Client Company Name"
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                    isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
-                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                />
-              </div>
-              
-              {/* Client Company Address */}
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Client Company Address <span className="text-red-500">*</span>
-                </label>
-                <textarea
-                  name="client_company_address"
-                  value={formData.client_company_address}
-                  onChange={handleInputChange}
-                  placeholder="Enter Client Company Address"
-                  rows={2}
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all resize-none ${
-                    isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
-                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                />
-              </div>
-
               {/* Client Point of Contact Section */}
               <div className={`p-4 rounded-lg ${isDark ? 'bg-slate-800/30' : 'bg-slate-50'}`}>
                 <h3 className={`text-base font-bold mb-4 ${textPrimary}`}>
@@ -764,7 +717,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* Left Column */}
                   <div className="space-y-4">
-                    {/* Name */}
+                    {/* Name (contact person) */}
                     <div>
                       <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
                         Name <span className="text-red-500">*</span>
@@ -774,7 +727,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                         name="client_name"
                         value={formData.client_name}
                         onChange={handleInputChange}
-                        placeholder="Enter Client Contact Name"
+                        placeholder="Enter Client Point of Contact Name"
                         className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                           isDark 
                             ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
@@ -805,7 +758,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                     {/* Mobile Number */}
                     <div>
                       <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                        Mobile Number <span className="text-red-500">*</span>
+                        Mobile Number
                       </label>
                       <input
                         type="tel"

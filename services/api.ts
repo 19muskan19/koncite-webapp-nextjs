@@ -4465,10 +4465,37 @@ export const goodsReceiptAPI = {
       throw { message: error.response?.data?.message || 'Failed to update inward details', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
-  /** POST /api/inventory/generate-pdf - Generate Inward PDF. Body: { type: 'inward', requestId } (inv_inwards.id). Returns { pdf_url, name, data, message }. */
-  generatePdf: async (requestId: number | string): Promise<{ pdf_url: string; name?: string }> => {
+  /** POST /api/inventory/generate-pdf - Generate Inward PDF. Body: { type: 'inward', requestId } (inv_inwards.id). Optional inward_details to avoid null->code when relations are missing. */
+  generatePdf: async (
+    requestId: number | string,
+    inwardDetails?: Array<{
+      id?: number | string;
+      materials_id?: number | string;
+      materialCode?: string;
+      materialName?: string;
+      materialSpec?: string;
+      materialUnit?: string;
+      recipt_qty?: number | string;
+      reject_qty?: number | string;
+    }>
+  ): Promise<{ pdf_url: string; name?: string }> => {
     try {
-      const response = await apiClient.post('/inventory/generate-pdf', { type: 'inward', requestId });
+      const payload: Record<string, unknown> = { type: 'inward', requestId };
+      if (inwardDetails != null && inwardDetails.length > 0) {
+        payload.inward_details = inwardDetails.map((d) => ({
+          id: d.id,
+          materials_id: d.materials_id,
+          materials: {
+            code: d.materialCode ?? '',
+            name: d.materialName ?? '',
+            specification: d.materialSpec ?? '',
+            unit: d.materialUnit ?? '',
+          },
+          recipt_qty: d.recipt_qty,
+          reject_qty: d.reject_qty,
+        }));
+      }
+      const response = await apiClient.post('/inventory/generate-pdf', payload);
       const data = response.data?.data ?? response.data;
       const pdfUrl = response.data?.pdf_url ?? data?.pdf_url;
       if (!pdfUrl) throw new Error('No PDF URL in response');

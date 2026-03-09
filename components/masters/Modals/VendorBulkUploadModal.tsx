@@ -2,31 +2,13 @@
 
 import React, { useState, useRef } from 'react';
 import { ThemeType } from '@/types';
-import { X, FileSpreadsheet, Loader2, Upload, CheckCircle, Download } from 'lucide-react';
+import { X, FileSpreadsheet, Loader2, Upload, CheckCircle } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { masterDataAPI } from '@/services/api';
-import * as XLSX from 'xlsx';
 
 const ACCEPTED_TYPES = '.xlsx,.xls,.csv';
 const MAX_SIZE_MB = 10;
 const MAX_SIZE_BYTES = MAX_SIZE_MB * 1024 * 1024;
-
-const VENDOR_HEADERS = [
-  'Name',
-  'Type',
-  'Gst No',
-  'Address',
-  'Contact Person Name',
-  'Contact Person Phone',
-  'Contact Person Email',
-  'UUID', // optional – for updating existing vendor
-];
-
-const SAMPLE_ROWS = [
-  ['ABC Supplies', 'supplier', '27AABCU9603R1ZM', 'Mumbai', 'John Doe', '9876543210', 'john@abc.com', ''],
-  ['XYZ Contractors', 'contractor', '', 'Delhi', 'Raj Kumar', '9123456789', 'raj@xyz.com', ''],
-  ['Multi Vendor', 'both', '29ZZZZZ9999Z1Z1', 'Bangalore', 'Sam', '9988776655', 'sam@multi.com', ''],
-];
 
 interface VendorBulkUploadModalProps {
   theme: ThemeType;
@@ -117,24 +99,6 @@ const VendorBulkUploadModal: React.FC<VendorBulkUploadModalProps> = ({
     e.preventDefault();
   };
 
-  const handleDownloadTemplate = () => {
-    const ws = XLSX.utils.aoa_to_sheet([VENDOR_HEADERS, ...SAMPLE_ROWS]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Vendors');
-    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `vendors_bulk_upload_${new Date().toISOString().split('T')[0]}.xlsx`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    toast.showSuccess('Template downloaded. Use Name, Type, Gst No, Address, Contact Person Name, Contact Person Phone, Contact Person Email.');
-  };
-
   const handleUpload = async () => {
     if (!selectedFile || isUploading) return;
     const err = validateFile(selectedFile);
@@ -198,15 +162,6 @@ const VendorBulkUploadModal: React.FC<VendorBulkUploadModalProps> = ({
               <p><strong>Contact Person Email</strong> (optional)</p>
               <p className="mt-2 opacity-80">For updates: <strong>UUID</strong> – Include vendor uuid to update existing</p>
             </div>
-            <button
-              onClick={handleDownloadTemplate}
-              className={`mt-3 flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all ${
-                isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100' : 'bg-slate-200 hover:bg-slate-300 text-slate-900'
-              }`}
-            >
-              <Download className="w-4 h-4" />
-              Download Template
-            </button>
           </div>
 
           <div

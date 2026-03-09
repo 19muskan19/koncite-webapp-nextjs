@@ -34,8 +34,7 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
-  const [editingUnitId, setEditingUnitId] = useState<string | null>(null); // UUID for GET /unit-edit/{uuid}
-  const [editingUnitNumericId, setEditingUnitNumericId] = useState<string | number | null>(null); // Numeric ID for POST /unit-add with updateId
+  const [editingUnitRows, setEditingUnitRows] = useState<Array<{ numericId?: number | string; unit: string; unit_coversion?: string; unit_coversion_factor?: string }> | null>(null);
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [units, setUnits] = useState<Unit[]>([]);
@@ -230,161 +229,60 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
 
-  const handleEditUnit = async (unit: Unit) => {
-    try {
-      // Backend edit() uses where('id', $uuid) - expects numeric ID in URL, despite route param name
-      const unitIdForApi = unit.numericId ?? unit.id;
-      const numericId = unit.numericId ?? unit.id;
-      
-      if (unitIdForApi == null || unitIdForApi === '') {
-        toast.showError('Invalid unit ID. Cannot edit unit.');
-        return;
-      }
-      
-      console.log('📝 Editing unit:', {
-        idForApi: unitIdForApi,
-        numericId,
-        type: typeof unitIdForApi
-      });
-      
-      // Fetch full unit details - GET /unit-edit/{id} (backend queries by numeric id)
-      const unitDetails = await masterDataAPI.getUnit(String(unitIdForApi));
-      console.log('✅ Unit details fetched:', unitDetails);
-      
-      setEditingUnitId(String(unitIdForApi)); // Pass numeric ID - modal's getUnit expects it
-      setEditingUnitNumericId(numericId);
-      
-      // Open modal with unit data - CreateUnitModal will handle this
-      setShowCreateModal(true);
-    } catch (error: any) {
-      console.error('❌ Failed to fetch unit details:', error);
-      console.error('❌ Error details:', {
-        message: error.message,
-        status: error.status,
-        response: error.response?.data
-      });
-      toast.showError(error.message || 'Failed to load unit details');
-    }
+  const handleEditUnit = (group: Unit[]) => {
+    // Pass all conversion rows for this unit - Edit uses same multi-row form as Create
+    const rows = group.map((u) => ({
+      numericId: u.numericId ?? u.id,
+      unit: u.unit || u.name || '',
+      unit_coversion: u.unit_coversion || u.conversion || '',
+      unit_coversion_factor: u.unit_coversion_factor || u.factor || ''
+    }));
+    setEditingUnitRows(rows);
+    setShowCreateModal(true);
   };
 
-  const handleDeleteUnit = async (unitId: string) => {
-    // Find the unit to get its numeric ID
-    // Backend delete() uses where('id', $uuid) so it expects numeric ID, not UUID
-    const unit = units.find(u => u.id === unitId);
-    const deleteId = unit?.numericId || unitId; // Use numeric ID
-    
-    console.log('🗑️ Deleting unit:', {
-      unitId: unitId,
-      numericId: unit?.numericId,
-      uuid: unit?.uuid,
-      usingId: deleteId
-    });
-    
-    if (window.confirm('Are you sure you want to delete this unit?')) {
-      try {
-        // Backend expects numeric ID
+  const handleDeleteUnit = async (group: Unit[]) => {
+    if (!window.confirm(`Are you sure you want to delete this unit${group.length > 1 ? ' and all its conversions' : ''}?`)) return;
+    try {
+      for (const u of group) {
+        const deleteId = u.numericId ?? u.id;
         await masterDataAPI.deleteUnit(String(deleteId));
-        toast.showSuccess('Unit deleted successfully');
-        // Refresh units list
-        await fetchUnits();
-        setDeleteConfirmId(null);
-      } catch (error: any) {
-        console.error('Failed to delete unit:', error);
-        toast.showError(error.message || 'Failed to delete unit');
       }
+      toast.showSuccess('Unit deleted successfully');
+      await fetchUnits();
+      setDeleteConfirmId(null);
+    } catch (error: any) {
+      console.error('Failed to delete unit:', error);
+      toast.showError(error.message || 'Failed to delete unit');
     }
   };
 
-  const handleToggleStatus = async (unit: Unit) => {
-    console.log('🔄 handleToggleStatus called with unit:', {
-      id: unit.id,
-      name: unit.name || unit.unit,
-      status: unit.status,
-      is_active: unit.is_active,
-      togglingUnitId: togglingUnitId,
-      isLoadingUnits: isLoadingUnits
-    });
-    
-    // Prevent multiple simultaneous toggles
-    if (togglingUnitId === unit.id) {
-      console.log('⏳ Toggle already in progress for this unit');
-      return;
-    }
+  const handleToggleStatus = async (group: Unit[]) => {
+    const firstUnit = group[0];
+    const groupKey = group.map((u) => u.id).join(',');
+    if (togglingUnitId === groupKey) return;
+    if (isLoadingUnits) return;
 
-    if (isLoadingUnits) {
-      console.log('⏳ Units are loading, cannot toggle');
-      return;
-    }
+    const currentStatus = firstUnit.status || (firstUnit.is_active === 1 ? 'Active' : 'Inactive');
+    const newStatus = currentStatus === 'Active' ? 'Inactive' : 'Active';
+    const isActive = newStatus === 'Active' ? 1 : 0;
 
     try {
-      setTogglingUnitId(unit.id);
-      
-      // Determine current status - check both status field and is_active field
-      const currentStatus = unit.status || (unit.is_active === 1 ? 'Active' : 'Inactive');
-      const newStatus = currentStatus === 'Active' ? 'Inactive' : 'Active';
-      const isActive = newStatus === 'Active' ? 1 : 0;
-      
-      console.log('🔄 Status toggle calculation:', {
-        currentStatus: currentStatus,
-        currentIsActive: unit.is_active,
-        newStatus: newStatus,
-        newIsActive: isActive
-      });
-      
-      // unit-status/{uuid} expects UUID - backend converts via uuidtoid()
-      const unitUuid = unit.uuid || unit.id;
-      if (!unitUuid) {
-        toast.showError('Unit identifier not found');
-        return;
-      }
-
-      console.log('🔄 Toggling unit status:', {
-        unitId: unit.id,
-        unitUuid,
-        currentStatus: unit.status,
-        currentIsActive: unit.is_active,
-        newStatus: newStatus,
-        newIsActive: isActive
-      });
-
-      // Optimistically update UI immediately
-      setUnits(prevUnits => 
-        prevUnits.map(u => 
-          u.id === unit.id 
-            ? { ...u, status: newStatus, is_active: isActive }
-            : u
-        )
+      setTogglingUnitId(groupKey);
+      const groupIds = new Set(group.map((u) => u.id));
+      setUnits((prev) =>
+        prev.map((u) => (groupIds.has(u.id) ? { ...u, status: newStatus, is_active: isActive } : u))
       );
-
-      // Close dropdown if unit was deactivated (row will be disabled)
-      if (newStatus === 'Inactive') {
-        setOpenDropdownId(prev => prev === unit.id ? null : prev);
+      if (newStatus === 'Inactive') setOpenDropdownId(null);
+      for (const u of group) {
+        const unitUuid = u.uuid || u.id;
+        if (unitUuid) await masterDataAPI.updateUnitStatus(unitUuid, isActive as 0 | 1);
       }
-
-      // Update unit status using unit-status/{uuid} API
-      await masterDataAPI.updateUnitStatus(unitUuid, isActive as 0 | 1);
-
-      // Keep optimistic update - don't call fetchUnits() which can overwrite with stale
-      // data if unit-list doesn't return updated is_active
-
       toast.showSuccess(`Unit ${newStatus === 'Active' ? 'activated' : 'deactivated'} successfully`);
     } catch (error: any) {
-      console.error('❌ Failed to toggle unit status:', error);
-      console.error('❌ Error details:', {
-        message: error.message,
-        status: error.status,
-        response: error.response?.data
-      });
-      
-      // Revert optimistic update on error
-      setUnits(prevUnits => 
-        prevUnits.map(u => 
-          u.id === unit.id 
-            ? { ...u, status: unit.status, is_active: unit.is_active }
-            : u
-        )
+      setUnits((prev) =>
+        prev.map((u) => (group.some((g) => g.id === u.id) ? { ...u, status: firstUnit.status, is_active: firstUnit.is_active } : u))
       );
-      
       toast.showError(error.message || 'Failed to update unit status');
     } finally {
       setTogglingUnitId(null);
@@ -432,9 +330,6 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
   // Filter units (client-side filtering is optional since we're using API search)
   const filteredUnits = useMemo(() => {
     let filtered = [...units];
-    
-    // Client-side filtering is optional since we're using API search
-    // But keep it for additional filtering if needed
     if (searchQuery.trim() && !isSearching) {
       filtered = filtered.filter(unit =>
         unit.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -442,15 +337,25 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
         (unit.conversion && unit.conversion.toLowerCase().includes(searchQuery.toLowerCase()))
       );
     }
-    
     return filtered;
   }, [units, searchQuery, isSearching]);
 
-  // Pagination
-  const totalPages = Math.max(1, Math.ceil(filteredUnits.length / entriesPerPage));
+  // Group units by base unit name - one row per unit, conversions accessible via Edit
+  const groupedUnits = useMemo(() => {
+    const groups = new Map<string, Unit[]>();
+    for (const u of filteredUnits) {
+      const key = (u.unit || u.name || '').trim().toLowerCase() || '__empty__';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(u);
+    }
+    return Array.from(groups.values());
+  }, [filteredUnits]);
+
+  // Pagination - over grouped rows
+  const totalPages = Math.max(1, Math.ceil(groupedUnits.length / entriesPerPage));
   const startIndex = (currentPage - 1) * entriesPerPage;
-  const endIndex = Math.min(startIndex + entriesPerPage, filteredUnits.length);
-  const paginatedUnits = filteredUnits.slice(startIndex, endIndex);
+  const endIndex = Math.min(startIndex + entriesPerPage, groupedUnits.length);
+  const paginatedGroups = groupedUnits.slice(startIndex, endIndex);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -536,7 +441,10 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
             <span className="hidden sm:inline">{isDeletingAll ? 'Deleting...' : 'Delete All'}</span>
           </button>
           <button 
-            onClick={() => setShowCreateModal(true)}
+            onClick={() => {
+              setEditingUnitRows(null);
+              setShowCreateModal(true);
+            }}
             className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white' : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'} shadow-md`}
           >
             <Plus className="w-4 h-4" /> <span className="hidden sm:inline">Add New</span><span className="sm:hidden">Add</span>
@@ -548,11 +456,11 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className={`p-4 rounded-xl border ${cardClass}`}>
           <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Total Records</p>
-          <p className={`text-2xl font-black ${textPrimary}`}>{filteredUnits.length}</p>
+          <p className={`text-2xl font-black ${textPrimary}`}>{groupedUnits.length}</p>
         </div>
         <div className={`p-4 rounded-xl border ${cardClass}`}>
           <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Active</p>
-          <p className={`text-2xl font-black text-[#C2D642]`}>{filteredUnits.filter(u => u.status === 'Active').length}</p>
+          <p className={`text-2xl font-black text-[#C2D642]`}>{groupedUnits.filter((g) => g[0]?.status === 'Active').length}</p>
         </div>
         <div className={`p-4 rounded-xl border ${cardClass}`}>
           <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>Last Updated</p>
@@ -604,105 +512,87 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
         </div>
       )}
 
-      {/* Units Table */}
-      {!isLoadingUnits && !unitsError && filteredUnits.length > 0 ? (
+      {/* Units Table - grouped by unit name, columns: Sr No, Unit, Status, Action */}
+      {!isLoadingUnits && !unitsError && groupedUnits.length > 0 ? (
         <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
-          <div className="overflow-x-auto">
-            <table className="w-full">
+          <div className="overflow-x-auto pl-1 pr-2 pt-1 pb-6">
+            <table className="w-full min-w-[320px]">
               <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
                 <tr>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Sr No</th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Code</th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Unit</th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Unit Conversion</th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Unit Conversion Factor</th>
-                  <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Status</th>
-                  <th className={`px-6 py-4 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>Action</th>
+                  <th className={`px-4 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Sr No</th>
+                  <th className={`px-4 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Unit</th>
+                  <th className={`px-4 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Status</th>
+                  <th className={`px-4 py-4 text-right text-xs font-black uppercase tracking-wider ${textSecondary} min-w-[80px] w-[80px]`}>Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-inherit">
-                {paginatedUnits.map((row, rowIdx) => (
+                {paginatedGroups.map((group, rowIdx) => {
+                  const first = group[0];
+                  const groupKey = group.map((u) => u.id).join(',');
+                  const isInactive = first?.status === 'Inactive';
+                  return (
                   <tr 
-                    key={rowIdx} 
+                    key={groupKey} 
                     className={`${
-                      row.status === 'Inactive' 
-                        ? isDark 
-                          ? 'opacity-50 bg-slate-800/20' 
-                          : 'opacity-50 bg-slate-50/50'
-                        : isDark 
-                          ? 'hover:bg-slate-800/30' 
-                          : 'hover:bg-slate-50/50'
+                      isInactive 
+                        ? isDark ? 'opacity-50 bg-slate-800/20' : 'opacity-50 bg-slate-50/50'
+                        : isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'
                     } transition-colors`}
                   >
-                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
+                    <td className={`px-4 py-4 text-sm font-bold ${isInactive ? textSecondary : textPrimary}`}>
                       {(currentPage - 1) * entriesPerPage + rowIdx + 1}
                     </td>
-                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
-                      {row.code || '—'}
-                    </td>
-                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>
-                      {row.name || row.unit || '—'}
-                      {row.status === 'Inactive' && (
+                    <td className={`px-4 py-4 text-sm font-bold ${isInactive ? textSecondary : textPrimary}`}>
+                      {first?.name || first?.unit || '—'}
+                      {isInactive && (
                         <span className="ml-2 text-xs text-red-500">(Disabled)</span>
                       )}
                     </td>
-                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.conversion || row.unit_coversion || '—'}</td>
-                    <td className={`px-6 py-4 text-sm font-bold ${row.status === 'Inactive' ? textSecondary : textPrimary}`}>{row.factor || row.unit_coversion_factor || '-'}</td>
-                    <td className={`px-6 py-4`}>
+                    <td className={`px-4 py-4`}>
                       <button
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          console.log('🔄 Toggle button clicked for unit:', {
-                            id: row.id,
-                            name: row.name || row.unit,
-                            currentStatus: row.status,
-                            currentIsActive: row.is_active,
-                            togglingUnitId: togglingUnitId,
-                            isLoadingUnits: isLoadingUnits
-                          });
-                          handleToggleStatus(row);
+                          handleToggleStatus(group);
                         }}
-                        disabled={isLoadingUnits || togglingUnitId === row.id}
+                        disabled={isLoadingUnits || togglingUnitId === groupKey}
                         className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#C2D642]/50 focus:ring-offset-2 ${
-                          row.status === 'Active'
+                          first?.status === 'Active'
                             ? 'bg-green-600'
                             : isDark ? 'bg-slate-700' : 'bg-slate-300'
-                        } ${(isLoadingUnits || togglingUnitId === row.id) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-                        title={row.status === 'Active' ? 'Click to deactivate' : 'Click to activate'}
+                        } ${(isLoadingUnits || togglingUnitId === groupKey) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                        title={first?.status === 'Active' ? 'Click to deactivate' : 'Click to activate'}
                       >
                         <span
                           className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                            row.status === 'Active' ? 'translate-x-6' : 'translate-x-1'
+                            first?.status === 'Active' ? 'translate-x-6' : 'translate-x-1'
                           }`}
                         />
                       </button>
                     </td>
-                    <td className="px-6 py-4 text-right">
-                      <div className="relative">
+                    <td className="px-4 py-4 text-right min-w-[80px] w-[80px]">
+                      <div className="relative inline-flex justify-end">
                         <button 
                           onClick={(e) => {
-                            if (row.status === 'Inactive') return; // Disabled when deactivated
+                            if (isInactive) return;
                             e.preventDefault();
                             e.stopPropagation();
-                            console.log('📋 Dropdown button clicked for unit:', row.id);
-                            setOpenDropdownId(openDropdownId === row.id ? null : row.id);
+                            setOpenDropdownId(openDropdownId === groupKey ? null : groupKey);
                           }}
-                          disabled={row.status === 'Inactive'}
-                          className={`dropdown-trigger p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors ${row.status === 'Inactive' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-                          title={row.status === 'Inactive' ? 'Activate unit to enable actions' : 'Actions'}
+                          disabled={isInactive}
+                          className={`dropdown-trigger p-2.5 rounded-lg flex items-center justify-center ${isDark ? 'bg-slate-700/60 hover:bg-slate-600/80 text-slate-100' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'} transition-colors ${isInactive ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                          title={isInactive ? 'Activate unit to enable actions' : 'Actions'}
                         >
-                          <MoreVertical className={`w-4 h-4 ${textSecondary}`} />
+                          <MoreVertical className="w-4 h-4" />
                         </button>
-                        {openDropdownId === row.id && row.status !== 'Inactive' && (
-                          <div className={`dropdown-menu absolute right-0 top-full mt-1 w-32 rounded-lg border shadow-lg z-20 ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                        {openDropdownId === groupKey && !isInactive && (
+                          <div className={`dropdown-menu absolute right-0 w-36 rounded-lg border shadow-xl z-[100] ${rowIdx === paginatedGroups.length - 1 ? 'bottom-full mb-1' : 'top-full mt-1'} ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                             <div className="py-1">
                               <button
                                 onClick={(e) => {
                                   e.preventDefault();
                                   e.stopPropagation();
-                                  console.log('✏️ Edit button clicked for unit:', row);
-                                  handleEditUnit(row);
+                                  handleEditUnit(group);
                                   setOpenDropdownId(null);
                                 }}
                                 className={`w-full flex items-center gap-2 px-4 py-2 text-sm font-bold transition-colors text-left ${
@@ -716,8 +606,7 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
                                 onClick={(e) => {
                                   e.preventDefault();
                                   e.stopPropagation();
-                                  console.log('🗑️ Delete button clicked for unit:', row.id);
-                                  handleDeleteUnit(row.id);
+                                  handleDeleteUnit(group);
                                   setOpenDropdownId(null);
                                 }}
                                 className={`w-full flex items-center gap-2 px-4 py-2 text-sm font-bold transition-colors text-left ${
@@ -733,7 +622,8 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -820,7 +710,7 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
               </select>
             </div>
             <span className={`text-sm ${textSecondary}`}>
-              Page {currentPage} of {totalPages} ({filteredUnits.length} total)
+              Page {currentPage} of {totalPages} ({groupedUnits.length} total)
             </span>
           </div>
         </div>
@@ -868,12 +758,10 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
         isOpen={showCreateModal}
         onClose={() => {
           setShowCreateModal(false);
-          setEditingUnitId(null);
-          setEditingUnitNumericId(null);
+          setEditingUnitRows(null);
         }}
         onSuccess={handleUnitCreated}
-        editingUnitId={editingUnitId}
-        editingUnitNumericId={editingUnitNumericId}
+        editingUnitRows={editingUnitRows}
         existingUnits={units}
       />
     </div>

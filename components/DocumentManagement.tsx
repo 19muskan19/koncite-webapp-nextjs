@@ -1,18 +1,13 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import * as XLSX from 'xlsx';
 import { ThemeType } from '../types';
 import { useToast } from '../contexts/ToastContext';
 import { useUser } from '../contexts/UserContext';
 import { masterDataAPI, documentAPI } from '../services/api';
-import {
-  getChatContext,
-  createSession,
-  sendMessage as sendDmsAiMessage,
-  getSessionIdFromResponse,
-} from '../services/dmsAiService';
-import ChatMarkdownViewer from './ChatMarkdownViewer';
+import { getLogoUrl } from '@/utils/imageUtils';
 import {
   Folder,
   Briefcase,
@@ -28,11 +23,9 @@ import {
   FileText,
   Info,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
-  Bot,
   X,
-  Send,
-  Paperclip,
   FolderOpen,
   Upload,
   FolderPlus,
@@ -43,9 +36,7 @@ import {
   Copy,
   RotateCcw,
   Cloud,
-  CloudOff,
-  Mic,
-  Square
+  CloudOff
 } from 'lucide-react';
 
 interface FileItem {
@@ -88,13 +79,6 @@ interface Project {
 interface DocumentManagementProps {
   theme: ThemeType;
   initialPathFromUrl?: string[];
-}
-
-interface ChatMessage {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: string;
 }
 
 /** Create URL-safe slug from project name */
@@ -154,6 +138,7 @@ function pathToUrlSegments(path: string[], projects?: Project[]): string[] {
 
 const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialPathFromUrl = [] }) => {
   const toast = useToast();
+  const router = useRouter();
   const { isAuthenticated, isLoading } = useUser();
   const [selectedFolder, setSelectedFolder] = useState<string>('office');
   const [currentPath, setCurrentPath] = useState<string[]>(() =>
@@ -163,8 +148,6 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [showAIAssistant, setShowAIAssistant] = useState<boolean>(false);
-  const [aiPanelWidth, setAiPanelWidth] = useState<number>(320); // Default w-80
   const [showNewDropdown, setShowNewDropdown] = useState<boolean>(false);
   const [showCreateFolderModal, setShowCreateFolderModal] = useState<boolean>(false);
   const [showShareModal, setShowShareModal] = useState<boolean>(false);
@@ -187,22 +170,8 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
   const [imageSearchName, setImageSearchName] = useState<string>('');
   const [selectedProjectFilter, setSelectedProjectFilter] = useState<string>('all');
   const [showProjectDropdown, setShowProjectDropdown] = useState<boolean>(false);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    {
-      id: '1',
-      role: 'assistant',
-      content: "Hello! I'm your AI assistant. How can I help you with your documents today?",
-      timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
-    }
-  ]);
-  const [chatInput, setChatInput] = useState<string>('');
-  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
-  const [isRecording, setIsRecording] = useState<boolean>(false);
-  const [recordingTime, setRecordingTime] = useState<number>(0);
-  const [dmsSessionId, setDmsSessionId] = useState<string | null>(null);
-  const [chatSending, setChatSending] = useState<boolean>(false);
-  const [chatCreatingSession, setChatCreatingSession] = useState<boolean>(false);
-  const [chatError, setChatError] = useState<string | null>(null);
+  const [galleryPage, setGalleryPage] = useState<number>(1);
+  const GALLERY_PAGE_SIZE = 24;
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [trashCount, setTrashCount] = useState<number>(0);
@@ -217,18 +186,10 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
   const [viewFileExcelData, setViewFileExcelData] = useState<{ sheetNames: string[]; sheets: Record<string, string[][]> } | null>(null);
   const [viewFileActiveSheet, setViewFileActiveSheet] = useState<string>('');
   const [viewFileLoading, setViewFileLoading] = useState(false);
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
   const uploadFileInputRef = React.useRef<HTMLInputElement>(null);
   const dropZoneRef = React.useRef<HTMLDivElement>(null);
-  const chatMessagesEndRef = React.useRef<HTMLDivElement>(null);
-  const mediaRecorderRef = React.useRef<MediaRecorder | null>(null);
-  const audioStreamRef = React.useRef<MediaStream | null>(null);
-  const audioChunksRef = React.useRef<Blob[]>([]);
-  const recordingTimerRef = React.useRef<NodeJS.Timeout | null>(null);
-  const aiResizeStartRef = React.useRef<{ x: number; w: number } | null>(null);
   const prevSelectedCountRef = React.useRef<number>(0);
   const lastFileClickRef = React.useRef<{ fileId: string; time: number } | null>(null);
-  const [isDesktop, setIsDesktop] = React.useState(false);
 
   const INVALID_FILENAME_CHARS = /[<>:"/\\|?*\x00-\x1f]/;
   const isValidDisplayName = (name: string): boolean => !INVALID_FILENAME_CHARS.test(name) && name.trim().length > 0;
@@ -289,7 +250,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
           status: p.status || 'Planning',
           progress: p.progress || 0,
           location: p.address || p.location || '',
-          logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name || p.name || '')}&background=6366f1&color=fff&size=128`,
+          logo: getLogoUrl(p.logo, p.project_name || p.name || '', '6366f1'),
           isContractor: p.own_project_or_contractor === 'yes' || p.is_contractor || p.isContractor,
           projectManager: p.project_manager || p.projectManager,
           createdAt: p.created_at || p.createdAt,
@@ -995,6 +956,27 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
     return matchesSearch;
   });
 
+  // Paginated gallery files (image-gallery only)
+  const galleryTotalPages = currentPath[0] === 'image-gallery'
+    ? Math.max(1, Math.ceil(filteredFiles.length / GALLERY_PAGE_SIZE))
+    : 1;
+  const paginatedGalleryFiles = currentPath[0] === 'image-gallery'
+    ? filteredFiles.slice((galleryPage - 1) * GALLERY_PAGE_SIZE, galleryPage * GALLERY_PAGE_SIZE)
+    : filteredFiles;
+  const galleryStart = currentPath[0] === 'image-gallery' && filteredFiles.length > 0
+    ? (galleryPage - 1) * GALLERY_PAGE_SIZE + 1
+    : 0;
+  const galleryEnd = currentPath[0] === 'image-gallery'
+    ? Math.min(galleryPage * GALLERY_PAGE_SIZE, filteredFiles.length)
+    : filteredFiles.length;
+
+  // Reset gallery page when filters change
+  useEffect(() => {
+    if (currentPath[0] === 'image-gallery') {
+      setGalleryPage(1);
+    }
+  }, [imageSearchName, selectedProjectFilter, currentPath[0]]);
+
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) {
       toast.showWarning('Please enter a folder name');
@@ -1576,181 +1558,6 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
     };
   }, []);
 
-  // Current project identifier for AI (context + chat). Use project UUID string to match MVC Laravel (this.currentProject).
-  // Laravel AI chat expects project_id as string (UUID); documents API uses numeric id for list/folder.
-  const currentProjectIdForAi = ((): string | undefined => {
-    if (currentPath[0] !== 'projects' || currentPath.length < 2) return undefined;
-    const projectSegment = currentPath[1];
-    if (!projectSegment?.startsWith('project_')) return undefined;
-    const projectIdStr = projectSegment.replace('project_', '');
-    const project = projects.find(p => p.id === projectIdStr || String(p.id) === projectIdStr);
-    return project ? String(project.id) : undefined;
-  })();
-
-  // When AI panel opens: load context (optional, matches MVC)
-  useEffect(() => {
-    if (!showAIAssistant || !isAuthenticated) return;
-    let cancelled = false;
-    getChatContext(currentProjectIdForAi)
-      .then(() => { if (!cancelled) setChatError(null); })
-      .catch(() => { if (!cancelled) setChatError(null); }); // Context failure is non-blocking
-    return () => { cancelled = true; };
-  }, [showAIAssistant, isAuthenticated, currentProjectIdForAi]);
-
-  const formatRecordingTime = (seconds: number): string => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioStreamRef.current = stream;
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const audioFile = new File([audioBlob], `voice-recording-${Date.now()}.webm`, { type: 'audio/webm' });
-        setAttachedFiles((prev) => [...prev, audioFile]);
-        if (audioStreamRef.current) {
-          audioStreamRef.current.getTracks().forEach((track) => track.stop());
-          audioStreamRef.current = null;
-        }
-        setRecordingTime(0);
-      };
-
-      mediaRecorder.start();
-      setIsRecording(true);
-      setRecordingTime(0);
-      recordingTimerRef.current = setInterval(() => {
-        setRecordingTime((prev) => prev + 1);
-      }, 1000);
-    } catch (error) {
-      console.error('Error accessing microphone:', error);
-      toast.showError('Unable to access microphone. Please check your permissions.');
-    }
-  };
-
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
-      mediaRecorderRef.current = null;
-      if (recordingTimerRef.current) {
-        clearInterval(recordingTimerRef.current);
-        recordingTimerRef.current = null;
-      }
-    }
-  };
-
-  const handleVoiceClick = () => {
-    if (isRecording) {
-      stopRecording();
-    } else {
-      startRecording();
-    }
-  };
-
-  const handleSendChatMessage = async () => {
-    if ((!chatInput.trim() && attachedFiles.length === 0) || chatSending || isRecording) return;
-
-    const messageContent = chatInput.trim();
-    const hasFiles = attachedFiles.length > 0;
-    let fullContent = messageContent;
-    if (hasFiles) {
-      const fileList = attachedFiles.map(f => `📎 ${f.name} (${(f.size / 1024).toFixed(2)} KB)`).join('\n');
-      fullContent = messageContent ? `${messageContent}\n\n${fileList}` : `Files attached:\n${fileList}`;
-    }
-
-    const userMessage: ChatMessage = {
-      id: Date.now().toString(),
-      role: 'user',
-      content: fullContent,
-      timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
-    };
-    const filesToSend = hasFiles ? [...attachedFiles] : undefined;
-    setChatMessages(prev => [...prev, userMessage]);
-    setChatInput('');
-    setAttachedFiles([]);
-    setChatError(null);
-    setChatSending(true);
-
-    const placeholderId = `ai-${Date.now()}`;
-    const placeholderMsg: ChatMessage = {
-      id: placeholderId,
-      role: 'assistant',
-      content: '',
-      timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
-    };
-    setChatMessages(prev => [...prev, { ...placeholderMsg, content: '…' }]);
-
-    try {
-      let sessionId = dmsSessionId;
-      if (!sessionId) {
-        const sessionRes = await createSession();
-        sessionId = getSessionIdFromResponse(sessionRes);
-        if (!sessionId) throw new Error('Could not create AI session.');
-        setDmsSessionId(sessionId);
-      }
-
-      const response = await sendDmsAiMessage(sessionId, messageContent || (hasFiles ? 'Files attached.' : ''), {
-        projectId: currentProjectIdForAi,
-        files: filesToSend,
-      });
-
-      const replyText = response.reply ?? response.response ?? response.message ?? response.content ?? 'No response received.';
-      setChatMessages(prev =>
-        prev.map(m => (m.id === placeholderId ? { ...m, content: replyText } : m))
-      );
-    } catch (err: any) {
-      const msg = err?.response?.data?.message ?? err?.message ?? 'Failed to send message.';
-      setChatMessages(prev =>
-        prev.map(m => (m.id === placeholderId ? { ...m, content: `Error: ${msg}` } : m))
-      );
-      setChatError(msg);
-      toast.showError(msg);
-    } finally {
-      setChatSending(false);
-    }
-  };
-
-  const handleNewChatSession = async () => {
-    setChatCreatingSession(true);
-    setChatError(null);
-    try {
-      const sessionRes = await createSession();
-      const sessionId = getSessionIdFromResponse(sessionRes);
-      if (!sessionId) throw new Error('Could not create AI session.');
-      setDmsSessionId(sessionId);
-      setChatMessages([
-        {
-          id: '1',
-          role: 'assistant',
-          content: "Hello! I'm your AI assistant. How can I help you with your documents today?",
-          timestamp: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })
-        }
-      ]);
-      setChatInput('');
-      setAttachedFiles([]);
-      toast.showSuccess('New chat session started');
-    } catch (err: any) {
-      const msg = err?.response?.data?.message ?? err?.message ?? 'Failed to create session';
-      setChatError(msg);
-      toast.showError(msg);
-    } finally {
-      setChatCreatingSession(false);
-    }
-  };
-
   const isViewableImage = (file: FileItem) =>
     file.type === 'file' &&
     file.fileData &&
@@ -1834,89 +1641,6 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
     }
   };
 
-  const handleAttachClick = () => {
-    fileInputRef.current?.click();
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-      const newFiles = Array.from(files);
-      setAttachedFiles(prev => [...prev, ...newFiles]);
-    }
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  };
-
-  const handleRemoveFile = (index: number) => {
-    setAttachedFiles(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey && !isRecording) {
-      e.preventDefault();
-      handleSendChatMessage();
-    }
-  };
-
-  // Auto-scroll chat to most recent message when user sends or AI responds
-  const scrollChatToBottom = () => {
-    requestAnimationFrame(() => {
-      chatMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-    });
-  };
-
-  useEffect(() => {
-    if (showAIAssistant) {
-      scrollChatToBottom();
-    }
-  }, [chatMessages, showAIAssistant]);
-
-  // AI panel resize: drag left edge to resize; hide sidebar when panel wide
-  const handleAiResizeStart = (e: React.MouseEvent) => {
-    e.preventDefault();
-    aiResizeStartRef.current = { x: e.clientX, w: aiPanelWidth };
-  };
-
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      if (!aiResizeStartRef.current) return;
-      const delta = aiResizeStartRef.current.x - e.clientX;
-      const newW = Math.min(600, Math.max(280, aiResizeStartRef.current.w + delta));
-      aiResizeStartRef.current.w = newW; // keep ref updated for onUp
-      setAiPanelWidth(newW);
-    };
-    const onUp = () => {
-      if (aiResizeStartRef.current) {
-        if (aiResizeStartRef.current.w > 450 && typeof window !== 'undefined' && window.innerWidth >= 768) {
-          setSidebarOpen(false);
-        }
-        aiResizeStartRef.current = null;
-      }
-    };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-    return () => {
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-    };
-  }, []);
-
-  useEffect(() => {
-    const check = () => setIsDesktop(typeof window !== 'undefined' && window.innerWidth >= 768);
-    check();
-    window.addEventListener('resize', check);
-    return () => window.removeEventListener('resize', check);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (recordingTimerRef.current) {
-        clearInterval(recordingTimerRef.current);
-      }
-    };
-  }, []);
 
   // Show toast when user selects file(s); avoid on clear
   useEffect(() => {
@@ -2812,12 +2536,15 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
               </div>
             )}
             <button
-              onClick={() => setShowAIAssistant(!showAIAssistant)}
-              className={`p-1.5 sm:p-2 rounded-lg border transition-colors flex-shrink-0 ${
-                showAIAssistant
-                  ? 'bg-[#C2D642] border-[#C2D642] text-white'
-                  : `border-[#C2D642]/60 ${isDark ? 'hover:bg-slate-700 text-[#C2D642]' : 'hover:bg-slate-100 text-[#C2D642]'}`
-              }`}
+              onClick={() => {
+                let pid: string | undefined;
+                if (currentPath[0] === 'projects' && currentPath.length >= 2 && currentPath[1]?.startsWith('project_')) {
+                  const idStr = currentPath[1].replace('project_', '');
+                  pid = projects.find(p => String(p.id) === idStr)?.id;
+                }
+                router.push(pid ? `/document-management/dms-agent?project_id=${encodeURIComponent(pid)}` : '/document-management/dms-agent');
+              }}
+              className={`p-1.5 sm:p-2 rounded-lg border border-[#C2D642]/60 transition-colors flex-shrink-0 ${isDark ? 'hover:bg-slate-700 text-[#C2D642]' : 'hover:bg-slate-100 text-[#C2D642]'}`}
               title="AI Assistant"
             >
               <BotMessageSquare className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
@@ -2956,9 +2683,34 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
 
               </div>
 
-              {/* Results Count */}
-              <div className={`text-sm font-bold ${textSecondary}`}>
-                Showing {filteredFiles.length === 0 ? 0 : 1} - {filteredFiles.length} of {filteredFiles.length} image{filteredFiles.length !== 1 ? 's' : ''}
+              {/* Results Count & Pagination Info */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                <div className={`text-sm font-bold ${textSecondary}`}>
+                  Showing {galleryStart} - {galleryEnd} of {filteredFiles.length} image{filteredFiles.length !== 1 ? 's' : ''}
+                </div>
+                {galleryTotalPages > 1 && (
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setGalleryPage(p => Math.max(1, p - 1))}
+                      disabled={galleryPage <= 1}
+                      className={`p-2 rounded-lg transition-colors ${galleryPage <= 1 ? 'opacity-50 cursor-not-allowed' : isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}
+                      aria-label="Previous page"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <span className={`px-3 py-1 text-xs font-bold ${textSecondary}`}>
+                      Page {galleryPage} of {galleryTotalPages}
+                    </span>
+                    <button
+                      onClick={() => setGalleryPage(p => Math.min(galleryTotalPages, p + 1))}
+                      disabled={galleryPage >= galleryTotalPages}
+                      className={`p-2 rounded-lg transition-colors ${galleryPage >= galleryTotalPages ? 'opacity-50 cursor-not-allowed' : isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}
+                      aria-label="Next page"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -3005,7 +2757,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-inherit">
-                    {filteredFiles.map((file) => {
+                    {(currentPath[0] === 'image-gallery' ? paginatedGalleryFiles : filteredFiles).map((file) => {
                       const isSelected = selectedFiles.has(file.id);
                       return (
                         <tr
@@ -3054,7 +2806,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4">
-              {filteredFiles.map((file) => {
+              {(currentPath[0] === 'image-gallery' ? paginatedGalleryFiles : filteredFiles).map((file) => {
                 const isSelected = selectedFiles.has(file.id);
                 return (
                   <div
@@ -3095,6 +2847,71 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {/* Image Gallery Pagination (below grid/list) */}
+          {currentPath[0] === 'image-gallery' && galleryTotalPages > 1 && filteredFiles.length > 0 && (
+            <div className={`mt-6 flex flex-col sm:flex-row items-center justify-between gap-4 p-4 rounded-xl border ${cardClass}`}>
+              <div className={`text-sm font-bold ${textSecondary}`}>
+                Showing {galleryStart} - {galleryEnd} of {filteredFiles.length} image{filteredFiles.length !== 1 ? 's' : ''}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setGalleryPage(p => Math.max(1, p - 1))}
+                  disabled={galleryPage <= 1}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-bold transition-colors ${
+                    galleryPage <= 1
+                      ? 'opacity-50 cursor-not-allowed'
+                      : isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100' : 'bg-slate-100 hover:bg-slate-200 text-slate-900'
+                  }`}
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  Previous
+                </button>
+                <div className="flex items-center gap-1">
+                  {Array.from({ length: Math.min(5, galleryTotalPages) }, (_, i) => {
+                    const total = Math.min(5, galleryTotalPages);
+                    let pageNum: number;
+                    if (galleryTotalPages <= 5) {
+                      pageNum = i + 1;
+                    } else if (galleryPage <= 3) {
+                      pageNum = i + 1;
+                    } else if (galleryPage >= galleryTotalPages - 2) {
+                      pageNum = galleryTotalPages - total + i + 1;
+                    } else {
+                      pageNum = galleryPage - 2 + i;
+                    }
+                    return (
+                      <button
+                        key={pageNum}
+                        onClick={() => setGalleryPage(pageNum)}
+                        className={`min-w-[36px] h-9 px-2 rounded-lg text-sm font-bold transition-colors ${
+                          galleryPage === pageNum
+                            ? 'bg-[#C2D642] text-white'
+                            : isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100' : 'bg-slate-100 hover:bg-slate-200 text-slate-900'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
+                </div>
+                <button
+                  onClick={() => setGalleryPage(p => Math.min(galleryTotalPages, p + 1))}
+                  disabled={galleryPage >= galleryTotalPages}
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-bold transition-colors ${
+                    galleryPage >= galleryTotalPages
+                      ? 'opacity-50 cursor-not-allowed'
+                      : isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100' : 'bg-slate-100 hover:bg-slate-200 text-slate-900'
+                  }`}
+                  aria-label="Next page"
+                >
+                  Next
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           )}
 
@@ -3596,179 +3413,6 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
             </div>
           </div>
         </div>
-      )}
-
-      {/* AI Assistant Panel - resizable by dragging left edge */}
-      {showAIAssistant && (
-        <>
-          {/* Mobile Overlay */}
-          <div 
-            className="fixed inset-0 bg-black/50 z-40 md:hidden"
-            onClick={() => setShowAIAssistant(false)}
-          />
-          {/* Resize handle - desktop only, drag left to widen AI panel */}
-          <div
-            onMouseDown={handleAiResizeStart}
-            className="hidden md:flex w-2 flex-shrink-0 cursor-col-resize select-none hover:bg-[#C2D642]/15 active:bg-[#C2D642]/30 transition-colors items-stretch justify-center self-stretch min-h-0"
-            title="Drag left to widen, drag right to narrow"
-            role="separator"
-            aria-orientation="vertical"
-          >
-            <div className="w-px min-h-full bg-slate-300/50 hover:bg-[#C2D642]/60 dark:bg-slate-600/50 dark:hover:bg-[#C2D642]/60 transition-colors pointer-events-none" />
-          </div>
-          <div 
-            className={`fixed md:static inset-y-0 right-0 z-50 md:z-auto w-full md:flex-shrink-0 border-l ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'} flex flex-col transform transition-transform duration-300 ease-in-out`}
-            style={isDesktop ? { width: aiPanelWidth, minWidth: 280, maxWidth: 600 } : undefined}
-          >
-          {/* AI Assistant Header */}
-          <div className={`p-3 sm:p-4 border-b ${isDark ? 'border-slate-700' : 'border-slate-200'} flex items-center justify-between gap-2`}>
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="relative flex-shrink-0">
-                <Bot className={`w-5 h-5 sm:w-6 sm:h-6 ${isDark ? 'text-[#C2D642]' : 'text-[#C2D642]'}`} />
-                <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 sm:w-2 sm:h-2 bg-red-500 rounded-full border-2 border-white"></span>
-              </div>
-              <h3 className={`text-xs sm:text-sm font-black truncate ${textPrimary}`}>AI Assistant</h3>
-            </div>
-            <div className="flex items-center gap-1 flex-shrink-0">
-              <button
-                onClick={handleNewChatSession}
-                disabled={chatCreatingSession}
-                title="New chat session"
-                className={`p-1.5 rounded-lg border border-[#C2D642]/60 bg-transparent hover:bg-[#C2D642]/10 transition-colors flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed`}
-              >
-                <Plus className={`w-4 h-4 ${textSecondary}`} />
-                <span className="text-[10px] sm:text-xs font-bold hidden sm:inline">New Chat</span>
-              </button>
-              <button
-                onClick={() => setShowAIAssistant(false)}
-                className={`p-1.5 rounded-lg transition-colors ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}
-                title="Close"
-              >
-                <X className={`w-5 h-5 sm:w-6 sm:h-6 ${textSecondary}`} />
-              </button>
-            </div>
-          </div>
-
-          {/* Chat Messages */}
-          <div className="flex-1 overflow-y-auto p-3 sm:p-4 pb-8 sm:pb-10 space-y-3 sm:space-y-4 custom-scrollbar">
-            {chatMessages.map((message) => (
-              <div
-                key={message.id}
-                className={`flex gap-2 ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
-                {message.role === 'assistant' && (
-                  <div className={`w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center flex-shrink-0 ${isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/10'}`}>
-                    <Bot className={`w-5 h-5 sm:w-6 sm:h-6 ${isDark ? 'text-[#C2D642]' : 'text-[#C2D642]'}`} />
-                  </div>
-                )}
-                <div className={`max-w-[75%] sm:max-w-[80%] ${message.role === 'user' ? 'order-2' : ''}`}>
-                  <div className={`rounded-lg p-2 sm:p-3 ${
-                    message.role === 'user'
-                      ? isDark ? 'bg-[#C2D642] text-white' : 'bg-[#C2D642] text-white'
-                      : isDark ? 'bg-slate-700 text-slate-100' : 'bg-slate-100 text-slate-900'
-                  }`}>
-                    <ChatMarkdownViewer
-                      content={message.content}
-                      isDark={isDark}
-                      role={message.role as 'assistant' | 'user'}
-                      className={`text-xs sm:text-sm md:text-base font-normal break-words leading-relaxed ${message.role === 'user' ? `font-chat-user text-white` : `font-chat-ai ${textPrimary}`}`}
-                    />
-                  </div>
-                </div>
-                {message.role === 'user' && (
-                  <div className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-[#C2D642] flex items-center justify-center flex-shrink-0 border-2 ${isDark ? 'border-[#C2D642]/60' : 'border-[#A8B838]/50'}`}>
-                    <span className="text-white text-[10px] sm:text-xs font-bold">U</span>
-                  </div>
-                )}
-              </div>
-            ))}
-            <div ref={chatMessagesEndRef} />
-          </div>
-
-          {/* Attached Files Preview */}
-          {attachedFiles.length > 0 && (
-            <div className="px-3 sm:px-4 pb-2 flex flex-wrap gap-1.5 sm:gap-2">
-              {attachedFiles.map((file, index) => (
-                <div
-                  key={index}
-                  className={`flex items-center gap-1.5 sm:gap-2 px-2 py-1 rounded text-[10px] sm:text-xs font-bold ${isDark ? 'bg-slate-700 text-slate-100' : 'bg-slate-100 text-slate-900'}`}
-                >
-                  <Paperclip className="w-2.5 h-2.5 sm:w-3 sm:h-3 flex-shrink-0" />
-                  <span className="max-w-[80px] sm:max-w-[120px] truncate">{file.name}</span>
-                  <button
-                    onClick={() => handleRemoveFile(index)}
-                    className={`ml-0.5 hover:opacity-70 transition-opacity ${textSecondary} flex-shrink-0`}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Chat Input */}
-          <div className={`p-2 sm:p-3 md:p-4 border-t min-w-0 overflow-hidden ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
-            <div className={`flex items-center gap-1 sm:gap-1.5 md:gap-2 p-1.5 sm:p-2 rounded-lg border min-w-0 w-full overflow-hidden ${isDark ? 'bg-slate-700 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept="*/*"
-                onChange={handleFileChange}
-                className="hidden"
-              />
-              <button
-                onClick={handleAttachClick}
-                className={`p-1 sm:p-1.5 rounded-lg transition-colors flex-shrink-0 ${isDark ? 'hover:bg-slate-600' : 'hover:bg-slate-200'}`}
-                title="Attach file"
-              >
-                <Paperclip className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${textSecondary}`} />
-              </button>
-              {isRecording ? (
-                <>
-                  <button
-                    onClick={stopRecording}
-                    className="p-1 sm:p-1.5 rounded-lg transition-colors flex-shrink-0 bg-red-500 hover:bg-red-600 text-white animate-pulse"
-                    title="Stop recording"
-                  >
-                    <Square className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-white" />
-                  </button>
-                  <span className={`text-[10px] sm:text-xs font-bold min-w-[2.5rem] sm:min-w-[3rem] ${isDark ? 'text-red-400' : 'text-red-600'}`}>
-                    {formatRecordingTime(recordingTime)}
-                  </span>
-                </>
-              ) : (
-                <button
-                  onClick={handleVoiceClick}
-                  className={`p-1 sm:p-1.5 rounded-lg transition-colors flex-shrink-0 ${isDark ? 'hover:bg-slate-600' : 'hover:bg-slate-200'}`}
-                  title="Start voice recording"
-                >
-                  <Mic className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${textSecondary}`} />
-                </button>
-              )}
-              <textarea
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={handleKeyPress}
-                placeholder="Ask about documents..."
-                rows={2}
-                className={`flex-1 min-w-0 max-h-24 resize-none overflow-y-auto overflow-x-hidden bg-transparent outline-none text-xs sm:text-sm font-bold py-1.5 sm:py-2 break-words leading-relaxed ${textPrimary} placeholder:${textSecondary}`}
-              />
-              <button
-                onClick={handleSendChatMessage}
-                disabled={(!chatInput.trim() && attachedFiles.length === 0) || chatSending || isRecording}
-                className={`p-1 sm:p-1.5 rounded-lg transition-colors flex-shrink-0 ${
-                  (chatInput.trim() || attachedFiles.length > 0) && !chatSending && !isRecording
-                    ? isDark ? 'bg-[#C2D642] hover:bg-[#A8B838] text-white' : 'bg-[#C2D642] hover:bg-[#A8B838] text-white'
-                    : isDark ? 'bg-slate-600 text-slate-400 cursor-not-allowed' : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                }`}
-              >
-                <Send className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-              </button>
-            </div>
-          </div>
-        </div>
-        </>
       )}
 
       {/* Floating Action Bar */}

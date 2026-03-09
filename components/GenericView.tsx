@@ -34,6 +34,7 @@ import {
   Share2
 } from 'lucide-react';
 import { masterDataAPI, materialRequestAPI, rfqAPI, goodsReturnAPI, goodsIssueAPI, goodsReceiptAPI } from '../services/api';
+import { getLogoUrl } from '@/utils/imageUtils';
 import { useRouter } from 'next/navigation';
 import { useToast } from '../contexts/ToastContext';
 import CreateProjectModal from './masters/Modals/CreateProjectModal';
@@ -207,7 +208,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
             id: p.uuid || String(p.id),
             numericId: numId,
             name: p.project_name || p.name || '',
-            logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name || p.name || '')}&background=6B8E23&color=fff&size=128`,
+            logo: getLogoUrl(p.logo, p.project_name || p.name || '', '6B8E23'),
             code: p.code || '',
             company: p.companies?.registration_name || p.companies?.name || p.company || p.company_name || '',
             location: p.address || p.location || ''
@@ -802,7 +803,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
       id: newProject.id || newProject.uuid || String(Date.now()),
       numericId: newProject.numericId ?? newProject.id,
       name: newProject.name || newProject.project_name || '',
-      logo: newProject.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(newProject.name || newProject.project_name || '')}&background=6B8E23&color=fff&size=128`,
+      logo: getLogoUrl(newProject.logo, newProject.name || newProject.project_name || '', '6B8E23'),
       code: newProject.code || '',
       company: newProject.company || '',
       location: newProject.location || ''
@@ -919,7 +920,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
         id: p.uuid ?? String(p.id),
         numericId: Number.isFinite(Number(p.id)) ? Number(p.id) : undefined,
         name: p.project_name ?? p.name ?? '',
-        logo: p.logo ?? `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name ?? p.name ?? '')}&background=6B8E23&color=fff&size=128`,
+        logo: getLogoUrl(p.logo, p.project_name ?? p.name ?? '', '6B8E23'),
         code: p.code ?? '',
         company: p.companies?.registration_name ?? p.companies?.name ?? p.company ?? '',
         location: p.address ?? p.location ?? ''
@@ -1814,9 +1815,10 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                               <div className="flex flex-col items-center text-center">
                                 <div className={`w-20 h-20 rounded-xl overflow-hidden border-2 mb-3 flex-shrink-0 group-hover:border-[#6B8E23]/50 transition-colors ${isSelected ? 'border-[#6B8E23]' : 'border-[#6B8E23]/20'}`}>
                                   <img
-                                    src={project.logo}
+                                    src={getLogoUrl(project.logo, project.name, '6B8E23')}
                                     alt={project.name}
                                     className="w-full h-full object-cover"
+                                    loading="lazy"
                                     onError={(e) => {
                                       const target = e.target as HTMLImageElement;
                                       target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(project.name)}&background=6B8E23&color=fff&size=128`;
@@ -2678,7 +2680,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                   id: p.uuid || String(p.id),
                   numericId: Number.isFinite(Number(p.id)) ? Number(p.id) : undefined,
                   name: p.project_name || p.name || '',
-                  logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name || p.name || '')}&background=6B8E23&color=fff&size=128`,
+                  logo: getLogoUrl(p.logo, p.project_name || p.name || '', '6B8E23'),
                   code: p.code || '',
                   company: p.companies?.registration_name || p.companies?.name || p.company || p.company_name || '',
                   location: p.address || p.location || ''

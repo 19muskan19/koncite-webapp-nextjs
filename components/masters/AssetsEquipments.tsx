@@ -494,30 +494,6 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
     toast.showSuccess('Master data exported successfully');
   };
 
-  const handleDownloadOpeningStockTemplate = () => {
-    // Backend ImportAssesOpeningStock expects lowercase keys: code, opening_qty
-    const headers = ['code', 'opening_qty'];
-    const sampleRows = assets.slice(0, 5).map(a => [a.code || '', '0']) as [string, string][];
-    if (sampleRows.length === 0) {
-      sampleRows.push(['A000001', '5'], ['A000002', '10']);
-    }
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleRows]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Opening Stock');
-    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `assets_opening_stock_template_${new Date().toISOString().split('T')[0]}.xlsx`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    toast.showSuccess('Opening stock template downloaded. Use code and opening_qty columns.');
-  };
-
   const handleImportAssetsOpeningStock = async () => {
     if (!openingStockForm.file) {
       toast.showWarning('Please select a file to upload');
@@ -541,7 +517,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
       const hasCode = headerKeys.includes('code');
       const hasOpeningQty = headerKeys.includes('opening_qty');
       if (!hasCode || !hasOpeningQty) {
-        toast.showError('Invalid file: expected columns "code" and "opening_qty". Use "Download Opening Stock Template" to get the correct format. Do not use the Asset/Equipments Bulk Upload template.');
+        toast.showError('Invalid file: expected columns "code" and "opening_qty". Do not use the Asset/Equipments Bulk Upload template.');
         return;
       }
     } catch (validateErr) {
@@ -570,30 +546,6 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
     } finally {
       setIsImportingOpeningStock(false);
     }
-  };
-
-  const handleDownloadBulkUploadTemplate = () => {
-    const headers = ['Asset/Equipments/Machinery', 'Specification', 'Unit', 'UUID'];
-    const sampleRows = [
-      ['Excavator', '20 Ton', 'Nos', ''],
-      ['Crane', '50 Ton', 'Nos', ''],
-      ['Concrete Mixer', '', 'Nos', ''],
-    ];
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleRows]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Assets');
-    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `assets_bulk_upload_template_${new Date().toISOString().split('T')[0]}.xlsx`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    toast.showSuccess('Template downloaded. Edit and upload to add assets.');
   };
 
   return (
@@ -771,7 +723,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
       {/* Assets Table */}
       {!isLoadingAssets && !assetsError && filteredAssets.length > 0 ? (
         <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto pt-1 pb-6">
             <table className="w-full min-w-[640px]">
               <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
                 <tr>
@@ -840,7 +792,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                           <MoreVertical className={`w-4 h-4 ${textSecondary}`} />
                         </button>
                         {openDropdownId === row.id && (
-                          <div className={`dropdown-menu absolute right-0 top-full mt-1 w-32 rounded-lg border shadow-lg z-20 ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                          <div className={`dropdown-menu absolute right-0 w-32 rounded-lg border shadow-xl z-[100] ${idx === paginatedAssets.length - 1 ? 'bottom-full mb-1' : 'top-full mt-1'} ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                             <div className="py-1">
                               <button
                                 onClick={() => {
@@ -984,17 +936,6 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
           </p>
           <div className="space-y-3 sm:space-y-4 max-w-md mx-auto">
             <button
-              onClick={handleDownloadBulkUploadTemplate}
-              className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
-                isDark
-                  ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600'
-                  : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-              } shadow-sm`}
-            >
-              <Download className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
-              <span className="text-center">Download Template (name, specification, unit, code)</span>
-            </button>
-            <button
               onClick={() => setShowBulkUploadModal(true)}
               className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
                 isDark
@@ -1054,30 +995,16 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
 
           {openingStockSubTab === 'bulkUpload' && (
             <div className="space-y-4 sm:space-y-6">
-              {/* Export & Template Buttons */}
               <div className={`rounded-xl border p-4 sm:p-8 ${cardClass}`}>
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <button
-                    onClick={handleExportMasterData}
-                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                      isDark ? 'bg-[#C2D642] text-white' : 'bg-[#C2D642] text-white'
-                    } shadow-md`}
-                  >
-                    <FileSpreadsheet className="w-4 h-4 flex-shrink-0" />
-                    Export Asset/Equipments/Machinery Data
-                  </button>
-                  <button
-                    onClick={handleDownloadOpeningStockTemplate}
-                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                      isDark
-                        ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600'
-                        : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-                    } shadow-sm`}
-                  >
-                    <Download className="w-4 h-4 flex-shrink-0" />
-                    Download Opening Stock Template (code, opening_qty)
-                  </button>
-                </div>
+                <button
+                  onClick={handleExportMasterData}
+                  className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                    isDark ? 'bg-[#C2D642] text-white' : 'bg-[#C2D642] text-white'
+                  } shadow-md`}
+                >
+                  <FileSpreadsheet className="w-4 h-4 flex-shrink-0" />
+                  Export Asset/Equipments/Machinery Data
+                </button>
               </div>
 
               {/* Bulk Upload Form */}

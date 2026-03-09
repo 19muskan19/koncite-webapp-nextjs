@@ -2,10 +2,9 @@
 
 import React, { useState, useRef } from 'react';
 import { ThemeType } from '@/types';
-import { X, FileSpreadsheet, Loader2, Upload, CheckCircle, Download } from 'lucide-react';
+import { X, FileSpreadsheet, Loader2, Upload, CheckCircle } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { masterDataAPI } from '@/services/api';
-import * as XLSX from 'xlsx';
 
 const ACCEPTED_TYPES = '.xlsx,.xls,.csv';
 const MAX_SIZE_MB = 10;
@@ -47,28 +46,6 @@ const LabourBulkUploadModal: React.FC<LabourBulkUploadModalProps> = ({
     setSelectedFile(null);
     setUploadResult(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
-  };
-
-  const handleDownloadTemplate = () => {
-    const headers = ['Code', 'Name', 'Category', 'Unit', 'uuid'];
-    const sampleRows = [
-      ['L001', 'Mason', 'skilled', 'Nos', ''],
-      ['L002', 'Carpenter', 'skilled', 'Nos', ''],
-      ['L003', 'Electrician', 'skilled', 'Nos', ''],
-      ['L004', 'Helper', 'unskilled', 'Day', ''],
-      ['L005', 'Supervisor', 'skilled', 'Day', ''],
-    ];
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleRows]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Labours Template');
-    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(blob);
-    link.download = 'labours_bulk_upload_template.xlsx';
-    link.click();
-    URL.revokeObjectURL(link.href);
-    toast.showSuccess('Template downloaded.');
   };
 
   const handleClose = () => {
@@ -177,28 +154,6 @@ const LabourBulkUploadModal: React.FC<LabourBulkUploadModalProps> = ({
         </div>
 
         <div className="p-6 space-y-6">
-          {/* Format instructions */}
-          <div className={`rounded-lg border p-4 ${isDark ? 'bg-slate-800/50 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
-            <div className="flex items-center justify-between mb-2">
-              <h3 className={`text-sm font-bold ${textPrimary}`}>Required columns (row 1):</h3>
-              <button
-                type="button"
-                onClick={handleDownloadTemplate}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-[#C2D642]/20 hover:bg-[#C2D642]/30 text-[#C2D642] transition-colors"
-              >
-                <Download className="w-4 h-4" />
-                Download Template
-              </button>
-            </div>
-            <div className={`text-xs ${textSecondary} space-y-1 font-mono`}>
-              <p><strong>Code</strong> – Unique code (e.g. L464807, L299174)</p>
-              <p><strong>Name</strong> – Labour role (e.g. Supervisor, Masons, Carpenters, Electricians)</p>
-              <p><strong>Category</strong> – skilled, semiskilled, or unskilled</p>
-              <p><strong>Unit</strong> – Unit of work (e.g. Nos, Day). Creates unit if missing.</p>
-              <p className="mt-2 opacity-80">Optional: <strong>uuid</strong> – to update existing labour by UUID</p>
-            </div>
-          </div>
-
           {/* Drop zone */}
           <div
             onDrop={handleDrop}

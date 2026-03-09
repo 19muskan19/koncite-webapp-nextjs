@@ -314,9 +314,12 @@ export default function GoodsReceiptFlow({
             : (m.name ?? '');
           const unitObj = m.unit_id && typeof m.unit_id === 'object' ? m.unit_id : m.units ?? m.unit;
           const unit = typeof unitObj === 'object' ? (unitObj?.unit ?? unitObj?.name) : (m.units?.unit ?? m.unit ?? unitObj ?? '');
+          const numericId = goodsType === 'machines'
+            ? (m.assets_id ?? m.assets?.id ?? m.id)
+            : (m.id);
           return {
             id: m.uuid ?? m.id,
-            numericId: Number.isFinite(Number(m.id)) ? Number(m.id) : undefined,
+            numericId: Number.isFinite(Number(numericId)) ? Number(numericId) : undefined,
             code: m.code ?? '',
             name,
             specification: m.specification ?? '',
@@ -349,8 +352,20 @@ export default function GoodsReceiptFlow({
       editInwardId;
     if (!inwardRecordId) return;
     setIsSubmitting(true);
+    const inwardDetailsForPdf = details.length > 0
+      ? details.map((d) => ({
+          id: d.id,
+          materials_id: d.materials_id,
+          materialCode: d.materialCode,
+          materialName: d.materialName,
+          materialSpec: d.materialSpec,
+          materialUnit: d.materialUnit,
+          recipt_qty: d.recipt_qty,
+          reject_qty: d.reject_qty,
+        }))
+      : undefined;
     goodsReceiptAPI
-      .generatePdf(inwardRecordId)
+      .generatePdf(inwardRecordId, inwardDetailsForPdf)
       .then(({ pdf_url, name }) => setPdfInfo({ url: pdf_url, name: name ?? `Inward-${inwardDate}.pdf` }))
       .catch((err: any) => {
         setPdfInfo(null);
@@ -358,7 +373,7 @@ export default function GoodsReceiptFlow({
         toast.showWarning(msg);
       })
       .finally(() => setIsSubmitting(false));
-  }, [step, inwardHeader?.id, inwardHeader?.inv_inwards_id, inwardHeader?.uuid, inwardGoodsList, editInwardId, inwardDate]);
+  }, [step, inwardHeader?.id, inwardHeader?.inv_inwards_id, inwardHeader?.uuid, inwardGoodsList, editInwardId, inwardDate, details]);
 
   const handleBackClick = () => {
     if (step === 'success') setStep('details');
@@ -461,7 +476,7 @@ export default function GoodsReceiptFlow({
       formData.append('grn_no', grnNo);
       formData.append('date', inwardDate);
       formData.append('entry_type', String(entryTypeId));
-      formData.append('type', goodsType);
+      formData.append('type', goodsType === 'machines' ? 'assets' : 'materials');
       formData.append('delivery_ref_copy_no', deliveryRefNo);
       formData.append('delivery_ref_copy_date', deliveryRefDate);
       if (remarks) formData.append('remarkes', remarks);
@@ -487,7 +502,7 @@ export default function GoodsReceiptFlow({
           const unitLabel = typeof unitObj === 'object' ? (unitObj?.unit ?? unitObj?.name) : (g.unit ?? '');
           return {
             inward_goods_id: g.inward_id ?? g.inward_goods_id ?? g.id ?? invInwardId,
-            materials_id: g.materials_id ?? g.assets_id ?? g.material_id ?? g.materials?.id ?? g.assets?.id,
+            materials_id: g.id ?? g.materials_id ?? g.assets_id ?? g.material_id ?? g.materials?.id ?? g.assets?.id,
             materialCode: g.materials?.code ?? g.assets?.code ?? g.code ?? '',
             materialName: g.materials?.name ?? g.assets?.name ?? (typeof g.assets === 'string' ? g.assets : null) ?? g.name ?? '',
             materialUnit: unitLabel ?? '',
@@ -969,7 +984,7 @@ export default function GoodsReceiptFlow({
             </div>
 
             <div className="flex justify-end">
-              <button onClick={handleInwardsListNext} disabled={isSubmitting || selectedMaterialIds.size === 0} className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold ${isSubmitting || selectedMaterialIds.size === 0 ? 'opacity-50 cursor-not-allowed' : ''} bg-[#6B8E23] text-white hover:bg-[#5a7a1e]`}>
+              <button onClick={handleInwardsListNext} disabled={isSubmitting || (selectedMaterialIds.size === 0 && !imageFile)} className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold ${isSubmitting || (selectedMaterialIds.size === 0 && !imageFile) ? 'opacity-50 cursor-not-allowed' : ''} bg-[#6B8E23] text-white hover:bg-[#5a7a1e]`}>
                 {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Next <ArrowRight className="w-4 h-4" />
               </button>
             </div>

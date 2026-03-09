@@ -83,30 +83,6 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
 
   const availableProjects = openingStockProjects;
 
-  const handleDownloadMaterialsOpeningStockTemplate = () => {
-    // Backend MaterialsOpeningStockImport expects: code, opening_qty
-    const headers = ['code', 'opening_qty'];
-    const sampleRows = materials.slice(0, 5).map(m => [m.code || '', '0']) as [string, string][];
-    if (sampleRows.length === 0) {
-      sampleRows.push(['M211600', '5'], ['M211601', '10']);
-    }
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleRows]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Opening Stock');
-    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `materials_opening_stock_template_${new Date().toISOString().split('T')[0]}.xlsx`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    toast.showSuccess('Opening stock template downloaded. Use code and opening_qty columns.');
-  };
-
   const handleImportMaterialsOpeningStock = async () => {
     if (!openingStockForm.file) {
       toast.showWarning('Please select a file to upload');
@@ -134,7 +110,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
       const hasCode = headerKeys.includes('code');
       const hasOpeningQty = headerKeys.includes('opening_qty');
       if (!hasCode || !hasOpeningQty) {
-        toast.showError('Invalid file: expected columns "code" and "opening_qty". Use "Download Opening Stock Template" to get the correct format. Do not use the Materials Bulk Upload template.');
+        toast.showError('Invalid file: expected columns "code" and "opening_qty". Do not use the Materials Bulk Upload template.');
         return;
       }
     } catch (validateErr) {
@@ -432,29 +408,6 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
     URL.revokeObjectURL(url);
   };
 
-  const handleDownloadBulkUploadTemplate = () => {
-    const headers = ['class', 'code', 'name', 'specification', 'unit', 'uuid'];
-    const sampleRows = [
-      ['A', 'M211600', 'Cement', 'OPC 53 Grade', 'Packet', ''],
-      ['A', 'M211601', 'Steel', 'TMT 500D', 'MT', ''],
-      ['B', '', 'Sand', '', 'Cum', ''],
-    ];
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleRows]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Template');
-    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `materials_upload_template_${new Date().toISOString().split('T')[0]}.xlsx`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  };
-
   const handleDownloadExcel = () => {
     const headers = ['SR No', 'Code', 'Class', 'Name', 'Specification', 'Unit'];
     const rows = filteredMaterials.map((material, idx) => [
@@ -658,7 +611,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
       {/* Materials Table - always show (no list API, empty) */}
       {!isLoadingMaterials && !materialsError ? (
         <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto pt-1 pb-6">
             <table className="w-full">
               <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
                 <tr>
@@ -720,7 +673,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                           <MoreVertical className={`w-4 h-4 ${textSecondary}`} />
                         </button>
                         {openDropdownId === row.id && (
-                          <div className={`dropdown-menu absolute right-0 top-full mt-1 w-32 rounded-lg border shadow-lg z-20 ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                          <div className={`dropdown-menu absolute right-0 w-32 rounded-lg border shadow-xl z-[100] ${idx === paginatedMaterials.length - 1 ? 'bottom-full mb-1' : 'top-full mt-1'} ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                             <div className="py-1">
                               <button
                                 onClick={() => {
@@ -854,17 +807,6 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
           </p>
           <div className="space-y-3 sm:space-y-4 max-w-md mx-auto">
             <button
-              onClick={handleDownloadBulkUploadTemplate}
-              className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
-                isDark
-                  ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600'
-                  : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-              } shadow-sm`}
-            >
-              <Download className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
-              <span className="text-center">Download Template (class, code, name, specification, unit, uuid)</span>
-            </button>
-            <button
               onClick={() => setShowBulkUploadModal(true)}
               className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
                 isDark
@@ -924,32 +866,18 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
 
           {openingStockSubTab === 'bulkUpload' && (
             <div className="space-y-4 sm:space-y-6">
-              {/* Export + Download Template Buttons */}
               <div className={`rounded-xl border p-4 sm:p-8 ${cardClass}`}>
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <button
-                    onClick={handleExportMasterData}
-                    className={`flex-1 flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
-                      isDark
-                        ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
-                        : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
-                    } shadow-md`}
-                  >
-                    <FileSpreadsheet className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
-                    <span className="text-center">Export Materials Data</span>
-                  </button>
-                  <button
-                    onClick={handleDownloadMaterialsOpeningStockTemplate}
-                    className={`flex-1 flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
-                      isDark
-                        ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600'
-                        : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-                    } shadow-sm`}
-                  >
-                    <Download className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
-                    <span className="text-center">Download Opening Stock Template (code, opening_qty)</span>
-                  </button>
-                </div>
+                <button
+                  onClick={handleExportMasterData}
+                  className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
+                    isDark
+                      ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
+                      : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
+                  } shadow-md`}
+                >
+                  <FileSpreadsheet className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
+                  <span className="text-center">Export Materials Data</span>
+                </button>
               </div>
 
               {/* Bulk Upload Opening Stock Form */}

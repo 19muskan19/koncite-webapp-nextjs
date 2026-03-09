@@ -2,21 +2,13 @@
 
 import React, { useState, useRef } from 'react';
 import { ThemeType } from '@/types';
-import { X, FileSpreadsheet, Loader2, Upload, CheckCircle, Download } from 'lucide-react';
+import { X, FileSpreadsheet, Loader2, Upload, CheckCircle } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { masterDataAPI } from '@/services/api';
-import * as XLSX from 'xlsx';
 
 const ACCEPTED_TYPES = '.xlsx,.xls,.csv';
 const MAX_SIZE_MB = 10;
 const MAX_SIZE_BYTES = MAX_SIZE_MB * 1024 * 1024;
-
-const MATERIALS_HEADERS = ['class', 'code', 'name', 'specification', 'unit', 'uuid'];
-const SAMPLE_ROWS = [
-  ['A', 'M211600', 'Cement', 'OPC 53 Grade', 'Packet', ''],
-  ['A', 'M211601', 'Steel', 'TMT 500D', 'MT', ''],
-  ['B', '', 'Sand', '', 'Cum', ''],
-];
 
 interface MaterialBulkUploadModalProps {
   theme: ThemeType;
@@ -86,24 +78,6 @@ const MaterialBulkUploadModal: React.FC<MaterialBulkUploadModalProps> = ({
     setUploadResult(null);
   };
 
-  const handleDownloadTemplate = () => {
-    const ws = XLSX.utils.aoa_to_sheet([MATERIALS_HEADERS, ...SAMPLE_ROWS]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Materials');
-    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `materials_bulk_upload_${new Date().toISOString().split('T')[0]}.xlsx`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    toast.showSuccess('Template downloaded. Use class, code, name, specification, unit, uuid.');
-  };
-
   const handleUpload = async () => {
     if (!selectedFile || isUploading) return;
     const err = validateFile(selectedFile);
@@ -164,13 +138,6 @@ const MaterialBulkUploadModal: React.FC<MaterialBulkUploadModalProps> = ({
               <p><strong>unit</strong> (required) – Unit name (e.g. Packet, MT, Cum). Must exist in units master.</p>
               <p><strong>uuid</strong> (optional) – Include for updates; leave empty for new materials</p>
             </div>
-            <button
-              onClick={handleDownloadTemplate}
-              className="mt-3 flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all bg-slate-700 hover:bg-slate-600 text-slate-100"
-            >
-              <Download className="w-4 h-4" />
-              Download Template
-            </button>
           </div>
 
           <div

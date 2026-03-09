@@ -26,6 +26,7 @@ import {
   ChevronDown
 } from 'lucide-react';
 import CreateProjectModal from './Modals/CreateProjectModal';
+import { getLogoUrl } from '@/utils/imageUtils';
 
 type SortFilterType = 'none' | 'recent_created' | 'oldest_created' | 'recent_updated' | 'oldest_updated';
 
@@ -151,7 +152,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
           progress: p.progress || 0,
           budget: p.budget,
           location: p.address || p.location || '',
-          logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name || p.name || '')}&background=6366f1&color=fff&size=128`,
+          logo: getLogoUrl(p.logo, p.project_name || p.name || '', '6366f1'),
           teamSize: p.team_size || p.teamSize,
           createdAt: p.created_at || p.createdAt,
           updatedAt: p.updated_at || p.updatedAt,
@@ -274,7 +275,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
           progress: p.progress || 0,
           budget: p.budget,
           location: p.address || p.location || '',
-          logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name || p.name || '')}&background=6366f1&color=fff&size=128`,
+          logo: getLogoUrl(p.logo, p.project_name || p.name || '', '6366f1'),
           teamSize: p.team_size || p.teamSize,
           createdAt: p.created_at || p.createdAt,
           updatedAt: p.updated_at || p.updatedAt,
@@ -888,9 +889,10 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                   <span className={`text-xs font-bold ${textSecondary} flex-shrink-0 w-6`}>{idx + 1}</span>
                   <div className="w-12 h-12 rounded-lg overflow-hidden border-2 border-[#C2D642]/20 flex-shrink-0">
                     <img 
-                      src={project.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(project.name)}&background=6366f1&color=fff&size=128`}
+                      src={getLogoUrl(project.logo, project.name, '6366f1')}
                       alt={project.name}
                       className="w-full h-full object-cover"
+                      loading="lazy"
                       onError={(e) => {
                         const target = e.target as HTMLImageElement;
                         target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(project.name)}&background=6366f1&color=fff&size=128`;
@@ -1177,7 +1179,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                   <div className="flex items-center gap-4 mb-6">
                     <div className="w-20 h-20 rounded-xl overflow-hidden border-2 border-[#C2D642]/20 flex-shrink-0">
                       <img 
-                        src={viewingProject.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(viewingProject.name)}&background=6366f1&color=fff&size=128`}
+                        src={getLogoUrl(viewingProject.logo, viewingProject.name, '6366f1')}
                         alt={viewingProject.name}
                         className="w-full h-full object-cover"
                         onError={(e) => {

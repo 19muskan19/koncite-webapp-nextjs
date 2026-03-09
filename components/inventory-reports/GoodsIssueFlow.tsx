@@ -420,12 +420,13 @@ export default function GoodsIssueFlow({
       });
       const goodsListRaw = Array.isArray(addResult) ? addResult : addResult?.data ?? addResult?.issue_goods ?? addResult;
       const goodsList = Array.isArray(goodsListRaw) ? goodsListRaw : (goodsListRaw && typeof goodsListRaw === 'object' ? [goodsListRaw] : []);
-      const firstGoodsId = goodsList[0]?.id ?? goodsList[0]?.inv_issue_goods_id ?? (typeof addResult === 'object' && addResult !== null ? (addResult as any).id ?? (addResult as any).inv_issue_goods_id : null) ?? invIssueId;
+      const issueIdFromResponse = goodsList[0]?.issue_id ?? (Array.isArray(addResult) ? addResult?.[0]?.issue_id : (addResult as any)?.issue_id);
+      const invIssueGoodsIdForDetails = issueIdFromResponse ?? goodsList[0]?.id ?? goodsList[0]?.inv_issue_goods_id ?? (typeof addResult === 'object' && addResult !== null ? (addResult as any).id ?? (addResult as any).inv_issue_goods_id : null) ?? invIssueId;
       const buildDetailsFromMaterials = () =>
         materialNumericIds.map((mid) => {
           const m = materials.find((x) => String(x.numericId ?? x.id) === String(mid));
           return {
-            inv_issue_goods_id: firstGoodsId,
+            inv_issue_goods_id: invIssueGoodsIdForDetails,
             materials_id: mid,
             materialNumericId: m?.numericId,
             materialCode: m?.code ?? '',
@@ -445,7 +446,7 @@ export default function GoodsIssueFlow({
           const matId = g.materials_id ?? g.material_id ?? g.materials?.id;
           if (matId == null) return [];
           const item: IssueDetailItem = {
-            inv_issue_goods_id: g.id ?? g.inv_issue_goods_id ?? invIssueId,
+            inv_issue_goods_id: g.issue_id ?? g.inv_issue_goods_id ?? g.id ?? invIssueGoodsIdForDetails,
             materials_id: matId,
             materialNumericId: g.materials?.id ?? g.materials_id ?? matId,
             materialCode: g.materials?.code ?? g.code ?? '',
@@ -489,7 +490,7 @@ export default function GoodsIssueFlow({
     const storeNumericIds = Array.from(selectedStoreIds)
       .map((sid) => stores.find((x) => String(x.id) === sid)?.numericId ?? stores.find((x) => String(x.id) === sid)?.id)
       .filter((x): x is string | number => x != null);
-    const invIssueGoodsId = issueGoodsList?.[0]?.id ?? issueHeader?.id ?? details?.[0]?.inv_issue_goods_id;
+    const invIssueGoodsId = issueGoodsList?.[0]?.issue_id ?? issueGoodsList?.[0]?.id ?? issueHeader?.id ?? details?.[0]?.inv_issue_goods_id;
     setIsSubmitting(true);
     try {
       const payload = details

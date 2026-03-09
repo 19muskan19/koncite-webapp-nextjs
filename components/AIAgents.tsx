@@ -5,6 +5,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import { ThemeType } from '../types';
 import ChatMarkdownViewer from './ChatMarkdownViewer';
 import { useToast } from '../contexts/ToastContext';
+import { useUser } from '@/contexts/UserContext';
 import {
   createSession,
   getSession,
@@ -54,10 +55,21 @@ function formatSessionTime(iso?: string): string {
   }
 }
 
+function getUserInitial(user: { name?: string; email?: string } | null): string {
+  if (!user) return 'U';
+  const name = (user.name || '').trim();
+  if (name.length > 0) return name.charAt(0).toUpperCase();
+  const email = (user.email || '').trim();
+  if (email.length > 0) return email.charAt(0).toUpperCase();
+  return 'U';
+}
+
 const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
   const toast = useToast();
   const router = useRouter();
   const pathname = usePathname();
+  const { user } = useUser();
+  const userInitial = getUserInitial(user);
   const [selectedAgent, setSelectedAgent] = useState<AgentType>(initialAgent);
 
   // Sync selectedAgent with URL
@@ -498,7 +510,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
   };
 
   return (
-    <div className={`flex flex-col md:flex-row h-[calc(100vh-4rem)] min-h-0 max-h-[calc(100dvh-4rem)] sm:h-[calc(100vh-4.5rem)] md:h-[calc(100vh-3.5rem-2rem)] ${isDark ? 'bg-[#2d2d2d]' : 'bg-white'} rounded-lg sm:rounded-xl border ${isDark ? 'border-[#404040]' : 'border-gray-200'} overflow-hidden relative`}>
+    <div className={`flex flex-col md:flex-row h-[calc(100vh-4rem)] min-h-0 max-h-[calc(100dvh-4rem)] sm:h-[calc(100vh-4.5rem)] md:h-[calc(100vh-3.5rem-2rem)] ${isDark ? 'bg-[#2d2d2d]' : 'bg-slate-50'} rounded-lg sm:rounded-xl border ${isDark ? 'border-[#404040]' : 'border-slate-200'} overflow-hidden relative`}>
       {/* Mobile Sidebar Overlay */}
       {sidebarOpen && (
         <div 
@@ -665,13 +677,13 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
         </div>
 
         {/* Messages Area */}
-        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-2 sm:p-3 md:p-4 lg:p-6 pb-6 sm:pb-8 md:pb-10 lg:pb-6 space-y-2 sm:space-y-3 md:space-y-4 custom-scrollbar">
+        <div className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-2 sm:p-3 md:p-4 lg:p-6 pb-6 sm:pb-8 md:pb-10 lg:pb-6 space-y-2 sm:space-y-3 md:space-y-4 custom-scrollbar ${isDark ? 'bg-[#1e1e1e]' : 'bg-slate-50'}`}>
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center min-h-[160px] sm:min-h-[200px] md:min-h-[280px] text-center px-3 sm:px-4">
               <div className="w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 bg-[#C2D642] rounded-xl sm:rounded-2xl flex items-center justify-center mb-3 sm:mb-4">
                 <Bot className="w-6 h-6 sm:w-8 sm:h-8 md:w-9 md:h-9 text-white" />
               </div>
-              <p className={`text-base sm:text-lg md:text-xl font-bold max-w-[280px] sm:max-w-md ${isDark ? 'text-violet-400' : 'text-[#7C3AED]'}`}>
+              <p className={`text-base sm:text-lg md:text-xl font-bold max-w-[280px] sm:max-w-md ${isDark ? 'text-[#C2D642]' : 'text-[#7c8a2e]'}`}>
                 You're connected to the DPR & Inventory Agent.
               </p>
               <p className={`text-[11px] sm:text-xs md:text-sm font-normal mt-1.5 sm:mt-2 max-w-[280px] sm:max-w-md ${isDark ? 'text-slate-400' : 'text-[#4B5563]'}`}>
@@ -690,7 +702,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
                 </div>
               )}
               <div className={`max-w-[90%] xs:max-w-[85%] sm:max-w-[75%] md:max-w-[70%] ${message.role === 'user' ? 'order-2' : ''}`}>
-                <div className={`rounded-lg sm:rounded-xl p-2.5 sm:p-3 md:p-4 ${message.role === 'user' ? `${isDark ? 'bg-slate-800/40 border border-[#404040]' : 'bg-slate-100 border border-gray-200'}` : isDark ? 'bg-[#2d2d2d] text-slate-100 border border-[#404040]' : 'bg-white text-slate-900 border border-gray-200'}`}>
+                <div className={`rounded-lg sm:rounded-xl p-2.5 sm:p-3 md:p-4 ${message.role === 'user' ? `${isDark ? 'bg-slate-700/50 text-slate-100 border border-slate-600/50' : 'bg-slate-100 text-slate-900 border border-slate-200'}` : isDark ? 'bg-[#2d2d2d] text-slate-100 border border-slate-600/50' : 'bg-white text-slate-900 border border-slate-200 shadow-sm'}`}>
                   <ChatMarkdownViewer
                     content={message.content}
                     isDark={isDark}
@@ -703,8 +715,8 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
                 </p>
               </div>
               {message.role === 'user' && (
-                <div className={`w-7 h-7 md:w-8 md:h-8 rounded-full bg-[#C2D642] flex items-center justify-center flex-shrink-0 border-2 ${isDark ? 'border-[#C2D642]/60' : 'border-[#A8B838]/50'}`}>
-                  <span className="text-white text-[10px] md:text-xs font-bold">NV</span>
+                <div className={`w-7 h-7 md:w-8 md:h-8 rounded-full flex items-center justify-center flex-shrink-0 border-2 ${isDark ? 'bg-slate-600 border-slate-500' : 'bg-slate-500 border-slate-400'}`}>
+                  <span className="text-white text-[10px] md:text-xs font-bold">{userInitial}</span>
                 </div>
               )}
             </div>
