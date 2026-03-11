@@ -85,7 +85,8 @@ process.on('unhandledRejection', (reason) => {
   }
 });
 
-const app = next({ dev, hostname, port });
+const turbo = process.env.TURBO === '1';
+const app = next({ dev, hostname, port, turbo });
 const handle = app.getRequestHandler();
 
 app.prepare().then(() => {

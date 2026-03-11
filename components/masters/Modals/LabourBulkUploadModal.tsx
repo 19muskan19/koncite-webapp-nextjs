@@ -117,9 +117,8 @@ const LabourBulkUploadModal: React.FC<LabourBulkUploadModalProps> = ({
       const totalRows = (data?.total_rows as number | undefined) ?? 0;
       const created = (data?.created as number | undefined) ?? 0;
       const updated = (data?.updated as number | undefined) ?? 0;
-      const skipped = (data?.skipped as number | undefined) ?? 0;
-      const msg = (data?.message as string | undefined) ?? `${created} created, ${updated} updated.`;
-      setUploadResult({ total_rows: totalRows, created, updated, skipped, message: msg });
+      const msg = (data?.message as string | undefined) ?? (totalRows === 0 ? 'No data rows found.' : `${created} created, ${updated} updated.`);
+      setUploadResult({ total_rows: totalRows, created, updated, skipped: 0, message: msg });
       toast.showSuccess(msg);
       onSuccess?.();
     } catch (error: any) {
@@ -154,6 +153,17 @@ const LabourBulkUploadModal: React.FC<LabourBulkUploadModalProps> = ({
         </div>
 
         <div className="p-6 space-y-6">
+          <div className={`rounded-lg border p-4 ${isDark ? 'bg-slate-800/50 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
+            <h3 className={`text-sm font-bold ${textPrimary} mb-2`}>Column format (row 1 = headers):</h3>
+            <div className={`text-xs ${textSecondary} space-y-1 font-mono`}>
+              <p><strong>#</strong> – Serial number (optional)</p>
+              <p><strong>Code</strong> – Labour code (e.g. L464807)</p>
+              <p><strong>Name</strong> (required) – Labour role (e.g. Supervisor, Masons, Carpenters)</p>
+              <p><strong>Category</strong> – skilled, semiskilled, or unskilled</p>
+              <p><strong>Unit</strong> – Unit of measurement (e.g. Nos)</p>
+              <p><strong>uuid</strong> – Required column; leave empty for new labours, add UUID to update existing</p>
+            </div>
+          </div>
           {/* Drop zone */}
           <div
             onDrop={handleDrop}

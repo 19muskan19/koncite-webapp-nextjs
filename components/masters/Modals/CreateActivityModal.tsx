@@ -229,24 +229,34 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
     fetchHierarchy();
   }, [isOpen, formData.project, formData.subproject, formData.type, projects, modalSubprojects]);
 
-  // Load activity data when editing
+  // Load activity data when editing (preserve all fields; use ?? to keep 0 for quantity/rate/amount)
   useEffect(() => {
     if (isOpen && editingActivityId) {
       const loadActivityData = async () => {
         try {
-          const activityData = await masterDataAPI.getActivity(editingActivityId);
+          const d = await masterDataAPI.getActivity(editingActivityId);
+          // API returns project/heading/subproject/unit_id as nested objects; extract ids
+          const projectVal = d.project_id ?? d.project?.id ?? '';
+          const subprojectVal = d.subproject_id ?? d.subproject?.id ?? '';
+          const typeVal = d.type ?? d.activity_type ?? '';
+          const activitiesVal = d.activities ?? d.name ?? d.activity_name ?? '';
+          const headingVal = d.parent_id ?? d.heading?.id ?? (typeof d.heading === 'object' && d.heading != null ? d.heading.id : null) ?? '';
+          const unitIdVal = (typeof d.unit_id === 'object' && d.unit_id != null && d.unit_id.id != null) ? d.unit_id.id : (d.unit_id ?? d.unit?.id ?? d.units?.id ?? '');
+          const qtyVal = d.quantity ?? d.qty ?? d.estimate_qty ?? '';
+          const rateVal = d.rate ?? d.est_rate ?? '';
+          const amountVal = d.amount ?? d.est_amount ?? '';
           setFormData({
-            project: String(activityData.project_id || activityData.project?.id || ''),
-            subproject: activityData.subproject_id || activityData.subproject?.id ? String(activityData.subproject_id || activityData.subproject?.id) : '',
-            type: activityData.type || '',
-            activities: activityData.activities || activityData.name || '',
-            heading: activityData.heading || activityData.parent_id ? String(activityData.heading || activityData.parent_id) : '',
-            unit_id: activityData.unit_id || activityData.unit?.id ? String(activityData.unit_id || activityData.unit?.id) : '',
-            quantity: activityData.quantity || activityData.qty ? String(activityData.quantity || activityData.qty) : '',
-            rate: activityData.rate ? String(activityData.rate) : '',
-            amount: activityData.amount ? String(activityData.amount) : '',
-            start_date: activityData.start_date || activityData.startDate || '',
-            end_date: activityData.end_date || activityData.endDate || ''
+            project: String(projectVal),
+            subproject: subprojectVal ? String(subprojectVal) : '',
+            type: typeVal ? String(typeVal) : '',
+            activities: activitiesVal ? String(activitiesVal) : '',
+            heading: headingVal ? String(headingVal) : '',
+            unit_id: unitIdVal ? String(unitIdVal) : '',
+            quantity: qtyVal !== '' && qtyVal !== null && qtyVal !== undefined ? String(qtyVal) : '',
+            rate: rateVal !== '' && rateVal !== null && rateVal !== undefined ? String(rateVal) : '',
+            amount: amountVal !== '' && amountVal !== null && amountVal !== undefined ? String(amountVal) : '',
+            start_date: (d.start_date ?? d.startDate ?? '').toString().trim(),
+            end_date: (d.end_date ?? d.endDate ?? '').toString().trim()
           });
         } catch (error: any) {
           console.error('Failed to load activity data:', error);

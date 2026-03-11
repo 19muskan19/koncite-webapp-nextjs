@@ -22,6 +22,7 @@ import {
   X,
 } from 'lucide-react';
 import { masterDataAPI, goodsIssueAPI } from '@/services/api';
+import CreateWarehouseModal from '@/components/masters/Modals/CreateWarehouseModal';
 import { getTodayDateString } from '@/utils/dateUtils';
 import { getAuthToken } from '@/services/apiClient';
 import { openPdfInNewTab, sharePdfAsFile } from '@/utils/pdfUtils';
@@ -129,6 +130,7 @@ export default function GoodsIssueFlow({
   const [activities, setActivities] = useState<any[]>([]);
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [showTagActivityModal, setShowTagActivityModal] = useState<number | null>(null);
+  const [showCreateWarehouseModal, setShowCreateWarehouseModal] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [pdfInfo, setPdfInfo] = useState<{ url?: string; name?: string } | null>(null);
   const [issueNoFromBackend, setIssueNoFromBackend] = useState<string | null>(null);
@@ -194,6 +196,10 @@ export default function GoodsIssueFlow({
     }
   }, [mode, editIssueId, pid]);
 
+  const [storeRefreshKey, setStoreRefreshKey] = useState(0);
+
+  const refreshStores = () => setStoreRefreshKey((k) => k + 1);
+
   useEffect(() => {
     const pId = projectIdForApi();
     if (!pId) return;
@@ -213,7 +219,7 @@ export default function GoodsIssueFlow({
       })
       .catch(() => setStores([]))
       .finally(() => setIsLoadingStores(false));
-  }, [pid, pNumId, mode, editIssueId, editProject]);
+  }, [pid, pNumId, mode, editIssueId, editProject, storeRefreshKey]);
 
   useEffect(() => {
     if (mode === 'edit' && issueHeader && stores.length > 0 && editLoadedStoreIds.length > 0) {
@@ -631,6 +637,11 @@ export default function GoodsIssueFlow({
                 })}
               </div>
             )}
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+              <button type="button" onClick={() => setShowCreateWarehouseModal(true)} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold border ${isDark ? 'border-slate-600 hover:bg-slate-800/50' : 'border-slate-300 hover:bg-slate-50'} ${textPrimary}`} title="Add new store">
+                <Plus className="w-4 h-4" /> Add New Store
+              </button>
+            </div>
             <div className="flex justify-end">
               <button onClick={handleStoresNext} disabled={isCreatingHeader} className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold ${isCreatingHeader ? 'opacity-50 cursor-not-allowed' : ''} bg-[#6B8E23] text-white hover:bg-[#5a7a1e]`}>
                 {isCreatingHeader ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Next <ArrowRight className="w-4 h-4" />
@@ -670,12 +681,19 @@ export default function GoodsIssueFlow({
                 if (!showTag) return null;
                 const label = isSameProjectOtherStores ? 'Select store (optional)' : slug.includes('other-project') || slug.includes('other project') ? 'Select project (optional)' : 'Tag (optional)';
                 return (
-                  <div className="sm:col-span-2">
-                    <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>{label}</label>
-                    <select value={tagId} onChange={(e) => setTagId(e.target.value)} className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}>
-                      <option value="">{tagOptions.length === 0 && isSameProjectOtherStores ? 'No stores available' : 'Select...'}</option>
-                      {tagOptions.map((t: any) => <option key={t.id} value={t.id}>{t.name ?? t.tag_name ?? t.label}</option>)}
-                    </select>
+                  <div className="sm:col-span-2 space-y-2">
+                    <label className={`block text-sm font-bold ${textSecondary}`}>{label}</label>
+                    <div className="flex gap-2">
+                      <select value={tagId} onChange={(e) => setTagId(e.target.value)} className={`flex-1 px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}>
+                        <option value="">{tagOptions.length === 0 && isSameProjectOtherStores ? 'No stores available' : 'Select...'}</option>
+                        {tagOptions.map((t: any) => <option key={t.id} value={t.id}>{t.name ?? t.tag_name ?? t.label}</option>)}
+                      </select>
+                      {isSameProjectOtherStores && (
+                        <button type="button" onClick={() => setShowCreateWarehouseModal(true)} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold border shrink-0 ${isDark ? 'border-slate-600 hover:bg-slate-800/50' : 'border-slate-300 hover:bg-slate-50'} ${textPrimary}`} title="Add new store">
+                          <Plus className="w-4 h-4" /> Add Store
+                        </button>
+                      )}
+                    </div>
                   </div>
                 );
               })()}
@@ -804,6 +822,17 @@ export default function GoodsIssueFlow({
             )}
           </div>
         )}
+
+        <CreateWarehouseModal
+          theme={theme}
+          isOpen={showCreateWarehouseModal}
+          onClose={() => setShowCreateWarehouseModal(false)}
+          selectedProjectId={projectIdForApi() ?? undefined}
+          onSuccess={() => {
+            refreshStores();
+            setShowCreateWarehouseModal(false);
+          }}
+        />
 
         {showHelpModal && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">

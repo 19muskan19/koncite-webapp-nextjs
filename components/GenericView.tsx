@@ -187,6 +187,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
   const [grnList, setGrnList] = useState<any[]>([]);
   const [isLoadingGrnList, setIsLoadingGrnList] = useState(false);
   const [showEditPreviousGrnModal, setShowEditPreviousGrnModal] = useState(false);
+  const [inventoryEntriesPerPage, setInventoryEntriesPerPage] = useState(25);
   const router = useRouter();
 
   // Fetch projects when project selection modal opens for any inventory section
@@ -437,25 +438,25 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
   }, [prList, prSearchQuery]);
 
   const paginatedPrList = useMemo(() => {
-    const start = (prListPage - 1) * INVENTORY_LIST_PAGE_SIZE;
-    return filteredPrList.slice(start, start + INVENTORY_LIST_PAGE_SIZE);
-  }, [filteredPrList, prListPage]);
+    const start = (prListPage - 1) * inventoryEntriesPerPage;
+    return filteredPrList.slice(start, start + inventoryEntriesPerPage);
+  }, [filteredPrList, prListPage, inventoryEntriesPerPage]);
   const paginatedRfqList = useMemo(() => {
-    const start = (rfqListPage - 1) * INVENTORY_LIST_PAGE_SIZE;
-    return filteredRfqList.slice(start, start + INVENTORY_LIST_PAGE_SIZE);
-  }, [filteredRfqList, rfqListPage]);
+    const start = (rfqListPage - 1) * inventoryEntriesPerPage;
+    return filteredRfqList.slice(start, start + inventoryEntriesPerPage);
+  }, [filteredRfqList, rfqListPage, inventoryEntriesPerPage]);
   const paginatedGrnList = useMemo(() => {
-    const start = (grnListPage - 1) * INVENTORY_LIST_PAGE_SIZE;
-    return filteredGrnList.slice(start, start + INVENTORY_LIST_PAGE_SIZE);
-  }, [filteredGrnList, grnListPage]);
+    const start = (grnListPage - 1) * inventoryEntriesPerPage;
+    return filteredGrnList.slice(start, start + inventoryEntriesPerPage);
+  }, [filteredGrnList, grnListPage, inventoryEntriesPerPage]);
   const paginatedReturnList = useMemo(() => {
-    const start = (returnListPage - 1) * INVENTORY_LIST_PAGE_SIZE;
-    return filteredReturnList.slice(start, start + INVENTORY_LIST_PAGE_SIZE);
-  }, [filteredReturnList, returnListPage]);
+    const start = (returnListPage - 1) * inventoryEntriesPerPage;
+    return filteredReturnList.slice(start, start + inventoryEntriesPerPage);
+  }, [filteredReturnList, returnListPage, inventoryEntriesPerPage]);
   const paginatedIssueList = useMemo(() => {
-    const start = (issueListPage - 1) * INVENTORY_LIST_PAGE_SIZE;
-    return filteredIssueList.slice(start, start + INVENTORY_LIST_PAGE_SIZE);
-  }, [filteredIssueList, issueListPage]);
+    const start = (issueListPage - 1) * inventoryEntriesPerPage;
+    return filteredIssueList.slice(start, start + inventoryEntriesPerPage);
+  }, [filteredIssueList, issueListPage, inventoryEntriesPerPage]);
 
   const paginatedPrEditModal = useMemo(() => {
     const start = (prEditModalPage - 1) * INVENTORY_LIST_PAGE_SIZE;
@@ -556,47 +557,49 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
     setPrSelectedProject(project);
   };
 
-  const handlePRProjectStepNext = () => {
-    if (!prSelectedProject) return;
+  const handlePRProjectStepNext = (projectOverride?: PRProject) => {
+    const project = projectOverride ?? prSelectedProject;
+    if (!project) return;
+    if (projectOverride) setPrSelectedProject(project);
     if (currentView === ViewType.INVENTORY_RFQ) {
       handlePRCloseModal();
-      const numericId = prSelectedProject.numericId != null ? String(prSelectedProject.numericId) : '';
-      const projectId = String(prSelectedProject.id ?? prSelectedProject.numericId);
-      const params = new URLSearchParams({ projectId, projectName: prSelectedProject.name });
+      const numericId = project.numericId != null ? String(project.numericId) : '';
+      const projectId = String(project.id ?? project.numericId);
+      const params = new URLSearchParams({ projectId, projectName: project.name });
       if (numericId) params.set('projectNumericId', numericId);
       router.push(`/inventory-reports/rfq/create?${params.toString()}`);
       return;
     }
     if (currentView === ViewType.INVENTORY_ISSUE_RETURN) {
       handlePRCloseModal();
-      const numericId = prSelectedProject.numericId != null ? String(prSelectedProject.numericId) : '';
-      const projectId = String(prSelectedProject.id ?? prSelectedProject.numericId);
-      const params = new URLSearchParams({ projectId, projectName: prSelectedProject.name });
+      const numericId = project.numericId != null ? String(project.numericId) : '';
+      const projectId = String(project.id ?? project.numericId);
+      const params = new URLSearchParams({ projectId, projectName: project.name });
       if (numericId) params.set('projectNumericId', numericId);
       router.push(`/inventory-reports/issue-return/create?${params.toString()}`);
       return;
     }
     if (currentView === ViewType.INVENTORY_ISSUE_SLIP) {
       handlePRCloseModal();
-      const numericId = prSelectedProject.numericId != null ? String(prSelectedProject.numericId) : '';
-      const projectId = String(prSelectedProject.id ?? prSelectedProject.numericId);
-      const params = new URLSearchParams({ projectId, projectName: prSelectedProject.name });
+      const numericId = project.numericId != null ? String(project.numericId) : '';
+      const projectId = String(project.id ?? project.numericId);
+      const params = new URLSearchParams({ projectId, projectName: project.name });
       if (numericId) params.set('projectNumericId', numericId);
       router.push(`/inventory-reports/issue-slip/create?${params.toString()}`);
       return;
     }
     if (currentView === ViewType.INVENTORY_GRN_MRN_SLIP) {
       handlePRCloseModal();
-      const numericId = prSelectedProject.numericId != null ? String(prSelectedProject.numericId) : '';
-      const projectId = String(prSelectedProject.id ?? prSelectedProject.numericId);
-      const params = new URLSearchParams({ projectId, projectName: prSelectedProject.name });
+      const numericId = project.numericId != null ? String(project.numericId) : '';
+      const projectId = String(project.id ?? project.numericId);
+      const params = new URLSearchParams({ projectId, projectName: project.name });
       if (numericId) params.set('projectNumericId', numericId);
       router.push(`/inventory-reports/grn-mrn-slip/create?${params.toString()}`);
       return;
     }
     if (currentView !== ViewType.INVENTORY_PR) {
       handlePRCloseModal();
-      toast.showSuccess(`Project "${prSelectedProject.name}" selected. Create flow for this section coming soon.`);
+      toast.showSuccess(`Project "${project.name}" selected. Create flow for this section coming soon.`);
       return;
     }
     setPrStep('subproject');
@@ -629,19 +632,20 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
     setSubprojectPage(1);
   };
 
-  const handlePRSubprojectStepNext = async () => {
+  const handlePRSubprojectStepNext = async (subprojectOverride?: PRSubproject) => {
     if (!prSelectedProject) return;
-    if (prSubprojects.length > 0 && !prSelectedSubproject) {
+    const subproject = subprojectOverride ?? prSelectedSubproject;
+    if (prSubprojects.length > 0 && !subproject) {
       toast.showWarning('Please select a subproject to continue. Subproject selection is mandatory when the project has subprojects.');
       return;
     }
+    if (subprojectOverride) setPrSelectedSubproject(subprojectOverride);
     const projectId = prSelectedProject.numericId ?? prSelectedProject.id;
-    const subprojectId = prSelectedSubproject ? (prSelectedSubproject.numericId ?? prSelectedSubproject.id) : undefined;
+    const subprojectId = subproject ? (subproject.numericId ?? subproject.id) : undefined;
     if (!prEditingId) {
       try {
         setIsSubmittingPR(true);
-        const name = new Date().toISOString().split('T')[0]; // YYYY-MM-DD per requirements
-        const headerData: { name: string; projects_id: string | number; sub_projects_id?: string | number } = { name, projects_id: projectId };
+        const headerData: { projects_id: string | number; sub_projects_id?: string | number } = { projects_id: projectId };
         if (subprojectId) headerData.sub_projects_id = subprojectId;
         const header = await materialRequestAPI.add(headerData);
         const materialRequestId = header?.id ?? header?.data?.id;
@@ -834,7 +838,31 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
     const rfqId = rfq.id ?? rfq.uuid;
     if (!rfqId) return;
     try {
-      const { pdf_url } = await rfqAPI.generatePdf(rfqId);
+      const projId = rfq.projects_id != null ? (typeof rfq.projects_id === 'object' ? (rfq.projects_id as any)?.id : rfq.projects_id) : rfq.projects?.id;
+      const [quoteData, mats] = await Promise.all([
+        rfqAPI.get(rfqId, projId ?? undefined),
+        masterDataAPI.getMaterials().then((m: any) => Array.isArray(m) ? m : []),
+      ]);
+      const details = quoteData?.quotesdetails ?? quoteData?.quotes_details ?? quoteData?.details ?? quoteData?.quote_details ?? (Array.isArray(quoteData) ? quoteData : []);
+      const arr = Array.isArray(details) ? details : [];
+      const quotesDetailsForPdf = arr.length > 0 ? arr.map((row: any) => {
+        const matId = row.materials?.id ?? row.materials_id ?? row.material_id ?? row.material?.id;
+        const materials = row.materials ?? row.materials_request_details?.materials ?? row.material;
+        const matched = matId != null && mats.length > 0 ? mats.find((m: any) => String(m.id ?? m.uuid ?? m.materials_id) === String(matId)) : null;
+        return {
+          id: row.id,
+          materials_id: matId,
+          materialCode: materials?.code ?? matched?.code ?? '',
+          materialName: materials?.name ?? materials?.material_name ?? matched?.name ?? matched?.material_name ?? '',
+          materialSpec: materials?.specification ?? matched?.specification ?? '',
+          materialUnit: materials?.unit ?? materials?.units ?? matched?.unit ?? matched?.units ?? '',
+          qty: row.qty ?? row.request_qty,
+          request_qty: row.request_qty ?? row.qty,
+          date: typeof (row.date ?? '') === 'string' && (row.date ?? '').includes('T') ? (row.date as string).split('T')[0] : (row.date ?? ''),
+          price: row.price,
+        };
+      }) : undefined;
+      const { pdf_url } = await rfqAPI.generatePdf(rfqId, quotesDetailsForPdf);
       if (!pdf_url) throw new Error('No PDF URL returned');
       const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || '';
       const fullUrl = pdf_url.startsWith('http') ? pdf_url : apiBase.replace(/\/api\/?$/, '') + (pdf_url.startsWith('/') ? pdf_url : '/' + pdf_url);
@@ -991,7 +1019,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
           : prMats.map((m) => m.numericId ?? m.id).filter((v) => v != null);
         if (materialIdsToFetch.length > 0) {
           try {
-            const editResp = await materialRequestAPI.detailsEdit(prId, materialIdsToFetch);
+            const editResp = await materialRequestAPI.detailsEdit(prId, materialIdsToFetch, projectId);
             const editData = Array.isArray(editResp) ? editResp : (editResp as any)?.data ?? (editResp as any)?.details ?? (editResp as any)?.materials ?? [];
             for (const item of editData) {
               const d = item?.materialsRequestDetails ?? item?.material_request_details ?? item?.details;
@@ -1431,19 +1459,39 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                   </tbody>
                 </table>
               </div>
-              {filteredPrList.length > INVENTORY_LIST_PAGE_SIZE && (
-                <div className={`flex items-center justify-between gap-2 px-6 py-4 border-t border-inherit ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
-                  <span className={`text-xs sm:text-sm ${textSecondary}`}>
-                    Page {prListPage} of {Math.ceil(filteredPrList.length / INVENTORY_LIST_PAGE_SIZE)}
-                  </span>
+              <div className={`flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 px-6 py-4 border-t border-inherit ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
+                <span className={`text-xs sm:text-sm ${textSecondary}`}>
+                  Page {prListPage} of {Math.max(1, Math.ceil(filteredPrList.length / inventoryEntriesPerPage))}
+                  {filteredPrList.length > 0 && (
+                    <span className="ml-2">
+                      ({(prListPage - 1) * inventoryEntriesPerPage + 1}-{Math.min(prListPage * inventoryEntriesPerPage, filteredPrList.length)} of {filteredPrList.length})
+                    </span>
+                  )}
+                </span>
+                <div className="flex items-center gap-2 flex-wrap">
                   <div className="flex items-center gap-1">
                     <button onClick={() => setPrListPage(1)} disabled={prListPage <= 1} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsLeft className={`w-4 h-4 ${textSecondary}`} /></button>
                     <button onClick={() => setPrListPage(p => Math.max(1, p - 1))} disabled={prListPage <= 1} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronLeft className={`w-4 h-4 ${textSecondary}`} /></button>
-                    <button onClick={() => setPrListPage(p => Math.min(Math.ceil(filteredPrList.length / INVENTORY_LIST_PAGE_SIZE), p + 1))} disabled={prListPage >= Math.ceil(filteredPrList.length / INVENTORY_LIST_PAGE_SIZE)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronRight className={`w-4 h-4 ${textSecondary}`} /></button>
-                    <button onClick={() => setPrListPage(Math.ceil(filteredPrList.length / INVENTORY_LIST_PAGE_SIZE))} disabled={prListPage >= Math.ceil(filteredPrList.length / INVENTORY_LIST_PAGE_SIZE)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsRight className={`w-4 h-4 ${textSecondary}`} /></button>
+                    <select value={prListPage} onChange={(e) => setPrListPage(Number(e.target.value))} className={`px-2 py-1 rounded text-sm font-bold border appearance-none cursor-pointer ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}>
+                      {Array.from({ length: Math.max(1, Math.ceil(filteredPrList.length / inventoryEntriesPerPage)) }, (_, i) => i + 1).map((p) => (
+                        <option key={p} value={p}>{p}</option>
+                      ))}
+                    </select>
+                    <button onClick={() => setPrListPage(p => Math.min(Math.ceil(filteredPrList.length / inventoryEntriesPerPage), p + 1))} disabled={prListPage >= Math.ceil(filteredPrList.length / inventoryEntriesPerPage)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronRight className={`w-4 h-4 ${textSecondary}`} /></button>
+                    <button onClick={() => setPrListPage(Math.max(1, Math.ceil(filteredPrList.length / inventoryEntriesPerPage)))} disabled={prListPage >= Math.ceil(filteredPrList.length / inventoryEntriesPerPage)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsRight className={`w-4 h-4 ${textSecondary}`} /></button>
+                  </div>
+                  <div className={`h-6 w-px hidden sm:block ${isDark ? 'bg-slate-600' : 'bg-slate-200'}`} />
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs ${textSecondary}`}>Rows:</span>
+                    <select value={inventoryEntriesPerPage} onChange={(e) => { setInventoryEntriesPerPage(Number(e.target.value)); setPrListPage(1); }} className={`px-2 py-1 rounded text-sm font-bold border appearance-none cursor-pointer ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}>
+                      <option value={10}>10</option>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                    </select>
                   </div>
                 </div>
-              )}
+              </div>
             </div>
           ) : (
             <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
@@ -1488,7 +1536,18 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                               <Eye className="w-4 h-4" />
                             </button>
                             <button
-                              onClick={() => router.push(`/inventory-reports/rfq/${rfq.id ?? rfq.uuid}/submit-quotes`)}
+                              onClick={() => {
+                                const rfqId = rfq.id ?? rfq.uuid;
+                                const projId = rfq.projects_id != null ? (typeof rfq.projects_id === 'object' ? (rfq.projects_id as any)?.id : rfq.projects_id) : rfq.projects?.id;
+                                const mrId = (rfq as any).material_requests_id ?? (rfq as any).material_request_id ?? (typeof (rfq as any).material_requests === 'object' ? (rfq as any).material_requests?.id : undefined);
+                                const sp = new URLSearchParams();
+                                if (projId != null) { sp.set('projectId', String(projId)); sp.set('projectNumericId', String(projId)); }
+                                if (mrId != null && mrId !== '') sp.set('mrId', String(mrId));
+                                const reqNo = (rfq as any).request_no ?? (rfq as any).request_id;
+                                if (reqNo != null && reqNo !== '') sp.set('mrRequestNo', String(reqNo));
+                                const params = sp.toString() ? `?${sp.toString()}` : '';
+                                router.push(`/inventory-reports/rfq/${rfqId}/submit-quotes${params}`);
+                              }}
                               className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
                               title="Edit"
                             >
@@ -1501,17 +1560,39 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                   </tbody>
                 </table>
               </div>
-              {filteredRfqList.length > INVENTORY_LIST_PAGE_SIZE && (
-                <div className={`flex items-center justify-between gap-2 px-6 py-4 border-t border-inherit ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
-                  <span className={`text-xs sm:text-sm ${textSecondary}`}>Page {rfqListPage} of {Math.ceil(filteredRfqList.length / INVENTORY_LIST_PAGE_SIZE)}</span>
+              <div className={`flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 px-6 py-4 border-t border-inherit ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
+                <span className={`text-xs sm:text-sm ${textSecondary}`}>
+                  Page {rfqListPage} of {Math.max(1, Math.ceil(filteredRfqList.length / inventoryEntriesPerPage))}
+                  {filteredRfqList.length > 0 && (
+                    <span className="ml-2">
+                      ({(rfqListPage - 1) * inventoryEntriesPerPage + 1}-{Math.min(rfqListPage * inventoryEntriesPerPage, filteredRfqList.length)} of {filteredRfqList.length})
+                    </span>
+                  )}
+                </span>
+                <div className="flex items-center gap-2 flex-wrap">
                   <div className="flex items-center gap-1">
                     <button onClick={() => setRfqListPage(1)} disabled={rfqListPage <= 1} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsLeft className={`w-4 h-4 ${textSecondary}`} /></button>
                     <button onClick={() => setRfqListPage(p => Math.max(1, p - 1))} disabled={rfqListPage <= 1} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronLeft className={`w-4 h-4 ${textSecondary}`} /></button>
-                    <button onClick={() => setRfqListPage(p => Math.min(Math.ceil(filteredRfqList.length / INVENTORY_LIST_PAGE_SIZE), p + 1))} disabled={rfqListPage >= Math.ceil(filteredRfqList.length / INVENTORY_LIST_PAGE_SIZE)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronRight className={`w-4 h-4 ${textSecondary}`} /></button>
-                    <button onClick={() => setRfqListPage(Math.ceil(filteredRfqList.length / INVENTORY_LIST_PAGE_SIZE))} disabled={rfqListPage >= Math.ceil(filteredRfqList.length / INVENTORY_LIST_PAGE_SIZE)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsRight className={`w-4 h-4 ${textSecondary}`} /></button>
+                    <select value={rfqListPage} onChange={(e) => setRfqListPage(Number(e.target.value))} className={`px-2 py-1 rounded text-sm font-bold border appearance-none cursor-pointer ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}>
+                      {Array.from({ length: Math.max(1, Math.ceil(filteredRfqList.length / inventoryEntriesPerPage)) }, (_, i) => i + 1).map((p) => (
+                        <option key={p} value={p}>{p}</option>
+                      ))}
+                    </select>
+                    <button onClick={() => setRfqListPage(p => Math.min(Math.ceil(filteredRfqList.length / inventoryEntriesPerPage), p + 1))} disabled={rfqListPage >= Math.ceil(filteredRfqList.length / inventoryEntriesPerPage)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronRight className={`w-4 h-4 ${textSecondary}`} /></button>
+                    <button onClick={() => setRfqListPage(Math.max(1, Math.ceil(filteredRfqList.length / inventoryEntriesPerPage)))} disabled={rfqListPage >= Math.ceil(filteredRfqList.length / inventoryEntriesPerPage)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsRight className={`w-4 h-4 ${textSecondary}`} /></button>
+                  </div>
+                  <div className={`h-6 w-px hidden sm:block ${isDark ? 'bg-slate-600' : 'bg-slate-200'}`} />
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs ${textSecondary}`}>Rows:</span>
+                    <select value={inventoryEntriesPerPage} onChange={(e) => { setInventoryEntriesPerPage(Number(e.target.value)); setRfqListPage(1); }} className={`px-2 py-1 rounded text-sm font-bold border appearance-none cursor-pointer ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}>
+                      <option value={10}>10</option>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                    </select>
                   </div>
                 </div>
-              )}
+              </div>
             </div>
           ) : (
             <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
@@ -1562,17 +1643,39 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                   </tbody>
                 </table>
               </div>
-              {filteredGrnList.length > INVENTORY_LIST_PAGE_SIZE && (
-                <div className={`flex items-center justify-between gap-2 px-6 py-4 border-t border-inherit ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
-                  <span className={`text-xs sm:text-sm ${textSecondary}`}>Page {grnListPage} of {Math.ceil(filteredGrnList.length / INVENTORY_LIST_PAGE_SIZE)}</span>
+              <div className={`flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 px-6 py-4 border-t border-inherit ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
+                <span className={`text-xs sm:text-sm ${textSecondary}`}>
+                  Page {grnListPage} of {Math.max(1, Math.ceil(filteredGrnList.length / inventoryEntriesPerPage))}
+                  {filteredGrnList.length > 0 && (
+                    <span className="ml-2">
+                      ({(grnListPage - 1) * inventoryEntriesPerPage + 1}-{Math.min(grnListPage * inventoryEntriesPerPage, filteredGrnList.length)} of {filteredGrnList.length})
+                    </span>
+                  )}
+                </span>
+                <div className="flex items-center gap-2 flex-wrap">
                   <div className="flex items-center gap-1">
                     <button onClick={() => setGrnListPage(1)} disabled={grnListPage <= 1} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsLeft className={`w-4 h-4 ${textSecondary}`} /></button>
                     <button onClick={() => setGrnListPage(p => Math.max(1, p - 1))} disabled={grnListPage <= 1} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronLeft className={`w-4 h-4 ${textSecondary}`} /></button>
-                    <button onClick={() => setGrnListPage(p => Math.min(Math.ceil(filteredGrnList.length / INVENTORY_LIST_PAGE_SIZE), p + 1))} disabled={grnListPage >= Math.ceil(filteredGrnList.length / INVENTORY_LIST_PAGE_SIZE)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronRight className={`w-4 h-4 ${textSecondary}`} /></button>
-                    <button onClick={() => setGrnListPage(Math.ceil(filteredGrnList.length / INVENTORY_LIST_PAGE_SIZE))} disabled={grnListPage >= Math.ceil(filteredGrnList.length / INVENTORY_LIST_PAGE_SIZE)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsRight className={`w-4 h-4 ${textSecondary}`} /></button>
+                    <select value={grnListPage} onChange={(e) => setGrnListPage(Number(e.target.value))} className={`px-2 py-1 rounded text-sm font-bold border appearance-none cursor-pointer ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}>
+                      {Array.from({ length: Math.max(1, Math.ceil(filteredGrnList.length / inventoryEntriesPerPage)) }, (_, i) => i + 1).map((p) => (
+                        <option key={p} value={p}>{p}</option>
+                      ))}
+                    </select>
+                    <button onClick={() => setGrnListPage(p => Math.min(Math.ceil(filteredGrnList.length / inventoryEntriesPerPage), p + 1))} disabled={grnListPage >= Math.ceil(filteredGrnList.length / inventoryEntriesPerPage)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronRight className={`w-4 h-4 ${textSecondary}`} /></button>
+                    <button onClick={() => setGrnListPage(Math.max(1, Math.ceil(filteredGrnList.length / inventoryEntriesPerPage)))} disabled={grnListPage >= Math.ceil(filteredGrnList.length / inventoryEntriesPerPage)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsRight className={`w-4 h-4 ${textSecondary}`} /></button>
+                  </div>
+                  <div className={`h-6 w-px hidden sm:block ${isDark ? 'bg-slate-600' : 'bg-slate-200'}`} />
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs ${textSecondary}`}>Rows:</span>
+                    <select value={inventoryEntriesPerPage} onChange={(e) => { setInventoryEntriesPerPage(Number(e.target.value)); setGrnListPage(1); }} className={`px-2 py-1 rounded text-sm font-bold border appearance-none cursor-pointer ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}>
+                      <option value={10}>10</option>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                    </select>
                   </div>
                 </div>
-              )}
+              </div>
             </div>
           ) : (
             <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
@@ -1623,17 +1726,39 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                   </tbody>
                 </table>
               </div>
-              {filteredReturnList.length > INVENTORY_LIST_PAGE_SIZE && (
-                <div className={`flex items-center justify-between gap-2 px-6 py-4 border-t border-inherit ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
-                  <span className={`text-xs sm:text-sm ${textSecondary}`}>Page {returnListPage} of {Math.ceil(filteredReturnList.length / INVENTORY_LIST_PAGE_SIZE)}</span>
+              <div className={`flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 px-6 py-4 border-t border-inherit ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
+                <span className={`text-xs sm:text-sm ${textSecondary}`}>
+                  Page {returnListPage} of {Math.max(1, Math.ceil(filteredReturnList.length / inventoryEntriesPerPage))}
+                  {filteredReturnList.length > 0 && (
+                    <span className="ml-2">
+                      ({(returnListPage - 1) * inventoryEntriesPerPage + 1}-{Math.min(returnListPage * inventoryEntriesPerPage, filteredReturnList.length)} of {filteredReturnList.length})
+                    </span>
+                  )}
+                </span>
+                <div className="flex items-center gap-2 flex-wrap">
                   <div className="flex items-center gap-1">
                     <button onClick={() => setReturnListPage(1)} disabled={returnListPage <= 1} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsLeft className={`w-4 h-4 ${textSecondary}`} /></button>
                     <button onClick={() => setReturnListPage(p => Math.max(1, p - 1))} disabled={returnListPage <= 1} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronLeft className={`w-4 h-4 ${textSecondary}`} /></button>
-                    <button onClick={() => setReturnListPage(p => Math.min(Math.ceil(filteredReturnList.length / INVENTORY_LIST_PAGE_SIZE), p + 1))} disabled={returnListPage >= Math.ceil(filteredReturnList.length / INVENTORY_LIST_PAGE_SIZE)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronRight className={`w-4 h-4 ${textSecondary}`} /></button>
-                    <button onClick={() => setReturnListPage(Math.ceil(filteredReturnList.length / INVENTORY_LIST_PAGE_SIZE))} disabled={returnListPage >= Math.ceil(filteredReturnList.length / INVENTORY_LIST_PAGE_SIZE)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsRight className={`w-4 h-4 ${textSecondary}`} /></button>
+                    <select value={returnListPage} onChange={(e) => setReturnListPage(Number(e.target.value))} className={`px-2 py-1 rounded text-sm font-bold border appearance-none cursor-pointer ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}>
+                      {Array.from({ length: Math.max(1, Math.ceil(filteredReturnList.length / inventoryEntriesPerPage)) }, (_, i) => i + 1).map((p) => (
+                        <option key={p} value={p}>{p}</option>
+                      ))}
+                    </select>
+                    <button onClick={() => setReturnListPage(p => Math.min(Math.ceil(filteredReturnList.length / inventoryEntriesPerPage), p + 1))} disabled={returnListPage >= Math.ceil(filteredReturnList.length / inventoryEntriesPerPage)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronRight className={`w-4 h-4 ${textSecondary}`} /></button>
+                    <button onClick={() => setReturnListPage(Math.max(1, Math.ceil(filteredReturnList.length / inventoryEntriesPerPage)))} disabled={returnListPage >= Math.ceil(filteredReturnList.length / inventoryEntriesPerPage)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsRight className={`w-4 h-4 ${textSecondary}`} /></button>
+                  </div>
+                  <div className={`h-6 w-px hidden sm:block ${isDark ? 'bg-slate-600' : 'bg-slate-200'}`} />
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs ${textSecondary}`}>Rows:</span>
+                    <select value={inventoryEntriesPerPage} onChange={(e) => { setInventoryEntriesPerPage(Number(e.target.value)); setReturnListPage(1); }} className={`px-2 py-1 rounded text-sm font-bold border appearance-none cursor-pointer ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}>
+                      <option value={10}>10</option>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                    </select>
                   </div>
                 </div>
-              )}
+              </div>
             </div>
           ) : (
             <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
@@ -1684,17 +1809,39 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                   </tbody>
                 </table>
               </div>
-              {filteredIssueList.length > INVENTORY_LIST_PAGE_SIZE && (
-                <div className={`flex items-center justify-between gap-2 px-6 py-4 border-t border-inherit ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
-                  <span className={`text-xs sm:text-sm ${textSecondary}`}>Page {issueListPage} of {Math.ceil(filteredIssueList.length / INVENTORY_LIST_PAGE_SIZE)}</span>
+              <div className={`flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 px-6 py-4 border-t border-inherit ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
+                <span className={`text-xs sm:text-sm ${textSecondary}`}>
+                  Page {issueListPage} of {Math.max(1, Math.ceil(filteredIssueList.length / inventoryEntriesPerPage))}
+                  {filteredIssueList.length > 0 && (
+                    <span className="ml-2">
+                      ({(issueListPage - 1) * inventoryEntriesPerPage + 1}-{Math.min(issueListPage * inventoryEntriesPerPage, filteredIssueList.length)} of {filteredIssueList.length})
+                    </span>
+                  )}
+                </span>
+                <div className="flex items-center gap-2 flex-wrap">
                   <div className="flex items-center gap-1">
                     <button onClick={() => setIssueListPage(1)} disabled={issueListPage <= 1} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsLeft className={`w-4 h-4 ${textSecondary}`} /></button>
                     <button onClick={() => setIssueListPage(p => Math.max(1, p - 1))} disabled={issueListPage <= 1} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronLeft className={`w-4 h-4 ${textSecondary}`} /></button>
-                    <button onClick={() => setIssueListPage(p => Math.min(Math.ceil(filteredIssueList.length / INVENTORY_LIST_PAGE_SIZE), p + 1))} disabled={issueListPage >= Math.ceil(filteredIssueList.length / INVENTORY_LIST_PAGE_SIZE)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronRight className={`w-4 h-4 ${textSecondary}`} /></button>
-                    <button onClick={() => setIssueListPage(Math.ceil(filteredIssueList.length / INVENTORY_LIST_PAGE_SIZE))} disabled={issueListPage >= Math.ceil(filteredIssueList.length / INVENTORY_LIST_PAGE_SIZE)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsRight className={`w-4 h-4 ${textSecondary}`} /></button>
+                    <select value={issueListPage} onChange={(e) => setIssueListPage(Number(e.target.value))} className={`px-2 py-1 rounded text-sm font-bold border appearance-none cursor-pointer ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}>
+                      {Array.from({ length: Math.max(1, Math.ceil(filteredIssueList.length / inventoryEntriesPerPage)) }, (_, i) => i + 1).map((p) => (
+                        <option key={p} value={p}>{p}</option>
+                      ))}
+                    </select>
+                    <button onClick={() => setIssueListPage(p => Math.min(Math.ceil(filteredIssueList.length / inventoryEntriesPerPage), p + 1))} disabled={issueListPage >= Math.ceil(filteredIssueList.length / inventoryEntriesPerPage)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronRight className={`w-4 h-4 ${textSecondary}`} /></button>
+                    <button onClick={() => setIssueListPage(Math.max(1, Math.ceil(filteredIssueList.length / inventoryEntriesPerPage)))} disabled={issueListPage >= Math.ceil(filteredIssueList.length / inventoryEntriesPerPage)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsRight className={`w-4 h-4 ${textSecondary}`} /></button>
+                  </div>
+                  <div className={`h-6 w-px hidden sm:block ${isDark ? 'bg-slate-600' : 'bg-slate-200'}`} />
+                  <div className="flex items-center gap-2">
+                    <span className={`text-xs ${textSecondary}`}>Rows:</span>
+                    <select value={inventoryEntriesPerPage} onChange={(e) => { setInventoryEntriesPerPage(Number(e.target.value)); setIssueListPage(1); }} className={`px-2 py-1 rounded text-sm font-bold border appearance-none cursor-pointer ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}>
+                      <option value={10}>10</option>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                    </select>
                   </div>
                 </div>
-              )}
+              </div>
             </div>
           ) : (
             <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
@@ -1806,6 +1953,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                             <div
                               key={project.id}
                               onClick={() => handlePRSelectProject(project)}
+                              onDoubleClick={() => handlePRProjectStepNext(project)}
                               className={`rounded-xl border p-4 hover:shadow-lg transition-all duration-300 cursor-pointer group ${
                                 isSelected
                                   ? isDark ? 'border-[#6B8E23] bg-[#6B8E23]/10' : 'border-[#6B8E23] bg-[#6B8E23]/5'
@@ -1872,7 +2020,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                     <button onClick={handlePRProjectStepBack} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all border-2 ${isDark ? 'border-slate-600 text-slate-300 hover:bg-slate-800/50' : 'border-slate-300 text-slate-700 hover:bg-slate-100'}`}>
                       <ArrowLeft className="w-4 h-4" /> Back
                     </button>
-                    <button onClick={handlePRProjectStepNext} disabled={!prSelectedProject} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${prSelectedProject ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-slate-400 text-white cursor-not-allowed'} shadow-md`}>
+                    <button onClick={() => handlePRProjectStepNext()} disabled={!prSelectedProject} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${prSelectedProject ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-slate-400 text-white cursor-not-allowed'} shadow-md`}>
                       Next <ArrowRight className="w-4 h-4" />
                     </button>
                   </div>
@@ -1930,6 +2078,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                             <div
                               key={subproject.id}
                               onClick={() => setPrSelectedSubproject(isSelected ? null : subproject)}
+                              onDoubleClick={() => handlePRSubprojectStepNext(subproject)}
                               className={`rounded-xl border p-4 hover:shadow-lg transition-all duration-300 cursor-pointer group flex items-start gap-4 ${
                                 isSelected ? isDark ? 'border-[#6B8E23] bg-[#6B8E23]/10' : 'border-[#6B8E23] bg-[#6B8E23]/5' : cardClass
                               }`}
@@ -1978,7 +2127,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                       <ArrowLeft className="w-4 h-4" /> Back
                     </button>
                     <button
-                      onClick={handlePRSubprojectStepNext}
+                      onClick={() => handlePRSubprojectStepNext()}
                       disabled={isSubmittingPR || isLoadingSubprojects || (prSubprojects.length > 0 && !prSelectedSubproject)}
                       className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isSubmittingPR || isLoadingSubprojects || (prSubprojects.length > 0 && !prSelectedSubproject) ? 'bg-slate-400 text-white cursor-not-allowed' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md disabled:opacity-70`}
                     >
@@ -2350,7 +2499,16 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                               <button
                                 onClick={() => {
                                   setShowEditPreviousRfqModal(false);
-                                  router.push(`/inventory-reports/rfq/${rfq.id ?? rfq.uuid}/submit-quotes`);
+                                  const rfqId = rfq.id ?? rfq.uuid;
+                                  const projId = rfq.projects_id != null ? (typeof rfq.projects_id === 'object' ? (rfq.projects_id as any)?.id : rfq.projects_id) : rfq.projects?.id;
+                                  const mrId = (rfq as any).material_requests_id ?? (rfq as any).material_request_id ?? (typeof (rfq as any).material_requests === 'object' ? (rfq as any).material_requests?.id : undefined);
+                                  const sp = new URLSearchParams();
+                                  if (projId != null) { sp.set('projectId', String(projId)); sp.set('projectNumericId', String(projId)); }
+                                  if (mrId != null && mrId !== '') sp.set('mrId', String(mrId));
+                                  const reqNo = (rfq as any).request_no ?? (rfq as any).request_id;
+                                  if (reqNo != null && reqNo !== '') sp.set('mrRequestNo', String(reqNo));
+                                  const params = sp.toString() ? `?${sp.toString()}` : '';
+                                  router.push(`/inventory-reports/rfq/${rfqId}/submit-quotes${params}`);
                                 }}
                                 className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${isDark ? 'bg-[#6B8E23]/20 text-[#6B8E23] hover:bg-[#6B8E23]/30' : 'bg-[#6B8E23]/10 text-[#6B8E23] hover:bg-[#6B8E23]/20'}`}
                               >

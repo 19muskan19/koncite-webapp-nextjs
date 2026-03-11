@@ -3,7 +3,6 @@
 import React, { useState, useEffect } from 'react';
 import { ThemeType } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
-import { useUser } from '@/contexts/UserContext';
 import { X, Loader2 } from 'lucide-react';
 import { masterDataAPI } from '@/services/api';
 
@@ -42,7 +41,6 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
   labours = []
 }) => {
   const toast = useToast();
-  const { user } = useUser();
   const [formData, setFormData] = useState({
     name: '', // Required: labour name
     category: '', // Required: must be "skilled", "semiskilled", or "unskilled"
@@ -66,30 +64,28 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
     { value: 'unskilled', label: 'Unskilled' },
   ];
 
-  // Fetch units from unit-list API (returns units associated with logged-in user)
+  // Fetch units from Masters (unit-list API) – same source as Masters > Units
   useEffect(() => {
     if (isOpen) {
       const fetchUnits = async () => {
         setIsLoadingUnits(true);
         try {
           const fetchedUnits = await masterDataAPI.getUnits();
-          // Filter to units associated with the logged-in user (company or created-by)
-          const userCompanyId = user?.company_id != null ? Number(user.company_id) : null;
-          const userId = user?.id != null ? Number(user.id) : null;
-          const filtered = !user ? fetchedUnits : fetchedUnits.filter((unit: any) => {
-            const uCompanyId = unit.company_id != null ? Number(unit.company_id) : null;
-            const uUserId = unit.user_id ?? unit.created_by;
-            if (userCompanyId != null && uCompanyId != null && uCompanyId === userCompanyId) return true;
-            if (userId != null && uUserId != null && Number(uUserId) === userId) return true;
-            if (userCompanyId == null && userId == null) return true; // no filter possible, show all
-            if (uCompanyId == null && uUserId == null) return true; // unit has no association, allow (global/seed)
-            return false;
-          });
-          const transformedUnits = filtered.map((unit: any) => ({
-            id: unit.id,
-            uuid: unit.uuid,
-            unit: unit.unit || unit.name || '',
-          }));
+          const raw = Array.isArray(fetchedUnits) ? fetchedUnits : [];
+          const seen = new Set<string>();
+          const transformedUnits = raw
+            .map((unit: any) => ({
+              id: unit.id,
+              uuid: unit.uuid,
+              unit: (unit.unit || unit.name || '').toString().trim(),
+            }))
+            .filter((u: { id: number; unit: string }) => {
+              if (!(u.unit || '').trim()) return false;
+              const key = (u.unit || '').toLowerCase();
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            });
           setUnits(transformedUnits);
           // Default to "Nos" for new labour when unit not yet selected
           if (!editingLabourId) {
@@ -99,15 +95,15 @@ const CreateLabourModal: React.FC<CreateLabourModalProps> = ({
             }
           }
         } catch (error: any) {
-          console.error('Failed to fetch units:', error);
-          toast.showError('Failed to load units');
+          console.error('Failed to fetch units from masters:', error);
+          toast.showError('Failed to load units from Masters');
         } finally {
           setIsLoadingUnits(false);
         }
       };
       fetchUnits();
     }
-  }, [isOpen, user?.id, user?.company_id]);
+  }, [isOpen, editingLabourId]);
 
   // Load labour data when editing
   useEffect(() => {

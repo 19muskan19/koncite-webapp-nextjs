@@ -45,6 +45,7 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [deleteAllConfirm, setDeleteAllConfirm] = useState<boolean>(false);
   const [isDeletingAll, setIsDeletingAll] = useState<boolean>(false);
+  const [editingUnitLoading, setEditingUnitLoading] = useState<boolean>(false);
 
   // Fetch units from API
   const fetchUnits = async () => {
@@ -229,16 +230,43 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
 
-  const handleEditUnit = (group: Unit[]) => {
-    // Pass all conversion rows for this unit - Edit uses same multi-row form as Create
-    const rows = group.map((u) => ({
-      numericId: u.numericId ?? u.id,
-      unit: u.unit || u.name || '',
-      unit_coversion: u.unit_coversion || u.conversion || '',
-      unit_coversion_factor: u.unit_coversion_factor || u.factor || ''
-    }));
-    setEditingUnitRows(rows);
-    setShowCreateModal(true);
+  const handleEditUnit = async (group: Unit[]) => {
+    const firstUnit = group[0];
+    const unitId = firstUnit?.uuid ?? firstUnit?.numericId ?? firstUnit?.id;
+    if (!unitId) {
+      toast.showError('Cannot edit: unit ID not found');
+      return;
+    }
+
+    setEditingUnitLoading(true);
+    try {
+      // Call unit-edit API to fetch fresh unit data
+      const apiData = await masterDataAPI.getUnit(String(unitId));
+
+      // Build first row from API response
+      const firstRow = {
+        numericId: apiData.id ?? apiData.uuid ?? firstUnit.numericId ?? firstUnit.id,
+        unit: apiData.unit ?? apiData.name ?? firstUnit.unit ?? firstUnit.name ?? '',
+        unit_coversion: apiData.unit_coversion ?? apiData.conversion ?? '',
+        unit_coversion_factor: apiData.unit_coversion_factor ?? apiData.factor ?? ''
+      };
+
+      // Additional rows from group (conversion entries) - API returns one unit, use list for rest
+      const restRows = group.slice(1).map((u) => ({
+        numericId: u.numericId ?? u.id,
+        unit: u.unit || u.name || '',
+        unit_coversion: u.unit_coversion || u.conversion || '',
+        unit_coversion_factor: u.unit_coversion_factor || u.factor || ''
+      }));
+
+      setEditingUnitRows([firstRow, ...restRows]);
+      setShowCreateModal(true);
+    } catch (error: any) {
+      console.error('Failed to fetch unit for edit:', error);
+      toast.showError(error?.message || 'Failed to load unit. Please try again.');
+    } finally {
+      setEditingUnitLoading(false);
+    }
   };
 
   const handleDeleteUnit = async (group: Unit[]) => {
@@ -589,17 +617,22 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
                           <div className={`dropdown-menu absolute right-0 w-36 rounded-lg border shadow-xl z-[100] ${rowIdx === paginatedGroups.length - 1 ? 'bottom-full mb-1' : 'top-full mt-1'} ${isDark ? 'bg-dropdown-panel border-slate-700' : 'bg-white border-slate-200'}`}>
                             <div className="py-1">
                               <button
-                                onClick={(e) => {
+                                onClick={async (e) => {
                                   e.preventDefault();
                                   e.stopPropagation();
-                                  handleEditUnit(group);
                                   setOpenDropdownId(null);
+                                  await handleEditUnit(group);
                                 }}
+                                disabled={editingUnitLoading}
                                 className={`w-full flex items-center gap-2 px-4 py-2 text-sm font-bold transition-colors text-left ${
                                   isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
-                                } cursor-pointer`}
+                                } ${editingUnitLoading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
                               >
-                                <Edit className="w-4 h-4" />
+                                {editingUnitLoading ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <Edit className="w-4 h-4" />
+                                )}
                                 Edit
                               </button>
                               <button

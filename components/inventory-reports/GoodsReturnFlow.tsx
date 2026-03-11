@@ -11,6 +11,8 @@ import {
   Building2,
   Package,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ChevronUp,
   HelpCircle,
   Loader2,
@@ -25,6 +27,7 @@ import {
   Search,
 } from 'lucide-react';
 import { masterDataAPI, goodsReturnAPI } from '@/services/api';
+import CreateWarehouseModal from '@/components/masters/Modals/CreateWarehouseModal';
 import { getTodayDateString } from '@/utils/dateUtils';
 import { getAuthToken } from '@/services/apiClient';
 
@@ -135,11 +138,16 @@ export default function GoodsReturnFlow({
   const [savedReturnDetails, setSavedReturnDetails] = useState<any[]>([]);
   const [returnNoFromBackend, setReturnNoFromBackend] = useState<string | null>(null);
   const [showProjectSelectModal, setShowProjectSelectModal] = useState(false);
+  const [showCreateWarehouseModal, setShowCreateWarehouseModal] = useState(false);
+  const [storeRefreshKey, setStoreRefreshKey] = useState(0);
   const [projectList, setProjectList] = useState<{ id: string; numericId?: number; name: string; logo?: string }[]>([]);
   const [selectedProjectForModal, setSelectedProjectForModal] = useState<{ id: string; numericId?: number; name: string } | null>(null);
   const [isLoadingProjects, setIsLoadingProjects] = useState(false);
   const [projectSearchQuery, setProjectSearchQuery] = useState('');
   const [projectPage, setProjectPage] = useState(1);
+  const [materialsSearchQuery, setMaterialsSearchQuery] = useState('');
+  const [materialsPage, setMaterialsPage] = useState(1);
+  const MATERIALS_PAGE_SIZE = 10;
 
   const projectIdForApi = () => (editProject?.numericId ?? editProject?.id ?? pNumId) || (pid && /^\d+$/.test(String(pid)) ? pid : undefined);
   const projectNameForDisplay = () => editProject?.name ?? pName;
@@ -207,6 +215,8 @@ export default function GoodsReturnFlow({
 
   const [editLoadedStoreIds, setEditLoadedStoreIds] = useState<(string | number)[]>([]);
 
+  const refreshStores = () => setStoreRefreshKey((k) => k + 1);
+
   useEffect(() => {
     const pId = projectIdForApi();
     if (!pId) return;
@@ -227,7 +237,7 @@ export default function GoodsReturnFlow({
       })
       .catch(() => setStores([]))
       .finally(() => setIsLoadingStores(false));
-  }, [pid, pNumId, mode, editReturnId, editProject]);
+  }, [pid, pNumId, mode, editReturnId, editProject, storeRefreshKey]);
 
   useEffect(() => {
     if (mode === 'edit' && returnHeader && stores.length > 0 && editLoadedStoreIds.length > 0) {
@@ -411,6 +421,23 @@ export default function GoodsReturnFlow({
       .finally(() => setIsLoadingMaterials(false));
   }, [projectIdForApi(), step, goodsType]);
 
+  const filteredMaterials = useMemo(() => {
+    if (!materialsSearchQuery.trim()) return materials;
+    const q = materialsSearchQuery.toLowerCase().trim();
+    return materials.filter(
+      (m) =>
+        (m.code ?? '').toLowerCase().includes(q) ||
+        (m.name ?? '').toLowerCase().includes(q) ||
+        (m.specification ?? '').toLowerCase().includes(q) ||
+        (m.unit ?? '').toLowerCase().includes(q)
+    );
+  }, [materials, materialsSearchQuery]);
+
+  const paginatedMaterials = useMemo(() => {
+    const start = (materialsPage - 1) * MATERIALS_PAGE_SIZE;
+    return filteredMaterials.slice(start, start + MATERIALS_PAGE_SIZE);
+  }, [filteredMaterials, materialsPage]);
+
   useEffect(() => {
     if (step === 'assetReturn' || step === 'details') {
       masterDataAPI
@@ -443,9 +470,9 @@ export default function GoodsReturnFlow({
           );
           const allRows = results.flat();
           for (const row of allRows) {
-            const code = row.code ?? row.material_code ?? row.asset_code ?? row.materials?.code ?? row.assets?.code ?? '';
-            const matId = String(row.materials_id ?? row.material_id ?? row.assets_id ?? row.asset_id ?? row.materials?.id ?? row.assets?.id ?? '');
-            const qty = Number(row.opening_qty ?? row.opening ?? row.stock_qty ?? row.stock ?? 0) || 0;
+            const code = row.material?.code ?? row.asset?.code ?? row.code ?? row.material_code ?? row.asset_code ?? row.materials?.code ?? row.assets?.code ?? '';
+            const matId = String(row.material?.id ?? row.asset?.id ?? row.materials_id ?? row.material_id ?? row.assets_id ?? row.asset_id ?? row.materials?.id ?? row.assets?.id ?? '');
+            const qty = Number(row.qty ?? row.opening_qty ?? row.opening ?? row.stock_qty ?? row.stock ?? 0) || 0;
             const key = code || matId;
             if (key) {
               stockByMaterial[key] = (Number(stockByMaterial[key]) || 0) + qty;
@@ -459,9 +486,9 @@ export default function GoodsReturnFlow({
             : await masterDataAPI.getMaterialsOpeningList(pId);
           const list = Array.isArray(rows) ? rows : [];
           for (const row of list) {
-            const code = row.code ?? row.material_code ?? row.asset_code ?? row.materials?.code ?? row.assets?.code ?? '';
-            const matId = String(row.materials_id ?? row.material_id ?? row.assets_id ?? row.asset_id ?? row.materials?.id ?? row.assets?.id ?? '');
-            const qty = Number(row.opening_qty ?? row.opening ?? row.stock_qty ?? row.stock ?? 0) || 0;
+            const code = row.material?.code ?? row.asset?.code ?? row.code ?? row.material_code ?? row.asset_code ?? row.materials?.code ?? row.assets?.code ?? '';
+            const matId = String(row.material?.id ?? row.asset?.id ?? row.materials_id ?? row.material_id ?? row.assets_id ?? row.asset_id ?? row.materials?.id ?? row.assets?.id ?? '');
+            const qty = Number(row.qty ?? row.opening_qty ?? row.opening ?? row.stock_qty ?? row.stock ?? 0) || 0;
             const key = code || matId;
             if (key) {
               stockByMaterial[key] = (Number(stockByMaterial[key]) || 0) + qty;
@@ -947,6 +974,7 @@ export default function GoodsReturnFlow({
                           ? 'border-slate-600 hover:border-slate-500'
                           : 'border-slate-200 hover:border-slate-300'
                       }`}
+                      onDoubleClick={(e) => { e.preventDefault(); setSelectedStoreIds((prev) => { const next = new Set(prev); next.add(sid); return next; }); }}
                     >
                       <input
                         type="checkbox"
@@ -964,6 +992,11 @@ export default function GoodsReturnFlow({
                 })}
               </div>
             )}
+            <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+              <button type="button" onClick={() => setShowCreateWarehouseModal(true)} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold border ${isDark ? 'border-slate-600 hover:bg-slate-800/50' : 'border-slate-300 hover:bg-slate-50'} ${textPrimary}`} title="Add new store">
+                <Plus className="w-4 h-4" /> Add New Store
+              </button>
+            </div>
             <div className="flex justify-end">
               <button
                 onClick={handleStoresNext}
@@ -1052,22 +1085,29 @@ export default function GoodsReturnFlow({
                   slug.includes('other-project') || slug.includes('other project') ? 'Select project (optional)' :
                   'Tag (optional)';
                 return (
-                  <div className="sm:col-span-2">
-                    <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>{label}</label>
-                    <select
-                      value={tagId}
-                      onChange={(e) => setTagId(e.target.value)}
-                      className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}
-                    >
-                      <option value="">
-                        {tagOptions.length === 0 && isSameProjectOtherStores ? 'No stores available' : 'Select...'}
-                      </option>
-                      {tagOptions.map((t: any) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name ?? t.tag_name ?? t.label}
+                  <div className="sm:col-span-2 space-y-2">
+                    <label className={`block text-sm font-bold ${textSecondary}`}>{label}</label>
+                    <div className="flex gap-2">
+                      <select
+                        value={tagId}
+                        onChange={(e) => setTagId(e.target.value)}
+                        className={`flex-1 px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}
+                      >
+                        <option value="">
+                          {tagOptions.length === 0 && isSameProjectOtherStores ? 'No stores available' : 'Select...'}
                         </option>
-                      ))}
-                    </select>
+                        {tagOptions.map((t: any) => (
+                          <option key={t.id} value={t.id}>
+                            {t.name ?? t.tag_name ?? t.label}
+                          </option>
+                        ))}
+                      </select>
+                      {isSameProjectOtherStores && (
+                        <button type="button" onClick={() => setShowCreateWarehouseModal(true)} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold border shrink-0 ${isDark ? 'border-slate-600 hover:bg-slate-800/50' : 'border-slate-300 hover:bg-slate-50'} ${textPrimary}`} title="Add new store">
+                          <Plus className="w-4 h-4" /> Add Store
+                        </button>
+                      )}
+                    </div>
                   </div>
                 );
               })()}
@@ -1081,7 +1121,7 @@ export default function GoodsReturnFlow({
                     type="radio"
                     name="goodsType"
                     checked={goodsType === 'materials'}
-                    onChange={() => setGoodsType('materials')}
+                    onChange={() => { setGoodsType('materials'); setMaterialsPage(1); }}
                     className="rounded-full"
                   />
                   <span className={textPrimary}>Material</span>
@@ -1091,11 +1131,21 @@ export default function GoodsReturnFlow({
                     type="radio"
                     name="goodsType"
                     checked={goodsType === 'machines'}
-                    onChange={() => setGoodsType('machines')}
+                    onChange={() => { setGoodsType('machines'); setMaterialsPage(1); }}
                     className="rounded-full"
                   />
                   <span className={textPrimary}>Machine</span>
                 </label>
+              </div>
+              <div className="relative mb-3">
+                <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
+                <input
+                  type="text"
+                  placeholder={`Search ${goodsType === 'materials' ? 'materials' : 'machines'} by code, name, spec, unit...`}
+                  value={materialsSearchQuery}
+                  onChange={(e) => { setMaterialsSearchQuery(e.target.value); setMaterialsPage(1); }}
+                  className={`w-full pl-10 pr-4 py-2 rounded-lg border text-sm ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100 placeholder-slate-500' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'}`}
+                />
               </div>
               <div className={`border rounded-lg overflow-hidden ${isDark ? 'border-slate-600' : 'border-slate-200'}`}>
                 <table className="w-full text-sm">
@@ -1108,8 +1158,14 @@ export default function GoodsReturnFlow({
                       <th className={`px-4 py-3 text-left ${textSecondary}`}>Unit</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-inherit">
-                    {materials.map((m) => {
+                  <tbody
+                    className="divide-y divide-inherit"
+                    onDoubleClick={() => {
+                      const maxPage = Math.ceil(filteredMaterials.length / MATERIALS_PAGE_SIZE);
+                      if (materialsPage < maxPage) setMaterialsPage((p) => p + 1);
+                    }}
+                  >
+                    {paginatedMaterials.map((m) => {
                       const mid = String(m.id);
                       const checked = selectedMaterialIds.has(mid);
                       return (
@@ -1136,6 +1192,34 @@ export default function GoodsReturnFlow({
                   </tbody>
                 </table>
               </div>
+              {filteredMaterials.length > MATERIALS_PAGE_SIZE && (
+                <div className={`flex items-center justify-between gap-4 mt-3 px-1 ${textSecondary}`}>
+                  <span className="text-sm">
+                    Showing {(materialsPage - 1) * MATERIALS_PAGE_SIZE + 1}–{Math.min(materialsPage * MATERIALS_PAGE_SIZE, filteredMaterials.length)} of {filteredMaterials.length}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setMaterialsPage((p) => Math.max(1, p - 1))}
+                      disabled={materialsPage <= 1}
+                      className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}
+                      aria-label="Previous page"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <span className="text-sm font-medium min-w-[4rem] text-center">Page {materialsPage} of {Math.ceil(filteredMaterials.length / MATERIALS_PAGE_SIZE) || 1}</span>
+                    <button
+                      type="button"
+                      onClick={() => setMaterialsPage((p) => Math.min(Math.ceil(filteredMaterials.length / MATERIALS_PAGE_SIZE), p + 1))}
+                      disabled={materialsPage >= Math.ceil(filteredMaterials.length / MATERIALS_PAGE_SIZE)}
+                      className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}
+                      aria-label="Next page"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end">
@@ -1314,6 +1398,17 @@ export default function GoodsReturnFlow({
             </div>
           </div>
         )}
+
+        <CreateWarehouseModal
+          theme={theme}
+          isOpen={showCreateWarehouseModal}
+          onClose={() => setShowCreateWarehouseModal(false)}
+          selectedProjectId={projectIdForApi() ?? undefined}
+          onSuccess={() => {
+            refreshStores();
+            setShowCreateWarehouseModal(false);
+          }}
+        />
 
         {/* Select Project Modal */}
         {showProjectSelectModal && mode === 'create' && (

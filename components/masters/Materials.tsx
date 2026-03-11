@@ -1,13 +1,14 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
-import { Boxes, Download, Plus, Search, ArrowUpDown, Loader2, RefreshCw, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Upload, MoreVertical, Edit, Trash2, FileSpreadsheet } from 'lucide-react';
+import { Boxes, Download, Plus, Search, ArrowUpDown, Loader2, RefreshCw, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Upload, MoreVertical, Edit, Trash2, FileSpreadsheet, X } from 'lucide-react';
 import DatePickerInput from '../ui/DatePickerInput';
 import CreateMaterialModal from './Modals/CreateMaterialModal';
 import MaterialBulkUploadModal from './Modals/MaterialBulkUploadModal';
 import { masterDataAPI } from '../../services/api';
+import { getExactErrorMessage } from '../../utils/errorUtils';
 import { useUser } from '../../contexts/UserContext';
 import * as XLSX from 'xlsx';
 
@@ -47,6 +48,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
   const [editingMaterial, setEditingMaterial] = useState<Material | null>(null);
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
   const [materials, setMaterials] = useState<Material[]>([]);
+  const [lastImportedCodes, setLastImportedCodes] = useState<string[]>([]);
   const [isLoadingMaterials, setIsLoadingMaterials] = useState<boolean>(false);
   const [materialsError, setMaterialsError] = useState<string | null>(null);
   const [availableStockFilters, setAvailableStockFilters] = useState({
@@ -78,26 +80,39 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
   const [isLoadingOpeningStockData, setIsLoadingOpeningStockData] = useState(false);
   const [isLoadingOpeningStockStores, setIsLoadingOpeningStockStores] = useState(false);
   const [isImportingOpeningStock, setIsImportingOpeningStock] = useState(false);
+  const openingStockFileInputRef = useRef<HTMLInputElement>(null);
   const [availableOpeningStockList, setAvailableOpeningStockList] = useState<any[]>([]);
   const [isLoadingAvailableOpeningStock, setIsLoadingAvailableOpeningStock] = useState(false);
 
   const availableProjects = openingStockProjects;
 
+  const MAX_OPENING_STOCK_FILE_MB = 10;
+
   const handleImportMaterialsOpeningStock = async () => {
     if (!openingStockForm.file) {
-      toast.showWarning('Please select a file to upload');
+      toast.showWarning('The Excel file is required.');
       return;
     }
     if (!openingStockForm.project) {
-      toast.showWarning('Please select a project');
+      toast.showWarning('The project is required.');
       return;
     }
     if (!openingStockForm.storeWarehouse) {
-      toast.showWarning('Please select a store/warehouse');
+      toast.showWarning('The warehouse/store is required.');
       return;
     }
     if (!openingStockForm.openingDate) {
-      toast.showWarning('Please select an opening date');
+      toast.showWarning('The opening stock date is required.');
+      return;
+    }
+    // File validation - matches backend (xlsx, xls, csv, max 10MB)
+    const ext = openingStockForm.file.name.split('.').pop()?.toLowerCase();
+    if (!['xlsx', 'xls', 'csv'].includes(ext || '')) {
+      toast.showError('The file must be a valid Excel or CSV file (xlsx, xls, csv).');
+      return;
+    }
+    if (openingStockForm.file.size > MAX_OPENING_STOCK_FILE_MB * 1024 * 1024) {
+      toast.showError(`The file must not exceed ${MAX_OPENING_STOCK_FILE_MB}MB.`);
       return;
     }
     // Validate file has expected columns (code, opening_qty) before upload - matches MaterialsOpeningStockImport
@@ -107,10 +122,12 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
       const firstSheet = wb.Sheets[wb.SheetNames[0]];
       const firstRow = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' })[0] as string[] | undefined;
       const headerKeys = (firstRow || []).map((h: string) => String(h || '').trim().toLowerCase().replace(/\s+/g, '_'));
-      const hasCode = headerKeys.includes('code');
-      const hasOpeningQty = headerKeys.includes('opening_qty');
+      const validCodeNames = ['code', 'material_code', 'materialcode'];
+      const validQtyNames = ['opening_qty', 'openingqty', 'qty', 'quantity', 'opening_quantity'];
+      const hasCode = headerKeys.some((k) => validCodeNames.includes(k));
+      const hasOpeningQty = headerKeys.some((k) => validQtyNames.includes(k));
       if (!hasCode || !hasOpeningQty) {
-        toast.showError('Invalid file: expected columns "code" and "opening_qty". Do not use the Materials Bulk Upload template.');
+        toast.showError('Invalid file: expected columns "code" (or material_code) and "opening_qty" (or qty/quantity). Row 1 must be headers. Do not use the Materials Bulk Upload template.');
         return;
       }
     } catch (validateErr) {
@@ -133,12 +150,13 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
       const detail = total > 0 ? ` (${created} created, ${updated} updated)` : '';
       toast.showSuccess(msg + detail);
       setOpeningStockForm((prev) => ({ ...prev, file: null }));
+      if (openingStockFileInputRef.current) openingStockFileInputRef.current.value = '';
       // Refresh available opening stock if viewing same project/store
       if (availableStockFilters.project === openingStockForm.project && availableStockFilters.storeWarehouse === openingStockForm.storeWarehouse) {
         fetchAvailableOpeningStock();
       }
     } catch (err: any) {
-      toast.showError(err?.message || 'Failed to import opening stock');
+      toast.showError(getExactErrorMessage(err) || 'Failed to import opening stock');
     } finally {
       setIsImportingOpeningStock(false);
     }
@@ -271,8 +289,14 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
 
 
   // Filter materials and sort by code (ascending, empty codes last)
+  // When lastImportedCodes is set (after import), show only those materials (135); otherwise show all
   const filteredMaterials = useMemo(() => {
     let filtered = [...materials];
+
+    if (lastImportedCodes.length > 0) {
+      const codeSet = new Set(lastImportedCodes.map((c) => c.toLowerCase().trim()));
+      filtered = filtered.filter((m) => codeSet.has((m.code || '').toLowerCase().trim()));
+    }
 
     if (searchQuery.trim() && !isSearching) {
       filtered = filtered.filter(material =>
@@ -295,7 +319,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
     });
 
     return filtered;
-  }, [materials, searchQuery, isSearching]);
+  }, [materials, searchQuery, isSearching, lastImportedCodes]);
 
   // Pagination for main materials list
   const listTotalPages = Math.max(1, Math.ceil(filteredMaterials.length / listEntriesPerPage));
@@ -382,15 +406,64 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
     }
   }, [openDropdownId]);
 
-  const handleExportMasterData = () => {
-    const headers = ['class', 'code', 'name', 'specification', 'unit', 'uuid'];
-    const rows = filteredMaterials.map((m) => [
+  const handleExportOpeningStockFormat = () => {
+    const sorted = [...materials].sort((a, b) => {
+      const aCode = (a.code || '').toString().trim();
+      const bCode = (b.code || '').toString().trim();
+      if (!aCode && !bCode) return 0;
+      if (!aCode) return 1;
+      if (!bCode) return -1;
+      return aCode.localeCompare(bCode, undefined, { numeric: true });
+    });
+    const headers = ['#', 'Name', 'Class', 'Code', 'Unit', 'Specification', 'Opening Qty'];
+    const rows = sorted.map((m, idx) => [
+      idx + 1,
+      m.name,
       m.class,
       m.code || '',
-      m.name,
-      m.specification || '',
       m.unit || '',
-      m.uuid || ''
+      m.specification || '',
+      '' // Opening Qty - empty for user to fill before import
+    ]);
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Opening Stock');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `opening_stock_export_${new Date().toISOString().split('T')[0]}.xlsx`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportMasterData = (exportAll = false) => {
+    // When lastImportedCodes is set (after import), export only those by default; otherwise export all
+    let toExport = materials;
+    if (!exportAll && lastImportedCodes.length > 0) {
+      const codeSet = new Set(lastImportedCodes.map((c) => c.toLowerCase().trim()));
+      toExport = materials.filter((m) => codeSet.has((m.code || '').toLowerCase().trim()));
+    }
+    const sorted = [...toExport].sort((a, b) => {
+      const aCode = (a.code || '').toString().trim();
+      const bCode = (b.code || '').toString().trim();
+      if (!aCode && !bCode) return 0;
+      if (!aCode) return 1;
+      if (!bCode) return -1;
+      return aCode.localeCompare(bCode, undefined, { numeric: true });
+    });
+    const headers = ['Sr. No.', 'Code', 'Name', 'Class', 'Unit', 'Specification'];
+    const rows = sorted.map((m, idx) => [
+      idx + 1,
+      m.code || '',
+      m.name,
+      m.class,
+      m.unit || '',
+      m.specification || ''
     ]);
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
     const wb = XLSX.utils.book_new();
@@ -409,8 +482,17 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
   };
 
   const handleDownloadExcel = () => {
+    // Export all materials (not filtered) to match materials-list count
+    const sorted = [...materials].sort((a, b) => {
+      const aCode = (a.code || '').toString().trim();
+      const bCode = (b.code || '').toString().trim();
+      if (!aCode && !bCode) return 0;
+      if (!aCode) return 1;
+      if (!bCode) return -1;
+      return aCode.localeCompare(bCode, undefined, { numeric: true });
+    });
     const headers = ['SR No', 'Code', 'Class', 'Name', 'Specification', 'Unit'];
-    const rows = filteredMaterials.map((material, idx) => [
+    const rows = sorted.map((material, idx) => [
       idx + 1,
       material.code || '',
       material.class,
@@ -563,6 +645,20 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
               <p className={`text-sm font-bold ${textPrimary}`}>Today</p>
             </div>
           </div>
+
+          {lastImportedCodes.length > 0 && (
+            <div className={`flex items-center justify-between gap-3 p-3 rounded-xl border ${isDark ? 'bg-[#C2D642]/10 border-[#C2D642]/30' : 'bg-[#C2D642]/5 border-[#C2D642]/30'}`}>
+              <p className={`text-sm ${textSecondary}`}>
+                Showing <strong className={textPrimary}>{filteredMaterials.length}</strong> imported materials
+              </p>
+              <button
+                onClick={() => setLastImportedCodes([])}
+                className={`text-sm font-bold ${textPrimary} hover:underline`}
+              >
+                Show all {materials.length} materials
+              </button>
+            </div>
+          )}
 
           {/* Search Bar */}
           <div className={`flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4 p-3 sm:p-4 rounded-xl border ${cardClass}`}>
@@ -815,10 +911,10 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
               } shadow-md`}
             >
               <Upload className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
-              <span className="text-center">Upload File</span>
+              <span className="text-center">Import Materials Data</span>
             </button>
             <button
-              onClick={handleExportMasterData}
+              onClick={() => handleExportMasterData(false)}
               className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
                 isDark
                   ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600'
@@ -826,8 +922,23 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
               } shadow-sm`}
             >
               <FileSpreadsheet className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
-              <span className="text-center">Export Master Data (Bulk Upload Format)</span>
+              <span className="text-center">
+                Export Materials Data{lastImportedCodes.length > 0 ? ` (${lastImportedCodes.length} imported)` : ''}
+              </span>
             </button>
+            {lastImportedCodes.length > 0 && (
+              <button
+                onClick={() => handleExportMasterData(true)}
+                className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
+                  isDark
+                    ? 'bg-slate-700/50 hover:bg-slate-600/50 text-slate-400 border border-slate-600'
+                    : 'bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200'
+                } shadow-sm`}
+              >
+                <FileSpreadsheet className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
+                <span className="text-center">Export All Materials ({materials.length})</span>
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -867,8 +978,11 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
           {openingStockSubTab === 'bulkUpload' && (
             <div className="space-y-4 sm:space-y-6">
               <div className={`rounded-xl border p-4 sm:p-8 ${cardClass}`}>
+                <p className={`text-sm ${textSecondary} mb-3 text-center`}>
+                  Export with columns: #, Name, Class, Code, Unit, Specification, Opening Qty. Fill <strong className={textPrimary}>Opening Qty</strong> and upload.
+                </p>
                 <button
-                  onClick={handleExportMasterData}
+                  onClick={handleExportOpeningStockFormat}
                   className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
                     isDark
                       ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
@@ -957,21 +1071,41 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                   {/* File Upload - columns: code, opening_qty */}
                   <div>
                     <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                      Upload File (xlsx, xls, csv — columns: code, opening_qty) <span className="text-red-500">*</span>
+                      Upload File <span className="text-red-500">*</span>
                     </label>
+                    <p className={`text-xs ${textSecondary} mb-2`}>
+                      Excel or CSV (.xlsx, .xls, .csv). Max {MAX_OPENING_STOCK_FILE_MB}MB. Row 1: headers (code, opening_qty). Row 2+: data.
+                    </p>
                     <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-4">
-                      <label className={`flex-1 px-4 py-3 rounded-lg text-sm font-bold transition-all cursor-pointer ${
+                      <label className={`relative flex-1 px-4 py-3 ${openingStockForm.file ? 'pr-10' : ''} rounded-lg text-sm font-bold transition-all cursor-pointer ${
                         isDark
                           ? 'bg-slate-800/50 border-slate-700 text-slate-100 border'
                           : 'bg-white border-slate-200 text-slate-900 border'
-                      } focus:ring-2 focus:ring-[#C2D642]/20 outline-none flex items-center justify-center`}>
+                      } focus:ring-2 focus:ring-[#C2D642]/20 outline-none flex items-center justify-center min-h-[48px]`}>
                         <input
+                          ref={openingStockFileInputRef}
                           type="file"
                           accept=".xlsx,.xls,.csv"
                           className="hidden"
                           onChange={(e) => setOpeningStockForm({ ...openingStockForm, file: e.target.files?.[0] ?? null })}
                         />
                         {openingStockForm.file ? openingStockForm.file.name : 'Choose file...'}
+                        {openingStockForm.file && !isImportingOpeningStock && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setOpeningStockForm({ ...openingStockForm, file: null });
+                              if (openingStockFileInputRef.current) openingStockFileInputRef.current.value = '';
+                            }}
+                            className={`absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'} ${textSecondary} transition-colors`}
+                            title="Remove file"
+                            aria-label="Remove selected file"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        )}
                       </label>
                       <button
                         type="button"
@@ -1168,10 +1302,11 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                           const filtered = availableOpeningStockList.filter((item) => {
                             if (!availableStockSearch) return true;
                             const searchLower = availableStockSearch.toLowerCase();
-                            const code = (item.code || item.material_code || '').toString().toLowerCase();
-                            const name = (item.name || item.material_name || item.materials_name || '').toString().toLowerCase();
-                            const spec = (item.specification || '').toString().toLowerCase();
-                            const cls = (item.class || item.class_of_materials || '').toString().toLowerCase();
+                            const m = item.material;
+                            const code = (m?.code ?? item.code ?? item.material_code ?? '').toString().toLowerCase();
+                            const name = (m?.name ?? item.name ?? item.material_name ?? '').toString().toLowerCase();
+                            const spec = (m?.specification ?? item.specification ?? '').toString().toLowerCase();
+                            const cls = (m?.class ?? item.class ?? item.class_of_materials ?? '').toString().toLowerCase();
                             return code.includes(searchLower) || name.includes(searchLower) || spec.includes(searchLower) || cls.includes(searchLower);
                           });
                           const paginated = filtered.slice(0, entriesPerPage);
@@ -1185,14 +1320,15 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                             );
                           }
                           return paginated.map((row, index) => {
-                            const projectName = row.project_name || row.project || '-';
-                            const storeName = row.store_name || row.store || row.warehouse || '-';
-                            const cls = row.class || row.class_of_materials || '-';
-                            const code = row.code || row.material_code || '-';
-                            const name = row.name || row.material_name || row.materials_name || '-';
-                            const spec = row.specification || '-';
-                            const unit = row.unit || row.units?.unit || '-';
-                            const opening = row.opening || row.opening_qty || row.opening_date || '-';
+                            const projectName = row.project?.project_name ?? row.project_name ?? row.project ?? '-';
+                            const storeName = row.store?.name ?? row.store_name ?? row.store ?? row.warehouse ?? '-';
+                            const m = row.material;
+                            const cls = m?.class ?? row.class ?? row.class_of_materials ?? '-';
+                            const code = m?.code ?? row.code ?? row.material_code ?? '-';
+                            const name = m?.name ?? row.name ?? row.material_name ?? row.materials_name ?? '-';
+                            const spec = m?.specification ?? row.specification ?? '-';
+                            const unit = m?.unit ?? row.unit ?? row.units?.unit ?? '-';
+                            const opening = row.qty ?? row.opening ?? row.opening_qty ?? '-';
                             return (
                               <tr key={row.id || index} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
                                 <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{index + 1}</td>
@@ -1275,7 +1411,8 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
         theme={theme}
         isOpen={showBulkUploadModal}
         onClose={() => setShowBulkUploadModal(false)}
-        onSuccess={() => {
+        onSuccess={(importedCodes) => {
+          setLastImportedCodes(importedCodes || []);
           setShowBulkUploadModal(false);
           fetchMaterials();
         }}

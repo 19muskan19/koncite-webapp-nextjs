@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import AppLayout from '@/components/AppLayout';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -10,10 +10,13 @@ import {
   ArrowRight,
   Building2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ChevronUp,
   HelpCircle,
   Loader2,
   Plus,
+  Search,
   Trash2,
   Share2,
   ExternalLink,
@@ -58,6 +61,7 @@ interface MaterialItem {
   name: string;
   specification?: string;
   unit?: string;
+  class?: string;
 }
 
 interface InwardDetailItem {
@@ -136,6 +140,9 @@ export default function GoodsReceiptFlow({
   const [addGoodsUnits, setAddGoodsUnits] = useState<Array<{ id: number; unit: string }>>([]);
   const [isAddGoodsSubmitting, setIsAddGoodsSubmitting] = useState(false);
   const [materialsRefreshKey, setMaterialsRefreshKey] = useState(0);
+  const [materialsSearchQuery, setMaterialsSearchQuery] = useState('');
+  const [materialsPage, setMaterialsPage] = useState(1);
+  const MATERIALS_PAGE_SIZE = 10;
   const [isLoading, setIsLoading] = useState(true);
   const [pdfInfo, setPdfInfo] = useState<{ url?: string; name?: string } | null>(null);
   const [grnNoFromBackend, setGrnNoFromBackend] = useState<string | null>(null);
@@ -317,6 +324,7 @@ export default function GoodsReceiptFlow({
           const numericId = goodsType === 'machines'
             ? (m.assets_id ?? m.assets?.id ?? m.id)
             : (m.id);
+          const materialClass = m.class?.value ?? m.class ?? '';
           return {
             id: m.uuid ?? m.id,
             numericId: Number.isFinite(Number(numericId)) ? Number(numericId) : undefined,
@@ -324,6 +332,7 @@ export default function GoodsReceiptFlow({
             name,
             specification: m.specification ?? '',
             unit,
+            class: materialClass,
           };
         }));
       })
@@ -337,6 +346,24 @@ export default function GoodsReceiptFlow({
       .then((u: any[]) => setAddGoodsUnits((Array.isArray(u) ? u : []).map((x: any) => ({ id: x.id, unit: x.unit ?? x.name ?? '' }))))
       .catch(() => setAddGoodsUnits([]));
   }, [showAddNewGoodsModal]);
+
+  const filteredMaterials = useMemo(() => {
+    if (!materialsSearchQuery.trim()) return materials;
+    const q = materialsSearchQuery.toLowerCase().trim();
+    return materials.filter(
+      (m) =>
+        (m.code ?? '').toLowerCase().includes(q) ||
+        (m.name ?? '').toLowerCase().includes(q) ||
+        (m.specification ?? '').toLowerCase().includes(q) ||
+        (m.unit ?? '').toLowerCase().includes(q) ||
+        (m.class ?? '').toLowerCase().includes(q)
+    );
+  }, [materials, materialsSearchQuery]);
+
+  const paginatedMaterials = useMemo(() => {
+    const start = (materialsPage - 1) * MATERIALS_PAGE_SIZE;
+    return filteredMaterials.slice(start, start + MATERIALS_PAGE_SIZE);
+  }, [filteredMaterials, materialsPage]);
 
   // Generate PDF on success screen mount (after inward-goods-details-add saves data)
   // requestId must be inv_inwards.id per API spec (POST /api/inventory/generate-pdf)
@@ -808,7 +835,7 @@ export default function GoodsReceiptFlow({
                     const sid = String(store.id);
                     const isSelected = selectedStoreIds.has(sid);
                     return (
-                      <button key={sid} type="button" onClick={() => toggleStore(sid)} className={`p-4 rounded-xl border-2 text-left transition-all ${isSelected ? 'border-[#6B8E23] bg-[#6B8E23]/10' : isDark ? 'border-slate-600 hover:border-slate-500' : 'border-slate-200 hover:border-slate-300'}`}>
+                      <button key={sid} type="button" onClick={() => toggleStore(sid)} onDoubleClick={() => setSelectedStoreIds((prev) => { const next = new Set(prev); next.add(sid); return next; })} className={`p-4 rounded-xl border-2 text-left transition-all ${isSelected ? 'border-[#6B8E23] bg-[#6B8E23]/10' : isDark ? 'border-slate-600 hover:border-slate-500' : 'border-slate-200 hover:border-slate-300'}`}>
                         <div className="flex items-center justify-between">
                           <div><p className={`font-bold ${textPrimary}`}>{store.name}</p>{store.code && <p className={`text-sm ${textSecondary}`}>{store.code}</p>}</div>
                           {isSelected && <Check className="w-5 h-5 text-[#6B8E23]" />}
@@ -948,8 +975,18 @@ export default function GoodsReceiptFlow({
                 </button>
               </div>
               <div className="flex gap-4 mb-3">
-                <label className="flex items-center gap-2 cursor-pointer"><input type="radio" name="goodsType" checked={goodsType === 'materials'} onChange={() => setGoodsType('materials')} className="rounded-full" /><span className={textPrimary}>Material</span></label>
-                <label className="flex items-center gap-2 cursor-pointer"><input type="radio" name="goodsType" checked={goodsType === 'machines'} onChange={() => setGoodsType('machines')} className="rounded-full" /><span className={textPrimary}>Machine</span></label>
+                <label className="flex items-center gap-2 cursor-pointer"><input type="radio" name="goodsType" checked={goodsType === 'materials'} onChange={() => { setGoodsType('materials'); setMaterialsPage(1); }} className="rounded-full" /><span className={textPrimary}>Material</span></label>
+                <label className="flex items-center gap-2 cursor-pointer"><input type="radio" name="goodsType" checked={goodsType === 'machines'} onChange={() => { setGoodsType('machines'); setMaterialsPage(1); }} className="rounded-full" /><span className={textPrimary}>Machine</span></label>
+              </div>
+              <div className="relative mb-3">
+                <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
+                <input
+                  type="text"
+                  placeholder={`Search ${goodsType === 'materials' ? 'materials' : 'machines'} by code, name, spec, unit...`}
+                  value={materialsSearchQuery}
+                  onChange={(e) => { setMaterialsSearchQuery(e.target.value); setMaterialsPage(1); }}
+                  className={`w-full pl-10 pr-4 py-2 rounded-lg border text-sm ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100 placeholder-slate-500' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'}`}
+                />
               </div>
               <div className={`border rounded-lg overflow-hidden ${isDark ? 'border-slate-600' : 'border-slate-200'}`}>
                 <table className="w-full text-sm">
@@ -962,8 +999,14 @@ export default function GoodsReceiptFlow({
                       <th className={`px-4 py-3 text-left ${textSecondary}`}>Unit</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-inherit">
-                    {materials.map((m) => {
+                  <tbody
+                    className="divide-y divide-inherit"
+                    onDoubleClick={() => {
+                      const maxPage = Math.ceil(filteredMaterials.length / MATERIALS_PAGE_SIZE);
+                      if (materialsPage < maxPage) setMaterialsPage((p) => p + 1);
+                    }}
+                  >
+                    {paginatedMaterials.map((m) => {
                       const mid = String(m.id);
                       const checked = selectedMaterialIds.has(mid);
                       return (
@@ -981,6 +1024,34 @@ export default function GoodsReceiptFlow({
                   </tbody>
                 </table>
               </div>
+              {filteredMaterials.length > MATERIALS_PAGE_SIZE && (
+                <div className={`flex items-center justify-between gap-4 mt-3 px-1 ${textSecondary}`}>
+                  <span className="text-sm">
+                    Showing {(materialsPage - 1) * MATERIALS_PAGE_SIZE + 1}–{Math.min(materialsPage * MATERIALS_PAGE_SIZE, filteredMaterials.length)} of {filteredMaterials.length}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setMaterialsPage((p) => Math.max(1, p - 1))}
+                      disabled={materialsPage <= 1}
+                      className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}
+                      aria-label="Previous page"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <span className="text-sm font-medium min-w-[4rem] text-center">Page {materialsPage} of {Math.ceil(filteredMaterials.length / MATERIALS_PAGE_SIZE) || 1}</span>
+                    <button
+                      type="button"
+                      onClick={() => setMaterialsPage((p) => Math.min(Math.ceil(filteredMaterials.length / MATERIALS_PAGE_SIZE), p + 1))}
+                      disabled={materialsPage >= Math.ceil(filteredMaterials.length / MATERIALS_PAGE_SIZE)}
+                      className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}
+                      aria-label="Next page"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end">

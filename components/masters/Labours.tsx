@@ -420,13 +420,15 @@ const Labours: React.FC<LaboursProps> = ({ theme }) => {
   }, [openDropdownId]);
 
   const handleDownloadExcel = () => {
-    const headers = ['Code', 'Name', 'Category', 'Unit', 'uuid'];
-    const rows = filteredLabours.map((labour) => [
+    // Export pattern: #, Code, Name, Category, Unit, uuid (backend expects uuid key; empty for new rows)
+    const headers = ['#', 'Code', 'Name', 'Category', 'Unit', 'uuid'];
+    const rows = filteredLabours.map((labour, idx) => [
+      idx + 1,
       labour.code || '',
       labour.name || '',
       (labour.category || '').toLowerCase(),
       labour.unit?.unit || 'Nos',
-      labour.uuid || ''
+      labour.uuid || '' // Required column for backend; empty for new records
     ]);
 
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);

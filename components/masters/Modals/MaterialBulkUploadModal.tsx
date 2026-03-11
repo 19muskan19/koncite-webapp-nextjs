@@ -5,6 +5,7 @@ import { ThemeType } from '@/types';
 import { X, FileSpreadsheet, Loader2, Upload, CheckCircle } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { masterDataAPI } from '@/services/api';
+import * as XLSX from 'xlsx';
 
 const ACCEPTED_TYPES = '.xlsx,.xls,.csv';
 const MAX_SIZE_MB = 10;
@@ -14,7 +15,7 @@ interface MaterialBulkUploadModalProps {
   theme: ThemeType;
   isOpen: boolean;
   onClose: () => void;
-  onSuccess?: () => void;
+  onSuccess?: (importedCodes?: string[]) => void;
 }
 
 const MaterialBulkUploadModal: React.FC<MaterialBulkUploadModalProps> = ({
@@ -64,6 +65,14 @@ const MaterialBulkUploadModal: React.FC<MaterialBulkUploadModalProps> = ({
     return null;
   };
 
+  const handleClearFile = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isUploading) return;
+    setSelectedFile(null);
+    setUploadResult(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -78,6 +87,51 @@ const MaterialBulkUploadModal: React.FC<MaterialBulkUploadModalProps> = ({
     setUploadResult(null);
   };
 
+  const parseAndDeduplicateFile = async (file: File): Promise<{ file: File; codes: string[]; duplicatesRemoved: number }> => {
+    const data = await file.arrayBuffer();
+    const wb = XLSX.read(data, { type: 'array' });
+    const firstSheet = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' }) as (string | number)[][];
+    const headerRow = rows[0] as (string | number)[];
+    const headers = (headerRow || []).map((h) => String(h || '').trim().toLowerCase());
+
+    const nameIdx = headers.findIndex((h) => h === 'name');
+    const classIdx = headers.findIndex((h) => h === 'class');
+    const specIdx = headers.findIndex((h) => h === 'specification');
+    const codeIdx = headers.findIndex((h) => h === 'code');
+
+    const seen = new Set<string>();
+    const deduplicatedRows: (string | number)[][] = [headerRow];
+    const codes: string[] = [];
+    let duplicatesRemoved = 0;
+
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i] as (string | number)[];
+      const name = (row?.[nameIdx] != null ? String(row[nameIdx]) : '').trim().toLowerCase();
+      const cls = (row?.[classIdx] != null ? String(row[classIdx]) : '').trim();
+      const spec = (row?.[specIdx] != null ? String(row[specIdx]) : '').trim().toLowerCase();
+      const key = `${name}|${cls}|${spec}`;
+
+      if (seen.has(key)) {
+        duplicatesRemoved++;
+        continue;
+      }
+      seen.add(key);
+      deduplicatedRows.push(row);
+      const code = row?.[codeIdx] != null ? String(row[codeIdx]).trim() : '';
+      if (code) codes.push(code);
+    }
+
+    const ws = XLSX.utils.aoa_to_sheet(deduplicatedRows);
+    const newWb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(newWb, ws, 'Materials');
+    const buffer = XLSX.write(newWb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const newFile = new File([blob], file.name, { type: blob.type });
+
+    return { file: newFile, codes, duplicatesRemoved };
+  };
+
   const handleUpload = async () => {
     if (!selectedFile || isUploading) return;
     const err = validateFile(selectedFile);
@@ -88,7 +142,11 @@ const MaterialBulkUploadModal: React.FC<MaterialBulkUploadModalProps> = ({
     setIsUploading(true);
     setUploadResult(null);
     try {
-      const response = await masterDataAPI.importMaterials(selectedFile);
+      const { file: deduplicatedFile, codes: importedCodes, duplicatesRemoved } = await parseAndDeduplicateFile(selectedFile);
+      if (duplicatesRemoved > 0) {
+        toast.showWarning(`${duplicatesRemoved} duplicate row(s) (same name, class, specification) removed. Only unique materials are imported.`);
+      }
+      const response = await masterDataAPI.importMaterials(deduplicatedFile);
       const data = response?.data ?? response;
       const totalRows = data?.total_rows ?? 0;
       const created = data?.created ?? 0;
@@ -96,7 +154,7 @@ const MaterialBulkUploadModal: React.FC<MaterialBulkUploadModalProps> = ({
       const msg = data?.message ?? `${created} created, ${updated} updated.`;
       setUploadResult({ total_rows: totalRows, created, updated, message: msg });
       toast.showSuccess(msg);
-      onSuccess?.();
+      onSuccess?.(importedCodes);
     } catch (error: any) {
       toast.showError(error?.message || 'Failed to import materials.');
     } finally {
@@ -128,21 +186,9 @@ const MaterialBulkUploadModal: React.FC<MaterialBulkUploadModalProps> = ({
         </div>
 
         <div className="p-6 space-y-6">
-          <div className={`rounded-lg border p-4 ${isDark ? 'bg-slate-800/50 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
-            <h3 className={`text-sm font-bold ${textPrimary} mb-2`}>Column format (row 1 = headers):</h3>
-            <div className={`text-xs ${textSecondary} space-y-1 font-mono`}>
-              <p><strong>class</strong> (required) – A, B, or C</p>
-              <p><strong>code</strong> (optional) – Material code</p>
-              <p><strong>name</strong> (required) – Material name</p>
-              <p><strong>specification</strong> (optional)</p>
-              <p><strong>unit</strong> (required) – Unit name (e.g. Packet, MT, Cum). Must exist in units master.</p>
-              <p><strong>uuid</strong> (optional) – Include for updates; leave empty for new materials</p>
-            </div>
-          </div>
-
           <div
             onClick={() => fileInputRef.current?.click()}
-            className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
+            className={`relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
               isDark ? 'border-slate-600 hover:border-[#C2D642]/50' : 'border-slate-300 hover:border-[#C2D642]/50'
             } ${isUploading ? 'pointer-events-none opacity-60' : ''}`}
           >
@@ -153,6 +199,17 @@ const MaterialBulkUploadModal: React.FC<MaterialBulkUploadModalProps> = ({
               onChange={handleFileChange}
               className="hidden"
             />
+            {selectedFile && !isUploading && (
+              <button
+                type="button"
+                onClick={handleClearFile}
+                className={`absolute top-3 right-3 p-1.5 rounded-lg ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'} ${textSecondary} transition-colors`}
+                title="Remove file"
+                aria-label="Remove selected file"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            )}
             {isUploading ? (
               <Loader2 className="w-12 h-12 mx-auto mb-3 animate-spin text-[#C2D642]" />
             ) : (

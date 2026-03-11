@@ -116,7 +116,7 @@ const AssetBulkUploadModal: React.FC<AssetBulkUploadModalProps> = ({
       const created = data?.created ?? 0;
       const updated = data?.updated ?? 0;
       const skipped = data?.skipped ?? 0;
-      const msg = data?.message ?? `${created} created, ${updated} updated.`;
+      const msg = data?.message ?? (totalRows === 0 ? 'No data rows found.' : `${created} created, ${updated} updated.`);
       setUploadResult({ total_rows: totalRows, created, updated, skipped, message: msg });
       toast.showSuccess(msg);
       onSuccess?.();
@@ -155,9 +155,11 @@ const AssetBulkUploadModal: React.FC<AssetBulkUploadModalProps> = ({
           <div className={`rounded-lg border p-4 ${isDark ? 'bg-slate-800/50 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
             <h3 className={`text-sm font-bold ${textPrimary} mb-2`}>Column format (row 1 = headers):</h3>
             <div className={`text-xs ${textSecondary} space-y-1 font-mono`}>
-              <p><strong>Asset/Equipments/Machinery</strong> (required) – Asset name (e.g. Excavator, Crane, Concrete Mixer)</p>
-              <p><strong>Specification</strong> (optional) – e.g. 20 Ton, 50 Ton</p>
-              <p><strong>Unit</strong> (optional) – Unit of measurement (e.g. Nos, Hrs, Day). Creates unit if missing.</p>
+              <p><strong>#</strong> – Serial number (optional)</p>
+              <p><strong>Code</strong> – Asset code (e.g. Hrs, Day)</p>
+              <p><strong>Asset/Equipments/Machinery</strong> (required) – Asset name (e.g. JCB/Others, Excavator, Crane)</p>
+              <p><strong>Unit</strong> – Unit of measurement (e.g. Nos, Hrs, Day)</p>
+              <p><strong>Specification</strong> – Technical specs (e.g. 20 Ton, 50 Ton)</p>
               <p className="mt-2 opacity-80">For updates: <strong>UUID</strong> or <strong>ID</strong> – Include to update existing asset</p>
             </div>
           </div>
