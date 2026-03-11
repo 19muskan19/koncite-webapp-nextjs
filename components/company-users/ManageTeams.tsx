@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { ThemeType } from '../../types';
 import { teamsAPI } from '../../services/api';
 import { useToast } from '@/contexts/ToastContext';
@@ -13,6 +13,7 @@ import {
   Trash2,
   Settings,
   User,
+  X,
   ChevronUp,
   ChevronDown,
   ChevronLeft,
@@ -36,8 +37,27 @@ interface CountryCode {
 const getFlagUrl = (countryCode: string) =>
   `https://flagcdn.com/w20/${countryCode.toLowerCase()}.png`;
 
+/** Resolve profile image URL - backend returns filename (e.g. 177307577119.jpg), build full storage URL */
+function resolveProfileImageUrl(value: string | null | undefined, fallbackName: string): string {
+  if (!value || typeof value !== 'string') {
+    return `https://ui-avatars.com/api/?name=${encodeURIComponent(fallbackName || '')}&background=6B8E23&color=fff&size=128`;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return `https://ui-avatars.com/api/?name=${encodeURIComponent(fallbackName || '')}&background=6B8E23&color=fff&size=128`;
+  }
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:')) {
+    return trimmed;
+  }
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging.koncite.com/api';
+  const storageBase = String(apiBase).replace(/\/api\/?$/, '');
+  const path = trimmed.startsWith('storage/') ? trimmed : trimmed.includes('/') ? `storage/${trimmed}` : `storage/profile_image/${trimmed}`;
+  return path.startsWith('/') ? `${storageBase}${path}` : `${storageBase}/${path}`;
+}
+
 interface UserData {
   id: string;
+  uuid?: string;
   profilePhoto: string;
   name: string;
   email: string;
@@ -57,7 +77,8 @@ interface ManageTeamsProps {
   theme: ThemeType;
 }
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
+const DEFAULT_PAGE_SIZE = 10;
 
 const ROLE_ID_TO_NAME: Record<string, string> = {
   '1': 'Super Admin',
@@ -69,9 +90,8 @@ const ROLE_ID_TO_NAME: Record<string, string> = {
 
 function mapApiStaffToUserData(apiUser: any): UserData {
   const id = String(apiUser.id ?? apiUser.uuid ?? '');
-  const profilePhoto = apiUser.profile_images
-    ? (String(apiUser.profile_images).startsWith('http') ? apiUser.profile_images : apiUser.profile_images)
-    : `https://ui-avatars.com/api/?name=${encodeURIComponent(apiUser.name || '')}&background=6B8E23&color=fff&size=128`;
+  const uuid = apiUser.uuid ? String(apiUser.uuid) : undefined;
+  const profilePhoto = resolveProfileImageUrl(apiUser.profile_images, apiUser.name || '');
   const rp = apiUser.reporting_person ?? apiUser.reportingPerson;
   const rpId = typeof rp === 'object' && rp ? (rp.id ?? null) : (rp || null);
   const rpIsObject = typeof rp === 'object' && rp;
@@ -85,6 +105,7 @@ function mapApiStaffToUserData(apiUser: any): UserData {
     'N/A';
   return {
     id,
+    uuid,
     profilePhoto,
     name: apiUser.name || '',
     email: apiUser.email || '',
@@ -110,6 +131,7 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [availableRoles, setAvailableRoles] = useState<Array<{ id: string; name: string }>>([]);
   const [formData, setFormData] = useState({
     name: '',
@@ -130,7 +152,18 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
   const [isLoadingCountryCodes, setIsLoadingCountryCodes] = useState(false);
   const [isCountryDropdownOpen, setIsCountryDropdownOpen] = useState(false);
   const [countrySearchQuery, setCountrySearchQuery] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const toast = useToast();
+
+  useEffect(() => {
+    if (formData.profile_images) {
+      const url = URL.createObjectURL(formData.profile_images);
+      setImagePreviewUrl(url);
+      return () => URL.revokeObjectURL(url);
+    }
+    setImagePreviewUrl(null);
+  }, [formData.profile_images]);
   const { user: currentUser } = useUser();
   
   const isDark = theme === 'dark';
@@ -381,15 +414,19 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
   }, [allUsers, searchQuery, sortConfig]);
 
   const paginatedUsers = useMemo(() => {
-    const start = (currentPage - 1) * PAGE_SIZE;
-    return filteredAndSortedUsers.slice(start, start + PAGE_SIZE);
-  }, [filteredAndSortedUsers, currentPage]);
+    const start = (currentPage - 1) * pageSize;
+    return filteredAndSortedUsers.slice(start, start + pageSize);
+  }, [filteredAndSortedUsers, currentPage, pageSize]);
 
-  const totalPages = Math.ceil(filteredAndSortedUsers.length / PAGE_SIZE);
+  const totalPages = Math.ceil(filteredAndSortedUsers.length / pageSize) || 1;
 
   useEffect(() => {
     setCurrentPage(1);
   }, [searchQuery]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [pageSize]);
 
   useEffect(() => {
     if (totalPages > 0 && currentPage > totalPages) {
@@ -409,15 +446,26 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
+    if (name === 'phone') {
+      const digitsOnly = value.replace(/\D/g, '').slice(0, 10);
+      setFormData({ ...formData, phone: digitsOnly });
+      return;
+    }
     setFormData({
       ...formData,
-      [e.target.name]: e.target.value
+      [name]: value
     });
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) setFormData({ ...formData, profile_images: file });
+  };
+
+  const handleClearImage = () => {
+    setFormData({ ...formData, profile_images: null });
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleCloseModal = () => {
@@ -467,6 +515,10 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
     if (!formData.email?.trim()) missing.push('Email');
     if (!formData.country_code) missing.push('Country code');
     if (!formData.phone?.trim()) missing.push('Phone');
+    else if (!/^\d{10}$/.test(formData.phone)) {
+      toast.showWarning('Phone must be exactly 10 digits (numbers only)');
+      return;
+    }
     if (!formData.address?.trim()) missing.push('Address');
     if (!formData.company_user_role) missing.push('Role');
     if (!formData.password?.trim()) missing.push('Password');
@@ -513,13 +565,14 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
     const user = allUsers.find(u => u.id === userId);
     if (user) {
       const roleMatch = availableRoles.find(r => r.name === user.roleType);
+      const phoneDigits = String(user.contactNumber || '').replace(/\D/g, '').slice(0, 10);
       setEditingUserId(userId);
       setFormData({
         name: user.name,
         email: user.email,
         country_code: user.country_code || '',
         country_code_iso: '', // API only has dial code; findCountryByDialCode will prefer US/CA for +1
-        phone: user.contactNumber,
+        phone: phoneDigits,
         address: user.address ?? '',
         company_user_role: roleMatch?.id ?? '',
         designation: user.roleType || '',
@@ -546,6 +599,10 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
     if (!formData.company_user_role) missing.push('Role');
     if (missing.length > 0) {
       toast.showWarning(`Required: ${missing.join(', ')}`);
+      return;
+    }
+    if (formData.phone && !/^\d{10}$/.test(formData.phone)) {
+      toast.showWarning('Phone must be exactly 10 digits (numbers only)');
       return;
     }
     if (formData.password && formData.password !== formData.confirmPassword) {
@@ -586,14 +643,14 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
       toast.showWarning('Cannot delete default user');
       return;
     }
+    setDeleteConfirmId(null);
     try {
       await teamsAPI.deleteStaff(userId);
       toast.showSuccess('User deleted successfully');
-      setUsers(prev => prev.filter(u => u.id !== userId));
+      await fetchStaffList();
     } catch (err: any) {
       toast.showError(err?.message || 'Failed to delete user');
     }
-    setDeleteConfirmId(null);
   };
 
   const handleToggleStatus = (userId: string) => {
@@ -781,14 +838,21 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
               </thead>
               <tbody className="divide-y divide-inherit">
                 {paginatedUsers.map((user, idx) => (
-                  <tr key={user.id} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
+                  <tr key={user.id} className={`${!user.status ? 'opacity-60' : ''} ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
-                      {(currentPage - 1) * PAGE_SIZE + idx + 1}
+                      {(currentPage - 1) * pageSize + idx + 1}
                     </td>
                     <td className="px-6 py-4">
                       <div className="w-10 h-10 rounded-full overflow-hidden bg-slate-200 dark:bg-slate-700 flex items-center justify-center">
                         {user.profilePhoto ? (
-                          <img src={user.profilePhoto} alt={user.name} className="w-full h-full object-cover" />
+                          <img
+                            src={user.profilePhoto}
+                            alt={user.name}
+                            className="w-full h-full object-cover"
+                            onError={(e) => {
+                              e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(user.name || '')}&background=6B8E23&color=fff&size=128`;
+                            }}
+                          />
                         ) : (
                           <User className={`w-5 h-5 ${textSecondary}`} />
                         )}
@@ -829,23 +893,26 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
                       </button>
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <div className="flex items-center justify-end gap-2">
+                      <div className={`flex items-center justify-end gap-2 ${!user.status ? 'pointer-events-none' : ''}`}>
                         <button
-                          onClick={() => handleEditUser(user.id)}
-                          className={`p-2 rounded-lg transition-colors ${isDark ? 'hover:bg-slate-700 text-blue-400' : 'hover:bg-slate-100 text-blue-600'}`}
+                          onClick={() => user.status && handleEditUser(user.id)}
+                          disabled={!user.status}
+                          className={`p-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isDark ? 'hover:bg-slate-700 text-blue-400' : 'hover:bg-slate-100 text-blue-600'}`}
                           title="Edit"
                         >
                           <Edit className="w-4 h-4" />
                         </button>
                         <button
-                          className={`p-2 rounded-lg transition-colors ${isDark ? 'hover:bg-slate-700 text-blue-400' : 'hover:bg-slate-100 text-blue-600'}`}
+                          disabled={!user.status}
+                          className={`p-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isDark ? 'hover:bg-slate-700 text-blue-400' : 'hover:bg-slate-100 text-blue-600'}`}
                           title="Settings"
                         >
                           <Settings className="w-4 h-4" />
                         </button>
                         <button
-                          onClick={() => setDeleteConfirmId(user.id)}
-                          className={`p-2 rounded-lg transition-colors ${isDark ? 'hover:bg-slate-700 text-red-400' : 'hover:bg-slate-100 text-red-600'}`}
+                          onClick={() => user.status && setDeleteConfirmId(user.id)}
+                          disabled={!user.status}
+                          className={`p-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isDark ? 'hover:bg-slate-700 text-red-400' : 'hover:bg-slate-100 text-red-600'}`}
                           title="Delete"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -857,11 +924,25 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
               </tbody>
             </table>
           </div>
-          {filteredAndSortedUsers.length > PAGE_SIZE && (
-            <div className={`flex items-center justify-between px-6 py-3 border-t border-inherit ${isDark ? 'bg-slate-800/30' : 'bg-slate-50/50'}`}>
-              <span className={`text-sm ${textSecondary}`}>
-                Showing {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, filteredAndSortedUsers.length)} of {filteredAndSortedUsers.length}
-              </span>
+          {filteredAndSortedUsers.length > 0 && (
+            <div className={`flex flex-wrap items-center justify-between gap-4 px-6 py-3 border-t border-inherit ${isDark ? 'bg-slate-800/30' : 'bg-slate-50/50'}`}>
+              <div className="flex items-center gap-4">
+                <span className={`text-sm ${textSecondary}`}>
+                  Showing {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, filteredAndSortedUsers.length)} of {filteredAndSortedUsers.length}
+                </span>
+                <div className="flex items-center gap-2">
+                  <span className={`text-sm ${textSecondary}`}>Rows per page:</span>
+                  <select
+                    value={pageSize}
+                    onChange={(e) => setPageSize(Number(e.target.value))}
+                    className={`text-sm rounded-lg border px-2 py-1 ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}
+                  >
+                    {PAGE_SIZE_OPTIONS.map((n) => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
               <div className="flex items-center gap-1">
                 <button
                   onClick={() => setCurrentPage(1)}
@@ -980,7 +1061,7 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
                               className="fixed inset-0 z-40"
                               onClick={() => { setIsCountryDropdownOpen(false); setCountrySearchQuery(''); }}
                             />
-                            <div className={`absolute top-full left-0 right-0 mt-1 z-[60] max-h-72 overflow-hidden ${isDark ? 'bg-slate-800' : 'bg-white'} border ${isDark ? 'border-slate-700' : 'border-slate-200'} rounded-lg shadow-xl flex flex-col`}>
+                            <div className={`absolute top-full left-0 right-0 mt-1 z-[60] max-h-72 overflow-hidden ${isDark ? 'bg-dropdown-panel' : 'bg-white'} border ${isDark ? 'border-slate-700' : 'border-slate-200'} rounded-lg shadow-xl flex flex-col`}>
                               <div className="p-2 border-b border-inherit flex-shrink-0">
                                 <div className="relative">
                                   <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
@@ -1049,8 +1130,12 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
                 <div>
                   <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Phone <span className="text-red-500">*</span></label>
                   <input type="tel" name="phone" value={formData.phone} onChange={handleInputChange}
+                    maxLength={10}
+                    inputMode="numeric"
+                    pattern="[0-9]*"
                     className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                    placeholder="Enter Phone" />
+                    placeholder="10 digits only" />
+                  <p className={`text-xs mt-1 ${textSecondary}`}>Numbers only, 10 digits</p>
                 </div>
                 <div>
                   <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Role <span className="text-red-500">*</span></label>
@@ -1083,8 +1168,11 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
                     <div>
                       <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Confirm Password <span className="text-red-500">*</span></label>
                       <input type="password" name="confirmPassword" value={formData.confirmPassword} onChange={handleInputChange}
-                        className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                        className={`w-full px-4 py-2 rounded-lg text-sm border ${formData.confirmPassword && formData.password !== formData.confirmPassword ? 'border-red-500' : ''} ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
                         placeholder="Confirm Password" />
+                      {formData.confirmPassword && formData.password !== formData.confirmPassword && (
+                        <p className="text-red-500 text-xs mt-1">Passwords do not match</p>
+                      )}
                     </div>
                   </>
                 )}
@@ -1099,8 +1187,11 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
                     <div>
                       <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Confirm New Password</label>
                       <input type="password" name="confirmPassword" value={formData.confirmPassword} onChange={handleInputChange}
-                        className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                        className={`w-full px-4 py-2 rounded-lg text-sm border ${formData.confirmPassword && formData.password !== formData.confirmPassword ? 'border-red-500' : ''} ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
                         placeholder="Required if changing password" />
+                      {formData.confirmPassword && formData.password !== formData.confirmPassword && (
+                        <p className="text-red-500 text-xs mt-1">Passwords do not match</p>
+                      )}
                     </div>
                   </>
                 )}
@@ -1114,8 +1205,34 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
               </div>
               <div>
                 <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Profile Photo (optional)</label>
-                <input type="file" accept="image/jpeg,image/jpg,image/png" onChange={handleFileChange}
-                  className={`w-full text-sm ${isDark ? 'text-slate-100' : 'text-slate-900'}`} />
+                {formData.profile_images && imagePreviewUrl ? (
+                  <div className="flex items-center gap-3">
+                    <div className="relative inline-block">
+                      <img
+                        src={imagePreviewUrl}
+                        alt="Preview"
+                        className="w-16 h-16 rounded-full object-cover border-2 border-slate-300"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleClearImage}
+                        className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center shadow-md"
+                        title="Remove image"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <span className={`text-sm ${textSecondary}`}>{formData.profile_images.name}</span>
+                  </div>
+                ) : (
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/jpg,image/png"
+                    onChange={handleFileChange}
+                    className={`w-full text-sm ${isDark ? 'text-slate-100' : 'text-slate-900'}`}
+                  />
+                )}
               </div>
             </div>
             <div className="p-6 border-t border-inherit flex items-center justify-end gap-3">

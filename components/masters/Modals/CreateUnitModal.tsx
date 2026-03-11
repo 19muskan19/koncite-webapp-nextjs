@@ -19,13 +19,15 @@ interface Unit {
   status?: 'Active' | 'Inactive';
 }
 
+type EditingUnitRow = { numericId?: number | string; unit: string; unit_coversion?: string; unit_coversion_factor?: string };
+
 interface CreateUnitModalProps {
   theme: ThemeType;
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
-  editingUnitId?: string | null; // UUID for GET /unit-edit/{uuid}
-  editingUnitNumericId?: string | number | null; // Numeric ID for POST /unit-add with updateId
+  /** When editing: array of all conversion rows for this unit (enables multi-row form like Create) */
+  editingUnitRows?: EditingUnitRow[] | null;
   existingUnits?: Array<{ id?: string; numericId?: number | string; uuid?: string; unit?: string; name?: string; unit_coversion?: string; conversion?: string; unit_coversion_factor?: string; factor?: string }>;
 }
 
@@ -34,17 +36,11 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
   isOpen,
   onClose,
   onSuccess,
-  editingUnitId = null,
-  editingUnitNumericId = null,
+  editingUnitRows = null,
   existingUnits = []
 }) => {
   const toast = useToast();
-  type UnitRow = { unit: string; unit_coversion: string; unit_coversion_factor: string };
-  const [formData, setFormData] = useState<UnitRow>({
-    unit: '',
-    unit_coversion: '',
-    unit_coversion_factor: ''
-  });
+  type UnitRow = { numericId?: number | string; unit: string; unit_coversion: string; unit_coversion_factor: string };
   const [rows, setRows] = useState<UnitRow[]>([{ unit: '', unit_coversion: '', unit_coversion_factor: '' }]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -54,58 +50,46 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
   const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
 
-  const isEditing = !!editingUnitId && !!editingUnitNumericId;
+  const isEditing = !!editingUnitRows && editingUnitRows.length > 0;
 
-  // Load unit data when editing
+  // Load unit rows when editing - use same multi-row form as Create
   useEffect(() => {
-    if (isOpen && editingUnitId) {
-      const loadUnitData = async () => {
-        try {
-          const unitData = await masterDataAPI.getUnit(editingUnitId);
-          setFormData({
-            unit: unitData.unit || unitData.name || '',
-            unit_coversion: unitData.unit_coversion || unitData.conversion || '',
-            unit_coversion_factor: unitData.unit_coversion_factor || unitData.factor || ''
-          });
-        } catch (error: any) {
-          console.error('Failed to load unit data:', error);
-          toast.showError('Failed to load unit data');
-        }
-      };
-      loadUnitData();
-    } else if (isOpen && !editingUnitId) {
-      setFormData({ unit: '', unit_coversion: '', unit_coversion_factor: '' });
+    if (isOpen && editingUnitRows && editingUnitRows.length > 0) {
+      const loadedRows: UnitRow[] = editingUnitRows.map((r) => ({
+        numericId: r.numericId,
+        unit: r.unit || '',
+        unit_coversion: r.unit_coversion || '',
+        unit_coversion_factor: r.unit_coversion_factor || ''
+      }));
+      setRows(loadedRows);
+    } else if (isOpen && !editingUnitRows) {
       setRows([{ unit: '', unit_coversion: '', unit_coversion_factor: '' }]);
     }
-  }, [isOpen, editingUnitId]);
+  }, [isOpen, editingUnitRows]);
 
   // Reset form when modal closes
   useEffect(() => {
     if (!isOpen) {
-      setFormData({ unit: '', unit_coversion: '', unit_coversion_factor: '' });
       setRows([{ unit: '', unit_coversion: '', unit_coversion_factor: '' }]);
       setIsSubmitting(false);
     }
   }, [isOpen]);
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value } = e.target;
-    setFormData({ ...formData, [name]: value });
-  };
 
   const handleRowChange = (index: number, field: keyof UnitRow, value: string) => {
     setRows(prev => prev.map((r, i) => i === index ? { ...r, [field]: value } : r));
   };
 
   const handleAddRow = () => {
-    setRows(prev => [...prev, { unit: '', unit_coversion: '', unit_coversion_factor: '' }]);
+    // Auto-populate Unit Name from first row when adding new conversion (e.g. SQM in row 1 → SQM in row 2)
+    const firstUnitName = rows.length > 0 ? rows[0].unit : '';
+    setRows(prev => [...prev, { unit: firstUnitName, unit_coversion: '', unit_coversion_factor: '' }]);
   };
 
   const handleRemoveRow = (index: number) => {
     setRows(prev => prev.filter((_, i) => i !== index));
   };
 
-  const validateRow = (row: UnitRow, rowIndex: number): boolean => {
+  const validateRow = (row: UnitRow, rowIndex: number, excludeNumericIds?: string[]): boolean => {
     if (!row.unit.trim()) {
       toast.showWarning(`Row ${rowIndex + 1}: Unit Name is required.`);
       return false;
@@ -118,6 +102,7 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
     const convTrim = (row.unit_coversion || '').trim().toLowerCase();
     const factorTrim = (row.unit_coversion_factor || '').trim();
     const isDuplicate = existingUnits.some((u) => {
+      if (excludeNumericIds?.length && excludeNumericIds.includes(String(u.numericId ?? u.id ?? ''))) return false;
       const uUnit = (u.unit || u.name || '').trim().toLowerCase();
       const uConv = (u.unit_coversion || u.conversion || '').trim().toLowerCase();
       const uFactor = (u.unit_coversion_factor || u.factor || '').trim();
@@ -131,32 +116,26 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
   };
 
   const validateForm = (): boolean => {
+    const validRows = rows.filter(r => r.unit.trim());
     if (isEditing) {
-      if (!formData.unit.trim()) {
-        toast.showWarning('Required field "Unit Name" is empty.');
+      if (validRows.length === 0) {
+        toast.showWarning('Add at least one unit with a name.');
         return false;
       }
-      if (formData.unit_coversion?.trim() && !(formData.unit_coversion_factor ?? '').trim()) {
-        toast.showWarning('Unit Conversion Factor is required when Unit Conversion is provided.');
-        return false;
-      }
-      const unitTrim = formData.unit.trim().toLowerCase();
-      const convTrim = (formData.unit_coversion || '').trim().toLowerCase();
-      const factorTrim = (formData.unit_coversion_factor || '').trim();
-      const isDuplicate = existingUnits.some((u) => {
-        if (String(u.numericId ?? u.id) === String(editingUnitNumericId)) return false;
-        const uUnit = (u.unit || u.name || '').trim().toLowerCase();
-        const uConv = (u.unit_coversion || u.conversion || '').trim().toLowerCase();
-        const uFactor = (u.unit_coversion_factor || u.factor || '').trim();
-        return uUnit === unitTrim && uConv === convTrim && uFactor === factorTrim;
-      });
-      if (isDuplicate) {
-        toast.showWarning('A unit with the same name, conversion, and factor already exists.');
-        return false;
+      const excludeIds = rows.filter((r) => r.numericId != null).map((r) => String(r.numericId));
+      const seen = new Set<string>();
+      for (let i = 0; i < validRows.length; i++) {
+        const idx = rows.findIndex(r => r === validRows[i]);
+        const key = `${validRows[i].unit.trim().toLowerCase()}|${(validRows[i].unit_coversion || '').trim().toLowerCase()}|${(validRows[i].unit_coversion_factor || '').trim()}`;
+        if (seen.has(key)) {
+          toast.showWarning(`Row ${idx + 1}: Duplicate unit (same name, conversion, and factor as another row).`);
+          return false;
+        }
+        seen.add(key);
+        if (!validateRow(validRows[i], idx, excludeIds)) return false;
       }
       return true;
     }
-    const validRows = rows.filter(r => r.unit.trim());
     if (validRows.length === 0) {
       toast.showWarning('Add at least one unit with a name.');
       return false;
@@ -180,19 +159,41 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
 
     setIsSubmitting(true);
     try {
-      if (isEditing && editingUnitNumericId) {
-        const payload: any = { unit: formData.unit.trim() };
-        if (formData.unit_coversion.trim()) {
-          payload.unit_coversion = formData.unit_coversion.trim();
-          payload.unit_coversion_factor = formData.unit_coversion_factor.trim();
+      const validRows = rows.filter(r => r.unit.trim());
+      if (isEditing && editingUnitRows && editingUnitRows.length > 0) {
+        const originalIds = new Set(editingUnitRows.map((r) => String(r.numericId ?? '')).filter(Boolean));
+        const currentIds = new Set(validRows.filter((r) => r.numericId != null).map((r) => String(r.numericId)));
+        const toDelete = [...originalIds].filter((id) => !currentIds.has(id));
+        const toUpdate = validRows.filter((r) => r.numericId != null);
+        const toCreate = validRows.filter((r) => r.numericId == null);
+
+        for (const id of toDelete) {
+          await masterDataAPI.deleteUnit(id);
         }
-        await masterDataAPI.updateUnit(String(editingUnitNumericId), payload);
+        for (const row of toUpdate) {
+          const payload: Record<string, any> = { unit: row.unit.trim() };
+          if (row.unit_coversion?.trim()) {
+            payload.unit_coversion = row.unit_coversion.trim();
+            payload.unit_coversion_factor = (row.unit_coversion_factor ?? '').trim();
+          }
+          await masterDataAPI.updateUnit(String(row.numericId), payload);
+        }
+        if (toCreate.length > 0) {
+          const bulkItems = toCreate.map((row) => {
+            const item: { unit: string; unit_coversion?: string; unit_coversion_factor?: string } = { unit: row.unit.trim() };
+            if (row.unit_coversion?.trim()) {
+              item.unit_coversion = row.unit_coversion.trim();
+              item.unit_coversion_factor = (row.unit_coversion_factor ?? '').trim();
+            }
+            return item;
+          });
+          await masterDataAPI.createUnitsBulk(bulkItems);
+        }
         toast.showSuccess('Unit updated successfully!');
         onSuccess?.();
         onClose();
       } else {
-        const validRows = rows.filter(r => r.unit.trim());
-        const bulkItems = validRows.map(row => {
+        const bulkItems = validRows.map((row) => {
           const item: { unit: string; unit_coversion?: string; unit_coversion_factor?: string } = { unit: row.unit.trim() };
           if (row.unit_coversion?.trim()) {
             item.unit_coversion = row.unit_coversion.trim();
@@ -236,32 +237,8 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
           </div>
         </div>
 
-        {/* Modal Body */}
+        {/* Modal Body - same multi-row form for both Create and Edit */}
         <div className="p-6">
-          {isEditing ? (
-            /* Single-row form for Edit */
-            <div className="space-y-6">
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Unit Name <span className="text-red-500">*</span></label>
-                <input type="text" name="unit" value={formData.unit} onChange={handleInputChange} placeholder="Enter unit name" disabled={isSubmitting}
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`} />
-              </div>
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Unit Conversion <span className="text-xs text-slate-500">(Optional)</span></label>
-                <select name="unit_coversion" value={formData.unit_coversion} onChange={(e) => setFormData({ ...formData, unit_coversion: e.target.value })} disabled={isSubmitting}
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold border appearance-none cursor-pointer pr-10 ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}>
-                  <option value="">-- Select Unit --</option>
-                  {['Bags', 'MT', 'Cft', 'Sft', 'Rft', 'Kgs', 'Ltr', 'Hrs', 'Day', 'Nos', 'Cum', 'Sqm', 'Rmt', 'Brass', 'Yard', 'Packet', 'LS', 'Bulk', 'Bundles'].map((u) => <option key={u} value={u}>{u}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Unit Conversion Factor <span className="text-xs text-slate-500">(Optional)</span></label>
-                <input type="text" name="unit_coversion_factor" value={formData.unit_coversion_factor} onChange={handleInputChange} placeholder="Enter conversion factor" disabled={isSubmitting}
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`} />
-              </div>
-            </div>
-          ) : (
-            /* Multi-row form for Create - add multiple units at once */
             <div className="space-y-4">
               {rows.length > 0 && (
                 <div className="grid grid-cols-12 gap-3 text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
@@ -333,7 +310,6 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
                 </button>
               </div>
             </div>
-          )}
         </div>
 
         {/* Modal Footer */}

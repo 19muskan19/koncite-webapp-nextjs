@@ -844,30 +844,16 @@ export const masterDataAPI = {
       const status = error.response?.status;
       const errData = error.response?.data ?? {};
       const backendMsg = errData?.message ?? errData?.error ?? errData?.exception ?? (typeof errData === 'string' ? errData : errData?.message);
-      const hasResponse = !!error.response;
-      console.error('❌ /project-subproject error:', {
-        hasResponse,
-        status: status ?? 'no response',
-        message: error.message ?? 'unknown',
-        backendMessage: backendMsg ?? 'none',
-        projectId,
-        code: error.code,
-        url: error.config?.url,
-      });
-      if (!hasResponse) {
-        console.error('❌ Likely network/CORS error - no response from server. Check API URL and connectivity.');
-      }
-      // Fallback: try /sub-project-list when /project-subproject fails (500, 404, or network error)
-      if (projectId != null && projectId !== '') {
-        const tryFallback = !error.response || error.response?.status === 500 || error.response?.status === 404;
-        if (tryFallback) {
-          console.warn('⚠️ Falling back to /sub-project-list');
-          try {
-            return await masterDataAPI.getSubprojects(projectId);
-          } catch (fallbackErr: any) {
-            console.error('❌ Fallback /sub-project-list failed:', fallbackErr?.message ?? fallbackErr?.response?.data ?? fallbackErr);
-          }
+      const tryFallback = projectId != null && projectId !== '' && (!error.response || error.response?.status === 500 || error.response?.status === 404);
+      if (tryFallback) {
+        try {
+          return await masterDataAPI.getSubprojects(projectId);
+        } catch (fallbackErr: any) {
+          const fallbackMsg = fallbackErr?.message ?? (typeof fallbackErr?.response?.data === 'string' ? fallbackErr.response.data : 'Unknown');
+          console.error('❌ /project-subproject and fallback failed:', String(fallbackMsg));
         }
+      } else {
+        console.error('❌ /project-subproject error:', `status=${status ?? 'none'}`, `msg=${String(error?.message ?? 'unknown')}`, `projectId=${projectId}`);
       }
       throw {
         message: backendMsg || error.response?.data?.message || 'Failed to fetch project subprojects',
@@ -1441,12 +1427,17 @@ export const masterDataAPI = {
       } as ApiError;
     }
   },
+  /**
+   * Available materials opening stock – GET/POST materials-available-opening-stock.
+   * Filters: project_id, store_id (both applied with AND when provided).
+   * Response: MaterialsAvailableOpeningStockResource[] with qty, material, project, store.
+   */
   getMaterialsOpeningList: async (projectId?: number | string, storeId?: number | string): Promise<any> => {
     try {
       const payload: Record<string, any> = {};
-      if (projectId) payload.projectId = projectId;
-      if (storeId) payload.storeId = storeId;
-      const response = await apiClient.post('/materials-opening-list', payload);
+      if (projectId) payload.project_id = projectId;
+      if (storeId) payload.store_id = storeId;
+      const response = await apiClient.post('/materials-available-opening-stock', payload);
       return response.data?.data ?? response.data ?? [];
     } catch (error: any) {
       throw {
@@ -1564,10 +1555,10 @@ export const masterDataAPI = {
   },
   /**
    * Labour bulk import: POST /api/labour-import
-   * File-based bulk upload (Excel/CSV). Max 10MB.
-   * Format: Row 1 headers - Code, Name, Category, Unit. Optional: uuid for updates.
+   * FormData: file (required). xlsx, xls, csv; max 10MB.
+   * Backend expects row 1 headers (e.g. Name, Category, Unit). Response: { data: { imported, total_rows, created, updated, message } }
    */
-  importLabour: async (file: File): Promise<{ status: boolean; data?: { imported?: boolean; total_rows?: number; created?: number; updated?: number; skipped?: number; message?: string } }> => {
+  importLabour: async (file: File): Promise<any> => {
     try {
       const formData = new FormData();
       formData.append('file', file);
@@ -2443,6 +2434,14 @@ export const masterDataAPI = {
       } as ApiError;
     }
   },
+  /**
+   * Bulk import assets/equipments/machinery via Excel/CSV
+   * POST /api/assets-import
+   * FormData: file (required), project (nullable), warehouses (nullable)
+   * File: xlsx, xls, csv; max 10MB
+   * Headers: Asset/Equipments/Machinery, Specification, Unit (optional UUID/ID for updates)
+   * Response: { data: { imported, total_rows, created, updated, skipped, message } }
+   */
   importAssetEquipment: async (file: File, project?: string, warehouses?: string): Promise<any> => {
     try {
       const formData = new FormData();
@@ -2454,8 +2453,9 @@ export const masterDataAPI = {
       });
       return response.data;
     } catch (error: any) {
+      const msg = error.response?.data?.message || 'Failed to import assets';
       throw {
-        message: error.response?.data?.message || 'Failed to import assets',
+        message: msg,
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
@@ -2463,8 +2463,10 @@ export const masterDataAPI = {
   /**
    * Bulk import assets opening stock via Excel/CSV
    * POST /api/assets-opening-stock-import
-   * FormData: file, project (ID), warehouses (store ID), opening_stock_date
-   * Excel format: Code | Opening Qty
+   * FormData: file (required), project (nullable), warehouses (nullable), opeing_stock_date/opening_stock_date (nullable)
+   * File: xlsx, xls, csv; max 10MB
+   * Excel format: Code | Opening Qty (row 1 = headers)
+   * Response: { data: { imported, total_rows, created, updated, failed, message } }
    */
   importAssetsOpeningStock: async (params: {
     file: File;
@@ -2475,11 +2477,11 @@ export const masterDataAPI = {
     try {
       const formData = new FormData();
       formData.append('file', params.file);
-      formData.append('project', String(params.project));
-      formData.append('warehouses', String(params.warehouses));
+      if (params.project) formData.append('project', String(params.project));
+      if (params.warehouses) formData.append('warehouses', String(params.warehouses));
       if (params.opening_stock_date) {
+        formData.append('opeing_stock_date', params.opening_stock_date);
         formData.append('opening_stock_date', params.opening_stock_date);
-        formData.append('opeing_stock_date', params.opening_stock_date); // API accepts both spellings
       }
       const response = await apiClient.post('/assets-opening-stock-import', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
@@ -2496,21 +2498,19 @@ export const masterDataAPI = {
     }
   },
   /**
-   * List assets opening stock by project and store
-   * POST /api/assets-opening-stock-list
-   * Payload: projectId, storeId (matches materials-opening-list pattern)
-   * Returns [] when endpoint not yet implemented (404)
+   * Available assets opening stock – GET/POST assets-available-opening-stock
+   * Filters: project_id, store_id (nullable; both applied with AND when provided)
+   * Response: AssetsOpeningStockResource[] with qty, asset, project, store
    */
   getAssetsOpeningStockList: async (projectId?: number | string, storeId?: number | string): Promise<any[]> => {
     try {
       const payload: Record<string, any> = {};
-      if (projectId != null && projectId !== '') payload.projectId = projectId;
-      if (storeId != null && storeId !== '') payload.storeId = storeId;
-      const response = await apiClient.post('/assets-opening-stock-list', payload);
+      if (projectId != null && projectId !== '') payload.project_id = projectId;
+      if (storeId != null && storeId !== '') payload.store_id = storeId;
+      const response = await apiClient.post('/assets-available-opening-stock', payload);
       const data = response.data?.data ?? response.data ?? [];
       return Array.isArray(data) ? data : [];
     } catch (error: any) {
-      if (error.response?.status === 404) return [];
       throw {
         message: error.response?.data?.message || 'Failed to fetch assets opening stock list',
         errors: error.response?.data?.errors || {},
@@ -3040,7 +3040,9 @@ export const dprAPI = {
   },
   dprHistoryEdit: async (data: { type: string; dprId: number }): Promise<any> => {
     try {
-      const response = await apiClient.post('/fetch-dpr-history-edit', data);
+      // Send both dprId and dpr_id for backend compatibility (Laravel may expect snake_case)
+      const payload = { ...data, dpr_id: data.dprId };
+      const response = await apiClient.post('/fetch-dpr-history-edit', payload);
       return response.data;
     } catch (error: any) {
       throw {
@@ -3581,10 +3583,9 @@ export const commonAPI = {
 };
 
 // Teams / Staff API - Admin > User Management > Teams (TeamsController)
-// Backend: teamsList, teamsAdd, edit, details, delete, search
+// Routes: teams-list, teams-add, teams-search, teams-edit/{uuid}, teams-details, teams-delete/{uuid}, teams-password-update/{uuid}, teams-chat
 export const teamsAPI = {
   /**
-   * Get staff/teams list
    * GET /teams-list -> teamsList()
    */
   getTeamsList: async (): Promise<any[]> => {
@@ -3601,7 +3602,6 @@ export const teamsAPI = {
   },
 
   /**
-   * Create or update staff
    * POST /teams-add -> teamsAdd()
    */
   createOrUpdateStaff: async (formData: FormData | Record<string, any>): Promise<any> => {
@@ -3617,40 +3617,8 @@ export const teamsAPI = {
   },
 
   /**
-   * Get staff by uuid
-   * GET /teams-edit/{uuid} -> edit()
-   */
-  getStaff: async (uuid: string): Promise<any> => {
-    try {
-      const response = await apiClient.get(`/teams-edit/${encodeURIComponent(uuid)}`);
-      return response.data?.data ?? response.data;
-    } catch (error: any) {
-      throw {
-        message: error.response?.data?.message || 'Failed to fetch staff',
-        errors: error.response?.data?.errors || {},
-      } as ApiError;
-    }
-  },
-
-  /**
-   * Delete staff
-   * DELETE /teams-delete/{uuid} -> delete()
-   */
-  deleteStaff: async (uuid: string): Promise<any> => {
-    try {
-      const response = await apiClient.delete(`/teams-delete/${encodeURIComponent(uuid)}`);
-      return response.data;
-    } catch (error: any) {
-      throw {
-        message: error.response?.data?.message || 'Failed to delete staff',
-        errors: error.response?.data?.errors || {},
-      } as ApiError;
-    }
-  },
-
-  /**
-   * Search staff
    * POST /teams-search -> search()
+   * Payload: { search_keyword?: string }
    */
   searchStaff: async (searchKeyword?: string): Promise<any[]> => {
     try {
@@ -3665,106 +3633,261 @@ export const teamsAPI = {
       } as ApiError;
     }
   },
-};
 
-// Material Request APIs - Inventory > Purchase Request
-// Backend routes: materials-request-list, materials-request-add, materials-request-edit,
-// materials-request-details-list, materials-request-details-add, materials-request-details-edit
-export const materialRequestAPI = {
-  /** POST /api/inventory/materials-request-add - Create (no id) or update (with id) Material Request header. Payload: { name, projects_id, sub_projects_id } */
-  add: async (data: { name?: string; projects_id: number | string; sub_projects_id?: number | string; id?: number | string; request_id?: string }): Promise<any> => {
+  /**
+   * GET /teams-edit/{uuid} -> edit()
+   * Note: Backend uses where('id', $uuid) - pass numeric id
+   */
+  getStaff: async (idOrUuid: string): Promise<any> => {
     try {
-      const response = await apiClient.post('/inventory/materials-request-add', data);
+      const response = await apiClient.get(`/teams-edit/${encodeURIComponent(idOrUuid)}`);
       return response.data?.data ?? response.data;
     } catch (error: any) {
       throw {
-        message: error.response?.data?.message || 'Failed to create material request',
+        message: error.response?.data?.message || 'Failed to fetch staff',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
   },
-  /** POST /api/inventory/materials-request-list - List Material Requests. Spec: POST with { projectId } for SubmitQuotes. */
+
+  /**
+   * POST /teams-details -> details()
+   * Payload: { details_search_id: string|number }
+   */
+  getStaffDetails: async (detailsSearchId: string | number): Promise<any> => {
+    try {
+      const response = await apiClient.post('/teams-details', { details_search_id: detailsSearchId });
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch staff details',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * DELETE /teams-delete/{uuid} -> delete()
+   * Note: Backend uses where('id', $uuid) - pass numeric id
+   * Request body: { id: string }
+   */
+  deleteStaff: async (id: string): Promise<any> => {
+    try {
+      const response = await apiClient.delete(`/teams-delete/${encodeURIComponent(id)}`, {
+        data: { id },
+      });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to delete staff',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * POST /teams-password-update/{uuid} -> teamsPasswordUpdate()
+   */
+  updatePassword: async (idOrUuid: string, passwordData: Record<string, any>): Promise<any> => {
+    try {
+      const response = await apiClient.post(`/teams-password-update/${encodeURIComponent(idOrUuid)}`, passwordData);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to update password',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * GET /teams-chat -> teamsChat()
+   */
+  getTeamsChat: async (): Promise<any> => {
+    try {
+      const response = await apiClient.get('/teams-chat');
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch teams chat',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
+// Material Request APIs - Inventory > Purchase Request
+// Backend: materials-request-list (GET/POST), materials-request-add (POST), materials-request-edit (POST)
+// MaterialRequestController: add(), index(), edit()
+export const materialRequestAPI = {
+  /**
+   * POST /inventory/materials-request-add
+   * Create: { projects_id, sub_projects_id? } — backend sets name, date, company_id, user_id, status
+   * Update: { id, projects_id, sub_projects_id? }
+   * Response: { status, message, data: MaterialRequest } — extract data.id for new MR
+   */
+  add: async (data: { projects_id: number | string; sub_projects_id?: number | string; id?: number | string }): Promise<any> => {
+    try {
+      const payload: Record<string, unknown> = {
+        projects_id: data.projects_id,
+        ...(data.sub_projects_id != null && { sub_projects_id: data.sub_projects_id }),
+        ...(data.id != null && { id: data.id }),
+      };
+      const response = await apiClient.post('/inventory/materials-request-add', payload);
+      if (response.data?.status === false || response.data?.success === false) {
+        throw new Error(response.data?.message || 'Material request creation failed');
+      }
+      const result = response.data?.data ?? response.data;
+      return result;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to create material request',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /**
+   * GET/POST /inventory/materials-request-list
+   * GET: no params. POST: { projectId, subprojectId? } — backend filters by projects_id, sub_projects_id
+   * Response: { status, message, data: MaterialRequest[] }
+   */
   list: async (filters?: { projectId?: number | string; subprojectId?: number | string }): Promise<any[]> => {
     try {
       let response;
-      if (filters?.subprojectId) {
-        response = await apiClient.post('/inventory/materials-request-list', {
-          projectId: filters.projectId,
-          subprojectId: filters.subprojectId,
-        });
-      } else if (filters?.projectId) {
-        response = await apiClient.post('/inventory/materials-request-list', { projectId: filters.projectId });
+      if (filters?.projectId != null || filters?.subprojectId != null) {
+        const body: Record<string, number | string> = {};
+        if (filters.projectId != null) body.projectId = filters.projectId;
+        if (filters.subprojectId != null) body.subprojectId = filters.subprojectId;
+        response = await apiClient.post('/inventory/materials-request-list', body);
       } else {
         response = await apiClient.get('/inventory/materials-request-list');
+      }
+      if (response.data?.status === false || response.data?.success === false) {
+        throw new Error(response.data?.message || 'Failed to fetch material requests');
       }
       const data = response.data?.data ?? response.data;
       return Array.isArray(data) ? data : [];
     } catch (error: any) {
       throw {
-        message: error.response?.data?.message || 'Failed to fetch material requests',
+        message: error.response?.data?.message || error.message || 'Failed to fetch material requests',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
   },
-  /** POST /api/inventory/materials-request-edit - Get Material Request details for edit */
+  /**
+   * POST /inventory/materials-request-edit
+   * Payload: { id } — Material Request id
+   * Response: { status, message, data: MaterialRequestDetails[] } — array of line items for edit
+   */
   edit: async (id: number | string): Promise<any> => {
     try {
       const response = await apiClient.post('/inventory/materials-request-edit', { id });
-      return response.data?.data ?? response.data;
+      if (response.data?.status === false || response.data?.success === false) {
+        throw new Error(response.data?.message || 'Failed to fetch material request');
+      }
+      const result = response.data?.data ?? response.data;
+      return Array.isArray(result) ? result : (result && typeof result === 'object' ? [result] : []);
     } catch (error: any) {
       throw {
-        message: error.response?.data?.message || 'Failed to fetch material request',
+        message: error.response?.data?.message || error.message || 'Failed to fetch material request',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
   },
-  /** POST /api/inventory/materials-request-details-add - Add/update Material Request line items in bulk */
+  /**
+   * POST /inventory/materials-request-details-list
+   * MaterialRequestDetailsController::index
+   * Payload: { projectId (required), searchkey? }
+   * Response: { status, message, data: MaterialRequestDetails[] }
+   */
+  detailsList: async (projectId: number | string, searchkey?: string): Promise<any[]> => {
+    try {
+      const body: Record<string, unknown> = { projectId };
+      if (searchkey != null && searchkey !== '') body.searchkey = searchkey;
+      const response = await apiClient.post('/inventory/materials-request-details-list', body);
+      if (response.data?.status === false || response.data?.success === false) {
+        throw new Error(response.data?.message || 'Failed to fetch material request details');
+      }
+      const data = response.data?.data ?? response.data;
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to fetch material request details',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /**
+   * POST /inventory/materials-request-details-add
+   * MaterialRequestDetailsController::add
+   * Payload: Array of { projects_id, qty, inventoryId, material_id?, sub_projects_id?, activities_id?, date?, remarks? }
+   * - inventoryId → material_requests_id (updateOrCreate criteria)
+   * - Backend updateOrCreate by (materials_id, material_requests_id)
+   */
   detailsAdd: async (items: Array<{
-    inventoryId: number | string;
-    material_id: number | string;
     projects_id: number | string;
     qty: number;
+    inventoryId: number | string;
+    material_id?: number | string;
     sub_projects_id?: number | string;
     activities_id?: number | string;
     date?: string;
     remarks?: string;
   }>): Promise<any> => {
     try {
-      const response = await apiClient.post('/inventory/materials-request-details-add', items);
+      if (!items || items.length === 0) {
+        throw new Error('No items to add');
+      }
+      const payload = items.map((it) => ({
+        projects_id: it.projects_id,
+        qty: it.qty,
+        inventoryId: it.inventoryId,
+        ...(it.material_id != null && { material_id: it.material_id }),
+        ...(it.sub_projects_id != null && { sub_projects_id: it.sub_projects_id }),
+        ...(it.activities_id != null && { activities_id: it.activities_id }),
+        ...(it.date != null && it.date !== '' && { date: it.date }),
+        ...(it.remarks != null && it.remarks !== '' && { remarks: it.remarks }),
+      }));
+      const response = await apiClient.post('/inventory/materials-request-details-add', payload);
+      if (response.data?.status === false || response.data?.success === false) {
+        throw new Error(response.data?.message || 'Failed to add material request details');
+      }
       return response.data?.data ?? response.data;
     } catch (error: any) {
       throw {
-        message: error.response?.data?.message || 'Failed to add material request details',
+        message: error.response?.data?.message || error.message || 'Failed to add material request details',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
   },
-  /** POST /api/inventory/materials-request-details-list - List details by projectId (optional searchkey). Filter by material_requests_id on frontend. */
-  detailsList: async (projectId: number | string, searchkey?: string): Promise<any[]> => {
+  /**
+   * POST /inventory/materials-request-details-edit
+   * MaterialRequestDetailsController::edit
+   * Payload: { inventoryId, inventory_id, materials, projectId?, project_id? }
+   * Backend expects: materials (array), inventoryId — projectId optional if backend filters by project
+   */
+  detailsEdit: async (inventoryId: number | string, materials: (number | string)[], projectId?: number | string): Promise<any> => {
     try {
-      const body: Record<string, any> = { projectId };
-      if (searchkey) body.searchkey = searchkey;
-      const response = await apiClient.post('/inventory/materials-request-details-list', body);
-      const data = response.data?.data ?? response.data;
-      return Array.isArray(data) ? data : [];
-    } catch (error: any) {
-      throw {
-        message: error.response?.data?.message || 'Failed to fetch material request details',
-        errors: error.response?.data?.errors || {},
-      } as ApiError;
-    }
-  },
-  /** POST /api/inventory/materials-request-details-edit - Get materials with existing details for edit. Backend expects inventoryId, materials[]. */
-  detailsEdit: async (inventoryId: number | string, materials: (number | string)[]): Promise<any> => {
-    try {
-      const response = await apiClient.post('/inventory/materials-request-details-edit', {
+      const materialsArr = Array.isArray(materials) && materials.length > 0 ? materials : [];
+      if (materialsArr.length === 0) return [];
+      const payload: Record<string, unknown> = {
         inventoryId,
-        materials,
-      });
-      return response.data?.data ?? response.data;
+        inventory_id: inventoryId,
+        materials: materialsArr,
+      };
+      if (projectId != null && projectId !== '') {
+        payload.projectId = projectId;
+        payload.project_id = projectId;
+      }
+      const response = await apiClient.post('/inventory/materials-request-details-edit', payload);
+      if (response.data?.success === false || response.data?.status === false) {
+        throw new Error(response.data?.message || 'Failed to fetch material request details for edit');
+      }
+      const data = response.data?.data ?? response.data;
+      return Array.isArray(data) ? data : (data ? [data] : []);
     } catch (error: any) {
       throw {
-        message: error.response?.data?.message || 'Failed to fetch material request details for edit',
+        message: error.response?.data?.message || error.message || 'Failed to fetch material request details for edit',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
@@ -3802,29 +3925,46 @@ export const materialRequestAPI = {
   },
 };
 
-// RFQ (Request for Quotation) APIs - Inventory > RFQ flow per spec
+// RFQ (Request for Quotation) APIs - QuotesDetailsController
+// Routes: quote-details-list, quote-details-add, quote-details-edit, material-request-send-to-vendor
 export const rfqAPI = {
-  /** GET /inventory/quote-details-list - List quotes for RFQ list */
-  list: async (filters?: { projectId?: number | string }): Promise<any[]> => {
+  /**
+   * GET /inventory/quote-details-list
+   * QuotesDetailsController::index - no params, returns Quote[] (last 15 days)
+   * Response: { status, message, data: Quote[] }
+   */
+  list: async (_filters?: { projectId?: number | string }): Promise<any[]> => {
     try {
-      const params = filters?.projectId ? { projectId: filters.projectId } : {};
-      const response = await apiClient.get('/inventory/quote-details-list', { params });
+      const response = await apiClient.get('/inventory/quote-details-list');
+      if (response.data?.status === false || response.data?.success === false) {
+        throw new Error(response.data?.message || 'Failed to fetch quote list');
+      }
       const data = response.data?.data ?? response.data;
       return Array.isArray(data) ? data : [];
     } catch (error: any) {
       if (error?.response?.status === 404) return [];
       try {
-        return await materialRequestAPI.list(filters);
+        return await materialRequestAPI.list(_filters);
       } catch {
         return [];
       }
     }
   },
-  /** POST /inventory/quote-details-edit - Load quote for edit */
-  get: async (id: number | string): Promise<any> => {
+  /**
+   * POST /inventory/quote-details-edit
+   * QuotesDetailsController::edit - Load quote with details for edit
+   * Payload: { quotesId } — backend only uses quotesId
+   * Response: { status, message, data: { flage, vendor_data, data } }
+   */
+  get: async (id: number | string, _projectsId?: number | string): Promise<any> => {
     try {
-      const response = await apiClient.post('/inventory/quote-details-edit', { quotesId: id });
-      return response.data?.data ?? response.data;
+      const payload = { quotesId: id };
+      const response = await apiClient.post('/inventory/quote-details-edit', payload);
+      if (response.data?.status === false || response.data?.success === false) {
+        throw new Error(response.data?.message || 'Failed to load RFQ');
+      }
+      const result = response.data?.data ?? response.data;
+      return result;
     } catch (error: any) {
       try {
         return await materialRequestAPI.edit(id);
@@ -3842,13 +3982,33 @@ export const rfqAPI = {
       throw { message: error.response?.data?.message || 'Failed to create quote', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
-  /** POST /inventory/quote-details-add - Add quote details (image path or materials) */
-  quoteDetailsAdd: async (details: FormData | Record<string, any>[]): Promise<any> => {
+  /**
+   * POST /inventory/quote-details-add
+   * QuotesDetailsController::add
+   * Two paths:
+   * A) Image: FormData with img, quotes_id, date, remarkes, id? (for update)
+   * B) Materials: Array of { quotes_id, materials, material_requests_id, material_request_details_id?, date, qty, request_qty, price, id? }
+   * Response: { status, message, data } — single model (image) or array (materials)
+   */
+  quoteDetailsAdd: async (details: FormData | Array<{
+    quotes_id: number | string;
+    materials: number | string;
+    material_requests_id?: number | string;
+    material_request_details_id?: number | string;
+    date: string;
+    qty: number | string;
+    request_qty: number | string;
+    price?: number | string;
+    id?: number | string;
+  }>): Promise<any> => {
     if (details instanceof FormData) {
       try {
         const response = await apiClient.post('/inventory/quote-details-add', details, {
           headers: { 'Content-Type': 'multipart/form-data' },
         });
+        if (response.data?.status === false || response.data?.success === false) {
+          throw new Error(response.data?.message || 'Failed to add quote details');
+        }
         return response.data?.data ?? response.data;
       } catch (error: any) {
         const data = error?.response?.data;
@@ -3856,58 +4016,33 @@ export const rfqAPI = {
         throw { message: msg, response: error?.response, errors: data?.errors || {} } as ApiError;
       }
     }
-    let lastError: any;
-    const bodyAttempts = [
-      details,
-      { data: details },
-      { quote_details: details },
-      { details },
-      { items: details },
-    ];
-    for (const body of bodyAttempts) {
-      try {
-        const response = await apiClient.post('/inventory/quote-details-add', body);
-        return response.data?.data ?? response.data;
-      } catch (error: any) {
-        lastError = error;
-      }
+    if (!Array.isArray(details) || details.length === 0) {
+      throw { message: 'No quote details to add', errors: {} } as ApiError;
     }
-    // Fallback: try adding one item at a time (some backends accept only single item)
-    if (Array.isArray(details) && details.length > 0) {
-      const results: any[] = [];
-      for (const item of details) {
-        try {
-          const response = await apiClient.post('/inventory/quote-details-add', item);
-          const r = response.data?.data ?? response.data;
-          results.push(Array.isArray(r) ? r[0] : r);
-        } catch (_) {
-          try {
-            const response = await apiClient.post('/inventory/quote-details-add', { data: [item] });
-            const r = response.data?.data ?? response.data;
-            results.push(Array.isArray(r) ? r[0] : r);
-          } catch (e2: any) {
-            lastError = e2;
-            break;
-          }
-        }
+    try {
+      const response = await apiClient.post('/inventory/quote-details-add', details);
+      if (response.data?.status === false || response.data?.success === false) {
+        throw new Error(response.data?.message || 'Failed to add quote details');
       }
-      if (results.length === details.length) return results;
+      const result = response.data?.data ?? response.data;
+      return Array.isArray(result) ? result : (result ? [result] : []);
+    } catch (error: any) {
+      const data = error?.response?.data;
+      const msg = typeof data === 'object' ? (data?.message ?? data?.error ?? 'Failed to add quote details') : 'Failed to add quote details';
+      const errList = data?.errors;
+      const errStr = errList && typeof errList === 'object' ? Object.entries(errList).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`).join('; ') : '';
+      throw { message: errStr ? `${msg} ${errStr}` : msg, response: error?.response, errors: data?.errors || {} } as ApiError;
     }
-    const data = lastError?.response?.data;
-    const msg = typeof data === 'object' ? (data?.message ?? data?.error ?? 'Failed to add quote details') : 'Failed to add quote details';
-    const errList = data?.errors;
-    const errStr = errList && typeof errList === 'object' ? Object.entries(errList).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`).join('; ') : '';
-    throw { message: errStr ? `${msg} ${errStr}` : msg, response: lastError?.response, errors: data?.errors || {} } as ApiError;
   },
-  /** POST /inventory/materials-request-no-wise-materials-list - Materials for selected PR */
-  getMaterialsByRequestNo: async (requestNo: string | number, materialRequestsId?: string | number): Promise<any[]> => {
+  /** POST /inventory/materials-request-no-wise-materials-list - Materials for selected request
+   * Backend uses only request_no. projectId optional for filtering.
+   */
+  getMaterialsByRequestNo: async (requestNo: string | number, _materialRequestsId?: string | number, projectId?: number | string): Promise<any[]> => {
     try {
       const reqNo = requestNo == null || String(requestNo).trim() === '' ? undefined : requestNo;
-      const mrId = materialRequestsId != null && String(materialRequestsId).trim() !== '' ? materialRequestsId : undefined;
-      if (!reqNo && !mrId) return [];
-      const payload: Record<string, unknown> = {};
-      if (reqNo) payload.request_no = reqNo;
-      if (mrId) payload.material_requests_id = mrId;
+      if (!reqNo) return [];
+      const payload: Record<string, unknown> = { request_no: reqNo };
+      if (projectId != null && projectId !== '') payload.projectId = projectId;
       const response = await apiClient.post('/inventory/materials-request-no-wise-materials-list', payload);
       const raw = response.data?.data ?? response.data;
       const arr = Array.isArray(raw) ? raw
@@ -3922,10 +4057,12 @@ export const rfqAPI = {
       return [];
     }
   },
-  /** POST /inventory/project-to-store-list - Project/quote context (type: quote) */
-  projectToStoreList: async (projectId: number | string, type = 'quote'): Promise<any> => {
+  /** POST /inventory/project-to-store-list - Project/quote context (type: quotes, project_id, store_id, request_id) */
+  projectToStoreList: async (projectId: number | string, type = 'quotes', requestId?: number | string): Promise<any> => {
     try {
-      const response = await apiClient.post('/inventory/project-to-store-list', { type, project_id: projectId, store_id: [] });
+      const payload: Record<string, unknown> = { type, project_id: projectId, store_id: [] };
+      if (requestId != null && requestId !== '') payload.request_id = requestId;
+      const response = await apiClient.post('/inventory/project-to-store-list', payload);
       return response.data?.data ?? response.data;
     } catch {
       return null;
@@ -3947,12 +4084,12 @@ export const rfqAPI = {
     if (!quoteId) throw new Error('No quote ID returned');
     return { id: quoteId, uuid: quoteId };
   },
-  /** Get quote details - uses quote-details-edit or materials-request-edit fallback */
-  getQuoteDetails: async (rfqId: number | string): Promise<any[]> => {
+  /** Get quote details - uses quote-details-edit (requires projects_id) or materials-request-edit fallback */
+  getQuoteDetails: async (rfqId: number | string, projectsId?: number | string): Promise<any[]> => {
     try {
-      const resp = await rfqAPI.get(rfqId);
+      const resp = await rfqAPI.get(rfqId, projectsId);
       const details = resp?.details ?? resp?.quote_details ?? (Array.isArray(resp) ? resp : resp?.data ?? []);
-      return Array.isArray(details) ? details : [];
+      return Array.isArray(details) ? details : (details && typeof details === 'object' ? [details] : []);
     } catch {
       return [];
     }
@@ -3965,33 +4102,38 @@ export const rfqAPI = {
       return [];
     }
   },
-  /** POST /inventory/material-request-send-to-vendor - Send RFQ to vendors */
+  /**
+   * POST /inventory/material-request-send-to-vendor
+   * QuotesDetailsController::materialrequestSendToVendor
+   * Payload: { type (0|1), vendor_id (array), quotes_id (array), quotes_details_id?, material_request_details_id?, materials_id? }
+   * type 0 = materials path, type 1 = image path
+   * Response: { status, message, data }
+   */
   sendToVendors: async (
     rfqId: number | string,
     vendorIds: (number | string)[],
     options?: { type?: 0 | 1; quotesDetailsId?: (number | string)[]; materialRequestDetailsId?: (number | string)[]; materialRequestsId?: (number | string)[]; materialsId?: (number | string)[] }
   ): Promise<any> => {
     try {
-      const isImagePath = (options?.type ?? 1) === 1;
+      const type = options?.type ?? 1;
       const payload: Record<string, unknown> = {
-        type: options?.type ?? 1,
+        type,
         vendor_id: vendorIds,
         quotes_id: [rfqId],
       };
-      if (isImagePath) {
-        payload.quotes_details_id = null;
-        payload.material_request_details_id = null;
-        payload.material_requests_id = null;
-        payload.materials_id = null;
+      if (type === 0 && options) {
+        if (options.quotesDetailsId?.length) payload.quotes_details_id = options.quotesDetailsId;
+        if (options.materialRequestDetailsId?.length) payload.material_request_details_id = options.materialRequestDetailsId;
+        if (options.materialRequestsId?.length) payload.material_requests_id = options.materialRequestsId;
+        if (options.materialsId?.length) payload.materials_id = options.materialsId;
       }
-      if (options?.quotesDetailsId) payload.quotes_details_id = options.quotesDetailsId;
-      if (options?.materialRequestDetailsId) payload.material_request_details_id = options.materialRequestDetailsId;
-      if (options?.materialRequestsId) payload.material_requests_id = options.materialRequestsId;
-      if (options?.materialsId) payload.materials_id = options.materialsId;
       const response = await apiClient.post('/inventory/material-request-send-to-vendor', payload);
+      if (response.data?.status === false || response.data?.success === false) {
+        throw new Error(response.data?.message || 'Failed to send to vendors');
+      }
       return response.data?.data ?? response.data;
     } catch (error: any) {
-      throw { message: error.response?.data?.message || 'Failed to send to vendors', errors: error.response?.data?.errors || {} } as ApiError;
+      throw { message: error.response?.data?.message || error.message || 'Failed to send to vendors', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
   /**
@@ -4039,13 +4181,41 @@ export const rfqAPI = {
       } as ApiError;
     }
   },
-  /** Generate RFQ PDF - inventory/generate-pdf with type: quotes (image path) */
-  generatePdf: async (rfqId: number | string): Promise<{ pdf_url: string; name?: string }> => {
+  /** Generate RFQ PDF - inventory/generate-pdf with type: quotes. Optional quotes_details to fill Code, Name, Specification, Units when backend returns materials: null. */
+  generatePdf: async (
+    rfqId: number | string,
+    quotesDetails?: Array<{
+      id?: number | string;
+      materials_id?: number | string;
+      materialCode?: string;
+      materialName?: string;
+      materialSpec?: string;
+      materialUnit?: string;
+      qty?: number | string;
+      request_qty?: number | string;
+      date?: string;
+      price?: number | string;
+    }>
+  ): Promise<{ pdf_url: string; name?: string }> => {
     try {
-      const response = await apiClient.post('/inventory/generate-pdf', {
-        requestId: rfqId,
-        type: 'quotes',
-      });
+      const payload: Record<string, unknown> = { requestId: rfqId, type: 'quotes' };
+      if (quotesDetails != null && quotesDetails.length > 0) {
+        payload.quotes_details = quotesDetails.map((d) => ({
+          id: d.id,
+          materials_id: d.materials_id,
+          materials: {
+            code: d.materialCode ?? '',
+            name: d.materialName ?? '',
+            specification: d.materialSpec ?? '',
+            unit: d.materialUnit ?? '',
+          },
+          qty: d.qty ?? d.request_qty,
+          request_qty: d.request_qty ?? d.qty,
+          date: d.date,
+          price: d.price,
+        }));
+      }
+      const response = await apiClient.post('/inventory/generate-pdf', payload);
       const data = response.data?.data ?? response.data;
       return { pdf_url: data?.pdf_url ?? data?.url ?? response.data?.pdf_url ?? '', name: data?.name };
     } catch (error: any) {
@@ -4465,10 +4635,37 @@ export const goodsReceiptAPI = {
       throw { message: error.response?.data?.message || 'Failed to update inward details', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
-  /** POST /api/inventory/generate-pdf - Generate Inward PDF. Body: { type: 'inward', requestId } (inv_inwards.id). Returns { pdf_url, name, data, message }. */
-  generatePdf: async (requestId: number | string): Promise<{ pdf_url: string; name?: string }> => {
+  /** POST /api/inventory/generate-pdf - Generate Inward PDF. Body: { type: 'inward', requestId } (inv_inwards.id). Optional inward_details to avoid null->code when relations are missing. */
+  generatePdf: async (
+    requestId: number | string,
+    inwardDetails?: Array<{
+      id?: number | string;
+      materials_id?: number | string;
+      materialCode?: string;
+      materialName?: string;
+      materialSpec?: string;
+      materialUnit?: string;
+      recipt_qty?: number | string;
+      reject_qty?: number | string;
+    }>
+  ): Promise<{ pdf_url: string; name?: string }> => {
     try {
-      const response = await apiClient.post('/inventory/generate-pdf', { type: 'inward', requestId });
+      const payload: Record<string, unknown> = { type: 'inward', requestId };
+      if (inwardDetails != null && inwardDetails.length > 0) {
+        payload.inward_details = inwardDetails.map((d) => ({
+          id: d.id,
+          materials_id: d.materials_id,
+          materials: {
+            code: d.materialCode ?? '',
+            name: d.materialName ?? '',
+            specification: d.materialSpec ?? '',
+            unit: d.materialUnit ?? '',
+          },
+          recipt_qty: d.recipt_qty,
+          reject_qty: d.reject_qty,
+        }));
+      }
+      const response = await apiClient.post('/inventory/generate-pdf', payload);
       const data = response.data?.data ?? response.data;
       const pdfUrl = response.data?.pdf_url ?? data?.pdf_url;
       if (!pdfUrl) throw new Error('No PDF URL in response');

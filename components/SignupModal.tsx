@@ -629,7 +629,7 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
                           className="fixed inset-0 z-40" 
                           onClick={() => { setIsCountryDropdownOpen(false); setCountrySearchQuery(''); }}
                         />
-                        <div className={`absolute top-full left-0 mt-1 z-[60] w-[min(90vw,288px)] max-h-72 overflow-hidden ${inputBg} border ${borderClass} rounded-lg shadow-xl flex flex-col`}>
+                        <div className={`absolute top-full left-0 mt-1 z-[60] w-[min(90vw,288px)] max-h-72 overflow-hidden ${isDark ? 'bg-dropdown-panel' : inputBg} border ${borderClass} rounded-lg shadow-xl flex flex-col`}>
                           {countryCodes.length > 0 ? (
                             <>
                               <div className="p-2 border-b border-inherit flex-shrink-0">

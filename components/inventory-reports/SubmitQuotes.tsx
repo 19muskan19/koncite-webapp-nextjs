@@ -107,18 +107,27 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
     if (mode === 'edit' && editId) {
       setIsLoading(true);
       const hasUrlMrParams = Boolean(urlMrId || urlMrRequestNo);
-      rfqAPI.get(editId).then((data) => {
+      const projectsIdForEdit = getProjectsIdForApi() ?? pid ?? projectNumericId;
+      rfqAPI.get(editId, projectsIdForEdit ?? undefined).then((data) => {
         setRfqData(data);
         const projId = data?.projects_id;
         const projectIdVal = typeof projId === 'object' ? (projId?.id ?? projId?.uuid) : projId;
         const projectNameVal = typeof projId === 'object' ? (projId?.project_name ?? projId?.name) : (data?.project_name ?? 'Project');
+        // Never use editId (quotesId) as project id — use projects_id from response or URL params only
+        const resolvedProjectId = projectIdVal ?? projectsIdForEdit ?? pid ?? projectNumericId ?? '';
         setProject({
-          id: String(projectIdVal ?? editId),
+          id: String(resolvedProjectId),
           name: projectNameVal || 'Project'
         });
         if (!hasUrlMrParams) {
-          setSelectedMrId(data?.material_requests_id ? String(data.material_requests_id) : String(editId));
-          setSelectedMrRequestNo(data?.request_no ?? null);
+          // Extract MR id from response - support multiple API response shapes
+          const mrIdRaw = data?.material_requests_id ?? data?.material_request_id
+            ?? (typeof data?.material_requests === 'object' && data?.material_requests != null ? (data.material_requests as any)?.id : undefined)
+            ?? data?.data?.material_requests_id ?? data?.data?.material_request_id
+            ?? (Array.isArray(data?.quotesdetails) && (data.quotesdetails as any[])[0] ? ((data.quotesdetails as any[])[0].material_requests_id ?? (data.quotesdetails as any[])[0].material_request_id) : undefined)
+            ?? (Array.isArray(data?.quotes_details) && (data.quotes_details as any[])[0] ? ((data.quotes_details as any[])[0].material_requests_id ?? (data.quotes_details as any[])[0].material_request_id) : undefined);
+          setSelectedMrId(mrIdRaw != null && mrIdRaw !== '' ? String(mrIdRaw) : null);
+          setSelectedMrRequestNo(data?.request_no ?? data?.data?.request_no ?? null);
         }
         setMessage(data?.message ?? data?.remarkes ?? '');
         setQuoteImage(data?.image_url ?? null);
@@ -133,22 +142,83 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
     } else {
       setIsLoading(false);
     }
-  }, [mode, editId, pid, projectName, urlMrId, urlMrRequestNo]);
+  }, [mode, editId, pid, projectName, projectNumericId, urlMrId, urlMrRequestNo]);
 
   /** Fetch MR list + project context on SubmitQuotes load: materials-request-list, project-to-store-list */
   useEffect(() => {
     const projectIdToUse = getProjectsIdForApi() ?? pid ?? (mode === 'edit' && project?.id) ?? undefined;
     if (!projectIdToUse) return;
     materialRequestAPI.list({ projectId: projectIdToUse }).then(setMaterialRequests).catch(() => setMaterialRequests([]));
-    rfqAPI.projectToStoreList(projectIdToUse, 'quote').catch(() => null);
-  }, [pid, mode, project?.id, projectNumericId]);
+    rfqAPI.projectToStoreList(projectIdToUse, 'quotes', editId ?? rfqId ?? undefined).catch(() => null);
+  }, [pid, mode, project?.id, projectNumericId, editId, rfqId]);
 
   useEffect(() => {
     if (step === 'quotesDetails' && (selectedMrId || selectedMrRequestNo || urlMrId || urlMrRequestNo || rfqId || editId)) {
-      const requestNo = selectedMrRequestNo ?? selectedMrId ?? urlMrRequestNo ?? urlMrId;
       const mrId = selectedMrId ?? urlMrId;
-      if (requestNo || mrId) {
-        rfqAPI.getMaterialsByRequestNo(requestNo ?? mrId!, mrId || undefined).then((data) => {
+      const isEditMode = Boolean(editId || rfqId);
+      // API expects request_no = material request id (e.g. 90), not request_no string (e.g. "263618")
+      const projectIdForApi = getProjectsIdForApi() ?? undefined;
+      const loadMaterialsFromMr = (requestId?: string | null) => {
+        const id = requestId ?? mrId;
+        if (!id) return;
+        rfqAPI.getMaterialsByRequestNo(id, id, projectIdForApi).then((data) => {
+          const arr = Array.isArray(data) ? data : [];
+          if (arr.length === 0) {
+            materialRequestAPI.edit(id).then((edit: any) => {
+              const details = Array.isArray(edit) ? edit
+                : Array.isArray(edit?.data) ? edit.data
+                : Array.isArray(edit?.details) ? edit.details
+                : Array.isArray(edit?.material_request_details) ? edit.material_request_details
+                : Array.isArray(edit?.materialsRequestDetails) ? edit.materialsRequestDetails
+                : Array.isArray(edit?.materials) ? edit.materials
+                : [];
+              setQuoteDetails(details);
+            }).catch(() => setQuoteDetails([]));
+          } else {
+            setQuoteDetails(arr);
+          }
+        }).catch(() => {
+          if (id) materialRequestAPI.edit(id).then((edit: any) => {
+            const details = Array.isArray(edit) ? edit
+              : Array.isArray(edit?.data) ? edit.data
+              : Array.isArray(edit?.details) ? edit.details
+              : Array.isArray(edit?.material_request_details) ? edit.material_request_details
+              : Array.isArray(edit?.materialsRequestDetails) ? edit.materialsRequestDetails
+              : Array.isArray(edit?.materials) ? edit.materials
+              : [];
+            setQuoteDetails(details);
+          }).catch(() => setQuoteDetails([]));
+          else setQuoteDetails([]);
+        });
+      };
+      if (isEditMode) {
+        const id = editId ?? rfqId;
+        const projectsId = getProjectsIdForApi();
+        if (id) {
+          rfqAPI.getQuoteDetails(id, projectsId ?? undefined).then((details) => {
+            const arr = Array.isArray(details) ? details : [];
+            const first = arr[0];
+            const derivedMrId = first?.material_requests_id ?? first?.material_request_id ?? (typeof (first as any)?.material_requests === 'object' ? (first as any).material_requests?.id : undefined);
+            const effectiveMrId = mrId ?? (derivedMrId != null && derivedMrId !== '' ? String(derivedMrId) : null);
+            // When we have an MR (user-selected or derived), always load materials from MR.
+            // getQuoteDetails can return malformed data (e.g. single row with "-") due to backend bug.
+            if (effectiveMrId) {
+              loadMaterialsFromMr(effectiveMrId);
+              setSelectedMrId((prev) => prev ?? effectiveMrId);
+            } else if (arr.length > 0) {
+              setQuoteDetails(arr);
+            } else {
+              setQuoteDetails([]);
+            }
+          }).catch(() => {
+            if (mrId) loadMaterialsFromMr();
+            else setQuoteDetails([]);
+          });
+        } else if (mrId) {
+          loadMaterialsFromMr();
+        }
+      } else if (mrId) {
+        rfqAPI.getMaterialsByRequestNo(mrId, mrId, projectIdForApi).then((data) => {
           const arr = Array.isArray(data) ? data : [];
           if (arr.length === 0 && mrId) {
             materialRequestAPI.edit(mrId).then((edit: any) => {
@@ -177,13 +247,11 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
           }).catch(() => setQuoteDetails([]));
           else setQuoteDetails([]);
         });
-      } else {
-        const id = editId ?? rfqId;
-        if (id) rfqAPI.getQuoteDetails(id).then(setQuoteDetails).catch(() => setQuoteDetails([]));
       }
     }
     if (step === 'vendorList' && (editId || rfqId)) {
-      rfqAPI.getQuoteDetails(editId ?? rfqId!).then(setQuoteDetails).catch(() => setQuoteDetails([]));
+      const projectsId = getProjectsIdForApi();
+      rfqAPI.getQuoteDetails(editId ?? rfqId!, projectsId ?? undefined).then(setQuoteDetails).catch(() => setQuoteDetails([]));
     }
     if (step === 'quotesDetails') {
       masterDataAPI.getMaterials().then((m) => setMaterialsMaster(Array.isArray(m) ? m : [])).catch(() => setMaterialsMaster([]));
@@ -205,26 +273,31 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
     }
     setIsSubmitting(true);
     try {
-      const payload: any = {
-        projects_id: projectsIdForApi,
-        material_request_id: selectedMrId || undefined,
-        message: message || undefined,
-        image_url: quoteImage || undefined
-      };
-      if (editId) payload.id = editId;
-      const saved = await rfqAPI.save(payload);
-      const newId = saved?.id ?? saved?.uuid ?? saved?.data?.id ?? saved?.data?.uuid ?? editId;
-      if (mode === 'create' && newId) {
-        const params = new URLSearchParams();
-        params.set('step', nextStep);
-        if (pid) params.set('projectId', pid);
-        if (projectNumericId) params.set('projectNumericId', projectNumericId);
-        if (selectedMrId) params.set('mrId', selectedMrId);
-        if (selectedMrRequestNo) params.set('mrRequestNo', selectedMrRequestNo);
-        router.replace(`/inventory-reports/rfq/${newId}/submit-quotes?${params.toString()}`);
-        return;
+      let newId: number | string | undefined;
+      if (mode === 'edit' && editId) {
+        newId = editId;
+        setStep(nextStep);
+      } else {
+        const payload: any = {
+          projects_id: projectsIdForApi,
+          material_request_id: selectedMrId || undefined,
+          message: message || undefined,
+          image_url: quoteImage || undefined
+        };
+        const saved = await rfqAPI.save(payload);
+        newId = saved?.id ?? saved?.uuid ?? saved?.data?.id ?? saved?.data?.uuid ?? editId;
+        if (mode === 'create' && newId) {
+          const params = new URLSearchParams();
+          params.set('step', nextStep);
+          if (pid) params.set('projectId', pid);
+          if (projectNumericId) params.set('projectNumericId', projectNumericId);
+          if (selectedMrId) params.set('mrId', selectedMrId);
+          if (selectedMrRequestNo) params.set('mrRequestNo', selectedMrRequestNo);
+          router.replace(`/inventory-reports/rfq/${newId}/submit-quotes?${params.toString()}`);
+          return;
+        }
+        setStep(nextStep);
       }
-      setStep(nextStep);
     } catch (e: any) {
       toast.showWarning(e?.message ?? 'Failed to save. Please try again.');
     } finally {
@@ -247,8 +320,11 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
         const edits = materialsEdits[key] ?? {};
         const materialsId = row.materials?.id ?? row.material?.id ?? row.material_id ?? row.materials_id;
         const detailId = row.material_request_details_id ?? row.material_request_detail_id ?? row.materials_request_details_id ?? row.id;
+        // Pass QuotesDetails id for updates so backend updates instead of creates. Backend QuotesMaterialsDetailsresources uses quort_details_id (typo); avoid row.id (may be material_requests_id).
+        const existingQuoteDetailId = row.quort_details_id ?? row.quotes_details_id ?? row.quotes_detail_id ?? (row.quotes_id != null ? row.id : null);
+        const quoteDetailId = existingQuoteDetailId != null && existingQuoteDetailId !== '' ? (Number(existingQuoteDetailId) || existingQuoteDetailId) : '';
         const item: Record<string, any> = {
-          id: '',
+          id: quoteDetailId,
           projects_id: Number(projectsIdForApi) || projectsIdForApi,
           quotes_id: Number(id) || id,
           materials: materialsId != null ? (Number(materialsId) || materialsId) : undefined,
@@ -274,10 +350,24 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
       if (typeof window !== 'undefined' && process.env.NODE_ENV === 'development') {
         console.log('[SubmitQuotes] quote-details-add payload:', JSON.stringify(validPayload, null, 2));
       }
-      const result = await rfqAPI.quoteDetailsAdd(validPayload);
+      const result = await rfqAPI.quoteDetailsAdd(validPayload as Parameters<typeof rfqAPI.quoteDetailsAdd>[0]);
       const created = Array.isArray(result) ? result : result?.data ?? (result ? [result] : []);
       const ids = created.map((r: any) => r.id ?? r.uuid).filter(Boolean);
       setQuotesDetailsIds(ids);
+      // Merge created ids back into quoteDetails so edits on re-submit update instead of create
+      if (created.length > 0 && created.length === validPayload.length) {
+        const quoteDetailIdFromCreated = (r: any) => r?.id ?? r?.uuid ?? r?.quort_details_id ?? r?.quotes_details_id;
+        setQuoteDetails((prev) =>
+          prev.map((row: any, i: number) => {
+            const createdRow = created[i];
+            const newId = quoteDetailIdFromCreated(createdRow);
+            if (createdRow && newId) {
+              return { ...row, id: newId, quort_details_id: newId, quotes_details_id: newId, quotes_id: row.quotes_id ?? id };
+            }
+            return row;
+          })
+        );
+      }
       setStep('vendorList');
     } catch (e: any) {
       const res = e?.response?.data;
@@ -300,6 +390,9 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
     }
     setShowMrSelectModal(false);
     setRfqPathType(0);
+    if (step === 'quotesDetails' && (rfqId || editId)) {
+      return;
+    }
     handleSaveAndContinue('quotesDetails');
   };
 
@@ -315,14 +408,21 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
     }
     setIsSubmitting(true);
     try {
-      const saved = await rfqAPI.save({ projects_id: projectsIdForApi });
-      const newId = saved?.id ?? saved?.uuid;
-      if (!newId) throw new Error('No quote ID returned');
+      let quoteId: string | number;
+      let existingImageDetailId: string | number | null = null;
+      if (mode === 'edit' && editId) {
+        quoteId = editId;
+        existingImageDetailId = rfqData?.data?.id ?? rfqData?.data?.quort_details_id ?? rfqData?.data?.quotes_details_id ?? null;
+      } else {
+        const saved = await rfqAPI.save({ projects_id: projectsIdForApi });
+        quoteId = saved?.id ?? saved?.uuid;
+        if (!quoteId) throw new Error('No quote ID returned');
+      }
       const fd = new FormData();
-      fd.append('id', '');
+      fd.append('id', existingImageDetailId != null && existingImageDetailId !== '' ? String(existingImageDetailId) : '');
       fd.append('projects_id', String(projectsIdForApi));
-      fd.append('quotes_id', String(newId));
-      fd.append('request_no', '201poiuytgfrds');
+      fd.append('quotes_id', String(quoteId));
+      fd.append('request_no', String(selectedMrRequestNo ?? selectedMrId ?? ''));
       fd.append('date', new Date().toISOString().split('T')[0]);
       fd.append('remarkes', message || '');
       if (quoteImage && quoteImage.startsWith('data:')) {
@@ -337,7 +437,7 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
       params.set('step', 'vendorList');
       if (pid) params.set('projectId', pid);
       if (projectNumericId) params.set('projectNumericId', projectNumericId);
-      router.replace(`/inventory-reports/rfq/${newId}/submit-quotes?${params.toString()}`);
+      router.replace(`/inventory-reports/rfq/${quoteId}/submit-quotes?${params.toString()}`);
     } catch (e: any) {
       toast.showWarning(e?.message ?? 'Failed to save. Please try again.');
     } finally {
@@ -370,7 +470,7 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
       await rfqAPI.sendToVendors(id, ids, opts);
       toast.showSuccess('Quote sent to vendors.');
       try {
-        const { pdf_url } = await rfqAPI.generatePdf(id);
+        const { pdf_url } = await generatePdfWithDetails(id);
         const fullUrl = pdf_url ? getFullPdfUrl(pdf_url) : '';
         setPdfUrl(fullUrl);
       } catch {
@@ -390,12 +490,48 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
     return url.startsWith('http') ? url : apiBase.replace(/\/api\/?$/, '') + (url.startsWith('/') ? url : '/' + url);
   };
 
+  /** Build quotes_details with material info for PDF (Code, Name, Specification, Units) when backend returns materials: null */
+  const buildQuotesDetailsForPdf = (details: any[], materialsLookup: any[]) => {
+    return details.map((row: any) => {
+      const matId = row.materials?.id ?? row.materials_id ?? row.material_id ?? row.material?.id;
+      const materials = row.materials ?? row.materials_request_details?.materials ?? row.material;
+      const matched = matId != null && materialsLookup.length > 0
+        ? materialsLookup.find((m: any) => String(m.id ?? m.uuid ?? m.materials_id) === String(matId))
+        : null;
+      return {
+        id: row.id,
+        materials_id: matId,
+        materialCode: materials?.code ?? matched?.code ?? '',
+        materialName: materials?.name ?? materials?.material_name ?? matched?.name ?? matched?.material_name ?? '',
+        materialSpec: materials?.specification ?? matched?.specification ?? '',
+        materialUnit: materials?.unit ?? materials?.units ?? matched?.unit ?? matched?.units ?? '',
+        qty: row.qty ?? row.request_qty,
+        request_qty: row.request_qty ?? row.qty,
+        date: typeof (row.date ?? '') === 'string' && (row.date ?? '').includes('T') ? (row.date as string).split('T')[0] : (row.date ?? ''),
+        price: row.price,
+      };
+    });
+  };
+
+  const generatePdfWithDetails = async (id: string) => {
+    const projectsId = getProjectsIdForApi();
+    const [quoteData, mats] = await Promise.all([
+      rfqAPI.get(id, projectsId ?? undefined),
+      materialsMaster.length > 0 ? Promise.resolve(materialsMaster) : masterDataAPI.getMaterials().then((m: any[]) => Array.isArray(m) ? m : []),
+    ]);
+    const details = quoteData?.quotesdetails ?? quoteData?.quotes_details ?? quoteData?.details ?? quoteData?.quote_details ?? (Array.isArray(quoteData) ? quoteData : []);
+    const arr = Array.isArray(details) ? details : [];
+    const materialsLookup = Array.isArray(mats) ? mats : [];
+    const quotesDetailsForPdf = arr.length > 0 ? buildQuotesDetailsForPdf(arr, materialsLookup) : undefined;
+    return rfqAPI.generatePdf(id, quotesDetailsForPdf);
+  };
+
   const handleGeneratePdf = async () => {
     const id = editId ?? rfqId;
     if (!id) return;
     setIsSubmitting(true);
     try {
-      const { pdf_url } = await rfqAPI.generatePdf(id);
+      const { pdf_url } = await generatePdfWithDetails(String(id));
       const fullUrl = pdf_url ? getFullPdfUrl(pdf_url) : '';
       setPdfUrl(fullUrl);
       if (fullUrl) window.open(fullUrl, '_blank');
@@ -422,7 +558,7 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
       }
       setIsSubmitting(true);
       try {
-        const { pdf_url } = await rfqAPI.generatePdf(id);
+        const { pdf_url } = await generatePdfWithDetails(String(id));
         urlToShare = pdf_url ? getFullPdfUrl(pdf_url) : '';
         if (urlToShare) setPdfUrl(urlToShare);
       } catch (e: any) {
@@ -610,6 +746,30 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
         {step === 'quotesDetails' && (
           <div className={`rounded-xl border p-6 ${cardClass}`}>
             <h2 className={`text-lg font-bold mb-4 ${textPrimary}`}>Quote Details — Enter qty, request qty, price, date</h2>
+            {mode !== 'edit' && (
+              <div className="mb-4 flex flex-wrap items-center gap-3">
+                <span className={`text-sm font-medium ${textSecondary}`}>Material Request:</span>
+                <button
+                  onClick={() => setShowMrSelectModal(true)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg border-2 ${selectedMrId ? 'border-[#6B8E23] bg-[#6B8E23]/10' : isDark ? 'border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10' : 'border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/5'}`}
+                >
+                  <FileText className="w-4 h-4" />
+                  {selectedMrId ? `MR #${selectedMrId}${selectedMrRequestNo ? ` (${selectedMrRequestNo})` : ''}` : 'Select Material Request'}
+                </button>
+                {selectedMrId && (
+                  <button
+                    onClick={() => { setSelectedMrId(null); setSelectedMrRequestNo(null); setQuoteDetails([]); }}
+                    className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}
+                    title="Change MR"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+                {materialRequests.length > 0 && !selectedMrId && (
+                  <span className={`text-xs ${textSecondary}`}>({materialRequests.length} available)</span>
+                )}
+              </div>
+            )}
             {quoteDetails.length > 0 ? (
               <div className="overflow-x-auto">
                 <table className="w-full">
@@ -679,7 +839,11 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
                 </table>
               </div>
             ) : (
-              <p className={`py-8 text-center ${textSecondary}`}>No materials. Load materials from the selected Material Request.</p>
+              <p className={`py-8 text-center ${textSecondary}`}>
+                {mode !== 'edit' 
+                  ? 'Select a Material Request above to load its materials, or go Back to choose from the previous step.' 
+                  : 'No materials. Load materials from the selected Material Request.'}
+              </p>
             )}
             <div className="flex gap-3 mt-6">
               <button
@@ -848,7 +1012,7 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
                   disabled={!selectedMrId}
                   className={`flex-1 px-4 py-2 rounded-lg font-bold ${selectedMrId ? 'bg-[#6B8E23] text-white' : 'bg-slate-400 text-white cursor-not-allowed'}`}
                 >
-                  Submit
+                  {step === 'quotesDetails' && (rfqId || editId) ? 'Select & Load' : 'Continue'}
                 </button>
               </div>
             </div>

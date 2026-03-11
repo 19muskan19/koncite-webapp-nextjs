@@ -26,6 +26,7 @@ import {
   ChevronDown
 } from 'lucide-react';
 import CreateProjectModal from './Modals/CreateProjectModal';
+import { getLogoUrl } from '@/utils/imageUtils';
 
 type SortFilterType = 'none' | 'recent_created' | 'oldest_created' | 'recent_updated' | 'oldest_updated';
 
@@ -151,7 +152,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
           progress: p.progress || 0,
           budget: p.budget,
           location: p.address || p.location || '',
-          logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name || p.name || '')}&background=6366f1&color=fff&size=128`,
+          logo: getLogoUrl(p.logo, p.project_name || p.name || '', '6366f1'),
           teamSize: p.team_size || p.teamSize,
           createdAt: p.created_at || p.createdAt,
           updatedAt: p.updated_at || p.updatedAt,
@@ -274,7 +275,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
           progress: p.progress || 0,
           budget: p.budget,
           location: p.address || p.location || '',
-          logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name || p.name || '')}&background=6366f1&color=fff&size=128`,
+          logo: getLogoUrl(p.logo, p.project_name || p.name || '', '6366f1'),
           teamSize: p.team_size || p.teamSize,
           createdAt: p.created_at || p.createdAt,
           updatedAt: p.updated_at || p.updatedAt,
@@ -790,14 +791,14 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
             )}
           </button>
           {showFilterDropdown && (
-            <div className={`absolute right-0 top-full mt-2 w-52 rounded-lg border shadow-lg z-20 filter-dropdown ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+            <div className={`absolute right-0 top-full mt-2 w-52 rounded-lg border shadow-lg z-20 filter-dropdown ${isDark ? 'bg-dropdown-panel border-slate-700' : 'bg-white border-slate-200'}`}>
               <div className="py-1">
                 <button
                   type="button"
                   onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setSortFilter('none'); setShowFilterDropdown(false); }}
                   className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
                     sortFilter === 'none' ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
-                      : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
+                      : isDark ? 'hover:bg-dropdown-panel-hover text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                   }`}
                 >
                   None
@@ -807,7 +808,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                   onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setSortFilter('recent_created'); setShowFilterDropdown(false); }}
                   className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
                     sortFilter === 'recent_created' ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
-                      : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
+                      : isDark ? 'hover:bg-dropdown-panel-hover text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                   }`}
                 >
                   Recent (by Created)
@@ -817,7 +818,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                   onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setSortFilter('oldest_created'); setShowFilterDropdown(false); }}
                   className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
                     sortFilter === 'oldest_created' ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
-                      : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
+                      : isDark ? 'hover:bg-dropdown-panel-hover text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                   }`}
                 >
                   Oldest (by Created)
@@ -827,7 +828,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                   onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setSortFilter('recent_updated'); setShowFilterDropdown(false); }}
                   className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
                     sortFilter === 'recent_updated' ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
-                      : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
+                      : isDark ? 'hover:bg-dropdown-panel-hover text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                   }`}
                 >
                   Recent (by Updated)
@@ -837,7 +838,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                   onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setSortFilter('oldest_updated'); setShowFilterDropdown(false); }}
                   className={`w-full flex items-center gap-3 px-4 py-2 text-sm font-bold transition-colors text-left ${
                     sortFilter === 'oldest_updated' ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
-                      : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
+                      : isDark ? 'hover:bg-dropdown-panel-hover text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                   }`}
                 >
                   Oldest (by Updated)
@@ -888,9 +889,10 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                   <span className={`text-xs font-bold ${textSecondary} flex-shrink-0 w-6`}>{idx + 1}</span>
                   <div className="w-12 h-12 rounded-lg overflow-hidden border-2 border-[#C2D642]/20 flex-shrink-0">
                     <img 
-                      src={project.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(project.name)}&background=6366f1&color=fff&size=128`}
+                      src={getLogoUrl(project.logo, project.name, '6366f1')}
                       alt={project.name}
                       className="w-full h-full object-cover"
+                      loading="lazy"
                       onError={(e) => {
                         const target = e.target as HTMLImageElement;
                         target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(project.name)}&background=6366f1&color=fff&size=128`;
@@ -916,7 +918,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                   </button>
                   {openStatusDropdownId === project.id && (
                     <div className={`absolute right-0 top-full mt-1 w-32 rounded-lg border shadow-lg z-20 py-1 status-dropdown ${
-                      isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'
+                      isDark ? 'bg-dropdown-panel border-slate-700' : 'bg-white border-slate-200'
                     }`}>
                       {['Closed', 'Pending', 'Completed', 'Ongoing'].map((opt) => (
                         <button
@@ -930,7 +932,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                           className={`w-full flex items-center px-4 py-2 text-sm font-bold transition-colors text-left ${
                             (project.status || 'Pending').toLowerCase() === opt.toLowerCase()
                               ? isDark ? 'bg-[#C2D642]/20 text-[#C2D642]' : 'bg-[#C2D642]/10 text-[#C2D642]'
-                              : isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
+                              : isDark ? 'hover:bg-dropdown-panel-hover text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                           }`}
                         >
                           {opt}
@@ -1177,7 +1179,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                   <div className="flex items-center gap-4 mb-6">
                     <div className="w-20 h-20 rounded-xl overflow-hidden border-2 border-[#C2D642]/20 flex-shrink-0">
                       <img 
-                        src={viewingProject.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(viewingProject.name)}&background=6366f1&color=fff&size=128`}
+                        src={getLogoUrl(viewingProject.logo, viewingProject.name, '6366f1')}
                         alt={viewingProject.name}
                         className="w-full h-full object-cover"
                         onError={(e) => {

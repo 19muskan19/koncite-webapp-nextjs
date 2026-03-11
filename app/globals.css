@@ -42,6 +42,54 @@
   background: rgba(194, 214, 66, 0.5);
 }
 
+/* Sessions list scrollbar - distinct styling for sessions panel */
+.sessions-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(194, 214, 66, 0.5) rgba(148, 163, 184, 0.1);
+}
+
+.sessions-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.sessions-scrollbar::-webkit-scrollbar-track {
+  background: rgba(148, 163, 184, 0.08);
+  border-radius: 4px;
+}
+
+.sessions-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(194, 214, 66, 0.45);
+  border-radius: 4px;
+}
+
+.sessions-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(194, 214, 66, 0.65);
+}
+
+/* Chat messages scrollbar - distinct styling for chat window */
+.chat-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.4) rgba(148, 163, 184, 0.06);
+}
+
+.chat-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.chat-scrollbar::-webkit-scrollbar-track {
+  background: rgba(148, 163, 184, 0.06);
+  border-radius: 4px;
+}
+
+.chat-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.35);
+  border-radius: 4px;
+}
+
+.chat-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.55);
+}
+
 /* Theme classes */
 .theme-dark {
   background: #0a0a0a;
@@ -76,6 +124,30 @@
 .card-dark {
   background: #2d2d2d;
   border-color: #404040;
+}
+
+/* Dropdown list panel - consistent dark blue-grey across all dropdowns (Tag Company, select options, custom dropdowns) */
+:root {
+  --dropdown-panel-bg: #f8fafc;
+  --dropdown-panel-hover: #f1f5f9;
+}
+.theme-dark {
+  --dropdown-panel-bg: #2e343d;
+  --dropdown-panel-hover: #3f4756;
+}
+/* Native select option styling - dark theme */
+.theme-dark select option {
+  background: var(--dropdown-panel-bg);
+  color: #f1f5f9;
+}
+.theme-dark select option:hover,
+.theme-dark select option:focus,
+.theme-dark select option:checked {
+  background: var(--dropdown-panel-hover);
+}
+/* Reusable class for custom dropdown list panels - use on the dropdown options container */
+.dropdown-panel-bg {
+  background: var(--dropdown-panel-bg);
 }
 
 .card-light {

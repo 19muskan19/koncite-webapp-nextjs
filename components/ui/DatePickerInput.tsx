@@ -180,7 +180,7 @@ export default function DatePickerInput({
         aria-hidden="true"
         min={min}
         max={max}
-        className="absolute opacity-0 pointer-events-none w-0 h-0"
+        className="absolute inset-0 w-full h-full opacity-0 pointer-events-none cursor-pointer"
         onChange={handleHiddenChange}
       />
     </div>

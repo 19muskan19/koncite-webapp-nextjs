@@ -259,7 +259,7 @@ const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) => {
                       className="fixed inset-0 z-40" 
                       onClick={() => setIsCountryDropdownOpen(false)}
                     />
-                    <div className={`absolute top-full left-0 mt-1 z-[60] w-64 max-h-60 overflow-y-auto ${inputBg} border ${borderClass} rounded-lg shadow-xl`}>
+                    <div className={`absolute top-full left-0 mt-1 z-[60] w-64 max-h-60 overflow-y-auto ${isDark ? 'bg-dropdown-panel' : inputBg} border ${borderClass} rounded-lg shadow-xl`}>
                       {isLoadingCountries ? (
                         <div className="p-4 flex items-center justify-center">
                           <Loader2 className="w-5 h-5 animate-spin text-[#C2D642]" />

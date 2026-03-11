@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
-import { Wrench, MoreVertical, Download, Plus, Search, FileSpreadsheet, Upload, ArrowUpDown, Loader2, Edit, Trash2, RefreshCw, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { Wrench, MoreVertical, Download, Plus, Search, FileSpreadsheet, Upload, ArrowUpDown, Loader2, Edit, Trash2, RefreshCw, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, X } from 'lucide-react';
 import DatePickerInput from '../ui/DatePickerInput';
 import CreateAssetEquipmentModal from './Modals/CreateAssetEquipmentModal';
 import AssetBulkUploadModal from './Modals/AssetBulkUploadModal';
@@ -62,6 +62,9 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
   const [isLoadingOpeningStockData, setIsLoadingOpeningStockData] = useState(false);
   const [isLoadingOpeningStockStores, setIsLoadingOpeningStockStores] = useState(false);
   const [isImportingOpeningStock, setIsImportingOpeningStock] = useState(false);
+  const [availableOpeningStockList, setAvailableOpeningStockList] = useState<any[]>([]);
+  const [isLoadingAvailableOpeningStock, setIsLoadingAvailableOpeningStock] = useState(false);
+  const [availableStockSearch, setAvailableStockSearch] = useState('');
   const [availableStockFilters, setAvailableStockFilters] = useState({
     project: '',
     storeWarehouse: ''
@@ -73,6 +76,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
   const [listCurrentPage, setListCurrentPage] = useState<number>(1);
   const [deleteAllConfirm, setDeleteAllConfirm] = useState<boolean>(false);
   const [isDeletingAll, setIsDeletingAll] = useState<boolean>(false);
+  const openingStockFileInputRef = useRef<HTMLInputElement>(null);
 
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -223,6 +227,34 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
       if (!openingStockForm.project) setOpeningStockForm(prev => ({ ...prev, storeWarehouse: '' }));
     }
   }, [activeTab, openingStockSubTab, openingStockForm.project, isAuthenticated]);
+
+  const fetchAvailableOpeningStock = React.useCallback(async () => {
+    if (!availableStockFilters.project || !availableStockFilters.storeWarehouse) {
+      setAvailableOpeningStockList([]);
+      return;
+    }
+    setIsLoadingAvailableOpeningStock(true);
+    try {
+      const data = await masterDataAPI.getAssetsOpeningStockList(availableStockFilters.project, availableStockFilters.storeWarehouse);
+      setAvailableOpeningStockList(Array.isArray(data) ? data : []);
+    } catch {
+      setAvailableOpeningStockList([]);
+    } finally {
+      setIsLoadingAvailableOpeningStock(false);
+    }
+  }, [availableStockFilters.project, availableStockFilters.storeWarehouse]);
+
+  useEffect(() => {
+    if (activeTab !== 'openingStock' || openingStockSubTab !== 'available') {
+      setAvailableOpeningStockList([]);
+      return;
+    }
+    if (!availableStockFilters.project || !availableStockFilters.storeWarehouse || !isAuthenticated) {
+      setAvailableOpeningStockList([]);
+      return;
+    }
+    fetchAvailableOpeningStock();
+  }, [activeTab, openingStockSubTab, availableStockFilters.project, availableStockFilters.storeWarehouse, isAuthenticated, fetchAvailableOpeningStock]);
 
   // Search assets using API
   const handleSearch = async (query: string) => {
@@ -466,15 +498,51 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
     URL.revokeObjectURL(url);
   };
 
+  const handleExportOpeningStockFormat = () => {
+    // Export pattern for opening quantity: #, Asset/Equipments/Machinery, Code, Unit, Specification, Opening Qty (empty)
+    const sorted = [...assets].sort((a, b) => {
+      const aCode = (a.code || '').toString().trim();
+      const bCode = (b.code || '').toString().trim();
+      if (!aCode && !bCode) return 0;
+      if (!aCode) return 1;
+      if (!bCode) return -1;
+      return aCode.localeCompare(bCode, undefined, { numeric: true });
+    });
+    const headers = ['#', 'Asset/Equipments/Machinery', 'Code', 'Unit', 'Specification', 'Opening Qty'];
+    const rows = sorted.map((asset, idx) => [
+      idx + 1,
+      asset.name ?? '',
+      asset.code ?? '',
+      asset.unit ?? '',
+      asset.specification ?? '',
+      '' // Opening Qty - empty for user to fill before import
+    ]);
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Opening Stock');
+    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', `assets_opening_stock_export_${new Date().toISOString().split('T')[0]}.xlsx`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    toast.showSuccess('Opening stock template exported');
+  };
+
   const handleExportMasterData = () => {
-    const headers = ['SR No', 'Name', 'Specification', 'Unit', 'Code', 'Status'];
+    // Export pattern: #, Code, Asset/Equipments/Machinery, Unit, Specification
+    const headers = ['#', 'Code', 'Asset/Equipments/Machinery', 'Unit', 'Specification'];
     const rows = assets.map((asset, idx) => [
       idx + 1,
-      asset.name,
-      asset.specification,
-      asset.unit,
-      asset.code,
-      asset.status
+      asset.code ?? '',
+      asset.name ?? '',
+      asset.unit ?? '',
+      asset.specification ?? ''
     ]);
 
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
@@ -492,30 +560,6 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
     toast.showSuccess('Master data exported successfully');
-  };
-
-  const handleDownloadOpeningStockTemplate = () => {
-    // Backend ImportAssesOpeningStock expects lowercase keys: code, opening_qty
-    const headers = ['code', 'opening_qty'];
-    const sampleRows = assets.slice(0, 5).map(a => [a.code || '', '0']) as [string, string][];
-    if (sampleRows.length === 0) {
-      sampleRows.push(['A000001', '5'], ['A000002', '10']);
-    }
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleRows]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Opening Stock');
-    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `assets_opening_stock_template_${new Date().toISOString().split('T')[0]}.xlsx`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    toast.showSuccess('Opening stock template downloaded. Use code and opening_qty columns.');
   };
 
   const handleImportAssetsOpeningStock = async () => {
@@ -541,7 +585,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
       const hasCode = headerKeys.includes('code');
       const hasOpeningQty = headerKeys.includes('opening_qty');
       if (!hasCode || !hasOpeningQty) {
-        toast.showError('Invalid file: expected columns "code" and "opening_qty". Use "Download Opening Stock Template" to get the correct format. Do not use the Asset/Equipments Bulk Upload template.');
+        toast.showError('Invalid file: expected columns "Code" and "Opening Qty". Ensure row 1 has headers and row 2+ have data.');
         return;
       }
     } catch (validateErr) {
@@ -557,43 +601,14 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
         opening_stock_date: openingStockForm.openingDate || undefined,
       });
       const data = result?.data ?? result;
-      const msg = data?.message ?? result?.message ?? 'Opening stock imported successfully';
-      const created = data?.created ?? 0;
-      const updated = data?.updated ?? 0;
-      const failed = data?.failed ?? 0;
-      const total = data?.total_rows ?? (created + updated + failed);
-      const detail = total > 0 ? ` (${created} created, ${updated} updated, ${failed} failed)` : '';
-      toast.showSuccess(msg + detail);
+      const msg = data?.message ?? 'Opening stock imported successfully';
+      toast.showSuccess(msg);
       setOpeningStockForm(prev => ({ ...prev, file: null }));
     } catch (err: any) {
       toast.showError(err?.message || 'Failed to import opening stock');
     } finally {
       setIsImportingOpeningStock(false);
     }
-  };
-
-  const handleDownloadBulkUploadTemplate = () => {
-    const headers = ['Asset/Equipments/Machinery', 'Specification', 'Unit', 'UUID'];
-    const sampleRows = [
-      ['Excavator', '20 Ton', 'Nos', ''],
-      ['Crane', '50 Ton', 'Nos', ''],
-      ['Concrete Mixer', '', 'Nos', ''],
-    ];
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...sampleRows]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Assets');
-    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `assets_bulk_upload_template_${new Date().toISOString().split('T')[0]}.xlsx`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    toast.showSuccess('Template downloaded. Edit and upload to add assets.');
   };
 
   return (
@@ -771,7 +786,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
       {/* Assets Table */}
       {!isLoadingAssets && !assetsError && filteredAssets.length > 0 ? (
         <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto pt-1 pb-6">
             <table className="w-full min-w-[640px]">
               <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
                 <tr>
@@ -840,7 +855,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                           <MoreVertical className={`w-4 h-4 ${textSecondary}`} />
                         </button>
                         {openDropdownId === row.id && (
-                          <div className={`dropdown-menu absolute right-0 top-full mt-1 w-32 rounded-lg border shadow-lg z-20 ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                          <div className={`dropdown-menu absolute right-0 w-32 rounded-lg border shadow-xl z-[100] ${idx === paginatedAssets.length - 1 ? 'bottom-full mb-1' : 'top-full mt-1'} ${isDark ? 'bg-dropdown-panel border-slate-700' : 'bg-white border-slate-200'}`}>
                             <div className="py-1">
                               <button
                                 onClick={() => {
@@ -979,42 +994,24 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
 
       {activeTab === 'bulkUpload' && (
         <div className={`rounded-xl border p-4 sm:p-8 ${cardClass}`}>
-          <p className={`text-sm ${textSecondary} mb-4 text-center`}>
-            Use columns: <strong className={textPrimary}>Asset/Equipments/Machinery</strong>, <strong className={textPrimary}>Specification</strong>, <strong className={textPrimary}>Unit</strong>. Optional: <strong className={textPrimary}>UUID</strong> or <strong className={textPrimary}>ID</strong> for updates
-          </p>
           <div className="space-y-3 sm:space-y-4 max-w-md mx-auto">
             <button
-              onClick={handleDownloadBulkUploadTemplate}
+              onClick={handleExportMasterData}
               className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
-                isDark
-                  ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600'
-                  : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-              } shadow-sm`}
+                isDark ? 'bg-[#C2D642] text-white' : 'bg-[#C2D642] text-white'
+              } shadow-md`}
             >
-              <Download className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
-              <span className="text-center">Download Template (name, specification, unit, code)</span>
+              <FileSpreadsheet className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
+              Export Asset/Equipments/Machinery Master Data
             </button>
             <button
               onClick={() => setShowBulkUploadModal(true)}
               className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
-                isDark
-                  ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
-                  : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'
+                isDark ? 'bg-[#C2D642] text-white' : 'bg-[#C2D642] text-white'
               } shadow-md`}
             >
-              <Upload className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
-              <span className="text-center">Upload File</span>
-            </button>
-            <button
-              onClick={handleExportMasterData}
-              className={`w-full flex items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 rounded-lg text-xs sm:text-sm font-bold transition-all ${
-                isDark
-                  ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600'
-                  : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-              } shadow-sm`}
-            >
               <FileSpreadsheet className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
-              <span className="text-center">Export Master Data</span>
+              Import Asset/Equipments/Machinery Master Data
             </button>
           </div>
         </div>
@@ -1054,30 +1051,19 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
 
           {openingStockSubTab === 'bulkUpload' && (
             <div className="space-y-4 sm:space-y-6">
-              {/* Export & Template Buttons */}
               <div className={`rounded-xl border p-4 sm:p-8 ${cardClass}`}>
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <button
-                    onClick={handleExportMasterData}
-                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                      isDark ? 'bg-[#C2D642] text-white' : 'bg-[#C2D642] text-white'
-                    } shadow-md`}
-                  >
-                    <FileSpreadsheet className="w-4 h-4 flex-shrink-0" />
-                    Export Asset/Equipments/Machinery Data
-                  </button>
-                  <button
-                    onClick={handleDownloadOpeningStockTemplate}
-                    className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                      isDark
-                        ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600'
-                        : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'
-                    } shadow-sm`}
-                  >
-                    <Download className="w-4 h-4 flex-shrink-0" />
-                    Download Opening Stock Template (code, opening_qty)
-                  </button>
-                </div>
+                <p className={`text-sm ${textSecondary} mb-3 text-center`}>
+                  Export with columns: <strong className={textPrimary}>#</strong>, <strong className={textPrimary}>Asset/Equipments/Machinery</strong>, <strong className={textPrimary}>Code</strong>, <strong className={textPrimary}>Unit</strong>, <strong className={textPrimary}>Specification</strong>, <strong className={textPrimary}>Opening Qty</strong>. Fill <strong className={textPrimary}>Opening Qty</strong> and upload.
+                </p>
+                <button
+                  onClick={handleExportOpeningStockFormat}
+                  className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                    isDark ? 'bg-[#C2D642] text-white' : 'bg-[#C2D642] text-white'
+                  } shadow-md`}
+                >
+                  <FileSpreadsheet className="w-4 h-4 flex-shrink-0" />
+                  Export Opening Stock Template
+                </button>
               </div>
 
               {/* Bulk Upload Form */}
@@ -1162,15 +1148,16 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                   {/* File Upload - Excel/CSV: code | opening_qty (backend expects lowercase) */}
                   <div>
                     <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                      Upload File (xlsx, xls, csv — columns: code, opening_qty) <span className="text-red-500">*</span>
+                      Upload File (xlsx, xls, csv — columns: Code, Opening Qty) <span className="text-red-500">*</span>
                     </label>
                     <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-4">
-                      <label className={`flex-1 px-4 py-3 rounded-lg text-sm font-bold transition-all cursor-pointer ${
+                      <label className={`relative flex-1 px-4 py-3 ${openingStockForm.file ? 'pr-10' : ''} rounded-lg text-sm font-bold transition-all cursor-pointer ${
                         isDark
                           ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800 border'
                           : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50 border'
-                      } flex items-center justify-center`}>
+                      } flex items-center justify-center min-h-[48px]`}>
                         <input
+                          ref={openingStockFileInputRef}
                           type="file"
                           accept=".csv,.xlsx,.xls"
                           onChange={(e) => {
@@ -1179,32 +1166,42 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                           }}
                           className="hidden"
                         />
-                        Choose File
+                        {openingStockForm.file ? openingStockForm.file.name : 'Choose file...'}
+                        {openingStockForm.file && !isImportingOpeningStock && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setOpeningStockForm(prev => ({ ...prev, file: null }));
+                              if (openingStockFileInputRef.current) openingStockFileInputRef.current.value = '';
+                            }}
+                            className={`absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'} ${textSecondary} transition-colors`}
+                            title="Remove file"
+                            aria-label="Remove selected file"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        )}
                       </label>
-                      <span className={`text-xs sm:text-sm ${textSecondary} text-center sm:text-left break-all`}>
-                        {openingStockForm.file ? openingStockForm.file.name : 'No file chosen'}
-                      </span>
+                      <button
+                        type="button"
+                        onClick={handleImportAssetsOpeningStock}
+                        disabled={!openingStockForm.file || !openingStockForm.project || !openingStockForm.storeWarehouse || !openingStockForm.openingDate || isImportingOpeningStock}
+                        className={`px-4 py-3 rounded-lg text-sm font-bold flex items-center justify-center gap-2 min-w-[120px] ${
+                          isDark ? 'bg-[#C2D642] text-white' : 'bg-[#C2D642] text-white'
+                        } shadow-md disabled:opacity-50 disabled:cursor-not-allowed`}
+                      >
+                        {isImportingOpeningStock ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Importing...
+                          </>
+                        ) : (
+                          'Import'
+                        )}
+                      </button>
                     </div>
-                  </div>
-
-                  {/* Import Data Button */}
-                  <div className="pt-4">
-                    <button
-                      onClick={handleImportAssetsOpeningStock}
-                      disabled={isImportingOpeningStock}
-                      className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-lg text-sm font-bold transition-all ${
-                        isDark ? 'bg-[#C2D642] text-white' : 'bg-[#C2D642] text-white'
-                      } shadow-md disabled:opacity-50 disabled:cursor-not-allowed`}
-                    >
-                      {isImportingOpeningStock ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          Importing...
-                        </>
-                      ) : (
-                        'Import Data'
-                      )}
-                    </button>
                   </div>
                 </div>
               </div>
@@ -1268,13 +1265,125 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
               <div className={`rounded-xl border ${cardClass}`}>
                 <div className="p-4 sm:p-6">
                   <h3 className={`text-base sm:text-lg font-black ${textPrimary} mb-4`}>LIST ASSET/MACHINERY OPENING DETAILS</h3>
-                  {/* Opening stock list: Backend assets-opening-stock-list not yet available */}
-                  <div className={`p-8 sm:p-12 text-center ${cardClass}`}>
-                    <p className={`text-sm sm:text-base ${textSecondary}`}>
-                      {!availableStockFilters.project || !availableStockFilters.storeWarehouse
-                        ? 'Select project and store above to view opening stock.'
-                        : 'Backend POST /api/assets-opening-stock-list is not yet available. Use Bulk Upload to import opening stock. The list will appear here once the backend implements this endpoint.'}
-                    </p>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-sm ${textSecondary}`}>Show</span>
+                      <select
+                        value={entriesPerPage}
+                        onChange={(e) => setEntriesPerPage(Number(e.target.value))}
+                        className={`px-3 py-1 rounded text-sm font-bold ${
+                          isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
+                        } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                      >
+                        <option value={10}>10</option>
+                        <option value={25}>25</option>
+                        <option value={50}>50</option>
+                        <option value={100}>100</option>
+                      </select>
+                      <span className={`text-sm ${textSecondary}`}>entries</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-sm ${textSecondary}`}>Search:</span>
+                      <input
+                        type="text"
+                        value={availableStockSearch}
+                        onChange={(e) => setAvailableStockSearch(e.target.value)}
+                        className={`px-3 py-1 rounded text-sm font-bold ${
+                          isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
+                        } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                        placeholder="Search..."
+                      />
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
+                        <tr>
+                          <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                            <div className="flex items-center gap-2"><ArrowUpDown className="w-3 h-3" />Sr No</div>
+                          </th>
+                          <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                            <div className="flex items-center gap-2"><ArrowUpDown className="w-3 h-3" />Project Name</div>
+                          </th>
+                          <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                            <div className="flex items-center gap-2"><ArrowUpDown className="w-3 h-3" />Store/Warehouse</div>
+                          </th>
+                          <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                            <div className="flex items-center gap-2"><ArrowUpDown className="w-3 h-3" />Asset/Equipments/Machinery</div>
+                          </th>
+                          <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                            <div className="flex items-center gap-2"><ArrowUpDown className="w-3 h-3" />Code</div>
+                          </th>
+                          <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                            <div className="flex items-center gap-2"><ArrowUpDown className="w-3 h-3" />Specification</div>
+                          </th>
+                          <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                            <div className="flex items-center gap-2"><ArrowUpDown className="w-3 h-3" />Unit</div>
+                          </th>
+                          <th className={`px-4 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>
+                            <div className="flex items-center gap-2"><ArrowUpDown className="w-3 h-3" />Opening</div>
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-inherit">
+                        {!availableStockFilters.project || !availableStockFilters.storeWarehouse ? (
+                          <tr>
+                            <td colSpan={8} className={`px-4 py-8 text-center text-sm ${textSecondary}`}>
+                              Select project and store above to view opening stock.
+                            </td>
+                          </tr>
+                        ) : isLoadingAvailableOpeningStock ? (
+                          <tr>
+                            <td colSpan={8} className={`px-4 py-8 text-center ${textSecondary}`}>
+                              <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" />
+                              <span className="text-sm">Loading opening stock...</span>
+                            </td>
+                          </tr>
+                        ) : (() => {
+                          const filtered = availableOpeningStockList.filter((item) => {
+                            if (!availableStockSearch) return true;
+                            const searchLower = availableStockSearch.toLowerCase();
+                            const a = item.asset;
+                            const code = (a?.code ?? item.code ?? item.asset_code ?? '').toString().toLowerCase();
+                            const name = (a?.name ?? item.name ?? item.assets ?? '').toString().toLowerCase();
+                            const spec = (a?.specification ?? item.specification ?? '').toString().toLowerCase();
+                            return code.includes(searchLower) || name.includes(searchLower) || spec.includes(searchLower);
+                          });
+                          const paginated = filtered.slice(0, entriesPerPage);
+                          if (paginated.length === 0) {
+                            return (
+                              <tr>
+                                <td colSpan={8} className={`px-4 py-8 text-center text-sm ${textSecondary}`}>
+                                  No opening stock found. Use Bulk Upload to import opening stock data.
+                                </td>
+                              </tr>
+                            );
+                          }
+                          return paginated.map((row, index) => {
+                            const projectName = row.project?.project_name ?? row.project_name ?? row.project ?? '-';
+                            const storeName = row.store?.name ?? row.store_name ?? row.store ?? row.warehouse ?? '-';
+                            const a = row.asset;
+                            const name = a?.name ?? row.name ?? row.assets ?? row.asset_name ?? '-';
+                            const code = a?.code ?? row.code ?? row.asset_code ?? '-';
+                            const spec = a?.specification ?? row.specification ?? '-';
+                            const unit = a?.unit ?? a?.units?.unit ?? row.unit ?? row.units?.unit ?? '-';
+                            const opening = row.qty ?? row.opening ?? row.opening_qty ?? '-';
+                            return (
+                              <tr key={row.id || index} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
+                                <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{index + 1}</td>
+                                <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{projectName}</td>
+                                <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{storeName}</td>
+                                <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{name}</td>
+                                <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{code}</td>
+                                <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{spec}</td>
+                                <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{unit}</td>
+                                <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{opening}</td>
+                              </tr>
+                            );
+                          });
+                        })()}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               </div>

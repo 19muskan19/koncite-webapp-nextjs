@@ -40,6 +40,7 @@ import { useUser } from '../../contexts/UserContext';
 import { useToast } from '../../contexts/ToastContext';
 import { useSidebar } from '../../contexts/SidebarContext';
 import { masterDataAPI, teamsAPI, safetyAPI, hinderanceAPI, dprAPI, activitiesHistoryAPI, labourHistoryAPI, materialsHistoryAPI, assetsHistoryAPI } from '../../services/api';
+import { getLogoUrl } from '@/utils/imageUtils';
 
 interface Project {
   id: string;
@@ -165,6 +166,7 @@ interface SafetyEntry {
   images?: string[];
   teamMembers?: string[];
   remarks?: string;
+  date?: string; // from updated_at or created_at for report
 }
 
 interface TeamMember {
@@ -181,6 +183,7 @@ interface HindranceEntry {
   images?: string[];
   teamMembers?: string[];
   remarks?: string;
+  date?: string; // from updated_at or created_at for report
 }
 
 interface SelectedLabour {
@@ -204,11 +207,12 @@ const PAGE_SIZE = 10;
 
 const DPR_BASE = '/work-progress-reports';
 
-/** Cache for DPR list auxiliary data to reduce API calls (project-list, project-subproject) */
+/** Cache for DPR list - instant display on remount, project names, throttle */
 const DPR_LIST_CACHE = {
   projects: null as { data: any[]; ts: number } | null,
-  subprojects: new Map<string, { data: Record<string, string>; ts: number }>(),
+  dprList: null as { data: any[]; projMap: Record<string, string>; subMap: Record<string, string>; ts: number } | null,
   TTL_MS: 3 * 60 * 1000,
+  DPR_LIST_TTL_MS: 30 * 1000,
   VISIBILITY_THROTTLE_MS: 30 * 1000,
 };
 
@@ -328,6 +332,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const [assetPage, setAssetPage] = useState(1);
   const [safetyPage, setSafetyPage] = useState(1);
   const [hindrancePage, setHindrancePage] = useState(1);
+  const [dprListPage, setDprListPage] = useState(1);
 
   // When focused and value is 0, show empty so user can type without deleting
   const [focusedQuantityField, setFocusedQuantityField] = useState<string | null>(null);
@@ -490,7 +495,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             id: uuid || String(rawId),
             numericId,
             name: p.project_name || p.name || '',
-            logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name || p.name || '')}&background=C2D642&color=fff&size=128`,
+            logo: getLogoUrl(p.logo, p.project_name || p.name || '', 'C2D642'),
             code: p.code || '',
             company: companyName,
             location: p.address || p.location || ''
@@ -684,6 +689,10 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   };
   };
 
+  // Cache subprojects by project ID - avoid refetch on Strict Mode double-mount or quick remount
+  const subprojectsCacheRef = useRef<{ projectId: string | number; data: Subproject[]; ts: number } | null>(null);
+  const SUBPROJECTS_CACHE_TTL = 60 * 1000;
+
   // Fetch subprojects when SelectSubprojectForDPR loads - POST project-subproject { project_id }
   useEffect(() => {
     if (!selectedProject) {
@@ -691,24 +700,37 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       return;
     }
 
+    const projectId = selectedProject.numericId ?? selectedProject.id;
+    const cacheKey = `${projectId}-${subprojectRefreshKey}`;
+    const cached = subprojectsCacheRef.current && subprojectsCacheRef.current.projectId === cacheKey
+      && Date.now() - subprojectsCacheRef.current.ts < SUBPROJECTS_CACHE_TTL;
+    if (cached && subprojectsCacheRef.current) {
+      setSubprojects(subprojectsCacheRef.current.data);
+      setIsLoadingSubprojects(false);
+      return;
+    }
+
+    const ac = new AbortController();
     const fetchSubprojects = async () => {
       setIsLoadingSubprojects(true);
       setSubprojectSearchQuery('');
       try {
-        const projectId = selectedProject.numericId ?? selectedProject.id;
         const result = await masterDataAPI.getProjectSubprojects(projectId);
+        if (ac.signal.aborted) return;
         const res = result as any;
         const list = Array.isArray(result) ? result : res?.subProject ?? res?.data ?? [];
         const transformed = list.map((sub: any) => transformSubproject(sub, selectedProject.name));
+        subprojectsCacheRef.current = { projectId: `${projectId}-${subprojectRefreshKey}`, data: transformed, ts: Date.now() };
         setSubprojects(transformed);
       } catch (e) {
-        setSubprojects([]);
+        if (!ac.signal.aborted) setSubprojects([]);
       } finally {
-        setIsLoadingSubprojects(false);
+        if (!ac.signal.aborted) setIsLoadingSubprojects(false);
       }
     };
 
     fetchSubprojects();
+    return () => { ac.abort(); };
   }, [selectedProject, subprojectRefreshKey]);
 
   // Search subprojects when user types - POST /sub-project-search
@@ -755,7 +777,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             id: uuid || String(rawId),
             numericId,
             name: p.project_name || p.name || '',
-            logo: p.logo || `https://ui-avatars.com/api/?name=${encodeURIComponent(p.project_name || p.name || '')}&background=C2D642&color=fff&size=128`,
+            logo: getLogoUrl(p.logo, p.project_name || p.name || '', 'C2D642'),
             code: p.code || '',
             company: companyName,
             location: p.address || p.location || ''
@@ -849,27 +871,63 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setSubprojectsSearchResults(prev => prev.map(s => s.id === subprojectId ? { ...s, status: newStatus } : s));
   };
 
-  // Step 3: Tap Next (subproject selected/skipped) -> dpr-add POST { name, projects_id, sub_projects_id, staps } -> navigate to Activities
+  // Step 3: Tap Next (subproject selected/skipped) -> dpr-add + activities prefetch in parallel, then navigate with data ready
   const handleSubprojectSelected = async (subproject: Subproject | null) => {
     if (!selectedProject) return;
     setEditingDprId(null);
     setSelectedSubproject(subproject);
     setSubprojectSearchQuery('');
     setIsCreatingDpr(true);
+    const projectId = selectedProject.numericId ?? Number(selectedProject.id);
+    const subprojectId = subproject ? (subproject.numericId ?? Number(subproject.id)) : null;
+    const dprName = new Date().toLocaleDateString('en-CA') || new Date().toISOString().slice(0, 10) || 'DPR';
+
     try {
-      const projectId = selectedProject.numericId ?? Number(selectedProject.id);
-      const subprojectId = subproject ? (subproject.numericId ?? Number(subproject.id)) : null;
-      const dprName = new Date().toLocaleDateString('en-CA') || new Date().toISOString().slice(0, 10) || 'DPR';
-      const res = await dprAPI.add({
-        name: dprName,
-        projects_id: projectId,
-        sub_projects_id: subprojectId ?? '',
-        staps: '7',
-      });
+      const [res, rawActivities] = await Promise.all([
+        dprAPI.add({
+          name: dprName,
+          projects_id: projectId,
+          sub_projects_id: subprojectId ?? '',
+          staps: '7',
+        }),
+        activitiesHistoryAPI.projectSearch(projectId, subprojectId ?? null, undefined),
+      ]);
       const created = res?.dpr ?? res?.data?.dpr ?? res?.data ?? res;
       const dprId = created?.id ?? created?.dpr_id ?? res?.data?.id ?? res?.data?.dpr_id ?? res?.id ?? res?.dpr_id ?? null;
       if (dprId != null) setDprIdRes(dprId);
-      router.push(`${DPR_BASE}/activities`);
+
+      const getUnitName = (a: any) => {
+        const u = a.unit_id ?? a.units ?? a.unit;
+        const fromApi = (u?.unit ?? u?.name ?? (typeof a.unit === 'string' ? a.unit : '')) ?? '';
+        return typeof fromApi === 'string' ? fromApi : '';
+      };
+      const transformed: ActivityItem[] = (Array.isArray(rawActivities) ? rawActivities : []).map((a: any) => {
+        const actType = (a.type ?? a.activity_type ?? '').toString().toLowerCase();
+        const type: 'heading' | 'activity' = actType === 'heading' ? 'heading' : 'activity';
+        return {
+          id: a.uuid || String(a.id),
+          numericId: a.id,
+          name: a.activities || a.name || '',
+          project: selectedProject.name,
+          subproject: subproject?.name || '',
+          type,
+          unit: getUnitName(a),
+          qty: a.qty ?? a.quantity,
+          rate: a.rate,
+          amount: a.amount,
+          startDate: a.start_date ?? a.startDate,
+          endDate: a.end_date ?? a.endDate,
+          createdAt: a.created_at ?? a.createdAt,
+          heading: a.heading ?? a.parent_id,
+          parent_id: a.parent_id ?? a.heading
+        };
+      });
+      const cacheKey = `${projectId}-${subprojectId ?? 'none'}-${''}-${activitiesRefreshKey}`;
+      activitiesCacheRef.current = { key: cacheKey, data: transformed, ts: Date.now() };
+      setActivities(transformed);
+      setShowActivitySelection(true);
+      setShowSubprojectSelection(false);
+      router.replace(`${DPR_BASE}/activities`);
     } catch (err: any) {
       toast.showError(err?.message || 'Failed to create DPR');
     } finally {
@@ -961,31 +1019,47 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastFetchDprListAt = useRef<number>(0);
 
+  const activitiesAbortRef = useRef<AbortController | null>(null);
+  const activitiesCacheRef = useRef<{ key: string; data: ActivityItem[]; ts: number } | null>(null);
+  const ACTIVITIES_CACHE_TTL = 20 * 1000;
+
   useEffect(() => {
     if (!showActivitySelection || !selectedProject) {
       setActivities([]);
       return;
     }
 
-    // Use POST activities-project-search (project, subproject, search_keyword)
-    // activities-history-list returns only activities with DPR history; project-search returns all Master activities.
-    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    activitiesAbortRef.current?.abort();
+    const ac = new AbortController();
+    activitiesAbortRef.current = ac;
+    const cancelled = () => ac.signal.aborted;
+
+    const rawProjectId = selectedProject.numericId ?? selectedProject.id;
+    const rawSubprojectId = selectedSubproject?.numericId ?? selectedSubproject?.id;
+    const projectId = Number.isFinite(Number(rawProjectId)) ? Number(rawProjectId) : rawProjectId;
+    const subprojectId = rawSubprojectId != null && rawSubprojectId !== '' && Number.isFinite(Number(rawSubprojectId))
+      ? Number(rawSubprojectId) : (rawSubprojectId ?? null);
     const kw = activitySearchQuery.trim();
+    const cacheKey = `${projectId}-${subprojectId ?? 'none'}-${kw}-${activitiesRefreshKey}`;
+    const cached = activitiesCacheRef.current
+      && activitiesCacheRef.current.key === cacheKey
+      && Date.now() - activitiesCacheRef.current.ts < ACTIVITIES_CACHE_TTL;
+    if (cached && activitiesCacheRef.current) {
+      setActivities(activitiesCacheRef.current.data);
+      return () => { ac.abort(); };
+    }
+
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
     const doFetch = async () => {
       setIsLoadingActivities(true);
       try {
-        // Backend expects numeric project_id/subproject_id; prefer numericId, fallback to parsed id
-        const rawProjectId = selectedProject.numericId ?? selectedProject.id;
-        const rawSubprojectId = selectedSubproject?.numericId ?? selectedSubproject?.id;
-        const projectId = Number.isFinite(Number(rawProjectId)) ? Number(rawProjectId) : rawProjectId;
-        const subprojectId = rawSubprojectId != null && rawSubprojectId !== '' && Number.isFinite(Number(rawSubprojectId))
-          ? Number(rawSubprojectId) : (rawSubprojectId ?? null);
         const getUnitName = (a: any) => {
           const u = a.unit_id ?? a.units ?? a.unit;
           const fromApi = (u?.unit ?? u?.name ?? (typeof a.unit === 'string' ? a.unit : '')) ?? '';
           return typeof fromApi === 'string' ? fromApi : '';
         };
         const raw = await activitiesHistoryAPI.projectSearch(projectId, subprojectId ?? null, kw || undefined);
+        if (cancelled()) return;
         const transformed: ActivityItem[] = (Array.isArray(raw) ? raw : []).map((a: any) => {
           const actType = (a.type ?? a.activity_type ?? '').toString().toLowerCase();
           const type: 'heading' | 'activity' = actType === 'heading' ? 'heading' : 'activity';
@@ -1007,11 +1081,12 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             parent_id: a.parent_id ?? a.heading
           };
         });
+        activitiesCacheRef.current = { key: cacheKey, data: transformed, ts: Date.now() };
         setActivities(transformed);
       } catch (e) {
-        setActivities([]);
+        if (!cancelled()) setActivities([]);
       } finally {
-        setIsLoadingActivities(false);
+        if (!cancelled()) setIsLoadingActivities(false);
       }
     };
     if (kw) {
@@ -1021,6 +1096,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     }
     return () => {
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+      ac.abort();
     };
   }, [showActivitySelection, selectedProject, selectedSubproject, activitiesRefreshKey, activitySearchQuery]);
 
@@ -1080,19 +1156,34 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     return map;
   };
 
-  // ActivitiesDetailsDPR: activities-history-edit (edit mode), supplier-contractor-list (screen loads), activities-history-add (Tap Next)
+  // ActivitiesDetailsDPR: fetch-dpr-history-edit or dpr-details fallback, then activities-history-edit for full records
   useEffect(() => {
     if (!showActivitySelection || !editingDprId || !selectedProject) return;
     let cancelled = false;
+    const extractActivities = (res: any): any[] => {
+      let data = res?.data ?? res;
+      if (data && !Array.isArray(data)) {
+        data = data?.activites ?? data?.activities ?? data?.activities_history ?? (Array.isArray(data?.data) ? data.data : []);
+      }
+      return Array.isArray(data) ? data : [];
+    };
     const load = async () => {
       let records: any[] = [];
       try {
-        const res = await dprAPI.dprHistoryEdit({ type: 'activites', dprId: Number(editingDprId) });
-        let data = res?.data ?? res;
-        if (data && !Array.isArray(data)) {
-          data = data?.activites ?? data?.activities ?? (Array.isArray(data?.data) ? data.data : []);
+        let res: any = null;
+        try {
+          res = await dprAPI.dprHistoryEdit({ type: 'activites', dprId: Number(editingDprId) });
+        } catch {
+          res = null;
         }
-        const arr = Array.isArray(data) ? data : [];
+        let arr = extractActivities(res ?? {});
+        // Fallback: dpr-details may contain activities when fetch-dpr-history-edit returns blank
+        if (arr.length === 0) {
+          try {
+            const details = await dprAPI.getDetails(editingDprId);
+            arr = extractActivities(details);
+          } catch { /* ignore */ }
+        }
         const ids = arr.map((e: any) => e?.activities_id ?? e?.activities_history_activities_id ?? e?.activity_id ?? e?.id).filter(Boolean);
         if (ids.length > 0) {
           try {
@@ -1100,6 +1191,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           } catch {
             records = arr;
           }
+        } else if (arr.length > 0) {
+          records = arr;
         }
       } catch {
         records = [];
@@ -1118,13 +1211,27 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   useEffect(() => {
     if (!showMaterialSelection || !editingDprId || !selectedProject) return; // Edit mode only for loading existing materials
     let cancelled = false;
+    const extractMaterials = (res: any): any[] => {
+      let data = res?.data ?? res ?? [];
+      if (data && !Array.isArray(data)) data = data?.materials ?? data?.material ?? data?.materials_history ?? [];
+      return Array.isArray(data) ? data : [];
+    };
     const load = async () => {
       let records: any[] = [];
       try {
-        const res = await dprAPI.dprHistoryEdit({ type: 'material', dprId: Number(editingDprId) });
-        let data = res?.data ?? res ?? [];
-        if (data && !Array.isArray(data)) data = data?.materials ?? data?.material ?? [];
-        const arr = Array.isArray(data) ? data : [];
+        let res: any = null;
+        try {
+          res = await dprAPI.dprHistoryEdit({ type: 'material', dprId: Number(editingDprId) });
+        } catch {
+          res = null;
+        }
+        let arr = extractMaterials(res ?? {});
+        if (arr.length === 0) {
+          try {
+            const details = await dprAPI.getDetails(editingDprId);
+            arr = extractMaterials(details);
+          } catch { /* ignore */ }
+        }
         const ids = arr.map((e: any) => e?.materials_id ?? e?.materials_history_materials_id ?? e?.id).filter(Boolean);
         if (ids.length > 0) {
           try {
@@ -1132,6 +1239,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           } catch {
             records = arr;
           }
+        } else if (arr.length > 0) {
+          records = arr;
         }
       } catch {
         records = [];
@@ -1170,13 +1279,27 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   useEffect(() => {
     if (!showLabourSelection || !editingDprId || !selectedProject) return; // Edit mode only for loading existing labour
     let cancelled = false;
+    const extractLabour = (res: any): any[] => {
+      let data = res?.data ?? res ?? [];
+      if (data && !Array.isArray(data)) data = data?.labour ?? data?.labours ?? data?.labour_history ?? [];
+      return Array.isArray(data) ? data : [];
+    };
     const load = async () => {
       let records: any[] = [];
       try {
-        const res = await dprAPI.dprHistoryEdit({ type: 'labour', dprId: Number(editingDprId) });
-        let data = res?.data ?? res ?? [];
-        if (data && !Array.isArray(data)) data = data?.labour ?? data?.labours ?? [];
-        const arr = Array.isArray(data) ? data : [];
+        let res: any = null;
+        try {
+          res = await dprAPI.dprHistoryEdit({ type: 'labour', dprId: Number(editingDprId) });
+        } catch {
+          res = null;
+        }
+        let arr = extractLabour(res ?? {});
+        if (arr.length === 0) {
+          try {
+            const details = await dprAPI.getDetails(editingDprId);
+            arr = extractLabour(details);
+          } catch { /* ignore */ }
+        }
         const ids = arr.map((e: any) => e?.labours_id ?? e?.labour_id ?? e?.id).filter(Boolean);
         if (ids.length > 0) {
           try {
@@ -1184,6 +1307,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           } catch {
             records = arr;
           }
+        } else if (arr.length > 0) {
+          records = arr;
         }
       } catch {
         records = [];
@@ -1226,13 +1351,27 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   useEffect(() => {
     if (!showAssetSelection || !editingDprId || !selectedProject) return; // Edit mode only for loading existing assets
     let cancelled = false;
+    const extractAssets = (res: any): any[] => {
+      let data = res?.data ?? res ?? [];
+      if (data && !Array.isArray(data)) data = data?.assets ?? data?.asset ?? data?.assets_history ?? [];
+      return Array.isArray(data) ? data : [];
+    };
     const load = async () => {
       let records: any[] = [];
       try {
-        const res = await dprAPI.dprHistoryEdit({ type: 'assets', dprId: Number(editingDprId) });
-        let data = res?.data ?? res ?? [];
-        if (data && !Array.isArray(data)) data = data?.assets ?? data?.asset ?? [];
-        const arr = Array.isArray(data) ? data : [];
+        let res: any = null;
+        try {
+          res = await dprAPI.dprHistoryEdit({ type: 'assets', dprId: Number(editingDprId) });
+        } catch {
+          res = null;
+        }
+        let arr = extractAssets(res ?? {});
+        if (arr.length === 0) {
+          try {
+            const details = await dprAPI.getDetails(editingDprId);
+            arr = extractAssets(details);
+          } catch { /* ignore */ }
+        }
         const ids = arr.map((e: any) => e?.assets_id ?? e?.assets_history_assets_id ?? e?.id).filter(Boolean);
         if (ids.length > 0) {
           try {
@@ -1240,6 +1379,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           } catch {
             records = arr;
           }
+        } else if (arr.length > 0) {
+          records = arr;
         }
       } catch {
         records = [];
@@ -1404,40 +1545,24 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const handleImageUpload = (activityId: string, files: FileList | null) => {
     if (!files || files.length === 0) return;
 
-    const imagePromises = Array.from(files).map(file => {
-      return new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          const result = e.target?.result as string;
-          if (result) resolve(result);
-          else reject(new Error('Failed to read file'));
-        };
-        reader.onerror = () => reject(new Error('File read error'));
-        reader.readAsDataURL(file);
+    const file = files[0];
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const result = e.target?.result as string;
+      if (!result) return;
+      setSelectedActivities(prev => {
+        const newMap = new Map(prev);
+        const activity = newMap.get(activityId);
+        if (activity) {
+          newMap.set(activityId, { ...activity, images: [result] });
+        }
+        return newMap;
       });
-    });
-
-    Promise.all(imagePromises)
-      .then(imageDataUrls => {
-        const valid = imageDataUrls.filter((url): url is string => !!url && typeof url === 'string');
-        if (valid.length === 0) return;
-        setSelectedActivities(prev => {
-          const newMap = new Map(prev);
-          const activity = newMap.get(activityId);
-          if (activity) {
-            const currentImages = activity.images || [];
-            newMap.set(activityId, { 
-              ...activity, 
-              images: [...currentImages, ...valid]
-            });
-          }
-          return newMap;
-        });
-      })
-      .catch((err) => {
-        console.error('Image upload error:', err);
-        toast.showError('Failed to add image. Please try again.');
-      });
+    };
+    reader.onerror = () => {
+      toast.showError('Failed to add image. Please try again.');
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleRemoveImage = (activityId: string, imageIndex: number) => {
@@ -1865,6 +1990,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     return hindranceEntries.slice(start, start + PAGE_SIZE);
   }, [hindranceEntries, hindrancePage]);
 
+  const paginatedDprList = useMemo(() => {
+    const start = (dprListPage - 1) * PAGE_SIZE;
+    return dprList.slice(start, start + PAGE_SIZE);
+  }, [dprList, dprListPage]);
+
   const handleToggleLabour = (labour: Labour) => {
     setSelectedLabours(prev => {
       const newMap = new Map(prev);
@@ -2222,6 +2352,13 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     return combined.filter(Boolean).map((u: string) => resolveImageUrl(String(u)));
   };
 
+  /** Extract date (YYYY-MM-DD) from ISO timestamp for report display */
+  const extractDateFromTimestamp = (ts: string | null | undefined): string => {
+    if (!ts || typeof ts !== 'string') return '';
+    const m = ts.match(/^(\d{4}-\d{2}-\d{2})/);
+    return m ? m[1] : '';
+  };
+
   /** Map API item to SafetyEntry - used by both fetch-dpr-history-edit and safety-list */
   const mapItemToSafetyEntry = (item: any) => ({
     id: item.uuid || String(item.id),
@@ -2230,6 +2367,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     images: parseImagesFromItem(item),
     teamMembers: Array.isArray(item.team_members) ? item.team_members.map((m: any) => String(m?.id ?? m)) : Array.isArray(item.teamMembers) ? item.teamMembers : [],
     remarks: item.remarks || '',
+    date: extractDateFromTimestamp(item.updated_at ?? item.created_at),
   });
 
   // SafetyDPR: fetch-dpr-history-edit (edit mode) or safety-list when screen loads
@@ -2248,6 +2386,13 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             rawList = Array.isArray(data) ? data : (data?.safety ?? data?.safeties ?? []);
           } catch {
             rawList = [];
+          }
+          if (rawList.length === 0) {
+            try {
+              const details = await dprAPI.getDetails(editingDprId);
+              const d = details?.data ?? details;
+              rawList = Array.isArray(d) ? d : (d?.safety ?? d?.safeties ?? []);
+            } catch { /* ignore */ }
           }
         }
         if (rawList.length === 0) {
@@ -2287,6 +2432,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     images: parseImagesFromItem(item),
     teamMembers: Array.isArray(item.team_members) ? item.team_members.map((m: any) => String(m?.id ?? m)) : Array.isArray(item.teamMembers) ? item.teamMembers : [],
     remarks: item.remarks || '',
+    date: extractDateFromTimestamp(item.updated_at ?? item.created_at),
   });
 
   // HinderanceDPR: fetch-dpr-history-edit (edit mode) or hinderance-list when screen loads
@@ -2305,6 +2451,13 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             rawList = Array.isArray(data) ? data : (data?.hindrances ?? data?.hinderances ?? data?.hinderance ?? []);
           } catch {
             rawList = [];
+          }
+          if (rawList.length === 0) {
+            try {
+              const details = await dprAPI.getDetails(editingDprId);
+              const d = details?.data ?? details;
+              rawList = Array.isArray(d) ? d : (d?.hindrances ?? d?.hinderances ?? d?.hinderance ?? []);
+            } catch { /* ignore */ }
           }
         }
         if (rawList.length === 0) {
@@ -2342,6 +2495,16 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     const useCache = !opts?.force && now - lastFetchDprListAt.current < 2000;
     if (useCache) return;
 
+    const cached = !opts?.force && DPR_LIST_CACHE.dprList && now - DPR_LIST_CACHE.dprList.ts < DPR_LIST_CACHE.DPR_LIST_TTL_MS;
+    if (cached && DPR_LIST_CACHE.dprList) {
+      setDprList(DPR_LIST_CACHE.dprList.data);
+      setProjectsMapForDprList(DPR_LIST_CACHE.dprList.projMap);
+      setSubprojectsMapForDprList(DPR_LIST_CACHE.dprList.subMap);
+      setDprListPage(1);
+      setIsLoadingDprList(false);
+      return;
+    }
+
     setIsLoadingDprList(true);
     setDprListError(null);
     try {
@@ -2349,85 +2512,100 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       const arr = Array.isArray(list) ? list : [];
       if (arr.length > 0 || !opts?.preserveOnEmpty) setDprList(arr);
       else setDprList(prev => prev);
+      setDprListPage(1);
       opts?.onFetched?.(arr);
 
-      const projectIds = arr.length === 0 ? [] : [...new Set(arr.map((d: any) => {
-        const pid = d.projects_id;
-        if (pid != null && typeof pid !== 'object') return String(pid);
-        return pid?.id ?? pid;
-      }).filter(Boolean))];
+      // Build project and subproject name maps from dpr-list response (avoid project-subproject API)
+      let projMap: Record<string, string> = {};
+      let subMap: Record<string, string> = {};
 
-      if (projectIds.length === 0) {
-        setProjectsMapForDprList({});
-        setSubprojectsMapForDprList({});
-        return;
+      for (const d of arr) {
+        // Project name from response: nested object or top-level
+        const pid = d.projects_id;
+        if (pid != null && typeof pid === 'object') {
+          const id = pid?.id ?? pid;
+          const name = pid?.project_name ?? pid?.name ?? d.project_name;
+          if (id != null && name) {
+            projMap[String(id)] = name;
+            if (Number.isFinite(Number(id))) projMap[String(Number(id))] = name;
+          }
+        } else if (pid != null && (d.project_name ?? d.projects?.project_name ?? d.projects?.name)) {
+          const name = d.project_name ?? d.projects?.project_name ?? d.projects?.name;
+          projMap[String(pid)] = name;
+          if (Number.isFinite(Number(pid))) projMap[String(Number(pid))] = name;
+        }
+        // Subproject name from response: nested object or top-level
+        const sid = d.sub_projects_id;
+        if (sid != null && typeof sid === 'object') {
+          const id = sid?.id ?? sid;
+          const name = sid?.name ?? d.sub_project_name ?? d.subproject_name;
+          if (id != null && name) {
+            subMap[String(id)] = name;
+            if (Number.isFinite(Number(id))) subMap[String(Number(id))] = name;
+          }
+        } else if (sid != null && (d.sub_project_name ?? d.subproject_name ?? d.sub_projects?.name ?? d.subProjects?.name)) {
+          const name = d.sub_project_name ?? d.subproject_name ?? d.sub_projects?.name ?? d.subProjects?.name;
+          subMap[String(sid)] = name;
+          if (Number.isFinite(Number(sid))) subMap[String(Number(sid))] = name;
+        }
       }
 
-      let projMap: Record<string, string> = {};
-      const projectsCacheValid = DPR_LIST_CACHE.projects && now - DPR_LIST_CACHE.projects.ts < DPR_LIST_CACHE.TTL_MS;
-      if (projectsCacheValid && !opts?.force) {
-        for (const p of DPR_LIST_CACHE.projects!.data || []) {
-          const rawId = p.id ?? p.project_id ?? p.projects_id;
-          const name = p.project_name || p.name || '';
-          if (rawId != null && name) {
-            projMap[String(rawId)] = name;
-            if (Number.isFinite(Number(rawId))) projMap[String(Number(rawId))] = name;
-          }
-        }
-      } else {
-        try {
-          const fetchedProjects = await masterDataAPI.getProjectsList();
-          const projArr = Array.isArray(fetchedProjects) ? fetchedProjects : ((fetchedProjects as any)?.data ?? (fetchedProjects as any)?.projects ?? []);
-          for (const p of projArr) {
-            const rawId = p.id ?? p.project_id ?? p.projects_id;
-            const name = p.project_name || p.name || '';
-            if (rawId != null && name) {
-              projMap[String(rawId)] = name;
-              if (Number.isFinite(Number(rawId))) projMap[String(Number(rawId))] = name;
+      // Only call project-list for project IDs we don't have names for (no project-subproject calls)
+      const missingProjectIds = [...new Set(arr.map((d: any) => {
+        const pid = d.projects_id;
+        if (pid == null) return null;
+        const id = typeof pid === 'object' ? (pid?.id ?? pid) : pid;
+        if (id == null) return null;
+        return projMap[String(id)] ? null : String(id);
+      }).filter(Boolean))] as string[];
+
+      // Show list immediately - user sees data right away
+      setProjectsMapForDprList(projMap);
+      setSubprojectsMapForDprList(subMap);
+      setIsLoadingDprList(false);
+      lastFetchDprListAt.current = Date.now();
+      DPR_LIST_CACHE.dprList = { data: arr, projMap: { ...projMap }, subMap: { ...subMap }, ts: Date.now() };
+
+      // Fill missing project names in background (non-blocking)
+      if (missingProjectIds.length > 0) {
+        const projectsCacheValid = DPR_LIST_CACHE.projects && now - DPR_LIST_CACHE.projects.ts < DPR_LIST_CACHE.TTL_MS;
+        const fetchProjects = async () => {
+          try {
+            let projArr: any[] = [];
+            if (projectsCacheValid && !opts?.force && DPR_LIST_CACHE.projects) {
+              projArr = DPR_LIST_CACHE.projects.data || [];
+            } else {
+              const fetched = await masterDataAPI.getProjectsList();
+              projArr = Array.isArray(fetched) ? fetched : ((fetched as any)?.data ?? (fetched as any)?.projects ?? []);
+              DPR_LIST_CACHE.projects = { data: projArr, ts: Date.now() };
             }
-          }
-          DPR_LIST_CACHE.projects = { data: projArr, ts: now };
-        } catch {
-          if (DPR_LIST_CACHE.projects) {
-            for (const p of DPR_LIST_CACHE.projects.data || []) {
+            const merged: Record<string, string> = { ...projMap };
+            for (const p of projArr) {
               const rawId = p.id ?? p.project_id ?? p.projects_id;
               const name = p.project_name || p.name || '';
               if (rawId != null && name) {
-                projMap[String(rawId)] = name;
-                if (Number.isFinite(Number(rawId))) projMap[String(Number(rawId))] = name;
+                merged[String(rawId)] = name;
+                if (Number.isFinite(Number(rawId))) merged[String(Number(rawId))] = name;
               }
             }
-          }
-        }
-      }
-      setProjectsMapForDprList(projMap);
-
-      const subMap: Record<string, string> = {};
-      const toFetch = projectIds.filter((pid) => {
-        const cached = DPR_LIST_CACHE.subprojects.get(pid);
-        return !cached || now - cached.ts > DPR_LIST_CACHE.TTL_MS || opts?.force;
-      });
-      for (const projectId of toFetch) {
-        try {
-          const subs = await masterDataAPI.getProjectSubprojects(projectId);
-          const subArr = Array.isArray(subs) ? subs : [];
-          const map: Record<string, string> = {};
-          for (const s of subArr) {
-            const rawId = s.id ?? s.subproject_id ?? s.sub_projects_id;
-            const name = s.name || s.subproject_name || '';
-            if (rawId != null && name) {
-              map[String(rawId)] = name;
-              if (Number.isFinite(Number(rawId))) map[String(Number(rawId))] = name;
+            setProjectsMapForDprList(prev => ({ ...prev, ...merged }));
+          } catch {
+            if (DPR_LIST_CACHE.projects) {
+              const merged: Record<string, string> = { ...projMap };
+              for (const p of DPR_LIST_CACHE.projects.data || []) {
+                const rawId = p.id ?? p.project_id ?? p.projects_id;
+                const name = p.project_name || p.name || '';
+                if (rawId != null && name) {
+                  merged[String(rawId)] = name;
+                  if (Number.isFinite(Number(rawId))) merged[String(Number(rawId))] = name;
+                }
+              }
+              setProjectsMapForDprList(prev => ({ ...prev, ...merged }));
             }
           }
-          DPR_LIST_CACHE.subprojects.set(projectId, { data: map, ts: now });
-        } catch { /* ignore */ }
+        };
+        void fetchProjects();
       }
-      for (const pid of projectIds) {
-        const c = DPR_LIST_CACHE.subprojects.get(pid);
-        if (c) Object.assign(subMap, c.data);
-      }
-      setSubprojectsMapForDprList(subMap);
     } catch (err: any) {
       setDprListError(err?.message || 'Failed to load DPR list');
       if (!opts?.preserveOnEmpty) setDprList([]);
@@ -2482,21 +2660,18 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const handleSafetyEntryImageUpload = (id: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-    const fileList = Array.from(files);
-    const readAsDataURL = (file: File): Promise<string> =>
-      new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-    Promise.all(fileList.map(readAsDataURL)).then((results) => {
-      setSafetyEntries(prev => prev.map(entry => {
-        if (entry.id !== id) return entry;
-        const current = entry.images || (entry.image ? [entry.image] : []);
-        return { ...entry, images: [...current, ...results] };
-      }));
-    }).catch(() => toast.showError('Failed to load some images'));
+    const file = files[0];
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      if (result) {
+        setSafetyEntries(prev => prev.map(entry =>
+          entry.id === id ? { ...entry, images: [result] } : entry
+        ));
+      }
+    };
+    reader.onerror = () => toast.showError('Failed to load image');
+    reader.readAsDataURL(file);
     e.target.value = '';
   };
 
@@ -2571,21 +2746,18 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const handleHindranceEntryImageUpload = (id: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-    const fileList = Array.from(files);
-    const readAsDataURL = (file: File): Promise<string> =>
-      new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-    Promise.all(fileList.map(readAsDataURL)).then((results) => {
-      setHindranceEntries(prev => prev.map(entry => {
-        if (entry.id !== id) return entry;
-        const current = entry.images || (entry.image ? [entry.image] : []);
-        return { ...entry, images: [...current, ...results] };
-      }));
-    }).catch(() => toast.showError('Failed to load some images'));
+    const file = files[0];
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      if (result) {
+        setHindranceEntries(prev => prev.map(entry =>
+          entry.id === id ? { ...entry, images: [result] } : entry
+        ));
+      }
+    };
+    reader.onerror = () => toast.showError('Failed to load image');
+    reader.readAsDataURL(file);
     e.target.value = '';
   };
 
@@ -2639,6 +2811,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     fd.append('name', (entry.details || '').substring(0, 100) || 'Safety');
     fd.append('details', entry.details || '');
     fd.append('remarks', entry.remarks || '');
+    (entry.teamMembers || []).forEach((id) => fd.append('team_members[]', String(id)));
     const imgs = entry.images || (entry.image ? [entry.image] : []);
     const uploadableImg = imgs.find((u): u is string => typeof u === 'string' && u.startsWith('data:'));
     if (uploadableImg) {
@@ -2663,6 +2836,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     fd.append('name', (entry.details || '').substring(0, 100) || 'Hindrance');
     fd.append('details', entry.details || '');
     fd.append('remarks', entry.remarks || '');
+    (entry.teamMembers || []).forEach((id) => fd.append('team_members[]', String(id)));
     const imgs = entry.images || (entry.image ? [entry.image] : []);
     const uploadableImg = imgs.find((u): u is string => typeof u === 'string' && u.startsWith('data:'));
     if (uploadableImg) {
@@ -2797,6 +2971,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         formData.append(`safety[${idx}][name]`, (entry.details || '').substring(0, 100) || 'Safety');
         formData.append(`safety[${idx}][details]`, entry.details || '');
         formData.append(`safety[${idx}][remarks]`, entry.remarks || '');
+        (entry.teamMembers || []).forEach((id) => formData.append(`safety[${idx}][team_members][]`, String(id)));
       });
       newSafetyEntries.forEach((entry, idx) => {
         const imgs = entry.images || (entry.image ? [entry.image] : []);
@@ -2816,6 +2991,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         formData.append(`hinderance[${idx}][name]`, (entry.details || '').substring(0, 100) || 'Hindrance');
         formData.append(`hinderance[${idx}][details]`, entry.details || '');
         formData.append(`hinderance[${idx}][remarks]`, entry.remarks || '');
+        (entry.teamMembers || []).forEach((id) => formData.append(`hinderance[${idx}][team_members][]`, String(id)));
       });
       newHindranceEntries.forEach((entry, idx) => {
         const imgs = entry.images || (entry.image ? [entry.image] : []);
@@ -3130,6 +3306,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
               <p className="text-xs mt-1">Create your first DPR using the button above</p>
             </div>
           ) : (
+            <>
             <table className="w-full">
               <thead>
                 <tr className={`border-b ${isDark ? 'border-slate-700 bg-slate-800/50' : 'border-slate-200 bg-slate-50/50'}`}>
@@ -3141,19 +3318,19 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                 </tr>
               </thead>
               <tbody className={`divide-y ${isDark ? 'divide-slate-700' : 'divide-slate-200'}`}>
-                {dprList.map((dpr: any, index: number) => (
+                {paginatedDprList.map((dpr: any, index: number) => (
                   <tr key={dpr.id != null ? `dpr-${dpr.id}-${index}` : `dpr-${index}`} className={isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'}>
                     <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{dpr.dpr_no ?? '-'}</td>
                     <td className={`px-4 py-3 text-sm ${textPrimary}`}>{formatDprListDate(dpr)}</td>
                     <td className={`px-4 py-3 text-sm ${textPrimary}`}>
                       {typeof dpr.projects_id === 'object' && dpr.projects_id
                         ? (dpr.projects_id?.project_name ?? dpr.projects_id?.name ?? '-')
-                        : (dpr.projects?.project_name ?? dpr.projects?.name ?? (dpr.projects_id ? (projectsMapForDprList[String(dpr.projects_id)] ?? `Project #${dpr.projects_id}`) : '-'))}
+                        : (dpr.project_name ?? dpr.projects?.project_name ?? dpr.projects?.name ?? (dpr.projects_id ? (projectsMapForDprList[String(dpr.projects_id)] ?? `Project #${dpr.projects_id}`) : '-'))}
                     </td>
                     <td className={`px-4 py-3 text-sm ${textPrimary}`}>
                       {typeof dpr.sub_projects_id === 'object' && dpr.sub_projects_id
                         ? (dpr.sub_projects_id?.name ?? '-')
-                        : (dpr.sub_projects?.name ?? dpr.subProjects?.name ?? (dpr.sub_projects_id ? (subprojectsMapForDprList[String(dpr.sub_projects_id)] ?? `#${dpr.sub_projects_id}`) : '-'))}
+                        : (dpr.sub_project_name ?? dpr.subproject_name ?? dpr.sub_projects?.name ?? dpr.subProjects?.name ?? (dpr.sub_projects_id ? (subprojectsMapForDprList[String(dpr.sub_projects_id)] ?? `#${dpr.sub_projects_id}`) : '-'))}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1">
@@ -3226,6 +3403,14 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                 ))}
               </tbody>
             </table>
+            {dprList.length > PAGE_SIZE && (
+              <PaginationBar
+                currentPage={dprListPage}
+                totalItems={dprList.length}
+                onPageChange={setDprListPage}
+              />
+            )}
+            </>
           )}
         </div>
       </div>
@@ -3316,7 +3501,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] h-[calc(100vh-5rem)] max-h-[85vh] my-auto overflow-hidden flex flex-col`}>
             {/* X - sticky at top right, stays visible while scrolling */}
             <button
-              onClick={() => { setProjectSearchQuery(''); router.push(DPR_BASE); }}
+              onClick={() => { setProjectSearchQuery(''); resetDPRForm(); }}
               className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
               title="Close"
             >
@@ -3369,9 +3554,10 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                       <div className="flex flex-col items-center text-center">
                         <div className={`w-20 h-20 rounded-xl overflow-hidden border-2 border-[#C2D642]/20 mb-3 flex-shrink-0 group-hover:border-[#C2D642]/50 transition-colors`}>
                           <img 
-                            src={project.logo} 
+                            src={getLogoUrl(project.logo, project.name, 'C2D642')} 
                             alt={project.name}
                             className="w-full h-full object-cover"
+                            loading="lazy"
                             onError={(e) => {
                               const target = e.target as HTMLImageElement;
                               target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(project.name)}&background=C2D642&color=fff&size=128`;
@@ -3418,7 +3604,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] h-[calc(100vh-5rem)] max-h-[85vh] my-auto overflow-hidden flex flex-col`}>
             {/* X - fixed top right corner */}
             <button
-              onClick={() => { setSubprojectSearchQuery(''); setSelectedProject(null); setEditingDprId(null); setDprIdRes(null); router.push(`${DPR_BASE}/projects`); }}
+              onClick={() => { setSubprojectSearchQuery(''); resetDPRForm(); }}
               className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
               title="Close"
             >
@@ -3552,7 +3738,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             {/* Footer with Back and Next buttons - sticky at bottom. Next only when project has no subprojects. */}
             <div className={`${bgPrimary} flex-shrink-0 shrink-0 flex items-center justify-between px-4 sm:px-6 py-4 sm:py-4 border-t border-inherit`}>
               <button
-                onClick={() => { setSubprojectSearchQuery(''); setSelectedProject(null); setEditingDprId(null); setDprIdRes(null); router.push(`${DPR_BASE}/projects`); }}
+                onClick={() => router.back()}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-colors ${isDark ? 'hover:bg-slate-800/50 text-slate-300' : 'hover:bg-slate-100 text-slate-700'}`}
               >
                 {'<'} Back
@@ -3590,9 +3776,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full min-w-[320px] max-w-[min(92vw,1100px)] h-[calc(100vh-5rem)] max-h-[85vh] my-auto overflow-hidden flex flex-col`}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* X - fixed top right corner */}
+            {/* X - fixed top right corner: edit mode -> DPR list; create flow -> subprojects */}
             <button
-              onClick={() => { setSelectedActivities(new Map()); setEditingDprId(null); setDprIdRes(null); router.push(`${DPR_BASE}/subprojects`); }}
+              onClick={() => { resetDPRForm(); }}
               className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
               title="Close"
             >
@@ -3696,7 +3882,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                           return (
                             <tr 
                               key={activity.id} 
-                              className={`transition-colors ${
+                              onClick={() => !isHeading && handleToggleActivity(activity)}
+                              className={`transition-colors cursor-pointer ${
                                 isHeading
                                   ? isDark
                                     ? 'bg-[#4a5d23]'
@@ -3710,7 +3897,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                       : 'bg-white hover:bg-slate-50'
                               }`}
                             >
-                              <td className="w-14 pl-6 py-4 align-middle">
+                              <td className="w-14 pl-6 py-4 align-middle" onClick={e => e.stopPropagation()}>
                                 <div className="flex items-center justify-start">
                                   {isHeading ? (
                                     <span className="w-4 h-4 block" />
@@ -3735,7 +3922,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                               <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary}`}>
                                 {isHeading ? <span className={`text-sm ${textSecondary}`}>-</span> : (activity.qty != null ? String(activity.qty) : '-')}
                               </td>
-                              <td className="px-4 py-4 align-middle">
+                              <td className="px-4 py-4 align-middle" onClick={e => e.stopPropagation()}>
                                 {isHeading ? (
                                   <span className={`text-sm ${textSecondary}`}>-</span>
                                 ) : isSelected ? (
@@ -3767,7 +3954,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   <span className={`text-sm ${textSecondary}`}>-</span>
                                 )}
                               </td>
-                              <td className="px-4 py-4 align-middle">
+                              <td className="px-4 py-4 align-middle" onClick={e => e.stopPropagation()}>
                                 {isHeading ? (
                                   <span className={`text-sm ${textSecondary}`}>-</span>
                                 ) : isSelected ? (
@@ -3791,48 +3978,26 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   <span className={`text-sm ${textSecondary}`}>-</span>
                                 )}
                               </td>
-                              <td className="px-4 py-4 align-middle">
+                              <td className="px-4 py-4 align-middle" onClick={e => e.stopPropagation()}>
                                 {isHeading ? (
                                   <span className={`text-sm ${textSecondary}`}>-</span>
                                 ) : isSelected ? (
                                   <div className="flex flex-wrap items-center gap-2">
                                     {selectedActivity?.images && selectedActivity.images.length > 0 && (
-                                      <>
-                                        {selectedActivity.images.map((image, imgIdx) => (
-                                          <div key={imgIdx} className="relative group">
-                                            <img 
-                                              src={image} 
-                                              alt={`Activity ${imgIdx + 1}`}
-                                              className="w-16 h-16 object-cover rounded-lg border border-inherit"
-                                            />
-                                            <button
-                                              onClick={() => handleRemoveImage(activity.id, imgIdx)}
-                                              className="absolute -top-1 -right-1 p-1 rounded-full bg-red-500 text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                                            >
-                                              <Trash2 className="w-3 h-3" />
-                                            </button>
-                                          </div>
-                                        ))}
-                                        <label htmlFor={`image-upload-${activity.id}`} className={`flex items-center justify-center gap-1.5 cursor-pointer w-16 h-16 rounded-lg text-xs font-bold border-2 border-dashed shrink-0 transition-all ${
-                                          isDark 
-                                            ? 'border-slate-600 hover:border-[#C2D642] text-slate-400 hover:text-[#C2D642] bg-slate-800/30' 
-                                            : 'border-slate-300 hover:border-[#C2D642] text-slate-500 hover:text-[#C2D642] bg-slate-50'
-                                        }`}>
-                                          <Upload className="w-4 h-4" />
-                                          <span>Add</span>
-                                          <input
-                                            id={`image-upload-${activity.id}`}
-                                            type="file"
-                                            accept="image/*"
-                                            multiple
-                                            onChange={(e) => {
-                                              handleImageUpload(activity.id, e.target.files);
-                                              e.target.value = '';
-                                            }}
-                                            className="hidden"
-                                          />
-                                        </label>
-                                      </>
+                                      <div key="img" className="relative group">
+                                        <img
+                                          src={selectedActivity.images[0]}
+                                          alt="Activity"
+                                          className="w-16 h-16 object-cover rounded-lg border border-inherit"
+                                        />
+                                        <button
+                                          onClick={() => handleRemoveImage(activity.id, 0)}
+                                          className="absolute -top-1 -right-1 p-1 rounded-full bg-red-500 text-white hover:bg-red-600"
+                                          title="Remove"
+                                        >
+                                          <X className="w-3 h-3" />
+                                        </button>
+                                      </div>
                                     )}
                                     {(!selectedActivity?.images || selectedActivity.images.length === 0) && (
                                       <label htmlFor={`image-upload-${activity.id}`} className={`flex items-center gap-2 cursor-pointer px-3 py-2 rounded-lg text-sm font-bold border-2 border-dashed transition-all shrink-0 ${
@@ -3846,7 +4011,6 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                           id={`image-upload-${activity.id}`}
                                           type="file"
                                           accept="image/*"
-                                          multiple
                                           onChange={(e) => {
                                             handleImageUpload(activity.id, e.target.files);
                                             e.target.value = '';
@@ -3860,7 +4024,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   <span className={`text-sm ${textSecondary}`}>-</span>
                                 )}
                               </td>
-                              <td className="px-4 py-4 align-middle">
+                              <td className="px-4 py-4 align-middle" onClick={e => e.stopPropagation()}>
                                 {isHeading ? (
                                   <span className={`text-sm ${textSecondary}`}>-</span>
                                 ) : isSelected ? (
@@ -3903,7 +4067,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             <div className={`${bgPrimary} flex flex-row items-center justify-between gap-2 sm:gap-4 px-4 sm:px-6 py-4 border-t border-inherit flex-shrink-0 shrink-0`}>
               <button
                 type="button"
-                onClick={() => { setSelectedActivities(new Map()); setEditingDprId(null); setDprIdRes(null); router.push(`${DPR_BASE}/subprojects`); }}
+                onClick={() => router.back()}
                 className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                   isDark
                     ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
@@ -3949,9 +4113,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] h-[calc(100vh-5rem)] max-h-[85vh] my-auto overflow-hidden flex flex-col`}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* X - fixed top right corner */}
+            {/* X - fixed top right corner: edit mode -> DPR list; create flow -> activities */}
             <button
-              onClick={() => { setSelectedMaterials(new Map()); router.push(`${DPR_BASE}/activities`); }}
+              onClick={() => { resetDPRForm(); }}
               className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
               title="Close"
             >
@@ -4047,9 +4211,10 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                           return (
                             <tr 
                               key={material.id} 
-                              className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors ${isSelected ? (isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5') : ''}`}
+                              onClick={() => handleToggleMaterial(material)}
+                              className={`cursor-pointer ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors ${isSelected ? (isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5') : ''}`}
                             >
-                              <td className="px-6 py-4">
+                              <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
                                 <input
                                   type="checkbox"
                                   checked={isSelected}
@@ -4062,7 +4227,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                               <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{material.name}</td>
                               <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{material.specification || '-'}</td>
                               <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{material.unit}</td>
-                              <td className="px-6 py-4">
+                              <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
                                 {isSelected ? (
                                   <input
                                     type="number"
@@ -4083,7 +4248,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   <span className={`text-sm ${textSecondary}`}>-</span>
                                 )}
                               </td>
-                              <td className="px-6 py-4">
+                              <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
                                 {isSelected ? (
                                   <select
                                     value={selectedMaterial?.activity || ''}
@@ -4105,7 +4270,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   <span className={`text-sm ${textSecondary}`}>-</span>
                                 )}
                               </td>
-                              <td className="px-6 py-4">
+                              <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
                                 {isSelected ? (
                                   <textarea
                                     value={selectedMaterial?.remarks || ''}
@@ -4145,7 +4310,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             {/* Modal Footer - sticky at bottom */}
             <div className={`${bgPrimary} flex items-center justify-between gap-2 sm:gap-4 px-4 sm:px-6 py-4 border-t border-inherit flex-shrink-0 shrink-0`}>
               <button
-                onClick={() => { setSelectedMaterials(new Map()); router.push(`${DPR_BASE}/activities`); }}
+                onClick={() => router.back()}
                 className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                   isDark
                     ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
@@ -4173,7 +4338,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           <div             className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] h-[calc(100vh-5rem)] max-h-[85vh] my-auto overflow-hidden flex flex-col`}>
             {/* X - fixed top right corner */}
             <button
-              onClick={() => { setSelectedLabours(new Map()); router.push(`${DPR_BASE}/materials`); }}
+              onClick={() => { resetDPRForm(); }}
               className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
               title="Close"
             >
@@ -4269,9 +4434,10 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                           return (
                             <tr 
                               key={labour.id} 
-                              className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors ${isSelected ? (isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5') : ''}`}
+                              onClick={() => handleToggleLabour(labour)}
+                              className={`cursor-pointer ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors ${isSelected ? (isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5') : ''}`}
                             >
-                              <td className="px-6 py-4">
+                              <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
                                 <input
                                   type="checkbox"
                                   checked={isSelected}
@@ -4282,7 +4448,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                               <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{labour.category}</td>
                               <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{labour.name}</td>
                               <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{labour.unit}</td>
-                              <td className="px-6 py-4">
+                              <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
                                 {isSelected ? (
                                   <input
                                     type="number"
@@ -4303,7 +4469,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   <span className={`text-sm ${textSecondary}`}>-</span>
                                 )}
                               </td>
-                              <td className="px-6 py-4">
+                              <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
                                 {isSelected ? (
                                   <input
                                     type="number"
@@ -4324,7 +4490,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   <span className={`text-sm ${textSecondary}`}>-</span>
                                 )}
                               </td>
-                              <td className="px-6 py-4">
+                              <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
                                 {isSelected ? (
                                   <select
                                     value={selectedLabour?.activity || ''}
@@ -4346,7 +4512,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   <span className={`text-sm ${textSecondary}`}>-</span>
                                 )}
                               </td>
-                              <td className="px-6 py-4">
+                              <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
                                 {isSelected ? (
                                   <select
                                     value={selectedLabour?.contractor || ''}
@@ -4368,7 +4534,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   <span className={`text-sm ${textSecondary}`}>-</span>
                                 )}
                               </td>
-                              <td className="px-6 py-4">
+                              <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
                                 {isSelected ? (
                                   <input
                                     type="number"
@@ -4389,7 +4555,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   <span className={`text-sm ${textSecondary}`}>-</span>
                                 )}
                               </td>
-                              <td className="px-6 py-4">
+                              <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
                                 {isSelected ? (
                                   <textarea
                                     value={selectedLabour?.remarks || ''}
@@ -4429,7 +4595,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             {/* Modal Footer - sticky at bottom */}
             <div className={`${bgPrimary} flex items-center justify-between gap-2 sm:gap-4 px-4 sm:px-6 py-4 border-t border-inherit flex-shrink-0 shrink-0`}>
               <button
-                onClick={() => { setSelectedLabours(new Map()); router.push(`${DPR_BASE}/materials`); }}
+                onClick={() => router.back()}
                 className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                   isDark
                     ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
@@ -4457,7 +4623,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] h-[calc(100vh-5rem)] max-h-[85vh] my-auto overflow-hidden flex flex-col`}>
             {/* X - fixed top right corner */}
             <button
-              onClick={() => { setSelectedAssets(new Map()); setAssetSearchQuery(''); router.push(`${DPR_BASE}/labour`); }}
+              onClick={() => { resetDPRForm(); }}
               className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
               title="Close"
             >
@@ -4554,9 +4720,10 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                           return (
                             <tr 
                               key={asset.id} 
-                              className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors ${isSelected ? (isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5') : ''}`}
+                              onClick={() => handleToggleAsset(asset)}
+                              className={`cursor-pointer ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors ${isSelected ? (isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5') : ''}`}
                             >
-                              <td className="px-6 py-4">
+                              <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
                                 <input
                                   type="checkbox"
                                   checked={isSelected}
@@ -4568,7 +4735,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                               <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{asset.name}</td>
                               <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{asset.specification || '-'}</td>
                               <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{asset.unit}</td>
-                              <td className="px-6 py-4">
+                              <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
                                 {isSelected ? (
                                   <input
                                     type="number"
@@ -4589,7 +4756,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   <span className={`text-sm ${textSecondary}`}>-</span>
                                 )}
                               </td>
-                              <td className="px-6 py-4">
+                              <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
                                 {isSelected ? (
                                   <select
                                     value={selectedAsset?.activity || ''}
@@ -4611,7 +4778,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   <span className={`text-sm ${textSecondary}`}>-</span>
                                 )}
                               </td>
-                              <td className="px-6 py-4">
+                              <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
                                 {isSelected ? (
                                   <select
                                     value={selectedAsset?.contractor || ''}
@@ -4633,7 +4800,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   <span className={`text-sm ${textSecondary}`}>-</span>
                                 )}
                               </td>
-                              <td className="px-6 py-4">
+                              <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
                                 {isSelected ? (
                                   <input
                                     type="number"
@@ -4654,7 +4821,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   <span className={`text-sm ${textSecondary}`}>-</span>
                                 )}
                               </td>
-                              <td className="px-6 py-4">
+                              <td className="px-6 py-4" onClick={e => e.stopPropagation()}>
                                 {isSelected ? (
                                   <textarea
                                     value={selectedAsset?.remarks || ''}
@@ -4696,12 +4863,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             {/* Modal Footer - sticky at bottom */}
             <div className={`${bgPrimary} flex items-center justify-between gap-2 sm:gap-4 px-4 sm:px-6 py-4 border-t border-inherit flex-shrink-0 shrink-0`}>
               <button
-                onClick={() => {
-                  setShowAssetSelection(false);
-                  setShowLabourSelection(true);
-                  setSelectedAssets(new Map());
-                  setAssetSearchQuery('');
-                }}
+                onClick={() => router.back()}
                 className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                   isDark
                     ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
@@ -4727,9 +4889,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       {showSafetySelection && selectedProject && (
         <div className="fixed top-0 right-0 bottom-0 bg-black/50 z-[60] flex items-center justify-center p-4 sm:p-6 md:p-8 overflow-hidden" style={{ left: sidebarWidth }}>
           <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] h-[calc(100vh-5rem)] max-h-[85vh] my-auto overflow-hidden flex flex-col`}>
-            {/* X - fixed top right corner */}
+            {/* X - fixed top right corner: edit mode -> DPR list; create flow -> assets */}
             <button
-              onClick={() => router.push(`${DPR_BASE}/assets`)}
+              onClick={() => { resetDPRForm(); }}
               className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
               title="Close"
             >
@@ -4766,6 +4928,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                     <thead>
                       <tr className={`border-b ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>SR No</th>
+                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Date</th>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Safety Problem Details</th>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Tag Team Members</th>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Remarks</th>
@@ -4777,6 +4940,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                         <React.Fragment key={entry.id}>
                           <tr className={isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'}>
                             <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{(safetyPage - 1) * PAGE_SIZE + index + 1}</td>
+                            <td className={`px-6 py-4 text-sm ${textPrimary}`}>{entry.date || '—'}</td>
                             <td className="px-6 py-4">
                               <input
                                 type="text"
@@ -4813,23 +4977,24 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                             </td>
                           </tr>
                           <tr className={isDark ? 'bg-slate-800/20' : 'bg-slate-50/50'}>
-                            <td colSpan={5} className="px-6 py-3 border-t-0">
+                            <td colSpan={6} className="px-6 py-3 border-t-0">
                               <div className="flex flex-wrap gap-2 items-center">
                                 <span className={`text-xs font-bold ${textSecondary} mr-2`}>Images:</span>
-                                {(entry.images || (entry.image ? [entry.image] : [])).map((img, idx) => (
-                                  <div key={idx} className="relative flex-shrink-0">
-                                    <img src={img} alt={`Safety ${idx + 1}`} className="w-14 h-14 object-cover rounded-lg border border-inherit" />
-                                    <button onClick={() => handleSafetyEntryRemoveImage(entry.id, idx)} className="absolute -top-1.5 -right-1.5 p-0.5 rounded-full bg-red-500 text-white hover:bg-red-600">
+                                {(entry.images || (entry.image ? [entry.image] : [])).length > 0 ? (
+                                  <div className="relative flex-shrink-0">
+                                    <img src={(entry.images || (entry.image ? [entry.image] : []))[0]} alt="Safety" className="w-14 h-14 object-cover rounded-lg border border-inherit" />
+                                    <button onClick={() => handleSafetyEntryRemoveImage(entry.id, 0)} className="absolute -top-1.5 -right-1.5 p-0.5 rounded-full bg-red-500 text-white hover:bg-red-600" title="Remove">
                                       <X className="w-2.5 h-2.5" />
                                     </button>
                                   </div>
-                                ))}
-                                <label className="cursor-pointer flex-shrink-0">
-                                  <input type="file" accept="image/*" multiple onChange={(e) => handleSafetyEntryImageUpload(entry.id, e)} className="hidden" />
-                                  <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed w-fit ${isDark ? 'border-slate-600 hover:border-[#C2D642] text-slate-400' : 'border-slate-300 hover:border-[#C2D642] text-slate-600'}`}>
-                                    <Upload className="w-4 h-4" /><span className="text-xs font-bold">Add</span>
-                                  </div>
-                                </label>
+                                ) : (
+                                  <label className="cursor-pointer flex-shrink-0">
+                                    <input type="file" accept="image/*" onChange={(e) => handleSafetyEntryImageUpload(entry.id, e)} className="hidden" />
+                                    <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed w-fit ${isDark ? 'border-slate-600 hover:border-[#C2D642] text-slate-400' : 'border-slate-300 hover:border-[#C2D642] text-slate-600'}`}>
+                                      <Upload className="w-4 h-4" /><span className="text-xs font-bold">Add</span>
+                                    </div>
+                                  </label>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -4847,7 +5012,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             {/* Modal Footer - sticky at bottom */}
             <div className={`${bgPrimary} flex items-center justify-between gap-2 sm:gap-4 px-4 sm:px-6 py-4 border-t border-inherit flex-shrink-0 shrink-0`}>
               <button
-                onClick={() => router.push(`${DPR_BASE}/assets`)}
+                onClick={() => router.back()}
                 className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                   isDark
                     ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'
@@ -4886,9 +5051,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       {showHindranceSelection && selectedProject && (
         <div className="fixed top-0 right-0 bottom-0 bg-black/50 z-[60] flex items-center justify-center p-4 sm:p-6 md:p-8 overflow-hidden" style={{ left: sidebarWidth }}>
           <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] h-[calc(100vh-5rem)] max-h-[85vh] my-auto overflow-hidden flex flex-col`}>
-            {/* X - fixed top right corner */}
+            {/* X - fixed top right corner: edit mode -> DPR list; create flow -> safety */}
             <button
-              onClick={() => router.push(`${DPR_BASE}/safety`)}
+              onClick={() => { resetDPRForm(); }}
               className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
               title="Close"
             >
@@ -4925,6 +5090,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                     <thead>
                       <tr className={`border-b ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>SR No</th>
+                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Date</th>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Hindrance Problem Details</th>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Tag Team Members</th>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Remarks</th>
@@ -4936,6 +5102,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                         <React.Fragment key={entry.id}>
                           <tr className={isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'}>
                             <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{(hindrancePage - 1) * PAGE_SIZE + index + 1}</td>
+                            <td className={`px-6 py-4 text-sm ${textPrimary}`}>{entry.date || '—'}</td>
                             <td className="px-6 py-4">
                               <input
                                 type="text"
@@ -4970,23 +5137,24 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                             </td>
                           </tr>
                           <tr className={isDark ? 'bg-slate-800/20' : 'bg-slate-50/50'}>
-                            <td colSpan={5} className="px-6 py-3 border-t-0">
+                            <td colSpan={6} className="px-6 py-3 border-t-0">
                               <div className="flex flex-wrap gap-2 items-center">
                                 <span className={`text-xs font-bold ${textSecondary} mr-2`}>Images:</span>
-                                {(entry.images || (entry.image ? [entry.image] : [])).map((img, idx) => (
-                                  <div key={idx} className="relative flex-shrink-0">
-                                    <img src={img} alt={`Hindrance ${idx + 1}`} className="w-14 h-14 object-cover rounded-lg border border-inherit" />
-                                    <button onClick={() => handleHindranceEntryRemoveImage(entry.id, idx)} className="absolute -top-1.5 -right-1.5 p-0.5 rounded-full bg-red-500 text-white hover:bg-red-600">
+                                {(entry.images || (entry.image ? [entry.image] : [])).length > 0 ? (
+                                  <div className="relative flex-shrink-0">
+                                    <img src={(entry.images || (entry.image ? [entry.image] : []))[0]} alt="Hindrance" className="w-14 h-14 object-cover rounded-lg border border-inherit" />
+                                    <button onClick={() => handleHindranceEntryRemoveImage(entry.id, 0)} className="absolute -top-1.5 -right-1.5 p-0.5 rounded-full bg-red-500 text-white hover:bg-red-600" title="Remove">
                                       <X className="w-2.5 h-2.5" />
                                     </button>
                                   </div>
-                                ))}
-                                <label className="cursor-pointer flex-shrink-0">
-                                  <input type="file" accept="image/*" multiple onChange={(e) => handleHindranceEntryImageUpload(entry.id, e)} className="hidden" />
-                                  <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed w-fit ${isDark ? 'border-slate-600 hover:border-[#C2D642] text-slate-400' : 'border-slate-300 hover:border-[#C2D642] text-slate-600'}`}>
-                                    <Upload className="w-4 h-4" /><span className="text-xs font-bold">Add</span>
-                                  </div>
-                                </label>
+                                ) : (
+                                  <label className="cursor-pointer flex-shrink-0">
+                                    <input type="file" accept="image/*" onChange={(e) => handleHindranceEntryImageUpload(entry.id, e)} className="hidden" />
+                                    <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed w-fit ${isDark ? 'border-slate-600 hover:border-[#C2D642] text-slate-400' : 'border-slate-300 hover:border-[#C2D642] text-slate-600'}`}>
+                                      <Upload className="w-4 h-4" /><span className="text-xs font-bold">Add</span>
+                                    </div>
+                                  </label>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -5004,7 +5172,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             {/* Modal Footer - sticky at bottom */}
             <div className={`${bgPrimary} flex items-center justify-between gap-2 sm:gap-4 px-4 sm:px-6 py-4 border-t border-inherit flex-shrink-0 shrink-0`}>
               <button
-                onClick={() => router.push(`${DPR_BASE}/safety`)}
+                onClick={() => router.back()}
                 className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
                   isDark
                     ? 'bg-slate-800/50 hover:bg-slate-800 text-slate-100 border border-slate-700'

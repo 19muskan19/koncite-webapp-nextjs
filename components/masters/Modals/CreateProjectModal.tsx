@@ -69,6 +69,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     // Client fields (required if own_project_or_contractor = 'yes')
     client_name: '',
     client_address: '',
+    client_point_of_contact_name: '',
     client_company_name: '',
     client_company_address: '',
     client_designation: '',
@@ -111,6 +112,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         logoPreview: null,
         client_name: '',
         client_address: '',
+        client_point_of_contact_name: '',
         client_company_name: '',
         client_company_address: '',
         client_designation: '',
@@ -269,6 +271,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         // Client fields - populate ALL fields from editingProject
         client_name: (editingProject as any).client_name || '',
         client_address: (editingProject as any).client_address || '',
+        client_point_of_contact_name: (editingProject as any).client_point_of_contact_name || (editingProject as any).client_contact_name || '',
         client_company_name: (editingProject as any).client_company_name || '',
         client_company_address: (editingProject as any).client_company_address || '',
         client_designation: (editingProject as any).client_designation || '',
@@ -370,6 +373,11 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         updates.planned_end_date = value;
       }
     }
+    // Phone fields: digits only, max 10
+    if (name === 'client_phone' || name === 'client_mobile') {
+      const digitsOnly = value.replace(/\D/g, '').slice(0, 10);
+      updates[name] = digitsOnly;
+    }
     setFormData({ ...formData, ...updates });
   };
 
@@ -381,6 +389,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         own_project_or_contractor: '',
         client_name: '',
         client_address: '',
+        client_point_of_contact_name: '',
         client_company_name: '',
         client_company_address: '',
         client_designation: '',
@@ -396,6 +405,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         ...formData,
         own_project_or_contractor: value,
         client_name: '',
+        client_point_of_contact_name: '',
         client_company_name: '',
         client_company_address: '',
         client_designation: '',
@@ -432,14 +442,29 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     if (!formData.planned_end_date) missingFields.push('Planned End Date');
     if (!formData.companies_id) missingFields.push('Tag Company');
     
-    // 2. Validate client fields if own_project_or_contractor = 'yes'
+    // 2. Validate client fields if own_project_or_contractor = 'yes' (Client Name, Address, Point of Contact only)
     if (formData.own_project_or_contractor === 'yes') {
       if (!formData.client_name.trim()) missingFields.push('Client Name');
-      if (!formData.client_company_name.trim()) missingFields.push('Client Company Name');
-      if (!formData.client_company_address.trim()) missingFields.push('Client Company Address');
+      if (!formData.client_address.trim()) missingFields.push('Client Address');
+      if (!formData.client_point_of_contact_name.trim()) missingFields.push('Client Point of Contact Name');
       if (!formData.client_designation.trim()) missingFields.push('Client Designation');
       if (!formData.client_email.trim()) missingFields.push('Client Email');
       if (!formData.client_phone.trim()) missingFields.push('Client Phone');
+    }
+
+    // 3. Phone validation: 10 digits, numbers only (client_phone required when contractor; client_mobile optional)
+    const phoneRegex = /^\d{10}$/;
+    if (formData.own_project_or_contractor === 'yes' && formData.client_phone.trim()) {
+      if (!phoneRegex.test(formData.client_phone.trim())) {
+        toast.showWarning('Client Phone must be exactly 10 digits (numbers only).');
+        return;
+      }
+    }
+    if (formData.client_mobile.trim()) {
+      if (!phoneRegex.test(formData.client_mobile.trim())) {
+        toast.showWarning('Client Mobile must be exactly 10 digits (numbers only).');
+        return;
+      }
     }
     
     if (missingFields.length > 0) {
@@ -487,23 +512,18 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         projectFormData.append('tag_project_incharge', formData.project_incharge);
       }
       
-      // Client data (required if own_project_or_contractor = 'yes')
+      // Client data (only when own_project_or_contractor = 'yes'): Client Name, Address, Point of Contact. Backend may require company fields - use client name/address as fallback.
       if (formData.own_project_or_contractor === 'yes') {
         projectFormData.append('client_name', formData.client_name.trim());
-        projectFormData.append('client_company_name', formData.client_company_name.trim());
-        projectFormData.append('client_company_address', formData.client_company_address.trim());
+        projectFormData.append('client_address', formData.client_address.trim());
+        projectFormData.append('client_company_name', (formData.client_company_name || formData.client_name).trim());
+        projectFormData.append('client_company_address', (formData.client_company_address || formData.client_address).trim());
+        projectFormData.append('client_point_of_contact_name', formData.client_point_of_contact_name.trim());
         projectFormData.append('client_designation', formData.client_designation.trim());
         projectFormData.append('client_email', formData.client_email.trim().toLowerCase());
         projectFormData.append('client_phone', formData.client_phone.trim());
-        
         if (formData.client_mobile) {
           projectFormData.append('client_mobile', formData.client_mobile.trim());
-        }
-        if (formData.country_code) {
-          projectFormData.append('country_code', formData.country_code);
-        }
-        if (formData.company_country_code) {
-          projectFormData.append('company_country_code', formData.company_country_code);
         }
       }
       
@@ -553,6 +573,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
           logoPreview: null,
           client_name: '',
           client_address: '',
+          client_point_of_contact_name: '',
           client_company_name: '',
           client_company_address: '',
           client_designation: '',
@@ -646,6 +667,43 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
             />
           </div>
 
+          {/* Planned Start Date */}
+          <div>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+              Planned Start Date <span className="text-red-500">*</span>
+            </label>
+            <DatePickerInput
+              name="planned_start_date"
+              value={formData.planned_start_date}
+              onChange={(e) => handleInputChange(e as React.ChangeEvent<HTMLInputElement>)}
+              iconClassName={textSecondary}
+              className={`${
+                isDark 
+                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
+                  : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+              } border`}
+            />
+          </div>
+
+          {/* Planned End Date */}
+          <div>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+              Planned End Date <span className="text-red-500">*</span>
+            </label>
+            <DatePickerInput
+              name="planned_end_date"
+              value={formData.planned_end_date}
+              onChange={(e) => handleInputChange(e as React.ChangeEvent<HTMLInputElement>)}
+              min={formData.planned_start_date}
+              iconClassName={textSecondary}
+              className={`${
+                isDark 
+                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
+                  : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+              } border`}
+            />
+          </div>
+
           {/* Are you contractor for this project? */}
           <div>
             <label className={`block text-sm font-bold mb-3 ${textPrimary}`}>
@@ -718,44 +776,6 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                 />
               </div>
 
-              {/* Client Company Name */}
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Client Company Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  name="client_company_name"
-                  value={formData.client_company_name}
-                  onChange={handleInputChange}
-                  placeholder="Enter Client Company Name"
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                    isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
-                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                />
-              </div>
-              
-              {/* Client Company Address */}
-              <div>
-                <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                  Client Company Address <span className="text-red-500">*</span>
-                </label>
-                <textarea
-                  name="client_company_address"
-                  value={formData.client_company_address}
-                  onChange={handleInputChange}
-                  placeholder="Enter Client Company Address"
-                  rows={2}
-                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all resize-none ${
-                    isDark 
-                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
-                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                />
-              </div>
-
               {/* Client Point of Contact Section */}
               <div className={`p-4 rounded-lg ${isDark ? 'bg-slate-800/30' : 'bg-slate-50'}`}>
                 <h3 className={`text-base font-bold mb-4 ${textPrimary}`}>
@@ -764,17 +784,17 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* Left Column */}
                   <div className="space-y-4">
-                    {/* Name */}
+                    {/* Name (contact person) */}
                     <div>
                       <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
                         Name <span className="text-red-500">*</span>
                       </label>
                       <input
                         type="text"
-                        name="client_name"
-                        value={formData.client_name}
+                        name="client_point_of_contact_name"
+                        value={formData.client_point_of_contact_name}
                         onChange={handleInputChange}
-                        placeholder="Enter Client Contact Name"
+                        placeholder="Enter Client Point of Contact Name"
                         className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                           isDark 
                             ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
@@ -805,7 +825,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                     {/* Mobile Number */}
                     <div>
                       <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                        Mobile Number <span className="text-red-500">*</span>
+                        Mobile Number
                       </label>
                       <input
                         type="tel"
@@ -813,12 +833,16 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                         value={formData.client_mobile}
                         onChange={handleInputChange}
                         placeholder="Enter Client Mobile Number"
+                        maxLength={10}
+                        inputMode="numeric"
+                        pattern="[0-9]*"
                         className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                           isDark 
                             ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
                             : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
                         } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                       />
+                      <p className={`text-xs mt-1 ${textSecondary}`}>Numbers only, 10 digits</p>
                     </div>
                   </div>
 
@@ -854,12 +878,16 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                         value={formData.client_phone}
                         onChange={handleInputChange}
                         placeholder="Enter Client Phone Number"
+                        maxLength={10}
+                        inputMode="numeric"
+                        pattern="[0-9]*"
                         className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
                           isDark 
                             ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
                             : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
                         } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                       />
+                      <p className={`text-xs mt-1 ${textSecondary}`}>Numbers only, 10 digits</p>
                     </div>
                   </div>
                 </div>
@@ -867,115 +895,81 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
             </>
           )}
 
-          {/* Planned Start Date */}
-          <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Planned Start Date <span className="text-red-500">*</span>
-            </label>
-            <DatePickerInput
-              name="planned_start_date"
-              value={formData.planned_start_date}
-              onChange={(e) => handleInputChange(e as React.ChangeEvent<HTMLInputElement>)}
-              iconClassName={textSecondary}
-              className={`${
-                isDark 
-                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
-                  : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-              } border`}
-            />
-          </div>
-
-          {/* Planned End Date */}
-          <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Planned End Date <span className="text-red-500">*</span>
-            </label>
-            <DatePickerInput
-              name="planned_end_date"
-              value={formData.planned_end_date}
-              onChange={(e) => handleInputChange(e as React.ChangeEvent<HTMLInputElement>)}
-              min={formData.planned_start_date}
-              iconClassName={textSecondary}
-              className={`${
-                isDark 
-                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
-                  : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-              } border`}
-            />
-          </div>
-
-          {/* Tag Company */}
-          <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Tag Company <span className="text-red-500">*</span>
-            </label>
-            <select
-              name="companies_id"
-              value={formData.companies_id}
-              onChange={handleInputChange}
-              disabled={isLoadingCompanies}
-              className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
-                isDark 
-                  ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
-                  : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
-              } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
-            >
-              <option value="">{isLoadingCompanies ? 'Loading companies...' : '-- Select Company --'}</option>
-              {companies.map((company: any) => {
-                // Use numeric ID for companies_id matching
-                // Backend expects numeric ID in companies_id field
-                // Companies have: id (numeric), uuid (UUID), numericId (numeric)
-                const companyValue = company.numericId || company.id || company.uuid;
-                console.log('Company dropdown option:', {
-                  id: company.id,
-                  numericId: company.numericId,
-                  uuid: company.uuid,
-                  value: companyValue,
-                  name: company.registration_name || company.name
-                });
-                // Prioritize registration_name for display (as per API response structure)
-                const companyDisplayName = company.registration_name || company.name || '';
-                
-                return (
-                  <option key={company.uuid || company.id} value={String(companyValue)}>
-                    {companyDisplayName}
-                  </option>
-                );
-              })}
-            </select>
-          </div>
-
-          {/* Tag Project Incharge */}
-          <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Tag Project Incharge
-            </label>
-            {isLoadingStaff ? (
-              <div className={`p-4 rounded-lg text-center ${isDark ? 'bg-slate-800/30' : 'bg-slate-50'}`}>
-                <p className={`text-sm ${textSecondary}`}>Loading staff...</p>
-              </div>
-            ) : staff.length > 0 ? (
+          {/* Tag Company & Tag Project Incharge - one line */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Tag Company */}
+            <div>
+              <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                Tag Company <span className="text-red-500">*</span>
+              </label>
               <select
-                value={formData.project_incharge}
-                onChange={(e) => handleInchargeChange(e.target.value)}
-                className={`w-full px-4 py-2.5 rounded-lg border font-medium ${
-                  isDark
-                    ? 'bg-slate-800/50 border-slate-600 text-slate-100'
-                    : 'bg-white border-slate-300 text-slate-900'
-                } focus:ring-2 focus:ring-[#C2D642]/50 focus:border-[#C2D642]`}
+                name="companies_id"
+                value={formData.companies_id}
+                onChange={handleInputChange}
+                disabled={isLoadingCompanies}
+                className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
+                  isDark 
+                    ? 'bg-slate-800/50 border-slate-700 text-slate-100 hover:bg-slate-800' 
+                    : 'bg-white border-slate-200 text-slate-900 hover:bg-slate-50'
+                } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
               >
-                <option value="">Select Project Incharge</option>
-                {staff.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name || s.email || s.id}{s.roleType ? ` (${s.roleType})` : ''}
-                  </option>
-                ))}
+                <option value="">{isLoadingCompanies ? 'Loading companies...' : '-- Select Company --'}</option>
+                {companies.map((company: any) => {
+                  // Use numeric ID for companies_id matching
+                  // Backend expects numeric ID in companies_id field
+                  // Companies have: id (numeric), uuid (UUID), numericId (numeric)
+                  const companyValue = company.numericId || company.id || company.uuid;
+                  console.log('Company dropdown option:', {
+                    id: company.id,
+                    numericId: company.numericId,
+                    uuid: company.uuid,
+                    value: companyValue,
+                    name: company.registration_name || company.name
+                  });
+                  // Prioritize registration_name for display (as per API response structure)
+                  const companyDisplayName = company.registration_name || company.name || '';
+                  
+                  return (
+                    <option key={company.uuid || company.id} value={String(companyValue)}>
+                      {companyDisplayName}
+                    </option>
+                  );
+                })}
               </select>
-            ) : (
-              <div className={`p-4 rounded-lg text-center ${isDark ? 'bg-slate-800/30' : 'bg-slate-50'}`}>
-                <p className={`text-sm ${textSecondary}`}>No staff available. Add staff in Admin → User Management → Teams first.</p>
-              </div>
-            )}
+            </div>
+
+            {/* Tag Project Incharge */}
+            <div>
+              <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+                Tag Project Incharge
+              </label>
+              {isLoadingStaff ? (
+                <div className={`p-4 rounded-lg text-center ${isDark ? 'bg-slate-800/30' : 'bg-slate-50'}`}>
+                  <p className={`text-sm ${textSecondary}`}>Loading staff...</p>
+                </div>
+              ) : staff.length > 0 ? (
+                <select
+                  value={formData.project_incharge}
+                  onChange={(e) => handleInchargeChange(e.target.value)}
+                  className={`w-full px-4 py-2.5 rounded-lg border font-medium ${
+                    isDark
+                      ? 'bg-slate-800/50 border-slate-600 text-slate-100'
+                      : 'bg-white border-slate-300 text-slate-900'
+                  } focus:ring-2 focus:ring-[#C2D642]/50 focus:border-[#C2D642]`}
+                >
+                  <option value="">Select Project Incharge</option>
+                  {staff.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name || s.email || s.id}{s.roleType ? ` (${s.roleType})` : ''}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <div className={`p-4 rounded-lg text-center ${isDark ? 'bg-slate-800/30' : 'bg-slate-50'}`}>
+                  <p className={`text-sm ${textSecondary}`}>No staff available. Add staff in Admin → User Management → Teams first.</p>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Upload Project Logo */}

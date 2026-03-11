@@ -748,7 +748,7 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
       {/* Activities Table */}
       {!isLoadingActivities && !activitiesError && selectedProjectId && filteredActivities.length > 0 ? (
         <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto pt-1 pb-6">
             <table className="w-full">
               <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
                 <tr>

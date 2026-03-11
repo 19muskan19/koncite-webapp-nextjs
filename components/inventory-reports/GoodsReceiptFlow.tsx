@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import AppLayout from '@/components/AppLayout';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -10,10 +10,13 @@ import {
   ArrowRight,
   Building2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ChevronUp,
   HelpCircle,
   Loader2,
   Plus,
+  Search,
   Trash2,
   Share2,
   ExternalLink,
@@ -58,6 +61,7 @@ interface MaterialItem {
   name: string;
   specification?: string;
   unit?: string;
+  class?: string;
 }
 
 interface InwardDetailItem {
@@ -136,6 +140,9 @@ export default function GoodsReceiptFlow({
   const [addGoodsUnits, setAddGoodsUnits] = useState<Array<{ id: number; unit: string }>>([]);
   const [isAddGoodsSubmitting, setIsAddGoodsSubmitting] = useState(false);
   const [materialsRefreshKey, setMaterialsRefreshKey] = useState(0);
+  const [materialsSearchQuery, setMaterialsSearchQuery] = useState('');
+  const [materialsPage, setMaterialsPage] = useState(1);
+  const MATERIALS_PAGE_SIZE = 10;
   const [isLoading, setIsLoading] = useState(true);
   const [pdfInfo, setPdfInfo] = useState<{ url?: string; name?: string } | null>(null);
   const [grnNoFromBackend, setGrnNoFromBackend] = useState<string | null>(null);
@@ -314,13 +321,18 @@ export default function GoodsReceiptFlow({
             : (m.name ?? '');
           const unitObj = m.unit_id && typeof m.unit_id === 'object' ? m.unit_id : m.units ?? m.unit;
           const unit = typeof unitObj === 'object' ? (unitObj?.unit ?? unitObj?.name) : (m.units?.unit ?? m.unit ?? unitObj ?? '');
+          const numericId = goodsType === 'machines'
+            ? (m.assets_id ?? m.assets?.id ?? m.id)
+            : (m.id);
+          const materialClass = m.class?.value ?? m.class ?? '';
           return {
             id: m.uuid ?? m.id,
-            numericId: Number.isFinite(Number(m.id)) ? Number(m.id) : undefined,
+            numericId: Number.isFinite(Number(numericId)) ? Number(numericId) : undefined,
             code: m.code ?? '',
             name,
             specification: m.specification ?? '',
             unit,
+            class: materialClass,
           };
         }));
       })
@@ -334,6 +346,24 @@ export default function GoodsReceiptFlow({
       .then((u: any[]) => setAddGoodsUnits((Array.isArray(u) ? u : []).map((x: any) => ({ id: x.id, unit: x.unit ?? x.name ?? '' }))))
       .catch(() => setAddGoodsUnits([]));
   }, [showAddNewGoodsModal]);
+
+  const filteredMaterials = useMemo(() => {
+    if (!materialsSearchQuery.trim()) return materials;
+    const q = materialsSearchQuery.toLowerCase().trim();
+    return materials.filter(
+      (m) =>
+        (m.code ?? '').toLowerCase().includes(q) ||
+        (m.name ?? '').toLowerCase().includes(q) ||
+        (m.specification ?? '').toLowerCase().includes(q) ||
+        (m.unit ?? '').toLowerCase().includes(q) ||
+        (m.class ?? '').toLowerCase().includes(q)
+    );
+  }, [materials, materialsSearchQuery]);
+
+  const paginatedMaterials = useMemo(() => {
+    const start = (materialsPage - 1) * MATERIALS_PAGE_SIZE;
+    return filteredMaterials.slice(start, start + MATERIALS_PAGE_SIZE);
+  }, [filteredMaterials, materialsPage]);
 
   // Generate PDF on success screen mount (after inward-goods-details-add saves data)
   // requestId must be inv_inwards.id per API spec (POST /api/inventory/generate-pdf)
@@ -349,8 +379,20 @@ export default function GoodsReceiptFlow({
       editInwardId;
     if (!inwardRecordId) return;
     setIsSubmitting(true);
+    const inwardDetailsForPdf = details.length > 0
+      ? details.map((d) => ({
+          id: d.id ?? undefined,
+          materials_id: d.materials_id,
+          materialCode: d.materialCode,
+          materialName: d.materialName,
+          materialSpec: d.materialSpec,
+          materialUnit: d.materialUnit,
+          recipt_qty: d.recipt_qty,
+          reject_qty: d.reject_qty,
+        }))
+      : undefined;
     goodsReceiptAPI
-      .generatePdf(inwardRecordId)
+      .generatePdf(inwardRecordId, inwardDetailsForPdf)
       .then(({ pdf_url, name }) => setPdfInfo({ url: pdf_url, name: name ?? `Inward-${inwardDate}.pdf` }))
       .catch((err: any) => {
         setPdfInfo(null);
@@ -358,7 +400,7 @@ export default function GoodsReceiptFlow({
         toast.showWarning(msg);
       })
       .finally(() => setIsSubmitting(false));
-  }, [step, inwardHeader?.id, inwardHeader?.inv_inwards_id, inwardHeader?.uuid, inwardGoodsList, editInwardId, inwardDate]);
+  }, [step, inwardHeader?.id, inwardHeader?.inv_inwards_id, inwardHeader?.uuid, inwardGoodsList, editInwardId, inwardDate, details]);
 
   const handleBackClick = () => {
     if (step === 'success') setStep('details');
@@ -461,7 +503,7 @@ export default function GoodsReceiptFlow({
       formData.append('grn_no', grnNo);
       formData.append('date', inwardDate);
       formData.append('entry_type', String(entryTypeId));
-      formData.append('type', goodsType);
+      formData.append('type', goodsType === 'machines' ? 'assets' : 'materials');
       formData.append('delivery_ref_copy_no', deliveryRefNo);
       formData.append('delivery_ref_copy_date', deliveryRefDate);
       if (remarks) formData.append('remarkes', remarks);
@@ -487,7 +529,7 @@ export default function GoodsReceiptFlow({
           const unitLabel = typeof unitObj === 'object' ? (unitObj?.unit ?? unitObj?.name) : (g.unit ?? '');
           return {
             inward_goods_id: g.inward_id ?? g.inward_goods_id ?? g.id ?? invInwardId,
-            materials_id: g.materials_id ?? g.assets_id ?? g.material_id ?? g.materials?.id ?? g.assets?.id,
+            materials_id: g.id ?? g.materials_id ?? g.assets_id ?? g.material_id ?? g.materials?.id ?? g.assets?.id,
             materialCode: g.materials?.code ?? g.assets?.code ?? g.code ?? '',
             materialName: g.materials?.name ?? g.assets?.name ?? (typeof g.assets === 'string' ? g.assets : null) ?? g.name ?? '',
             materialUnit: unitLabel ?? '',
@@ -793,7 +835,7 @@ export default function GoodsReceiptFlow({
                     const sid = String(store.id);
                     const isSelected = selectedStoreIds.has(sid);
                     return (
-                      <button key={sid} type="button" onClick={() => toggleStore(sid)} className={`p-4 rounded-xl border-2 text-left transition-all ${isSelected ? 'border-[#6B8E23] bg-[#6B8E23]/10' : isDark ? 'border-slate-600 hover:border-slate-500' : 'border-slate-200 hover:border-slate-300'}`}>
+                      <button key={sid} type="button" onClick={() => toggleStore(sid)} onDoubleClick={() => setSelectedStoreIds((prev) => { const next = new Set(prev); next.add(sid); return next; })} className={`p-4 rounded-xl border-2 text-left transition-all ${isSelected ? 'border-[#6B8E23] bg-[#6B8E23]/10' : isDark ? 'border-slate-600 hover:border-slate-500' : 'border-slate-200 hover:border-slate-300'}`}>
                         <div className="flex items-center justify-between">
                           <div><p className={`font-bold ${textPrimary}`}>{store.name}</p>{store.code && <p className={`text-sm ${textSecondary}`}>{store.code}</p>}</div>
                           {isSelected && <Check className="w-5 h-5 text-[#6B8E23]" />}
@@ -933,8 +975,18 @@ export default function GoodsReceiptFlow({
                 </button>
               </div>
               <div className="flex gap-4 mb-3">
-                <label className="flex items-center gap-2 cursor-pointer"><input type="radio" name="goodsType" checked={goodsType === 'materials'} onChange={() => setGoodsType('materials')} className="rounded-full" /><span className={textPrimary}>Material</span></label>
-                <label className="flex items-center gap-2 cursor-pointer"><input type="radio" name="goodsType" checked={goodsType === 'machines'} onChange={() => setGoodsType('machines')} className="rounded-full" /><span className={textPrimary}>Machine</span></label>
+                <label className="flex items-center gap-2 cursor-pointer"><input type="radio" name="goodsType" checked={goodsType === 'materials'} onChange={() => { setGoodsType('materials'); setMaterialsPage(1); }} className="rounded-full" /><span className={textPrimary}>Material</span></label>
+                <label className="flex items-center gap-2 cursor-pointer"><input type="radio" name="goodsType" checked={goodsType === 'machines'} onChange={() => { setGoodsType('machines'); setMaterialsPage(1); }} className="rounded-full" /><span className={textPrimary}>Machine</span></label>
+              </div>
+              <div className="relative mb-3">
+                <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
+                <input
+                  type="text"
+                  placeholder={`Search ${goodsType === 'materials' ? 'materials' : 'machines'} by code, name, spec, unit...`}
+                  value={materialsSearchQuery}
+                  onChange={(e) => { setMaterialsSearchQuery(e.target.value); setMaterialsPage(1); }}
+                  className={`w-full pl-10 pr-4 py-2 rounded-lg border text-sm ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100 placeholder-slate-500' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'}`}
+                />
               </div>
               <div className={`border rounded-lg overflow-hidden ${isDark ? 'border-slate-600' : 'border-slate-200'}`}>
                 <table className="w-full text-sm">
@@ -947,8 +999,14 @@ export default function GoodsReceiptFlow({
                       <th className={`px-4 py-3 text-left ${textSecondary}`}>Unit</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-inherit">
-                    {materials.map((m) => {
+                  <tbody
+                    className="divide-y divide-inherit"
+                    onDoubleClick={() => {
+                      const maxPage = Math.ceil(filteredMaterials.length / MATERIALS_PAGE_SIZE);
+                      if (materialsPage < maxPage) setMaterialsPage((p) => p + 1);
+                    }}
+                  >
+                    {paginatedMaterials.map((m) => {
                       const mid = String(m.id);
                       const checked = selectedMaterialIds.has(mid);
                       return (
@@ -966,10 +1024,38 @@ export default function GoodsReceiptFlow({
                   </tbody>
                 </table>
               </div>
+              {filteredMaterials.length > MATERIALS_PAGE_SIZE && (
+                <div className={`flex items-center justify-between gap-4 mt-3 px-1 ${textSecondary}`}>
+                  <span className="text-sm">
+                    Showing {(materialsPage - 1) * MATERIALS_PAGE_SIZE + 1}–{Math.min(materialsPage * MATERIALS_PAGE_SIZE, filteredMaterials.length)} of {filteredMaterials.length}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setMaterialsPage((p) => Math.max(1, p - 1))}
+                      disabled={materialsPage <= 1}
+                      className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}
+                      aria-label="Previous page"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <span className="text-sm font-medium min-w-[4rem] text-center">Page {materialsPage} of {Math.ceil(filteredMaterials.length / MATERIALS_PAGE_SIZE) || 1}</span>
+                    <button
+                      type="button"
+                      onClick={() => setMaterialsPage((p) => Math.min(Math.ceil(filteredMaterials.length / MATERIALS_PAGE_SIZE), p + 1))}
+                      disabled={materialsPage >= Math.ceil(filteredMaterials.length / MATERIALS_PAGE_SIZE)}
+                      className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}
+                      aria-label="Next page"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end">
-              <button onClick={handleInwardsListNext} disabled={isSubmitting || selectedMaterialIds.size === 0} className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold ${isSubmitting || selectedMaterialIds.size === 0 ? 'opacity-50 cursor-not-allowed' : ''} bg-[#6B8E23] text-white hover:bg-[#5a7a1e]`}>
+              <button onClick={handleInwardsListNext} disabled={isSubmitting || (selectedMaterialIds.size === 0 && !imageFile)} className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold ${isSubmitting || (selectedMaterialIds.size === 0 && !imageFile) ? 'opacity-50 cursor-not-allowed' : ''} bg-[#6B8E23] text-white hover:bg-[#5a7a1e]`}>
                 {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Next <ArrowRight className="w-4 h-4" />
               </button>
             </div>
