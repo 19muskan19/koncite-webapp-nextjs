@@ -1,11 +1,11 @@
 'use client';
 
 import AppLayout from '@/components/AppLayout';
-import ProjectStockStatementReport from '@/components/inventory-reports/ProjectStockStatementReport';
+import IndentReport from '@/components/inventory-reports/IndentReport';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
 
-export default function ProjectStockStatementReportPage() {
+export default function IndentReportPage() {
   const { theme } = useTheme();
   const { isAuthenticated, isChecking } = useAuth();
 
@@ -23,7 +23,7 @@ export default function ProjectStockStatementReportPage() {
 
   return (
     <AppLayout>
-      <ProjectStockStatementReport theme={theme} />
+      <IndentReport theme={theme} />
     </AppLayout>
   );
 }

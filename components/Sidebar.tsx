@@ -141,7 +141,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
           id: ViewType.WORK_PROGRESS_REPORTS, 
           children: [
             { label: 'Work Progress Details', id: ViewType.WORK_PROGRESS_DETAILS, path: '/work-progress-reports/work-progress-details' },
-            { label: 'DPR', id: ViewType.DPR, path: '/work-progress-reports' },
+            { label: 'DPR', id: ViewType.DPR, path: '/work-progress-reports/dpr-report' },
             { label: 'Resources Usage from DPR', id: ViewType.RESOURCES_USAGE_FROM_DPR, path: '/work-progress-reports/resources-usage-from-dpr' },
             { label: 'Material Used vs Store Issue', id: ViewType.MATERIAL_USED_VS_STORE_ISSUE, path: '/work-progress-reports/material-used-vs-store-issue' }
           ]
@@ -150,13 +150,13 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
           label: 'Inventory Reports', 
           id: ViewType.INVENTORY_REPORTS, 
           children: [
-            { label: 'PR', id: ViewType.INVENTORY_PR, path: '/inventory-reports/pr' },
-            { label: 'RFQ', id: ViewType.INVENTORY_RFQ, path: '/inventory-reports/rfq' },
-            { label: 'GRN(MRN) Slip', id: ViewType.INVENTORY_GRN_MRN_SLIP, path: '/inventory-reports/grn-mrn-slip' },
-            { label: 'GRN(MRN) Details', id: ViewType.INVENTORY_GRN_MRN_DETAILS, path: '/inventory-reports/grn-mrn-details' },
-            { label: 'Issue Slip', id: ViewType.INVENTORY_ISSUE_SLIP, path: '/inventory-reports/issue-slip' },
-            { label: 'Issue(Outward) Details', id: ViewType.INVENTORY_ISSUE_OUTWARD_DETAILS, path: '/inventory-reports/issue-outward-details' },
-            { label: 'Issue Return', id: ViewType.INVENTORY_ISSUE_RETURN, path: '/inventory-reports/issue-return' },
+            { label: 'PR', id: 'INVENTORY_PR_REPORT', path: '/inventory-reports/pr-report' },
+            { label: 'RFQ', id: 'INVENTORY_RFQ_REPORT', path: '/inventory-reports/rfq-report' },
+            { label: 'GRN(MRN) Slip', id: 'INVENTORY_GRN_SLIP_REPORT', path: '/inventory-reports/grn-slip-report' },
+            { label: 'GRN(MRN) Details', id: 'INVENTORY_GRN_DETAILS_REPORT', path: '/inventory-reports/grn-details-report' },
+            { label: 'Issue Slip', id: 'INVENTORY_ISSUE_SLIP_REPORT', path: '/inventory-reports/issue-slip-report' },
+            { label: 'Issue(Outward) Details', id: 'INVENTORY_ISSUE_OUTWARD_DETAILS_REPORT', path: '/inventory-reports/issue-outward-details-report' },
+            { label: 'Issue Return', id: 'INVENTORY_ISSUE_RETURN_REPORT', path: '/inventory-reports/issue-return-report' },
             { label: 'Global Stock Details', id: ViewType.INVENTORY_GLOBAL_STOCK_DETAILS, path: '/inventory-reports/global-stock-details' },
             { label: 'Project Stock Statement', id: ViewType.INVENTORY_PROJECT_STOCK_STATEMENT, path: '/inventory-reports/project-stock-statement' }
           ]

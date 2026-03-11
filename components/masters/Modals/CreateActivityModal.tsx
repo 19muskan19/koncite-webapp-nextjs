@@ -182,7 +182,7 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
           ? modalSubprojects.find(s => s.uuid === formData.subproject || String(s.id) === formData.subproject)?.id
           : undefined;
         const result = await masterDataAPI.getActivities(projectIdNum || formData.project, subprojectIdNum);
-        const raw = Array.isArray(result) ? result : (result?.data ?? []);
+        const raw = Array.isArray(result) ? result : ((result as { data?: any[] })?.data ?? []);
         const isHeading = (a: any) => {
           const t = a.type ?? a.activity_type ?? '';
           return t && String(t).toLowerCase() === 'heading';

@@ -2517,6 +2517,68 @@ export const masterDataAPI = {
       } as ApiError;
     }
   },
+  /**
+   * Global Projects Stock - POST /inventory/inventory-report
+   * Backend type: 'global-project-stock'
+   * Request: { type: 'global-project-stock', item_type: 'materials'|'machines' }
+   * Response: data.material or data.assets - array with code, name, specification, unit, project, total_inward
+   */
+  getGlobalStockReport: async (dataType: 'materials' | 'assets'): Promise<any[]> => {
+    try {
+      const itemType = dataType === 'materials' ? 'materials' : 'machines';
+      const payload = { type: 'global-project-stock', item_type: itemType };
+      const response = await apiClient.post('/inventory/inventory-report', payload);
+      const data = response.data?.data ?? response.data;
+      const arr = dataType === 'materials' ? (data?.material ?? data?.materials ?? []) : (data?.assets ?? []);
+      const list = Array.isArray(arr) ? arr : [];
+      return list.filter((r: any) => (Number(r?.total_inward ?? r?.total_stock_qty ?? r?.qty ?? 0) > 0));
+    } catch (error: any) {
+      if (error?.response?.status === 404 || error?.response?.status === 422) {
+        return [];
+      }
+      throw {
+        message: error.response?.data?.message || 'Failed to load global stock report',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /**
+   * Project Stock Statement - POST /inventory/inventory-report
+   * Backend type: 'project-stock'
+   * Request: { type: 'project-stock', project, store, item_type: 'materials'|'machines' }
+   * Response: data.material or data.assets - class (materials only), code, name, specification, unit, total_inward, total_issue, available_stock
+   */
+  getProjectStockStatement: async (params: {
+    projectId: string | number;
+    storeId?: string | number;
+    dataType: 'materials' | 'assets';
+  }): Promise<any[]> => {
+    try {
+      const itemType = params.dataType === 'materials' ? 'materials' : 'machines';
+      const payload: Record<string, any> = {
+        type: 'project-stock',
+        project: params.projectId,
+        projectId: params.projectId,
+        item_type: itemType,
+      };
+      if (params.storeId != null && params.storeId !== '') {
+        payload.store = params.storeId;
+        payload.storeId = params.storeId;
+      }
+      const response = await apiClient.post('/inventory/inventory-report', payload);
+      const data = response.data?.data ?? response.data;
+      const arr = params.dataType === 'materials' ? (data?.material ?? data?.materials ?? []) : (data?.assets ?? []);
+      return Array.isArray(arr) ? arr : [];
+    } catch (error: any) {
+      if (error?.response?.status === 404 || error?.response?.status === 422) {
+        return [];
+      }
+      throw {
+        message: error.response?.data?.message || 'Failed to load project stock statement',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
 };
 
 // Safety API - Matching Laravel routes (SafetyController)
@@ -2945,7 +3007,7 @@ export const materialsHistoryAPI = {
 
 // DPR API - Matching Laravel routes (DprController)
 export const dprAPI = {
-  getList: async (params?: { project?: number | string; subproject?: number | string; date?: string }): Promise<any[]> => {
+  getList: async (params?: { project?: number | string; subproject?: number | string; date?: string; userId?: number | string; emp_id?: number | string }): Promise<any[]> => {
     const toArray = (val: any): any[] => {
       if (Array.isArray(val)) return val;
       if (val && typeof val === 'object' && !Array.isArray(val)) {
@@ -3795,6 +3857,37 @@ export const materialRequestAPI = {
     }
   },
   /**
+   * POST /inventory/inventory-report - PR (Indent / Purchase Request) report
+   * Backend type: 'pr'
+   * Request: { type: 'pr', projectId, subProjectId?, dateForm, dateTo, indentNo? }
+   * Response: data.material - array with sl_no, code, name, specification, unit, totalRequiredQty, totalRequiredDate, requiredforActivities, remarks, currentStock
+   */
+  getReport: async (filters: {
+    projectId: number | string;
+    subProjectId?: number | string;
+    dateForm?: string;
+    dateTo?: string;
+    indentNo?: string;
+  }): Promise<any[]> => {
+    try {
+      const payload: Record<string, unknown> = { type: 'pr', projectId: filters.projectId };
+      if (filters.subProjectId != null && filters.subProjectId !== '') payload.subProjectId = filters.subProjectId;
+      if (filters.dateForm) payload.dateForm = filters.dateForm.slice(0, 10);
+      if (filters.dateTo) payload.dateTo = filters.dateTo.slice(0, 10);
+      if (filters.indentNo != null && String(filters.indentNo).trim()) payload.indentNo = filters.indentNo.trim();
+      const response = await apiClient.post('/inventory/inventory-report', payload);
+      const data = response.data?.data ?? response.data;
+      const material = data?.material ?? data?.materials ?? data;
+      return Array.isArray(material) ? material : [];
+    } catch (error: any) {
+      if (error?.response?.status === 404 || error?.response?.status === 422) return [];
+      throw {
+        message: error.response?.data?.message || 'Failed to load PR report',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /**
    * POST /inventory/materials-request-details-list
    * MaterialRequestDetailsController::index
    * Payload: { projectId (required), searchkey? }
@@ -4222,6 +4315,35 @@ export const rfqAPI = {
       throw { message: error.response?.data?.message || 'Failed to generate RFQ PDF', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
+  /**
+   * POST /inventory/inventory-report - RFQ report
+   * Request: { type: 'rfq', projectId, subProjectId?, dateForm, dateTo, prepared?, rfqno? }
+   * Response: data.material = RFQ table rows
+   */
+  getReport: async (filters: {
+    projectId: number | string;
+    subProjectId?: number | string;
+    dateForm?: string;
+    dateTo?: string;
+    prepared?: number | string;
+    rfqno?: string;
+  }): Promise<any[]> => {
+    try {
+      const payload: Record<string, unknown> = { type: 'rfq', projectId: filters.projectId };
+      if (filters.subProjectId != null && filters.subProjectId !== '') payload.subProjectId = filters.subProjectId;
+      if (filters.dateForm) payload.dateForm = filters.dateForm.slice(0, 10);
+      if (filters.dateTo) payload.dateTo = filters.dateTo.slice(0, 10);
+      if (filters.prepared != null && filters.prepared !== '') payload.prepared = filters.prepared;
+      if (filters.rfqno != null && String(filters.rfqno).trim()) payload.rfqno = filters.rfqno.trim();
+      const response = await apiClient.post('/inventory/inventory-report', payload);
+      const data = response.data?.data ?? response.data;
+      const material = data?.material ?? data?.materials ?? data;
+      return Array.isArray(material) ? material : [];
+    } catch (error: any) {
+      if (error?.response?.status === 404) return [];
+      throw { message: error.response?.data?.message || 'Failed to load RFQ report', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
 };
 
 // Goods Return APIs - Inventory > Goods Returns
@@ -4400,6 +4522,53 @@ export const goodsReturnAPI = {
       throw { message: error.response?.data?.message || 'Failed to generate PDF', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
+  /**
+   * POST /inventory/inventory-report - Issue Return report
+   * Backend type: 'issue-return'
+   * Request: { type: 'issue-return', project, store, from_date, to_date, entry_type?, item_type }
+   * Response: data.assets - array of report rows
+   */
+  getReport: async (filters: {
+    projectId: number | string;
+    storeId?: number | string;
+    entryTypeId?: number | string;
+    dateFrom?: string;
+    dateTo?: string;
+    search?: string;
+    dataType: 'materials' | 'machines';
+  }): Promise<any[]> => {
+    try {
+      const payload: Record<string, unknown> = {
+        type: 'issue-return',
+        project: filters.projectId,
+        projectId: filters.projectId,
+        item_type: filters.dataType,
+      };
+      if (filters.storeId != null && filters.storeId !== '') {
+        payload.store = filters.storeId;
+        payload.storeId = filters.storeId;
+      }
+      if (filters.entryTypeId != null && filters.entryTypeId !== '') payload.entry_type = filters.entryTypeId;
+      if (filters.dateFrom) {
+        payload.from_date = filters.dateFrom.slice(0, 10);
+        payload.dateForm = filters.dateFrom.slice(0, 10);
+      }
+      if (filters.dateTo) {
+        payload.to_date = filters.dateTo.slice(0, 10);
+        payload.dateTo = filters.dateTo.slice(0, 10);
+      }
+      if (filters.search != null && String(filters.search).trim()) payload.search = filters.search.trim();
+      const response = await apiClient.post('/inventory/inventory-report', payload);
+      const data = response.data?.data ?? response.data;
+      const assets = data?.assets ?? data?.material ?? data?.materials ?? data;
+      return Array.isArray(assets) ? assets : [];
+    } catch (error: any) {
+      if (error?.response?.status === 404 || error?.response?.status === 422) {
+        return [];
+      }
+      throw { message: error.response?.data?.message || 'Failed to load Issue Return report', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
 };
 
 // Goods Issue (Outward) APIs - Inventory > Goods Issue / Issue Slip
@@ -4523,6 +4692,54 @@ export const goodsIssueAPI = {
       return { pdf_url: pdfUrl, name: data?.name ?? data?.filename };
     } catch (error: any) {
       throw { message: error.response?.data?.message || 'Failed to generate PDF', errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  /**
+   * POST /inventory/inventory-report - Issue Slip / Issue Details report
+   * Backend types: 'issue-slip' (single date), 'issue-details' (date range)
+   * Request: { type, project, store, from_date/to_date, entry_type?, item_type }
+   * Response: InvIssuesDetails - transformed to assets array by buildIssueDetailsOrSlipAssets
+   */
+  getReport: async (filters: {
+    projectId: number | string;
+    storeId?: number | string;
+    issueToId?: number | string;
+    date?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    search?: string;
+    dataType: 'materials' | 'machines';
+    reportType?: 'issue-slip' | 'issue-details';
+  }): Promise<any[]> => {
+    try {
+      const reportType = filters.reportType ?? 'issue-slip';
+      const payload: Record<string, unknown> = {
+        type: reportType,
+        project: filters.projectId,
+        projectId: filters.projectId,
+        item_type: filters.dataType,
+      };
+      if (filters.storeId != null && filters.storeId !== '') {
+        payload.store = filters.storeId;
+        payload.storeId = filters.storeId;
+      }
+      if (filters.issueToId != null && filters.issueToId !== '') payload.entry_type = filters.issueToId;
+      if (filters.date) {
+        payload.from_date = filters.date.slice(0, 10);
+        payload.date = filters.date.slice(0, 10);
+      }
+      if (filters.dateFrom) payload.from_date = filters.dateFrom.slice(0, 10);
+      if (filters.dateTo) payload.to_date = filters.dateTo.slice(0, 10);
+      if (filters.search != null && String(filters.search).trim()) payload.search = filters.search.trim();
+      const response = await apiClient.post('/inventory/inventory-report', payload);
+      const data = response.data?.data ?? response.data;
+      const arr = data?.assets ?? data?.material ?? data?.materials ?? data;
+      return Array.isArray(arr) ? arr : [];
+    } catch (error: any) {
+      if (error?.response?.status === 404 || error?.response?.status === 422) {
+        return [];
+      }
+      throw { message: error.response?.data?.message || 'Failed to load Issue report', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
 };
@@ -4673,6 +4890,54 @@ export const goodsReceiptAPI = {
     } catch (error: any) {
       const errMsg = error.response?.data?.error ?? error.response?.data?.message ?? 'Failed to generate PDF';
       throw { message: errMsg, errors: error.response?.data?.errors || {} } as ApiError;
+    }
+  },
+  /**
+   * POST /inventory/inventory-report - GRN/MRN Slip / GRN Details report
+   * Backend types: 'grn-slip' (single date), 'grn-details' (date range)
+   * Request: { type, project, store, from_date/to_date, entry_type?, item_type, supplier?, search? }
+   * Response: data.assets (grn-slip returns fetchHeadData + assets, grn-details returns assets)
+   */
+  getReport: async (filters: {
+    projectId: number | string;
+    storeId?: number | string;
+    entryTypeId?: number | string;
+    supplierId?: number | string;
+    dateFrom?: string;
+    dateTo?: string;
+    search?: string;
+    dataType: 'materials' | 'machines';
+    reportType?: 'grn-slip' | 'grn-details';
+  }): Promise<any[]> => {
+    try {
+      const reportType = filters.reportType ?? 'grn-slip';
+      const payload: Record<string, unknown> = {
+        type: reportType,
+        project: filters.projectId,
+        projectId: filters.projectId,
+        item_type: filters.dataType,
+      };
+      if (filters.storeId != null && filters.storeId !== '') {
+        payload.store = filters.storeId;
+        payload.storeId = filters.storeId;
+      }
+      if (filters.entryTypeId != null && filters.entryTypeId !== '') payload.entry_type = filters.entryTypeId;
+      if (filters.supplierId != null && filters.supplierId !== '') payload.supplier = filters.supplierId;
+      if (filters.dateFrom) {
+        payload.from_date = filters.dateFrom.slice(0, 10);
+        payload.date = filters.dateFrom.slice(0, 10);
+      }
+      if (filters.dateTo) payload.to_date = filters.dateTo.slice(0, 10);
+      if (filters.search != null && String(filters.search).trim()) payload.search = filters.search.trim();
+      const response = await apiClient.post('/inventory/inventory-report', payload);
+      const data = response.data?.data ?? response.data;
+      const arr = data?.assets ?? data?.material ?? data?.materials ?? data;
+      return Array.isArray(arr) ? arr : [];
+    } catch (error: any) {
+      if (error?.response?.status === 404 || error?.response?.status === 422) {
+        return [];
+      }
+      throw { message: error.response?.data?.message || 'Failed to load GRN report', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
 };

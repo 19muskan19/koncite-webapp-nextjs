@@ -202,7 +202,7 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
       const unitsList = units.length > 0 ? units : (fetchedUnits || []).map((u: any) => ({ id: u.id, unit: (u.unit || u.name || '').toString().trim() }));
       if (unitsList.length > 0 && units.length === 0) setUnits(unitsList);
 
-      const fetchedActivities = Array.isArray(result) ? result : (result?.data ?? []);
+      const fetchedActivities = Array.isArray(result) ? result : ((result as { data?: any[] })?.data ?? []);
       setActivitiesEmptyMessage(fetchedActivities.length === 0 && (result as any)?.message ? (result as any).message : null);
 
       const getUnitName = (activity: any) => {

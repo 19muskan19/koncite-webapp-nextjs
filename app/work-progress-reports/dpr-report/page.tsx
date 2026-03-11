@@ -1,11 +1,12 @@
 'use client';
 
+import React, { Suspense } from 'react';
 import AppLayout from '@/components/AppLayout';
-import ProjectStockStatementReport from '@/components/inventory-reports/ProjectStockStatementReport';
+import DPRReportView from '@/components/work-progress-reports/DPRReportView';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
 
-export default function ProjectStockStatementReportPage() {
+export default function DPRReportPage() {
   const { theme } = useTheme();
   const { isAuthenticated, isChecking } = useAuth();
 
@@ -23,7 +24,9 @@ export default function ProjectStockStatementReportPage() {
 
   return (
     <AppLayout>
-      <ProjectStockStatementReport theme={theme} />
+      <Suspense fallback={<div className="flex justify-center p-8"><div className="h-8 w-8 animate-spin rounded-full border-b-2 border-[#C2D642]" /></div>}>
+        <DPRReportView theme={theme} />
+      </Suspense>
     </AppLayout>
   );
 }

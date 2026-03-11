@@ -1090,10 +1090,9 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
           icon: Users,
           description: 'Manage company users and team assignments',
           columns: ['Name', 'Email', 'Role', 'Team', 'Status'],
-          sampleData: [
-            { name: 'John Doe', email: 'john.doe@company.com', role: 'Project Manager', team: 'Team Alpha', status: 'Active' },
-            { name: 'Jane Smith', email: 'jane.smith@company.com', role: 'Site Engineer', team: 'Team Beta', status: 'Active' },
-          ]
+          sampleData: [],
+          emptyStateTitle: 'No Users',
+          emptyStateMessage: 'User data will appear here once available'
         };
       case ViewType.USER_ROLES_PERMISSIONS:
         return {
@@ -1101,10 +1100,9 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
           icon: ShieldCheck,
           description: 'Configure user roles and their permissions',
           columns: ['Role Name', 'Description', 'Users', 'Permissions', 'Status'],
-          sampleData: [
-            { name: 'Admin', description: 'Full system access', users: '5', permissions: 'All', status: 'Active' },
-            { name: 'Project Manager', description: 'Project management access', users: '12', permissions: 'Project, Reports', status: 'Active' },
-          ]
+          sampleData: [],
+          emptyStateTitle: 'No Roles',
+          emptyStateMessage: 'Role data will appear here once configured'
         };
       case ViewType.PROJECT_PERMISSIONS:
         return {
@@ -1112,10 +1110,9 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
           icon: ShieldCheck,
           description: 'Manage project-level access and permissions',
           columns: ['Project', 'User/Role', 'Permission Type', 'Access Level', 'Status'],
-          sampleData: [
-            { project: 'Residential Complex A', userRole: 'John Doe', type: 'Read/Write', level: 'Full', status: 'Active' },
-            { project: 'Commercial Tower B', userRole: 'Jane Smith', type: 'Read Only', level: 'Limited', status: 'Active' },
-          ]
+          sampleData: [],
+          emptyStateTitle: 'No Project Permissions',
+          emptyStateMessage: 'Project permission data will appear here once configured'
         };
       case ViewType.PR_MANAGEMENT:
       case ViewType.PR_APPROVAL_MANAGE:
@@ -1124,10 +1121,9 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
           icon: ClipboardCheck,
           description: 'Manage purchase requisitions and approvals',
           columns: ['PR Number', 'Requested By', 'Department', 'Amount', 'Status'],
-          sampleData: [
-            { prNumber: 'PR-2024-001', requestedBy: 'John Doe', department: 'Construction', amount: '$15,000', status: 'Pending Approval' },
-            { prNumber: 'PR-2024-002', requestedBy: 'Jane Smith', department: 'Procurement', amount: '$8,500', status: 'Approved' },
-          ]
+          sampleData: [],
+          emptyStateTitle: 'No PR Data',
+          emptyStateMessage: 'Purchase requisition data will appear here once available'
         };
       case ViewType.PR:
         return {
@@ -1135,10 +1131,9 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
           icon: FileText,
           description: 'Purchase requisition details and management',
           columns: ['PR Number', 'Date', 'Items', 'Total Amount', 'Status'],
-          sampleData: [
-            { prNumber: 'PR-2024-001', date: '2024-01-15', items: '5', amount: '$15,000', status: 'Pending' },
-            { prNumber: 'PR-2024-002', date: '2024-01-20', items: '3', amount: '$8,500', status: 'Approved' },
-          ]
+          sampleData: [],
+          emptyStateTitle: 'No PR Data',
+          emptyStateMessage: 'Purchase requisition data will appear here once available'
         };
       case ViewType.INVENTORY_PR:
         return {
@@ -1237,10 +1232,9 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
           icon: BarChart3,
           description: 'View and generate work progress reports',
           columns: ['Report Name', 'Project', 'Period', 'Progress', 'Status'],
-          sampleData: [
-            { reportName: 'Weekly Progress - Week 1', project: 'Residential Complex A', period: 'Jan 1-7', progress: '45%', status: 'Completed' },
-            { reportName: 'Monthly Summary - January', project: 'Commercial Tower B', period: 'Jan 2024', progress: '78%', status: 'In Progress' },
-          ]
+          sampleData: [],
+          emptyStateTitle: 'No Reports',
+          emptyStateMessage: 'Report data will appear here once generated'
         };
       case ViewType.INVENTORY_REPORTS:
         return {
@@ -1248,7 +1242,9 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
           icon: Package,
           description: 'Generate and view inventory reports',
           columns: ['Report Name', 'Warehouse', 'Date', 'Items Count', 'Status'],
-          sampleData: []
+          sampleData: [],
+          emptyStateTitle: 'No Inventory Reports',
+          emptyStateMessage: 'Use the sidebar to navigate to specific report pages'
         };
       case ViewType.WORKFORCE_MANAGEMENT:
         return {
@@ -1256,10 +1252,9 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
           icon: UsersRound,
           description: 'Manage workforce, labour, and staff assignments',
           columns: ['Name', 'Role', 'Project', 'Status', 'Availability'],
-          sampleData: [
-            { name: 'John Doe', role: 'Supervisor', project: 'Site A', status: 'Active', availability: 'Available' },
-            { name: 'Jane Smith', role: 'Site Engineer', project: 'Site B', status: 'Active', availability: 'Assigned' },
-          ]
+          sampleData: [],
+          emptyStateTitle: 'No Workforce Data',
+          emptyStateMessage: 'Workforce data will appear here once available'
         };
       case ViewType.LABOUR_STRENGTH:
         return {
@@ -1267,10 +1262,9 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
           icon: UsersRound,
           description: 'View labour workforce strength and statistics',
           columns: ['Trade', 'Total Workers', 'Available', 'Assigned', 'Skill Level'],
-          sampleData: [
-            { trade: 'Carpenters', total: '45', available: '12', assigned: '33', skillLevel: 'Mixed' },
-            { trade: 'Electricians', total: '28', available: '8', assigned: '20', skillLevel: 'Expert' },
-          ]
+          sampleData: [],
+          emptyStateTitle: 'No Labour Data',
+          emptyStateMessage: 'Labour strength data will appear here once available'
         };
       case ViewType.WORK_CONTRACTOR:
         return {
@@ -1278,10 +1272,9 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
           icon: Briefcase,
           description: 'Manage contractors and their work assignments',
           columns: ['Contractor Name', 'Code', 'Specialization', 'Projects', 'Status'],
-          sampleData: [
-            { name: 'ABC Contractors Ltd', code: 'CON001', specialization: 'Civil Works', projects: '3', status: 'Active' },
-            { name: 'DEF Contractors Ltd', code: 'CON002', specialization: 'Electrical', projects: '2', status: 'Active' },
-          ]
+          sampleData: [],
+          emptyStateTitle: 'No Contractor Data',
+          emptyStateMessage: 'Contractor data will appear here once available'
         };
       case ViewType.SUBSCRIPTION:
         return {
@@ -1289,10 +1282,9 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
           icon: CreditCard,
           description: 'Manage subscription plans and billing',
           columns: ['Plan Name', 'Features', 'Price', 'Users', 'Status'],
-          sampleData: [
-            { planName: 'Enterprise Plan', features: 'All Features', price: '$999/month', users: 'Unlimited', status: 'Active' },
-            { planName: 'Professional Plan', features: 'Standard Features', price: '$499/month', users: '50', status: 'Active' },
-          ]
+          sampleData: [],
+          emptyStateTitle: 'No Subscription Data',
+          emptyStateMessage: 'Subscription data will appear here once configured'
         };
       default:
         return {

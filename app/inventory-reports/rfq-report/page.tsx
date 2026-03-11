@@ -1,11 +1,11 @@
 'use client';
 
 import AppLayout from '@/components/AppLayout';
-import ProjectStockStatementReport from '@/components/inventory-reports/ProjectStockStatementReport';
+import RFQReport from '@/components/inventory-reports/RFQReport';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
 
-export default function ProjectStockStatementReportPage() {
+export default function RFQReportPage() {
   const { theme } = useTheme();
   const { isAuthenticated, isChecking } = useAuth();
 
@@ -23,7 +23,7 @@ export default function ProjectStockStatementReportPage() {
 
   return (
     <AppLayout>
-      <ProjectStockStatementReport theme={theme} />
+      <RFQReport theme={theme} />
     </AppLayout>
   );
 }

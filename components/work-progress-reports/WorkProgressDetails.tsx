@@ -17,6 +17,9 @@ import {
   ChevronRight
 } from 'lucide-react';
 import DatePickerInput from '../ui/DatePickerInput';
+import { useProjectsFromMasters, useSubprojectsFromMasters } from '../../hooks/useProjectsFromMasters';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 interface WorkProgressActivity {
   id: string;
@@ -37,17 +40,19 @@ interface WorkProgressDetailsProps {
 }
 
 const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
-  const [selectedProject, setSelectedProject] = useState<string>('Lakeshire');
-  const [selectedSubProject, setSelectedSubProject] = useState<string>('A wing');
-  const [fromDate, setFromDate] = useState<string>('2021-12-26');
-  const [toDate, setToDate] = useState<string>('2026-01-13');
+  const [selectedProject, setSelectedProject] = useState<string>('');
+  const [selectedSubProject, setSelectedSubProject] = useState<string>('');
+  const [fromDate, setFromDate] = useState<string>('');
+  const [toDate, setToDate] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
   const [entriesPerPage, setEntriesPerPage] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [availableProjects, setAvailableProjects] = useState<string[]>([]);
-  const [availableSubProjects, setAvailableSubProjects] = useState<Array<{ name: string; project: string }>>([]);
-  
+
+  const projects = useProjectsFromMasters();
+  const projIdForSub = projects.find((p) => String(p.id) === String(selectedProject))?.id ?? selectedProject;
+  const subprojects = useSubprojectsFromMasters(projIdForSub || undefined);
+
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
@@ -113,114 +118,11 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
 
   // Load projects from Projects component (localStorage)
   useEffect(() => {
-    const loadProjects = () => {
-      const defaultProjectNames = [
-        'Lakeshire',
-        'Demo Data',
-        'Residential Complex A',
-        'Commercial Tower B',
-        'Infrastructure Project C',
-        'Urban Development D'
-      ];
+    if (!selectedProject) setSelectedSubProject('');
+  }, [selectedProject]);
 
-      const savedProjects = localStorage.getItem('projects');
-      let userProjectNames: string[] = [];
-      
-      if (savedProjects) {
-        try {
-          const parsed = JSON.parse(savedProjects);
-          userProjectNames = parsed.map((project: { name: string }) => project.name);
-        } catch (e) {
-          console.error('Error parsing projects:', e);
-        }
-      }
-
-      const allProjects = [...new Set([...defaultProjectNames, ...userProjectNames])];
-      setAvailableProjects(allProjects);
-    };
-
-    loadProjects();
-
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'projects') {
-        loadProjects();
-      }
-    };
-
-    window.addEventListener('storage', handleStorageChange);
-    window.addEventListener('projectsUpdated', loadProjects);
-    const interval = setInterval(loadProjects, 500);
-
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('projectsUpdated', loadProjects);
-      clearInterval(interval);
-    };
-  }, []);
-
-  // Load subprojects from Subproject component (localStorage)
-  useEffect(() => {
-    const loadSubProjects = () => {
-      const defaultSubProjects = [
-        { name: 'A wing', project: 'Lakeshire' },
-        { name: 'B wing', project: 'Lakeshire' },
-        { name: 'Foundation Work', project: 'Residential Complex A' },
-        { name: 'Structural Framework', project: 'Residential Complex A' },
-        { name: 'Electrical Installation', project: 'Commercial Tower B' },
-        { name: 'HVAC System', project: 'Commercial Tower B' },
-      ];
-
-      const savedSubProjects = localStorage.getItem('subprojects');
-      let userSubProjects: Array<{ name: string; project: string }> = [];
-      
-      if (savedSubProjects) {
-        try {
-          const parsed = JSON.parse(savedSubProjects);
-          userSubProjects = parsed.map((sub: { name: string; project: string }) => ({
-            name: sub.name,
-            project: sub.project
-          }));
-        } catch (e) {
-          console.error('Error parsing subprojects:', e);
-        }
-      }
-
-      const allSubProjects = [...defaultSubProjects, ...userSubProjects];
-      setAvailableSubProjects(allSubProjects);
-    };
-
-    loadSubProjects();
-
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'subprojects') {
-        loadSubProjects();
-      }
-    };
-
-    window.addEventListener('storage', handleStorageChange);
-    window.addEventListener('subprojectsUpdated', loadSubProjects);
-    const interval = setInterval(loadSubProjects, 500);
-
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('subprojectsUpdated', loadSubProjects);
-      clearInterval(interval);
-    };
-  }, []);
-
-  // Filter subprojects by selected project
-  const filteredSubProjects = useMemo(() => {
-    return availableSubProjects.filter(sub => sub.project === selectedProject);
-  }, [availableSubProjects, selectedProject]);
-
-  // Update selected subproject when project changes
-  useEffect(() => {
-    if (filteredSubProjects.length > 0 && !filteredSubProjects.find(sub => sub.name === selectedSubProject)) {
-      setSelectedSubProject(filteredSubProjects[0].name);
-    } else if (filteredSubProjects.length === 0) {
-      setSelectedSubProject('');
-    }
-  }, [selectedProject, filteredSubProjects]);
+  // Required filters for loading table: project, fromDate, toDate
+  const filtersReady = Boolean(selectedProject && fromDate && toDate);
 
   // Filter and sort activities
   const filteredAndSortedActivities = useMemo(() => {
@@ -446,42 +348,41 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
   };
 
   const handleDownloadPDF = () => {
-    const printContent = getPrintContent();
-    
-    // Create a hidden iframe for PDF download
-    const iframe = document.createElement('iframe');
-    iframe.style.position = 'fixed';
-    iframe.style.right = '0';
-    iframe.style.bottom = '0';
-    iframe.style.width = '0';
-    iframe.style.height = '0';
-    iframe.style.border = '0';
-    iframe.style.opacity = '0';
-    iframe.style.pointerEvents = 'none';
-    document.body.appendChild(iframe);
+    const projectName = projects.find((p) => String(p.id) === String(selectedProject))?.name ?? selectedProject;
+    const subprojectName = subprojects.find((s) => String(s.id) === String(selectedSubProject))?.name ?? selectedSubProject;
 
-    const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-    if (iframeDoc) {
-      iframeDoc.open();
-      iframeDoc.write(printContent);
-      iframeDoc.close();
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    doc.setFontSize(18);
+    doc.text('Work Progress Report', 14, 15);
+    doc.setFontSize(10);
+    doc.text(`Project: ${projectName}`, 14, 22);
+    doc.text(`Sub Project: ${subprojectName || 'N/A'}`, 14, 27);
+    doc.text(`From Date: ${fromDate ? new Date(fromDate).toLocaleDateString('en-GB') : '-'}`, 100, 22);
+    doc.text(`To Date: ${toDate ? new Date(toDate).toLocaleDateString('en-GB') : '-'}`, 100, 27);
 
-      // Wait for content to load, then automatically trigger print dialog for PDF save
-      setTimeout(() => {
-        if (iframe.contentWindow) {
-          iframe.contentWindow.focus();
-          // Trigger print dialog - user can select "Save as PDF" as destination
-          iframe.contentWindow.print();
-        }
-        
-        // Clean up iframe after print dialog is shown
-        setTimeout(() => {
-          if (document.body.contains(iframe)) {
-            document.body.removeChild(iframe);
-          }
-        }, 2000);
-      }, 500);
-    }
+    const headers = [['Sl.no', 'Activities', 'Unit', 'Estimate Qty', 'Est Rate', 'Est. Amount', 'Completed Qty', 'Est. Amount for Completion', '% Completion', 'Balance qty']];
+    const body = filteredAndSortedActivities.map((a) => [
+      String(a.slNo),
+      a.activities,
+      a.unit,
+      String(a.estimateQty),
+      formatNumber(a.estRate),
+      formatNumber(a.estAmount),
+      formatNumber(a.completedQty),
+      formatNumber(a.estAmountForCompletion),
+      formatNumber(a.completionPercentage),
+      formatNumber(a.balanceQty),
+    ]);
+
+    autoTable(doc, {
+      head: headers,
+      body,
+      startY: 32,
+      styles: { fontSize: 8 },
+      headStyles: { fillColor: [240, 240, 240] },
+    });
+
+    doc.save('work-progress-details.pdf');
   };
 
   const handlePrint = () => {
@@ -529,8 +430,9 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
               onChange={(e) => setSelectedProject(e.target.value)}
               className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
             >
-              {availableProjects.map(project => (
-                <option key={project} value={project}>{project}</option>
+              <option value="">Select Project</option>
+              {projects.map((p) => (
+                <option key={String(p.id)} value={String(p.id)}>{p.name}</option>
               ))}
             </select>
           </div>
@@ -544,8 +446,8 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
               className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
             >
               <option value="">Select Sub Project</option>
-              {filteredSubProjects.map(sub => (
-                <option key={sub.name} value={sub.name}>{sub.name}</option>
+              {subprojects.map((s) => (
+                <option key={String(s.id)} value={String(s.id)}>{s.name}</option>
               ))}
             </select>
           </div>
@@ -579,7 +481,8 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
         </div>
       </div>
 
-      {/* Export Buttons and Search */}
+      {/* Export Buttons and Search - only when filters are selected */}
+      {filtersReady && (
       <div className={`flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4 p-3 sm:p-4 rounded-xl border ${cardClass}`}>
         <div className="flex items-center gap-2 flex-wrap">
           <button
@@ -627,8 +530,10 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
           </div>
         </div>
       </div>
+      )}
 
-      {/* Work Progress Table */}
+      {/* Work Progress Table - only when filters are selected */}
+      {filtersReady ? (
       <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[900px]">
@@ -742,6 +647,15 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
           </div>
         </div>
       </div>
+      ) : (
+        <div className={`rounded-xl border p-12 text-center ${cardClass}`}>
+          <ClipboardCheck className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
+          <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>Select filters to load report</h3>
+          <p className={`text-sm ${textSecondary}`}>
+            Select Project, From Date, and To Date above to load the work progress details table.
+          </p>
+        </div>
+      )}
     </div>
   );
 };
