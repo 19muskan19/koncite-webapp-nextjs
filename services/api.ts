@@ -4370,21 +4370,17 @@ export const goodsReturnAPI = {
   },
   /**
    * POST /inventory/return-edit
-   * Request body: inv_returns_id (required). Optional: project_id / projects_id for backends that require it.
-   * Response: status, response_code, message, data (id, uuid, return_no, date, type, inv_issue_lists_id, tag, remarkes, inv_return, inv_return_details).
+   * Request body: { inv_returns_id: number } - ID of the return record only.
+   * Response root is the return goods record with inv_return and inv_return_details nested inside.
    */
-  edit: async (invReturnsId: number | string, projectId?: number | string): Promise<any> => {
+  edit: async (invReturnsId: number | string): Promise<any> => {
     try {
-      const body: Record<string, unknown> = { inv_returns_id: invReturnsId };
-      if (projectId != null && projectId !== '') {
-        body.project_id = projectId;
-        body.projects_id = projectId; // Some backends expect projects_id
-      }
+      const body = { inv_returns_id: invReturnsId };
       const response = await apiClient.post('/inventory/return-edit', body);
-      // Handle nested data: { data: { data: {...} } } or { data: {...} }
       const d = response.data;
       const inner = d?.data;
-      if (inner && typeof inner === 'object' && (inner.inv_return != null || inner.inv_return_details != null || inner.inv_return_goods != null)) {
+      // Response root = return goods record (has inv_return, inv_return_details nested)
+      if (inner && typeof inner === 'object' && (inner.inv_return != null || inner.inv_return_details != null)) {
         return inner;
       }
       return d?.data ?? d;
@@ -4459,7 +4455,6 @@ export const goodsReturnAPI = {
     id?: number | string | null;
     inv_return_id: number | string;
     projects_id: number | string;
-    store_warehouses_id?: (number | string)[];
     return_no: string;
     date: string;
     type?: number | string;
@@ -4509,8 +4504,9 @@ export const goodsReturnAPI = {
     type: 'materials' | 'machines';
     return_qty: number | string;
     stock_qty?: number | string;
+    price?: number | string;
     remarkes?: string;
-    activities_id?: number | string;
+    activities_id?: number | string | null;
   }>): Promise<any> => {
     try {
       const response = await apiClient.post('/inventory/return-goods-details-add', items);
@@ -4699,6 +4695,7 @@ export const goodsIssueAPI = {
     goods_type: 'materials' | 'machines';
     issue_to: number | string;
     materials_id: (number | string)[];
+    remarkes?: string;
   }): Promise<any> => {
     try {
       const response = await apiClient.post('/inventory/issue-goods-add', payload);
