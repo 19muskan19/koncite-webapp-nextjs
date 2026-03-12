@@ -396,7 +396,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
     const q = inventorySearchQuery.toLowerCase();
     return returnList.filter(
       (r: any) =>
-        (r.return_no ?? r.name ?? r.id ?? '').toString().toLowerCase().includes(q) ||
+        (r.code ?? r.return_no ?? r.name ?? r.id ?? '').toString().toLowerCase().includes(q) ||
         (r.date ?? '').toLowerCase().includes(q) ||
         (r.projects_id?.project_name ?? r.project_name ?? '').toLowerCase().includes(q)
     );
@@ -873,6 +873,42 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
     }
   };
 
+  /** View GRN PDF: fetch inward-goods-edit data, build inward_details, pass to generate-pdf for correct display */
+  const handleGrnViewPdfClick = async (grn: any) => {
+    const grnId = grn?.id ?? grn?.uuid ?? grn?.inv_inwards_id;
+    if (!grnId) return;
+    try {
+      const editData = await goodsReceiptAPI.edit(grnId);
+      const invInwardsId = typeof editData?.inv_inwards_id === 'object' && editData?.inv_inwards_id != null
+        ? (editData.inv_inwards_id as any)?.id ?? (editData.inv_inwards_id as any)?.uuid
+        : editData?.inv_inwards_id;
+      const requestId = invInwardsId ?? editData?.id ?? grnId;
+      const detailsList = editData?.InvInwardGoodDetails ?? editData?.details ?? editData?.inward_details ?? editData?.inward_goods ?? [];
+      const inwardDetailsForPdf = Array.isArray(detailsList) && detailsList.length > 0
+        ? detailsList.map((d: any) => {
+            const mat = d?.materials_id ?? d?.materials ?? d?.material ?? d?.assets ?? d;
+            const matObj = typeof mat === 'object' && mat != null ? mat : {};
+            return {
+              id: d.id ?? undefined,
+              materials_id: typeof matObj?.id !== 'undefined' ? matObj.id : d.materials_id ?? d.material_id,
+              materialCode: matObj?.code ?? d?.code ?? '',
+              materialName: matObj?.name ?? d?.name ?? '',
+              materialSpec: matObj?.specification ?? d?.specification ?? '',
+              materialUnit: matObj?.unit_id?.unit ?? matObj?.unit ?? matObj?.units?.unit ?? d?.unit ?? '',
+              recipt_qty: d.recipt_qty ?? d.receipt_qty ?? 0,
+              reject_qty: d.reject_qty ?? 0,
+            };
+          })
+        : undefined;
+      const { pdf_url } = await goodsReceiptAPI.generatePdf(requestId, inwardDetailsForPdf);
+      const fullUrl = pdf_url ? getFullPdfUrl(pdf_url) : '';
+      if (fullUrl) window.open(fullUrl, '_blank');
+      toast.showSuccess(fullUrl ? 'PDF opened in new tab.' : 'PDF generated.');
+    } catch (e: any) {
+      toast.showError(e?.message || 'Failed to load PDF.');
+    }
+  };
+
   const handlePRShareClick = async (pr: any) => {
     const prId = pr.id ?? pr.uuid;
     if (!prId) return;
@@ -914,7 +950,8 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
       setPrIsEditMode(true);
       setShowProjectSelection(true);
       setPrStep('materials');
-      const editResp = await materialRequestAPI.edit(prId);
+      const projId = (typeof pr.projects_id === 'object' && pr.projects_id != null) ? (pr.projects_id as any).id : (pr.projects_id ?? pr.project_id ?? pr.projects?.id);
+      const editResp = await materialRequestAPI.edit(prId, projId ?? undefined);
       const detailsFromEdit = Array.isArray(editResp) ? editResp : (editResp && typeof editResp === 'object' && Array.isArray((editResp as any).data) ? (editResp as any).data : []);
       const firstDetail = detailsFromEdit.length > 0 ? detailsFromEdit[0] : null;
       const projectsIdRaw = firstDetail?.projects_id ?? pr.projects_id ?? pr.projects?.id;
@@ -1622,6 +1659,45 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                         <td className="px-6 py-4 text-right">
                           <div className="flex justify-end gap-1">
                             <button
+                              onClick={async () => {
+                                try {
+                                  const grnId = grn.id ?? grn.uuid ?? grn.inv_inwards_id;
+                                  if (!grnId) return;
+                                  const editData = await goodsReceiptAPI.edit(grnId);
+                                  const invInwardsId = typeof editData?.inv_inwards_id === 'object' && editData?.inv_inwards_id != null
+                                    ? (editData.inv_inwards_id as any)?.id ?? (editData.inv_inwards_id as any)?.uuid
+                                    : editData?.inv_inwards_id ?? grnId;
+                                  const detailsList = editData?.InvInwardGoodDetails ?? editData?.details ?? editData?.inward_details ?? editData?.inward_goods ?? [];
+                                  const inwardDetailsForPdf = Array.isArray(detailsList) && detailsList.length > 0
+                                    ? detailsList.map((d: any) => {
+                                        const mat = d?.materials_id ?? d?.materials ?? d?.material ?? d;
+                                        const matObj = typeof mat === 'object' && mat != null ? mat : {};
+                                        return {
+                                          id: d.id,
+                                          materials_id: matObj?.id ?? d.materials_id ?? d.material_id,
+                                          materialCode: matObj?.code ?? d?.code ?? '',
+                                          materialName: matObj?.name ?? d?.name ?? '',
+                                          materialSpec: matObj?.specification ?? d?.specification ?? '',
+                                          materialUnit: matObj?.unit_id?.unit ?? matObj?.unit ?? matObj?.units?.unit ?? d?.unit ?? '',
+                                          recipt_qty: d.recipt_qty ?? d.receipt_qty ?? 0,
+                                          reject_qty: d.reject_qty ?? 0,
+                                        };
+                                      })
+                                    : undefined;
+                                  const { pdf_url } = await goodsReceiptAPI.generatePdf(invInwardsId, inwardDetailsForPdf);
+                                  const fullUrl = pdf_url ? getFullPdfUrl(pdf_url) : '';
+                                  if (fullUrl) window.open(fullUrl, '_blank');
+                                  toast.showSuccess('PDF opened in new tab.');
+                                } catch (e: any) {
+                                  toast.showError(e?.message || 'Failed to generate PDF.');
+                                }
+                              }}
+                              className="p-2 rounded-lg bg-blue-500/20 text-blue-600 hover:bg-blue-500/30 transition-colors dark:bg-blue-500/20 dark:text-blue-400 dark:hover:bg-blue-500/30"
+                              title="View PDF (opens in new tab)"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                            <button
                               onClick={() => router.push(`/inventory-reports/grn-mrn-slip/${grn.id ?? grn.uuid ?? grn.inv_inwards_id}`)}
                               className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
                               title="Edit"
@@ -1699,13 +1775,21 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                   <tbody className="divide-y divide-inherit">
                     {paginatedReturnList.map((ret: any) => (
                       <tr key={ret.id ?? ret.uuid} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
-                        <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{ret.return_no ?? ret.name ?? ret.id ?? '-'}</td>
+                        <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{ret.code ?? ret.return_no ?? ret.name ?? ret.id ?? '-'}</td>
                         <td className={`px-6 py-4 text-sm ${textPrimary}`}>{ret.date ?? ret.created_at ?? '-'}</td>
                         <td className={`px-6 py-4 text-sm ${textPrimary}`}>{ret.projects_id?.project_name ?? ret.project_name ?? ret.projects?.name ?? '-'}</td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex justify-end gap-1">
                             <button
-                              onClick={() => router.push(`/inventory-reports/issue-return/${ret.id ?? ret.uuid}`)}
+                              onClick={() => {
+                              const projId = ret.projects_id?.id ?? ret.projects_id ?? ret.project_id;
+                              const projName = ret.projects_id?.project_name ?? ret.project_name ?? ret.projects?.name ?? '';
+                              const params = new URLSearchParams();
+                              if (projId != null && projId !== '') params.set('projectId', String(projId));
+                              if (projName) params.set('projectName', projName);
+                              const qs = params.toString();
+                              router.push(`/inventory-reports/issue-return/${ret.inv_returns_id ?? ret.id ?? ret.uuid}${qs ? `?${qs}` : ''}`);
+                            }}
                               className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
                               title="Edit"
                             >
@@ -1788,7 +1872,10 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                         <td className="px-6 py-4 text-right">
                           <div className="flex justify-end gap-1">
                             <button
-                              onClick={() => router.push(`/inventory-reports/issue-slip/${iss.id ?? iss.uuid}`)}
+                              onClick={() => {
+                              const editId = iss.inv_issue?.id ?? iss.inv_issues_id ?? iss.id ?? iss.uuid;
+                              router.push(`/inventory-reports/issue-slip/${editId}`);
+                            }}
                               className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
                               title="Edit"
                             >
@@ -2563,14 +2650,20 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                     <tbody className={`divide-y ${isDark ? 'divide-slate-700' : 'divide-slate-200'}`}>
                       {paginatedReturnEditModal.map((ret: any) => (
                         <tr key={ret.id ?? ret.uuid} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
-                          <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{ret.return_no ?? ret.name ?? ret.id ?? '-'}</td>
+                          <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{ret.code ?? ret.return_no ?? ret.name ?? ret.id ?? '-'}</td>
                           <td className={`px-4 py-3 text-sm ${textPrimary}`}>{ret.date ?? ret.created_at ?? '-'}</td>
                           <td className={`px-4 py-3 text-sm ${textPrimary}`}>{ret.projects_id?.project_name ?? ret.project_name ?? ret.projects?.name ?? '-'}</td>
                           <td className="px-4 py-3 text-right">
                             <button
                               onClick={() => {
                                 setShowEditPreviousReturnModal(false);
-                                router.push(`/inventory-reports/issue-return/${ret.id ?? ret.uuid}`);
+                                const projId = ret.projects_id?.id ?? ret.projects_id ?? ret.project_id;
+                                const projName = ret.projects_id?.project_name ?? ret.project_name ?? ret.projects?.name ?? '';
+                                const params = new URLSearchParams();
+                                if (projId != null && projId !== '') params.set('projectId', String(projId));
+                                if (projName) params.set('projectName', projName);
+                                const qs = params.toString();
+                                router.push(`/inventory-reports/issue-return/${ret.inv_returns_id ?? ret.id ?? ret.uuid}${qs ? `?${qs}` : ''}`);
                               }}
                               className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${isDark ? 'bg-[#6B8E23]/20 text-[#6B8E23] hover:bg-[#6B8E23]/30' : 'bg-[#6B8E23]/10 text-[#6B8E23] hover:bg-[#6B8E23]/20'}`}
                             >

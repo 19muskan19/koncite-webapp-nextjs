@@ -149,42 +149,58 @@ export default function GoodsIssueFlow({
     } else if (mode === 'edit' && editIssueId) {
       goodsIssueAPI
         .edit(editIssueId)
-        .then((data) => {
-          const proj = data?.projects_id ?? data?.project;
+        .then((raw) => {
+          // Unwrap nested data if backend returns { status, data: { data: {...} } }
+          const data = raw?.data && typeof raw.data === 'object' && !Array.isArray(raw.data) && (raw.data.inv_issue != null || raw.data.inv_issue_details != null)
+            ? raw.data
+            : raw;
+          // issue-goods-edit nests header in inv_issue; data has id (inv_issue_goods), inv_issue (header), inv_issue_details
+          const header = data?.inv_issue ?? data;
+          const proj = header?.projects_id ?? data?.projects_id ?? data?.project;
           const projId = typeof proj === 'object' ? proj?.id ?? proj?.uuid : proj;
           const projName = typeof proj === 'object' ? proj?.project_name ?? proj?.name : '';
-          if (projId) {
+          const effectiveProjId = projId ?? (pid && /^\d+$/.test(String(pid)) ? pid : undefined);
+          if (effectiveProjId) {
             setEditProject({
-              id: String(projId),
+              id: String(effectiveProjId),
               name: projName || 'Project',
-              numericId: typeof proj === 'object' && proj != null ? String((proj as any).id ?? projId) : String(projId),
+              numericId: typeof proj === 'object' && proj != null ? String((proj as any).id ?? projId) : String(effectiveProjId),
             });
-            setIssueHeader(data);
-            setIssueDate(data?.date ?? data?.name ?? getTodayDateString());
-            setIssueToId(data?.issue_to ?? data?.type ?? '');
-            setTagId(data?.entry_type ?? data?.tag ?? '');
-            const storeIds = data?.store_warehouses_id ?? data?.store_warehouses ?? [];
-            const arr = Array.isArray(storeIds) ? storeIds : [];
-            setEditLoadedStoreIds(arr.map((s: any) => s?.id ?? s));
-            const detailsList = data?.details ?? data?.issue_details ?? [];
-            const headerId = data?.id ?? data?.inv_issue_id ?? data?.uuid;
-            const mapped: IssueDetailItem[] = (Array.isArray(detailsList) ? detailsList : []).map((d: any) => ({
+          }
+          // Merge inv_issues_id from inv_issue when present (data.id is inv_issue_goods, inv_issue.id is header id)
+          const invIssuesId = header?.id ?? header?.uuid ?? data?.inv_issue_id ?? data?.id ?? data?.uuid;
+          const issueHeaderData = { ...data, inv_issues_id: invIssuesId };
+          setIssueHeader(issueHeaderData);
+          setIssueDate(data?.date ?? header?.date ?? header?.name ?? getTodayDateString());
+          setIssueToId(data?.inv_issue_lists_id?.id ?? data?.inv_issue_lists_id ?? data?.issue_to ?? data?.type ?? '');
+          setTagId(data?.entry_type ?? data?.tag ?? '');
+          const storeIds = header?.store_id ?? header?.store_warehouses_id ?? data?.store_warehouses_id ?? data?.store_warehouses ?? [];
+          const arr = Array.isArray(storeIds) ? storeIds : [];
+          setEditLoadedStoreIds(arr.map((s: any) => s?.id ?? s));
+          // Backend returns inv_issue_details (snake_case); each item has materials_id as object
+          const detailsList = data?.inv_issue_details ?? data?.details ?? data?.issue_details ?? data?.issue_goods ?? [];
+          const headerId = data?.id ?? data?.inv_issue_id ?? data?.uuid;
+          const mapped: IssueDetailItem[] = (Array.isArray(detailsList) ? detailsList : []).map((d: any) => {
+            const mat = d?.materials_id ?? d?.materials ?? d?.material ?? d?.assets ?? d;
+            const matObj = typeof mat === 'object' && mat != null ? mat : {};
+            return {
               inv_issue_goods_id: d.inv_issue_goods_id ?? d.inv_issue_goods ?? headerId,
-              materials_id: d.materials_id ?? d.material_id ?? d.materials?.id,
-              materialNumericId: d.materials?.id ?? d.materials_id,
-              materialCode: d.materials?.code ?? d.code ?? '',
-              materialName: d.materials?.name ?? d.name ?? '',
-              materialUnit: d.materials?.units?.unit ?? d.unit ?? '',
-              materialSpec: d.materials?.specification ?? d.specification ?? '',
+              materials_id: typeof matObj?.id === 'number' || typeof matObj?.id === 'string' ? matObj.id : (d.materials_id ?? d.material_id ?? d.materials?.id),
+              materialNumericId: typeof matObj?.id !== 'undefined' ? matObj.id : (d.materials?.id ?? d.materials_id),
+              materialCode: matObj?.code ?? d?.code ?? '',
+              materialName: matObj?.name ?? d?.name ?? '',
+              materialUnit: matObj?.unit_id?.unit ?? matObj?.units?.unit ?? matObj?.unit ?? d?.unit ?? '',
+              materialSpec: matObj?.specification ?? d?.specification ?? '',
               issue_qty: d.issue_qty ?? d.qty ?? 0,
               stock_qty: d.stock_qty ?? 0,
               activities_id: d.activities_id ?? d.activity_id,
               activityName: d.activities?.name ?? d.activity_name ?? '',
               id: d.id ?? null,
-            }));
-            setDetails(mapped);
-            setGoodsType(data?.goods_type === 'machines' ? 'machines' : 'materials');
-          }
+            };
+          });
+          setDetails(mapped);
+          setExpandedDetails(new Set(mapped.map((_, i) => String(i)))); // Expand all in edit so user sees content
+          setGoodsType(data?.type === 'machines' || data?.goods_type === 'machines' ? 'machines' : 'materials');
         })
         .catch((err: any) => {
           toast.showWarning(err?.message ?? 'Failed to load issue. Redirecting...');
@@ -195,6 +211,13 @@ export default function GoodsIssueFlow({
       setIsLoading(false);
     }
   }, [mode, editIssueId, pid]);
+
+  // In edit mode, auto-advance to details step when data is loaded so user sees materials without clicking through
+  useEffect(() => {
+    if (mode === 'edit' && details.length > 0 && step === 'stores') {
+      setStep('details');
+    }
+  }, [mode, details.length, step]);
 
   const [storeRefreshKey, setStoreRefreshKey] = useState(0);
 

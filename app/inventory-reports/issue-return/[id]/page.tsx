@@ -1,13 +1,16 @@
 'use client';
 
-import { useParams } from 'next/navigation';
+import { useParams, useSearchParams } from 'next/navigation';
 import GoodsReturnFlow from '@/components/inventory-reports/GoodsReturnFlow';
 import { useAuth } from '@/hooks/useAuth';
 
 export default function GoodsReturnEditPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const { isAuthenticated, isChecking } = useAuth();
   const returnId = params?.id as string | undefined;
+  const projectId = searchParams?.get('projectId') ?? '';
+  const projectName = searchParams?.get('projectName') ?? '';
 
   if (isChecking) {
     return (
@@ -21,5 +24,12 @@ export default function GoodsReturnEditPage() {
     return null;
   }
 
-  return <GoodsReturnFlow mode="edit" returnId={returnId} />;
+  return (
+    <GoodsReturnFlow
+      mode="edit"
+      returnId={returnId}
+      projectId={projectId}
+      projectName={projectName}
+    />
+  );
 }

@@ -47,6 +47,7 @@ interface StoreItem {
   name: string;
   code?: string;
   location?: string;
+  store_warehouses_id?: number | string;
 }
 
 interface IssueType {
@@ -75,6 +76,7 @@ interface ReturnDetailItem {
   materialSpec?: string;
   return_qty: number | string;
   stock_qty?: number | string;
+  remarkes?: string;
   activities_id?: string | number;
   activityName?: string;
   id?: string | number | null;
@@ -110,7 +112,7 @@ export default function GoodsReturnFlow({
 
   const [editProject, setEditProject] = useState<{ id: string; name: string; numericId?: string } | null>(null);
 
-  const [step, setStep] = useState<GoodsReturnStep>('stores');
+  const [step, setStep] = useState<GoodsReturnStep>(() => (mode === 'edit' ? 'assetReturn' : 'stores'));
   const [stores, setStores] = useState<StoreItem[]>([]);
   const [selectedStoreIds, setSelectedStoreIds] = useState<Set<string>>(new Set());
   const [isLoadingStores, setIsLoadingStores] = useState(false);
@@ -149,8 +151,16 @@ export default function GoodsReturnFlow({
   const [materialsPage, setMaterialsPage] = useState(1);
   const MATERIALS_PAGE_SIZE = 10;
 
-  const projectIdForApi = () => (editProject?.numericId ?? editProject?.id ?? pNumId) || (pid && /^\d+$/.test(String(pid)) ? pid : undefined);
+  const projectIdForApi = () => (editProject?.numericId ?? editProject?.id ?? pNumId) || pid || undefined;
+  const hasProjectForEdit = () => !!projectIdForApi();
   const projectNameForDisplay = () => editProject?.name ?? pName;
+
+  // In edit mode, set editProject from URL immediately so Project ID shows before API response
+  useEffect(() => {
+    if (mode === 'edit' && pid && !editProject) {
+      setEditProject({ id: String(pid), name: pName || 'Project', numericId: String(pid) });
+    }
+  }, [mode, pid, pName]);
 
   useEffect(() => {
     if (mode === 'create') {
@@ -161,46 +171,113 @@ export default function GoodsReturnFlow({
       }
       setIsLoading(false);
     } else if (mode === 'edit' && editReturnId) {
-      goodsReturnAPI
-        .edit(editReturnId)
-        .then((data) => {
-          const proj = data?.projects_id ?? data?.project;
+      // Resolve project_id: from URL (pid) or by fetching return-list to find matching row
+      const resolveProjectId = (): Promise<string | number | undefined> => {
+        if (pid) return Promise.resolve(pid);
+        return goodsReturnAPI.list().then((list: any[]) => {
+          const arr = Array.isArray(list) ? list : [];
+          const ret = arr.find((r: any) => String(r.inv_returns_id ?? r.id ?? r.uuid) === String(editReturnId));
+          const proj = ret?.projects_id ?? ret?.project_id ?? ret?.projects ?? ret?.project;
+          const projId = typeof proj === 'object' ? proj?.id ?? proj?.uuid : proj;
+          return projId != null && projId !== '' ? projId : undefined;
+        }).catch(() => undefined);
+      };
+      resolveProjectId().then((projectIdForEdit) => {
+        goodsReturnAPI
+          .edit(editReturnId, projectIdForEdit)
+          .then((raw) => {
+          // Unwrap nested data - API may return { data: {...} } or the inner object directly
+          const inner = raw?.data && typeof raw.data === 'object' && !Array.isArray(raw.data);
+          const hasNested = inner && (raw.data.inv_return != null || raw.data.inv_return_details != null || raw.data.inv_return_goods != null);
+          const data = hasNested ? raw.data : raw;
+          // return-edit: header may be in inv_return, inv_return_goods, or top-level
+          const goods = data?.inv_return_goods;
+          const invReturn = data?.inv_return ?? data?.return;
+          const header = goods ?? invReturn ?? data;
+          const storeArr = Array.isArray(header?.store_id) ? header.store_id : Array.isArray(header?.store_warehouses_id) ? header.store_warehouses_id : [];
+          const firstStore = storeArr[0];
+          // Project is in inv_return.projects_id (object with id, project_name) - prefer inv_return for project
+          const proj = invReturn?.projects_id ?? header?.projects_id ?? header?.project_id ?? header?.projects ?? firstStore?.projects_id ?? firstStore?.projects ?? data?.projects_id ?? data?.project;
           const projId = typeof proj === 'object' ? proj?.id ?? proj?.uuid : proj;
           const projName = typeof proj === 'object' ? proj?.project_name ?? proj?.name : '';
-          if (projId) {
+          // Use projectIdForEdit (from return-list) when API response has no project - avoids duplicate list fetch
+          const effectiveProjId = projId ?? projectIdForEdit ?? (pid ? pid : undefined);
+          const displayName = projName || (pName && pName !== 'Project' ? pName : 'Project');
+          // Always set editProject when we have project (from API or URL) so stores load and UI shows
+          if (effectiveProjId) {
             setEditProject({
-              id: String(projId),
-              name: projName || 'Project',
-              numericId: typeof proj === 'object' && proj != null ? String((proj as any).id ?? projId) : String(projId),
+              id: String(effectiveProjId),
+              name: displayName,
+              numericId: typeof proj === 'object' && proj != null ? String((proj as any).id ?? projId) : String(effectiveProjId),
             });
-            setReturnHeader(data);
-            setReturnDate(data?.date ?? data?.name ?? getTodayDateString());
-            setReturnFromId(data?.type ?? data?.return_from ?? '');
-            setReturnFrom(typeof data?.type === 'object' ? data?.type?.name ?? '' : '');
-            setTagId(data?.issue_type_tag_id ?? data?.tag ?? '');
-            const storeIds = data?.store_warehouses_id ?? data?.store_warehouses ?? [];
-            const arr = Array.isArray(storeIds) ? storeIds : [];
-            const apiStoreIds = arr.map((s: any) => s?.id ?? s);
-            setEditLoadedStoreIds(apiStoreIds);
-            const detailsList = data?.details ?? data?.return_details ?? [];
-            const headerId = data?.id ?? data?.inv_return_id ?? data?.uuid;
-            const mapped: ReturnDetailItem[] = (Array.isArray(detailsList) ? detailsList : []).map((d: any) => ({
-              inv_return_goods_id: d.inv_return_goods_id ?? d.inv_return_goods ?? headerId,
-              materials_id: d.materials_id ?? d.material_id ?? d.materials?.id,
-              materialNumericId: d.materials?.id ?? d.materials_id,
-              materialCode: d.materials?.code ?? d.code ?? '',
-              materialName: d.materials?.name ?? d.name ?? '',
-              materialUnit: d.materials?.units?.unit ?? d.unit ?? '',
-              materialSpec: d.materials?.specification ?? d.specification ?? '',
-              return_qty: d.return_qty ?? d.qty ?? 0,
+          } else if (pid) {
+            // Fallback: use projectId from URL when API doesn't return project
+            setEditProject({ id: String(pid), name: pName || 'Project', numericId: String(pid) });
+          } else {
+            // Last resort: fetch return list and get project from matching row (Edit link may omit projectId)
+            goodsReturnAPI.list().then((list: any[]) => {
+              const arr = Array.isArray(list) ? list : [];
+              const ret = arr.find((r: any) => {
+                const rid = r.inv_returns_id ?? r.id ?? r.uuid;
+                return String(rid) === String(editReturnId);
+              });
+              const proj = ret?.projects_id ?? ret?.project_id ?? ret?.projects;
+              const projId = typeof proj === 'object' ? proj?.id ?? proj?.uuid : proj;
+              const projName = typeof proj === 'object' ? proj?.project_name ?? proj?.name : '';
+              if (projId != null && projId !== '') {
+                setEditProject({ id: String(projId), name: projName || 'Project', numericId: String(projId) });
+              }
+            }).catch(() => {});
+          }
+          // Always set form data when we have a response (don't block on project)
+          // inv_returns_id (88) = return header for inv_return_id; data.id (68) = inv_return_goods_id for return-goods-add UPDATE
+          const invReturnsId = data?.inv_returns_id ?? header?.id ?? header?.uuid ?? data?.inv_return_id ?? data?.uuid;
+          const invReturnGoodsId = data?.id ?? data?.inv_return_goods_id ?? data?.uuid; // inv_return_goods_id for details linking
+          setReturnHeader({ ...data, inv_returns_id: invReturnsId, inv_return_goods_id: invReturnGoodsId });
+          setReturnNoFromBackend(data?.return_no ?? header?.return_no ?? header?.name ?? null);
+          setReturnDate(data?.date ?? header?.date ?? header?.name ?? getTodayDateString());
+          const returnFromRaw = data?.inv_issue_lists_id ?? data?.type ?? data?.return_from ?? header?.inv_issue_lists_id;
+          const returnFromIdVal = typeof returnFromRaw === 'object' && returnFromRaw != null ? (returnFromRaw as any)?.id ?? (returnFromRaw as any)?.uuid : returnFromRaw;
+          setReturnFromId(returnFromIdVal ?? '');
+          const returnFromName = typeof returnFromRaw === 'object' && returnFromRaw != null ? (returnFromRaw as any)?.name ?? (returnFromRaw as any)?.project_name ?? '' : '';
+          setReturnFrom(returnFromName || '');
+          setTagId(data?.issue_type_tag_id ?? data?.tag ?? header?.issue_type_tag_id ?? '');
+          const storeIds = invReturn?.store_id ?? invReturn?.store_warehouses_id ?? header?.store_id ?? header?.store_warehouses_id ?? data?.store_warehouses_id ?? data?.store_warehouses ?? data?.store_id ?? [];
+          const arr = Array.isArray(storeIds) ? storeIds : storeIds != null ? [storeIds] : [];
+          const extractStoreId = (s: any): string | number | undefined => {
+            if (s == null) return undefined;
+            if (typeof s === 'object') {
+              const id = s?.id ?? s?.store_id ?? s?.store_warehouses_id ?? s?.uuid;
+              return typeof id === 'object' ? (id?.id ?? id?.store_warehouses_id) : id;
+            }
+            return s;
+          };
+          const loadedIds = arr.map(extractStoreId).filter((x): x is string | number => x != null && x !== '');
+          setEditLoadedStoreIds(loadedIds);
+          // Backend returns inv_return_details - check goods, header, data
+          const detailsList = data?.inv_return_details ?? goods?.inv_return_details ?? header?.inv_return_details ?? data?.details ?? data?.return_details ?? data?.return?.inv_return_details ?? [];
+          const mapped: ReturnDetailItem[] = (Array.isArray(detailsList) ? detailsList : []).map((d: any) => {
+            const mat = d?.materials_id ?? d?.materials ?? d?.material ?? d?.assets ?? d;
+            const matObj = typeof mat === 'object' && mat != null ? mat : {};
+            return {
+              inv_return_goods_id: d.inv_return_goods_id ?? d.inv_return_goods ?? d.inv_issue_goods_id ?? invReturnGoodsId,
+              materials_id: typeof matObj?.id === 'number' || typeof matObj?.id === 'string' ? matObj.id : (d.materials_id ?? d.material_id ?? d.materials?.id),
+              materialNumericId: typeof matObj?.id !== 'undefined' ? matObj.id : (d.materials?.id ?? d.materials_id),
+              materialCode: matObj?.code ?? d?.code ?? '',
+              materialName: matObj?.name ?? d?.name ?? '',
+              materialUnit: matObj?.unit_id?.unit ?? matObj?.units?.unit ?? matObj?.unit ?? d?.unit ?? '',
+              materialSpec: matObj?.specification ?? d?.specification ?? '',
+              return_qty: d.issue_qty ?? d.return_qty ?? d.qty ?? 0,
               stock_qty: d.stock_qty ?? d.stock ?? d.available_stock ?? d.materials?.stock_qty ?? d.materials?.stock ?? 0,
+              remarkes: d.remarkes ?? d.remarks ?? '',
               activities_id: d.activities_id ?? d.activity_id,
               activityName: d.activities?.name ?? d.activity_name ?? '',
               id: d.id ?? null,
-            }));
-            setDetails(mapped);
-            setGoodsType(data?.goods_type === 'machines' ? 'machines' : 'materials');
-          }
+            };
+          });
+          setDetails(mapped);
+          setExpandedDetails(new Set(mapped.map((_, i) => String(i))));
+          setGoodsType(data?.type === 'machines' || data?.goods_type === 'machines' ? 'machines' : 'materials');
         })
         .catch((err: any) => {
           const msg = err?.message ?? err?.response?.data?.message ?? 'Failed to load return';
@@ -208,6 +285,7 @@ export default function GoodsReturnFlow({
           router.push('/inventory-reports/issue-return');
         })
         .finally(() => setIsLoading(false));
+      });
     } else {
       setIsLoading(false);
     }
@@ -226,13 +304,18 @@ export default function GoodsReturnFlow({
       .getProjectWiseWarehouses(pId)
       .then((res: any[]) => {
         const list = Array.isArray(res) ? res : [];
-        const transformed: StoreItem[] = list.map((s: any) => ({
-          id: s.uuid ?? s.id,
-          numericId: Number.isFinite(Number(s.id)) ? Number(s.id) : undefined,
-          name: s.name ?? s.store_name ?? '',
-          code: s.code ?? '',
-          location: s.location ?? s.address ?? '',
-        }));
+        const transformed: StoreItem[] = list.map((s: any) => {
+          const swId = s?.store_warehouses_id;
+          const numId = Number.isFinite(Number(s?.id)) ? Number(s.id) : Number.isFinite(Number(swId)) ? Number(swId) : (typeof swId === 'object' && swId?.id != null ? Number(swId.id) : undefined);
+          return {
+            id: s.uuid ?? s.id ?? (numId != null ? String(numId) : ''),
+            numericId: numId,
+            name: s.name ?? s.store_name ?? '',
+            code: s.code ?? '',
+            location: s.location ?? s.address ?? '',
+            store_warehouses_id: typeof swId === 'object' ? swId?.id ?? swId?.store_warehouses_id : swId,
+          };
+        });
         setStores(transformed);
       })
       .catch(() => setStores([]))
@@ -243,19 +326,37 @@ export default function GoodsReturnFlow({
     if (mode === 'edit' && returnHeader && stores.length > 0 && editLoadedStoreIds.length > 0) {
       const ids = new Set<string>();
       for (const apiId of editLoadedStoreIds) {
-        const s = stores.find((x) => String(x.id) === String(apiId) || String(x.numericId) === String(apiId));
+        const s = stores.find((x) =>
+          String(x.id) === String(apiId) ||
+          String(x.numericId) === String(apiId) ||
+          String(x.store_warehouses_id) === String(apiId)
+        );
         if (s) ids.add(String(s.id));
       }
-      setSelectedStoreIds(ids);
-      setEditLoadedStoreIds([]);
+      if (ids.size > 0) {
+        setSelectedStoreIds(ids);
+        setEditLoadedStoreIds([]);
+      }
     }
   }, [mode, returnHeader, stores, editLoadedStoreIds]);
 
+  // Auto-advance to assetReturn when edit data is loaded so user sees header form with date, return from, materials
   useEffect(() => {
-    if (step === 'assetReturn' || step === 'details') {
+    if (mode !== 'edit' || !returnHeader || step !== 'stores') return;
+    // Advance once stores have loaded (selectedStoreIds will be set by then if there was a match)
+    if (editProject && !isLoadingStores) {
+      setStep('assetReturn');
+    }
+  }, [mode, returnHeader, step, editProject, isLoadingStores]);
+
+  // Fetch issue types for Return From dropdown - fetch early in edit mode so dropdown shows when user reaches assetReturn
+  useEffect(() => {
+    if (mode === 'edit' && editReturnId) {
+      goodsReturnAPI.getIssueTypeList().then((list: any[]) => setIssueTypes(Array.isArray(list) ? list : []));
+    } else if (step === 'assetReturn' || step === 'details') {
       goodsReturnAPI.getIssueTypeList().then((list: any[]) => setIssueTypes(Array.isArray(list) ? list : []));
     }
-  }, [step]);
+  }, [mode, editReturnId, step]);
 
   useEffect(() => {
     if (!showProjectSelectModal) return;
@@ -420,6 +521,22 @@ export default function GoodsReturnFlow({
       .catch(() => setMaterials([]))
       .finally(() => setIsLoadingMaterials(false));
   }, [projectIdForApi(), step, goodsType]);
+
+  // In edit mode, pre-select materials from details when materials list has loaded on assetReturn
+  useEffect(() => {
+    if (mode !== 'edit' || step !== 'assetReturn' || details.length === 0 || materials.length === 0) return;
+    if (selectedMaterialIds.size > 0) return; // Already selected; avoid overwriting user changes
+    const ids = new Set<string>();
+    for (const d of details) {
+      const mid = d.materials_id ?? d.materialNumericId;
+      if (mid == null) continue;
+      const m = materials.find(
+        (x) => String(x.id) === String(mid) || String(x.numericId ?? x.id) === String(mid)
+      );
+      if (m) ids.add(String(m.id));
+    }
+    if (ids.size > 0) setSelectedMaterialIds(ids);
+  }, [mode, step, details, materials, selectedMaterialIds.size]);
 
   const filteredMaterials = useMemo(() => {
     if (!materialsSearchQuery.trim()) return materials;
@@ -602,7 +719,7 @@ export default function GoodsReturnFlow({
         projects_id: pId,
         store_warehouses_id: storeNumericIds,
       };
-      if (mode === 'edit' && returnHeader?.id) {
+      if (mode === 'edit' && (returnHeader?.id ?? returnHeader?.inv_returns_id ?? returnHeader?.inv_return_goods_id)) {
         setReturnHeader(returnHeader);
         setStep('assetReturn');
       } else {
@@ -628,23 +745,33 @@ export default function GoodsReturnFlow({
       toast.showWarning('Please Select Issue');
       return;
     }
-    const invReturnId = returnHeader.id ?? returnHeader.inv_return_id ?? returnHeader.uuid;
+    const invReturnId = returnHeader.inv_returns_id ?? returnHeader.inv_return_id ?? returnHeader.id ?? returnHeader.uuid;
     const returnNo = returnHeader.return_no ?? returnNoFromBackend ?? returnHeader.name ?? returnDate;
     const pId = projectIdForApi();
     const storeIdsArr = Array.from(selectedStoreIds);
-    const storeNumericIds = storeIdsArr
+    let storeNumericIds = storeIdsArr
       .map((sid) => {
         const s = stores.find((x) => String(x.id) === sid);
-        return s?.numericId ?? s?.id;
+        return s?.numericId ?? s?.id ?? (sid && String(sid) !== '' ? sid : null);
       })
       .filter((x): x is string | number => x != null);
-    const materialIdsArr = Array.from(selectedMaterialIds);
-    const materialNumericIds = materialIdsArr
+    // Edit mode: when store matching failed, use editLoadedStoreIds so save doesn't fail
+    if (mode === 'edit' && storeNumericIds.length === 0 && editLoadedStoreIds.length > 0) {
+      storeNumericIds = [...editLoadedStoreIds];
+    }
+    let materialIdsArr = Array.from(selectedMaterialIds);
+    let materialNumericIds = materialIdsArr
       .map((mid) => {
         const m = materials.find((x) => String(x.id) === mid);
         return m?.numericId ?? m?.id;
       })
       .filter((x): x is string | number => x != null);
+    // Edit mode: when details are pre-loaded but materials didn't match (selectedMaterialIds empty), use details
+    if (mode === 'edit' && materialNumericIds.length === 0 && details.length > 0) {
+      materialNumericIds = details
+        .filter((d) => d.materials_id != null || d.materialNumericId != null)
+        .map((d) => d.materials_id ?? d.materialNumericId) as (string | number)[];
+    }
     setIsSubmitting(true);
     try {
       if (materialNumericIds.length === 0) {
@@ -654,7 +781,7 @@ export default function GoodsReturnFlow({
         return;
       }
       const addResult = await goodsReturnAPI.addReturnGoods({
-        id: mode === 'edit' && returnHeader?.id ? returnHeader.id : null,
+        id: mode === 'edit' ? (returnHeader?.inv_return_goods_id ?? returnHeader?.id ?? null) : null,
         inv_return_id: invReturnId,
         projects_id: pId!,
         store_warehouses_id: storeNumericIds,
@@ -742,13 +869,16 @@ export default function GoodsReturnFlow({
       toast.showWarning('Project is required.');
       return;
     }
-    const storeNumericIds = Array.from(selectedStoreIds)
+    let storeNumericIds = Array.from(selectedStoreIds)
       .map((sid) => {
         const s = stores.find((x) => String(x.id) === sid);
-        return s?.numericId ?? s?.id;
+        return s?.numericId ?? s?.id ?? s?.store_warehouses_id;
       })
       .filter((x): x is string | number => x != null);
-    const invReturnGoodsId = returnGoodsList?.[0]?.return_id ?? returnGoodsList?.[0]?.id ?? returnHeader?.id ?? details?.[0]?.inv_return_goods_id;
+    if (storeNumericIds.length === 0 && mode === 'edit' && editLoadedStoreIds.length > 0) {
+      storeNumericIds = [...editLoadedStoreIds];
+    }
+    const invReturnGoodsId = returnGoodsList?.[0]?.return_id ?? returnGoodsList?.[0]?.id ?? returnHeader?.inv_return_goods_id ?? returnHeader?.id ?? details?.[0]?.inv_return_goods_id;
     setIsSubmitting(true);
     try {
       if (details.length === 0) {
@@ -759,7 +889,7 @@ export default function GoodsReturnFlow({
       const payload = details
         .filter((d) => d.materials_id != null || d.materialNumericId != null)
         .map((d) => ({
-          id: d.id ?? null,
+          ...(d.id != null ? { id: d.id } : {}),
           inv_return_goods_id: d.inv_return_goods_id ?? invReturnGoodsId,
           projects_id: pId,
           store_warehouses_id: storeNumericIds,
@@ -767,11 +897,30 @@ export default function GoodsReturnFlow({
           type: goodsType,
           return_qty: d.return_qty,
           stock_qty: d.stock_qty,
+          remarkes: d.remarkes ?? '',
           activities_id: d.activities_id || undefined,
         }));
       if (payload.length === 0) {
         toast.showWarning('No valid items to save.');
         return;
+      }
+      // Per API spec: in edit mode, call return-goods-add first (UPDATE header), then return-goods-details-add
+      const invReturnId = returnHeader?.inv_returns_id ?? returnHeader?.inv_return_id ?? returnHeader?.uuid;
+      if (mode === 'edit' && invReturnGoodsId && invReturnId) {
+        const materialIds = payload.map((d) => d.materials_id);
+        await goodsReturnAPI.addReturnGoods({
+          id: invReturnGoodsId,
+          inv_return_id: invReturnId,
+          projects_id: pId,
+          store_warehouses_id: storeNumericIds,
+          return_no: returnHeader?.return_no ?? returnNoFromBackend ?? returnDate,
+          date: returnDate,
+          type: tagId || undefined,
+          goods_type: goodsType,
+          return_from: returnFromId,
+          remarkes: returnHeader?.remarkes ?? returnHeader?.remarks ?? '',
+          materials_id: materialIds,
+        });
       }
       const saved = await goodsReturnAPI.addReturnDetails(payload);
       const savedArr = Array.isArray(saved) ? saved : saved != null ? [saved] : [];

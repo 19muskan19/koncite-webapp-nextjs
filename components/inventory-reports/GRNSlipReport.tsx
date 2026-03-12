@@ -234,21 +234,22 @@ const GRNSlipReport: React.FC<GRNSlipReportProps> = ({ theme }) => {
           try {
             const invId = inv?.id ?? inv?.uuid ?? inv?.inv_inwards_id;
             const editData = await goodsReceiptAPI.edit(invId);
-            const details = editData?.details ?? editData?.inward_details ?? editData?.inward_goods ?? [];
+            // Backend returns InvInwardGoodDetails; items have materials_id as object
+            const details = editData?.InvInwardGoodDetails ?? editData?.details ?? editData?.inward_details ?? editData?.inward_goods ?? [];
             const list = Array.isArray(details) ? details : [];
-            const grnNo = inv?.grn_no ?? inv?.name ?? inv?.id ?? '-';
-            const invDate = inv?.date ?? inv?.created_at ?? '-';
+            const grnNo = editData?.grn_no ?? inv?.grn_no ?? inv?.name ?? inv?.id ?? '-';
+            const invDate = editData?.date ?? inv?.date ?? inv?.created_at ?? '-';
             const dateStr = typeof invDate === 'string' && invDate.length >= 10 ? invDate.slice(0, 10) : (invDate || '-');
             for (const d of list) {
               const itemType = (d?.type ?? (d?.materials_id ? 'materials' : d?.assets_id ? 'machines' : 'materials')).toString().toLowerCase();
               const wantMaterials = activeTab === 'materials';
               if (wantMaterials && (itemType === 'machines' || itemType === 'assets')) continue;
               if (!wantMaterials && (itemType === 'materials' || itemType === 'material')) continue;
-              const mat = d?.materials ?? d?.material ?? d?.assets ?? d;
-              const code = mat?.code ?? d?.materialCode ?? d?.code ?? '-';
-              const name = mat?.name ?? d?.materialName ?? d?.materials_name ?? mat?.assets?.name ?? '-';
-              const spec = mat?.specification ?? d?.materialSpec ?? d?.specification ?? '-';
-              const unit = mat?.unit ?? d?.materialUnit ?? d?.unit ?? (mat?.units?.unit ?? '-');
+              const mat = d?.materials_id ?? d?.materials ?? d?.material ?? d?.assets ?? d;
+              const code = (typeof mat === 'object' && mat?.code) ?? d?.materialCode ?? d?.code ?? '-';
+              const name = (typeof mat === 'object' && mat?.name) ?? d?.materialName ?? d?.materials_name ?? (typeof mat === 'object' && mat?.assets?.name) ?? '-';
+              const spec = (typeof mat === 'object' && mat?.specification) ?? d?.materialSpec ?? d?.specification ?? '-';
+              const unit = (typeof mat === 'object' && (mat?.unit_id?.unit ?? mat?.unit ?? mat?.units?.unit)) ?? d?.materialUnit ?? d?.unit ?? '-';
               const recQty = Number(d?.recipt_qty ?? d?.receipt_qty ?? 0);
               const rejQty = Number(d?.reject_qty ?? 0);
               const accQty = Number(d?.accepted_qty ?? recQty - rejQty);

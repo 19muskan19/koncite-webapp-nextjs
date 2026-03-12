@@ -210,7 +210,8 @@ const IssueReturnReport: React.FC<IssueReturnReportProps> = ({ theme }) => {
         for (const ret of filtered) {
           try {
             const retId = ret?.id ?? ret?.uuid ?? ret?.inv_returns_id;
-            const editData = await goodsReturnAPI.edit(retId);
+            const projId = ret?.projects_id?.id ?? ret?.projects_id ?? ret?.project_id;
+            const editData = await goodsReturnAPI.edit(retId, projId);
             const details = editData?.details ?? editData?.return_details ?? editData?.return_goods ?? [];
             const list = Array.isArray(details) ? details : [];
             const returnNo = ret?.return_no ?? ret?.name ?? ret?.id ?? '-';

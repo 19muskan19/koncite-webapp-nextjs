@@ -169,37 +169,51 @@ export default function GoodsReceiptFlow({
     } else if (mode === 'edit' && editInwardId) {
       goodsReceiptAPI.edit(editInwardId)
         .then((data) => {
-          const proj = data?.projects_id ?? data?.project;
+          // inward-goods-edit nests header in inv_inwards_id; data has id, grn_no, date, InvInwardGoodDetails
+          const header = data?.inv_inwards_id ?? data;
+          const proj = header?.projects_id ?? data?.projects_id ?? data?.project;
           const projId = typeof proj === 'object' ? proj?.id ?? proj?.uuid : proj;
           const projName = typeof proj === 'object' ? proj?.project_name ?? proj?.name : '';
-          if (projId) {
-            setEditProject({ id: String(projId), name: projName || 'Project', numericId: String((proj as any)?.id ?? projId) });
+          const effectiveProjId = projId ?? (pid && /^\d+$/.test(String(pid)) ? pid : undefined);
+          if (effectiveProjId) setEditProject({ id: String(effectiveProjId), name: projName || 'Project', numericId: String((proj as any)?.id ?? effectiveProjId) });
+          // Always set form data when we have a response (don't block on project)
+          {
             setInwardHeader(data);
-            setInwardDate(data?.date ?? data?.name ?? getTodayDateString());
-            setEntryTypeId(data?.entry_type ?? '');
+            setInwardDate(data?.date ?? header?.date ?? header?.name ?? getTodayDateString());
+            setEntryTypeId(data?.inv_inward_entry_types_id?.id ?? data?.entry_type ?? '');
             setSupplierProjectStoreId(data?.vendors_id ?? data?.supplier_id ?? '');
             setDeliveryRefNo(data?.delivery_ref_copy_no ?? '');
             setDeliveryRefDate(data?.delivery_ref_copy_date ?? inwardDate);
             setRemarks(data?.remarkes ?? data?.remarks ?? '');
-            const storeIds = data?.store_warehouses_id ?? data?.store_warehouses ?? [];
+            const storeIds = header?.store_id ?? header?.store_warehouses_id ?? data?.store_warehouses_id ?? data?.store_warehouses ?? [];
             setEditLoadedStoreIds((Array.isArray(storeIds) ? storeIds : []).map((s: any) => s?.id ?? s));
-            const detailsList = data?.details ?? data?.inward_details ?? [];
-            const headerId = data?.id ?? data?.inv_inwards_id ?? data?.uuid;
-            setDetails((Array.isArray(detailsList) ? detailsList : []).map((d: any) => ({
+            // Backend returns InvInwardGoodDetails (PascalCase); each item has materials_id as object
+            const detailsList = data?.InvInwardGoodDetails ?? data?.details ?? data?.inward_details ?? data?.inward_goods ?? [];
+            const headerIdRaw = data?.id ?? data?.uuid;
+            const headerId = (headerIdRaw != null && headerIdRaw !== '')
+              ? headerIdRaw
+              : (typeof data?.inv_inwards_id === 'object' && data?.inv_inwards_id != null)
+                ? (data.inv_inwards_id.id ?? data.inv_inwards_id.uuid)
+                : data?.inv_inwards_id;
+            setDetails((Array.isArray(detailsList) ? detailsList : []).map((d: any) => {
+              const mat = d?.materials_id ?? d?.materials ?? d?.material ?? d?.assets ?? d;
+              const matObj = typeof mat === 'object' && mat != null ? mat : {};
+              return {
               inward_goods_id: d.inward_goods_id ?? d.inward_goods ?? headerId,
-              materials_id: d.materials_id ?? d.material_id ?? d.materials?.id,
-              materialCode: d.materials?.code ?? d.code ?? '',
-              materialName: d.materials?.name ?? d.name ?? '',
-              materialUnit: d.materials?.units?.unit ?? d.unit ?? '',
-              materialSpec: d.materials?.specification ?? d.specification ?? '',
+              materials_id: typeof matObj?.id === 'number' || typeof matObj?.id === 'string' ? matObj.id : (d.materials_id ?? d.material_id ?? d.materials?.id),
+              materialCode: matObj?.code ?? d?.code ?? '',
+              materialName: matObj?.name ?? d?.name ?? '',
+              materialUnit: matObj?.unit_id?.unit ?? matObj?.units?.unit ?? d?.unit ?? '',
+              materialSpec: matObj?.specification ?? d?.specification ?? '',
               recipt_qty: d.recipt_qty ?? d.receipt_qty ?? d.qty ?? 0,
               reject_qty: d.reject_qty ?? 0,
-              accepted_qty: d.accepted_qty ?? '',
+              accepted_qty: d.accept_qty ?? d.accepted_qty ?? '',
               po_qty: d.po_qty ?? '',
               price: d.price ?? d.rate ?? '',
               remarkes: d.remarkes ?? d.remarks ?? '',
               id: d.id ?? null,
-            })));
+            };
+            }));
             setGoodsType(data?.type === 'machines' ? 'machines' : 'materials');
           }
         })
@@ -210,6 +224,13 @@ export default function GoodsReceiptFlow({
         .finally(() => setIsLoading(false));
     } else setIsLoading(false);
   }, [mode, editInwardId, pid]);
+
+  // In edit mode, auto-advance to details step when data is loaded so user sees materials without clicking through
+  useEffect(() => {
+    if (mode === 'edit' && details.length > 0 && step === 'stores') {
+      setStep('details');
+    }
+  }, [mode, details.length, step]);
 
   useEffect(() => {
     const pId = projectIdForApi();
@@ -369,28 +390,35 @@ export default function GoodsReceiptFlow({
   // requestId must be inv_inwards.id per API spec (POST /api/inventory/generate-pdf)
   useEffect(() => {
     if (step !== 'success') return;
+    // Prefer inv_inwards_id when object (edit: data.inv_inwards_id.id); else use id (create)
+    const invInwardsIdScalar =
+      typeof inwardHeader?.inv_inwards_id === 'object' && inwardHeader?.inv_inwards_id != null
+        ? (inwardHeader.inv_inwards_id as any)?.id ?? (inwardHeader.inv_inwards_id as any)?.uuid
+        : inwardHeader?.inv_inwards_id;
     const inwardRecordId =
+      invInwardsIdScalar ??
       inwardHeader?.id ??
-      inwardHeader?.inv_inwards_id ??
       inwardHeader?.uuid ??
       inwardGoodsList?.[0]?.inward_id ??
-      inwardGoodsList?.[0]?.inv_inwards_id ??
+      (typeof inwardGoodsList?.[0]?.inv_inwards_id === 'object' ? (inwardGoodsList?.[0]?.inv_inwards_id as any)?.id : inwardGoodsList?.[0]?.inv_inwards_id) ??
       inwardGoodsList?.[0]?.id ??
       editInwardId;
     if (!inwardRecordId) return;
     setIsSubmitting(true);
-    const inwardDetailsForPdf = details.length > 0
-      ? details.map((d) => ({
-          id: d.id ?? undefined,
-          materials_id: d.materials_id,
-          materialCode: d.materialCode,
-          materialName: d.materialName,
-          materialSpec: d.materialSpec,
-          materialUnit: d.materialUnit,
-          recipt_qty: d.recipt_qty,
-          reject_qty: d.reject_qty,
-        }))
-      : undefined;
+    // Always pass inward_details so PDF displays materials (code, name, spec, unit) correctly
+    const inwardDetailsForPdf =
+      details.length > 0
+        ? details.map((d) => ({
+            id: d.id ?? undefined,
+            materials_id: d.materials_id,
+            materialCode: d.materialCode ?? '',
+            materialName: d.materialName ?? '',
+            materialSpec: d.materialSpec ?? '',
+            materialUnit: d.materialUnit ?? '',
+            recipt_qty: d.recipt_qty,
+            reject_qty: d.reject_qty,
+          }))
+        : undefined;
     goodsReceiptAPI
       .generatePdf(inwardRecordId, inwardDetailsForPdf)
       .then(({ pdf_url, name }) => setPdfInfo({ url: pdf_url, name: name ?? `Inward-${inwardDate}.pdf` }))

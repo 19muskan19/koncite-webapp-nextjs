@@ -110,9 +110,10 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
       const projectsIdForEdit = getProjectsIdForApi() ?? pid ?? projectNumericId;
       rfqAPI.get(editId, projectsIdForEdit ?? undefined).then((data) => {
         setRfqData(data);
-        const projId = data?.projects_id;
+        // quote-details-edit: projects_id can be at data.projects_id OR data.data.material_requests.projects_id
+        const projId = data?.projects_id ?? data?.data?.projects_id ?? data?.data?.material_requests?.projects_id;
         const projectIdVal = typeof projId === 'object' ? (projId?.id ?? projId?.uuid) : projId;
-        const projectNameVal = typeof projId === 'object' ? (projId?.project_name ?? projId?.name) : (data?.project_name ?? 'Project');
+        const projectNameVal = typeof projId === 'object' ? (projId?.project_name ?? projId?.name) : (data?.project_name ?? data?.data?.material_requests?.projects_id?.project_name ?? 'Project');
         // Never use editId (quotesId) as project id — use projects_id from response or URL params only
         const resolvedProjectId = projectIdVal ?? projectsIdForEdit ?? pid ?? projectNumericId ?? '';
         setProject({
@@ -120,17 +121,22 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
           name: projectNameVal || 'Project'
         });
         if (!hasUrlMrParams) {
-          // Extract MR id from response - support multiple API response shapes
-          const mrIdRaw = data?.material_requests_id ?? data?.material_request_id
-            ?? (typeof data?.material_requests === 'object' && data?.material_requests != null ? (data.material_requests as any)?.id : undefined)
+          // quote-details-edit returns material_requests nested: data.data.material_requests or data.material_requests
+          const mrObj = data?.data?.material_requests ?? data?.material_requests;
+          const mrIdRaw = (typeof mrObj === 'object' && mrObj != null ? (mrObj as any)?.id : undefined)
+            ?? data?.material_requests_id ?? data?.material_request_id
             ?? data?.data?.material_requests_id ?? data?.data?.material_request_id
             ?? (Array.isArray(data?.quotesdetails) && (data.quotesdetails as any[])[0] ? ((data.quotesdetails as any[])[0].material_requests_id ?? (data.quotesdetails as any[])[0].material_request_id) : undefined)
             ?? (Array.isArray(data?.quotes_details) && (data.quotes_details as any[])[0] ? ((data.quotes_details as any[])[0].material_requests_id ?? (data.quotes_details as any[])[0].material_request_id) : undefined);
+          const mrRequestNo = (typeof mrObj === 'object' && mrObj != null ? (mrObj as any)?.request_no : undefined)
+            ?? data?.data?.request_no ?? data?.request_no ?? null;
           setSelectedMrId(mrIdRaw != null && mrIdRaw !== '' ? String(mrIdRaw) : null);
-          setSelectedMrRequestNo(data?.request_no ?? data?.data?.request_no ?? null);
+          setSelectedMrRequestNo(mrRequestNo != null && mrRequestNo !== '' ? String(mrRequestNo) : null);
         }
-        setMessage(data?.message ?? data?.remarkes ?? '');
-        setQuoteImage(data?.image_url ?? null);
+        setMessage(data?.message ?? data?.remarkes ?? data?.data?.remarkes ?? '');
+        // quote-details-edit returns img at data.data.img (nested), or data.img; also support image_url
+        const imgUrl = data?.image_url ?? data?.data?.img ?? data?.img ?? null;
+        setQuoteImage(imgUrl ? String(imgUrl).trim() : null);
       }).catch(() => {
         toast.showWarning('Failed to load RFQ. Redirecting...');
         router.push('/inventory-reports/rfq');
@@ -144,13 +150,53 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
     }
   }, [mode, editId, pid, projectName, projectNumericId, urlMrId, urlMrRequestNo]);
 
-  /** Fetch MR list + project context on SubmitQuotes load: materials-request-list, project-to-store-list */
+  /** Fetch MR list with request_no from quote-details-edit when in edit mode; preselect matching MR from response */
   useEffect(() => {
-    const projectIdToUse = getProjectsIdForApi() ?? pid ?? (mode === 'edit' && project?.id) ?? undefined;
-    if (!projectIdToUse) return;
-    materialRequestAPI.list({ projectId: projectIdToUse }).then(setMaterialRequests).catch(() => setMaterialRequests([]));
+    const mrObjForProject = rfqData?.data?.material_requests ?? rfqData?.material_requests;
+    const projectIdFromRfq = typeof mrObjForProject?.projects_id === 'object'
+      ? (mrObjForProject?.projects_id as any)?.id ?? (mrObjForProject?.projects_id as any)?.uuid
+      : mrObjForProject?.projects_id;
+    const projectIdToUse = getProjectsIdForApi() ?? pid ?? (mode === 'edit' && project?.id) ?? (mode === 'edit' && projectIdFromRfq != null && projectIdFromRfq !== '' ? String(projectIdFromRfq) : undefined) ?? undefined;
+    if (!projectIdToUse || String(projectIdToUse).trim() === '') return;
+    const mrObj = rfqData?.data?.material_requests ?? rfqData?.material_requests;
+    const requestNoToPass = typeof mrObj === 'object' && mrObj != null ? (mrObj as any)?.request_no : null;
+    const mrIdFromRfq = typeof mrObj === 'object' && mrObj != null ? (mrObj as any)?.id : null;
+    const filters: { projectId: string | number; subprojectId?: string | number; request_no?: string } = { projectId: projectIdToUse };
+    if (mode === 'edit' && requestNoToPass && String(requestNoToPass).trim()) {
+      filters.request_no = String(requestNoToPass).trim();
+    }
+    materialRequestAPI.list(filters).then((list) => {
+      setMaterialRequests(list);
+      if (mode === 'edit' && !urlMrId && !urlMrRequestNo) {
+        // Prefer match by request_no (e.g. "263618"); fallback to match by id (e.g. 90)
+        let matched = requestNoToPass
+          ? list.find((mr: any) => String(mr?.request_no ?? '') === String(requestNoToPass))
+          : null;
+        if (!matched && mrIdFromRfq != null) {
+          matched = list.find((mr: any) => String(mr?.id ?? mr?.uuid ?? '') === String(mrIdFromRfq));
+        }
+        if (matched) {
+          setSelectedMrId(String(matched.id ?? matched.uuid ?? ''));
+          setSelectedMrRequestNo(String(matched.request_no ?? requestNoToPass ?? ''));
+        }
+      } else if (urlMrRequestNo && !urlMrId) {
+        // URL has mrRequestNo only (e.g. ?mrRequestNo=263618) - preselect MR by request_no
+        const matched = list.find((mr: any) => String(mr?.request_no ?? '') === String(urlMrRequestNo));
+        if (matched) {
+          setSelectedMrId(String(matched.id ?? matched.uuid ?? ''));
+          setSelectedMrRequestNo(String(matched.request_no ?? urlMrRequestNo ?? ''));
+        }
+      } else if (urlMrId) {
+        // URL has mrId - sync to list's id format so modal isSelected matches (handles UUID vs numeric id)
+        const matched = list.find((mr: any) => String(mr?.id ?? mr?.uuid ?? '') === String(urlMrId));
+        if (matched) {
+          setSelectedMrId(String(matched.id ?? matched.uuid ?? ''));
+          setSelectedMrRequestNo((prev) => prev ?? String(matched.request_no ?? ''));
+        }
+      }
+    }).catch(() => setMaterialRequests([]));
     rfqAPI.projectToStoreList(projectIdToUse, 'quotes', editId ?? rfqId ?? undefined).catch(() => null);
-  }, [pid, mode, project?.id, projectNumericId, editId, rfqId]);
+  }, [pid, mode, project?.id, projectNumericId, editId, rfqId, rfqData, urlMrId, urlMrRequestNo]);
 
   useEffect(() => {
     if (step === 'quotesDetails' && (selectedMrId || selectedMrRequestNo || urlMrId || urlMrRequestNo || rfqId || editId)) {
@@ -164,7 +210,7 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
         rfqAPI.getMaterialsByRequestNo(id, id, projectIdForApi).then((data) => {
           const arr = Array.isArray(data) ? data : [];
           if (arr.length === 0) {
-            materialRequestAPI.edit(id).then((edit: any) => {
+            materialRequestAPI.edit(id, projectIdForApi ?? undefined).then((edit: any) => {
               const details = Array.isArray(edit) ? edit
                 : Array.isArray(edit?.data) ? edit.data
                 : Array.isArray(edit?.details) ? edit.details
@@ -178,7 +224,7 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
             setQuoteDetails(arr);
           }
         }).catch(() => {
-          if (id) materialRequestAPI.edit(id).then((edit: any) => {
+          if (id) materialRequestAPI.edit(id, projectIdForApi ?? undefined).then((edit: any) => {
             const details = Array.isArray(edit) ? edit
               : Array.isArray(edit?.data) ? edit.data
               : Array.isArray(edit?.details) ? edit.details
@@ -195,21 +241,70 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
         const id = editId ?? rfqId;
         const projectsId = getProjectsIdForApi();
         if (id) {
-          rfqAPI.getQuoteDetails(id, projectsId ?? undefined).then((details) => {
-            const arr = Array.isArray(details) ? details : [];
-            const first = arr[0];
-            const derivedMrId = first?.material_requests_id ?? first?.material_request_id ?? (typeof (first as any)?.material_requests === 'object' ? (first as any).material_requests?.id : undefined);
-            const effectiveMrId = mrId ?? (derivedMrId != null && derivedMrId !== '' ? String(derivedMrId) : null);
-            // When we have an MR (user-selected or derived), always load materials from MR.
-            // getQuoteDetails can return malformed data (e.g. single row with "-") due to backend bug.
-            if (effectiveMrId) {
-              loadMaterialsFromMr(effectiveMrId);
-              setSelectedMrId((prev) => prev ?? effectiveMrId);
-            } else if (arr.length > 0) {
-              setQuoteDetails(arr);
-            } else {
-              setQuoteDetails([]);
+          const effectiveMrId = mrId;
+          // Load both existing quote details and MR materials, then merge so same MR updates instead of appends
+          Promise.all([
+            rfqAPI.getQuoteDetails(id, projectsId ?? undefined),
+            effectiveMrId
+              ? rfqAPI.getMaterialsByRequestNo(effectiveMrId, effectiveMrId, projectIdForApi).catch(() => [])
+              : Promise.resolve([]),
+          ]).then(([detailsResp, mrMaterials]) => {
+            const existingDetails = Array.isArray(detailsResp) ? detailsResp : [];
+            const mrMat = Array.isArray(mrMaterials) ? mrMaterials : [];
+            const derivedMrId = (existingDetails[0] as any)?.material_requests_id ?? (existingDetails[0] as any)?.material_request_id;
+            const resolvedMrId = effectiveMrId ?? (derivedMrId != null && derivedMrId !== '' ? String(derivedMrId) : null);
+            setSelectedMrId((prev) => prev ?? resolvedMrId);
+
+            if (!resolvedMrId) {
+              setQuoteDetails(existingDetails.length > 0 ? existingDetails : []);
+              return;
             }
+            const existingForMr = existingDetails.filter((d: any) => String(d?.material_requests_id ?? d?.material_request_id ?? '') === String(resolvedMrId));
+            if (mrMat.length === 0) {
+              materialRequestAPI.edit(resolvedMrId, projectIdForApi ?? undefined).then((edit: any) => {
+                const fallback = Array.isArray(edit) ? edit
+                  : Array.isArray(edit?.data) ? edit.data
+                  : Array.isArray(edit?.details) ? edit.details
+                  : Array.isArray(edit?.material_request_details) ? edit.material_request_details
+                  : Array.isArray(edit?.materialsRequestDetails) ? edit.materialsRequestDetails
+                  : Array.isArray(edit?.materials) ? edit.materials
+                  : [];
+                if (fallback.length > 0) {
+                  const merged = fallback.map((mat: any) => {
+                    const matId = mat?.materials_id ?? mat?.materials?.id ?? mat?.material_id ?? mat?.id;
+                    const detailId = mat?.material_request_details_id ?? mat?.material_request_detail_id ?? mat?.id;
+                    const match = existingForMr.find((e: any) => {
+                      const eMat = e?.materials_id ?? e?.materials?.id ?? e?.material_id;
+                      const eDetail = e?.material_request_details_id ?? e?.material_request_detail_id;
+                      return (matId != null && String(eMat) === String(matId)) || (detailId != null && String(eDetail) === String(detailId));
+                    });
+                    if (match) {
+                      return { ...mat, ...match, id: match.id ?? match.quort_details_id ?? match.quotes_details_id, quort_details_id: match.quort_details_id ?? match.id, quotes_details_id: match.quotes_details_id ?? match.id };
+                    }
+                    return mat;
+                  });
+                  setQuoteDetails(merged);
+                } else {
+                  setQuoteDetails(existingForMr.length > 0 ? existingForMr : []);
+                }
+              }).catch(() => setQuoteDetails(existingForMr.length > 0 ? existingForMr : []));
+              return;
+            }
+            // Merge MR materials with existing quote details (preserve ids for update)
+            const merged = mrMat.map((mat: any) => {
+              const matId = mat?.materials_id ?? mat?.materials?.id ?? mat?.material_id ?? mat?.id;
+              const detailId = mat?.material_request_details_id ?? mat?.material_request_detail_id ?? mat?.id;
+              const match = existingForMr.find((e: any) => {
+                const eMat = e?.materials_id ?? e?.materials?.id ?? e?.material_id;
+                const eDetail = e?.material_request_details_id ?? e?.material_request_detail_id;
+                return (matId != null && String(eMat) === String(matId)) || (detailId != null && String(eDetail) === String(detailId));
+              });
+              if (match) {
+                return { ...mat, ...match, id: match.id ?? match.quort_details_id ?? match.quotes_details_id, quort_details_id: match.quort_details_id ?? match.id, quotes_details_id: match.quotes_details_id ?? match.id };
+              }
+              return mat;
+            });
+            setQuoteDetails(merged);
           }).catch(() => {
             if (mrId) loadMaterialsFromMr();
             else setQuoteDetails([]);
@@ -221,7 +316,7 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
         rfqAPI.getMaterialsByRequestNo(mrId, mrId, projectIdForApi).then((data) => {
           const arr = Array.isArray(data) ? data : [];
           if (arr.length === 0 && mrId) {
-            materialRequestAPI.edit(mrId).then((edit: any) => {
+            materialRequestAPI.edit(mrId, projectIdForApi ?? undefined).then((edit: any) => {
               const details = Array.isArray(edit) ? edit
                 : Array.isArray(edit?.data) ? edit.data
                 : Array.isArray(edit?.details) ? edit.details
@@ -235,7 +330,7 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
             setQuoteDetails(arr);
           }
         }).catch(() => {
-          if (mrId) materialRequestAPI.edit(mrId).then((edit: any) => {
+          if (mrId) materialRequestAPI.edit(mrId, projectIdForApi ?? undefined).then((edit: any) => {
             const details = Array.isArray(edit) ? edit
               : Array.isArray(edit?.data) ? edit.data
               : Array.isArray(edit?.details) ? edit.details
@@ -976,7 +1071,8 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
                 <div className="space-y-2 max-h-64 overflow-y-auto">
                   {materialRequests.map((mr: any) => {
                     const id = String(mr.id ?? mr.uuid ?? '');
-                    const isSelected = selectedMrId === id;
+                    const mrReqNo = String(mr?.request_no ?? '');
+                    const isSelected = selectedMrId === id || (Boolean(selectedMrRequestNo && mrReqNo) && selectedMrRequestNo === mrReqNo);
                     return (
                       <button
                         key={id}

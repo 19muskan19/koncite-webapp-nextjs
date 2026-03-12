@@ -3810,16 +3810,17 @@ export const materialRequestAPI = {
   },
   /**
    * GET/POST /inventory/materials-request-list
-   * GET: no params. POST: { projectId, subprojectId? } — backend filters by projects_id, sub_projects_id
+   * GET: no params. POST: { projectId, subprojectId?, request_no? } — backend filters by projects_id, sub_projects_id, request_no
    * Response: { status, message, data: MaterialRequest[] }
    */
-  list: async (filters?: { projectId?: number | string; subprojectId?: number | string }): Promise<any[]> => {
+  list: async (filters?: { projectId?: number | string; subprojectId?: number | string; request_no?: string }): Promise<any[]> => {
     try {
       let response;
-      if (filters?.projectId != null || filters?.subprojectId != null) {
+      if (filters?.projectId != null || filters?.subprojectId != null || filters?.request_no != null) {
         const body: Record<string, number | string> = {};
         if (filters.projectId != null) body.projectId = filters.projectId;
         if (filters.subprojectId != null) body.subprojectId = filters.subprojectId;
+        if (filters.request_no != null && String(filters.request_no).trim()) body.request_no = String(filters.request_no).trim();
         response = await apiClient.post('/inventory/materials-request-list', body);
       } else {
         response = await apiClient.get('/inventory/materials-request-list');
@@ -3838,12 +3839,14 @@ export const materialRequestAPI = {
   },
   /**
    * POST /inventory/materials-request-edit
-   * Payload: { id } — Material Request id
+   * Payload: { id, project_id? } — Material Request id, project_id optional
    * Response: { status, message, data: MaterialRequestDetails[] } — array of line items for edit
    */
-  edit: async (id: number | string): Promise<any> => {
+  edit: async (id: number | string, projectId?: number | string): Promise<any> => {
     try {
-      const response = await apiClient.post('/inventory/materials-request-edit', { id });
+      const body: Record<string, unknown> = { id };
+      if (projectId != null && projectId !== '') body.project_id = projectId;
+      const response = await apiClient.post('/inventory/materials-request-edit', body);
       if (response.data?.status === false || response.data?.success === false) {
         throw new Error(response.data?.message || 'Failed to fetch material request');
       }
@@ -4060,7 +4063,7 @@ export const rfqAPI = {
       return result;
     } catch (error: any) {
       try {
-        return await materialRequestAPI.edit(id);
+        return await materialRequestAPI.edit(id, _projectsId);
       } catch {
         throw { message: error.response?.data?.message || 'Failed to load RFQ', errors: error.response?.data?.errors || {} } as ApiError;
       }
@@ -4347,27 +4350,55 @@ export const rfqAPI = {
 };
 
 // Goods Return APIs - Inventory > Goods Returns
+// Spec: return-list (GET), return-add (POST), return-edit (POST), return-goods-add (POST), return-goods-details-add (POST)
 export const goodsReturnAPI = {
+  /**
+   * GET /inventory/return-list - No request body.
+   * Returns list of returns with at least one return good.
+   * Response: status, response_code, message, data (collection with id, name, date, code/return_no, projects_id, sub_projects_id, user_id, company_id, details, remarks).
+   */
   list: async (): Promise<any[]> => {
     try {
       const response = await apiClient.get('/inventory/return-list');
-      const data = response.data?.data ?? response.data;
-      return Array.isArray(data) ? data : [];
+      const raw = response.data?.data ?? response.data;
+      const arr = Array.isArray(raw) ? raw : Array.isArray(raw?.returns) ? raw.returns : Array.isArray(raw?.data) ? raw.data : [];
+      return arr;
     } catch (error: any) {
       if (error?.response?.status === 404) return [];
       throw { message: error.response?.data?.message || 'Failed to fetch returns', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
-  edit: async (invReturnsId: number | string): Promise<any> => {
+  /**
+   * POST /inventory/return-edit
+   * Request body: inv_returns_id (required). Optional: project_id / projects_id for backends that require it.
+   * Response: status, response_code, message, data (id, uuid, return_no, date, type, inv_issue_lists_id, tag, remarkes, inv_return, inv_return_details).
+   */
+  edit: async (invReturnsId: number | string, projectId?: number | string): Promise<any> => {
     try {
-      const response = await apiClient.post('/inventory/return-edit', { inv_returns_id: invReturnsId });
-      return response.data?.data ?? response.data;
+      const body: Record<string, unknown> = { inv_returns_id: invReturnsId };
+      if (projectId != null && projectId !== '') {
+        body.project_id = projectId;
+        body.projects_id = projectId; // Some backends expect projects_id
+      }
+      const response = await apiClient.post('/inventory/return-edit', body);
+      // Handle nested data: { data: { data: {...} } } or { data: {...} }
+      const d = response.data;
+      const inner = d?.data;
+      if (inner && typeof inner === 'object' && (inner.inv_return != null || inner.inv_return_details != null || inner.inv_return_goods != null)) {
+        return inner;
+      }
+      return d?.data ?? d;
     } catch (error: any) {
       const data = error.response?.data;
       const msg = typeof data === 'object' ? data?.message : (typeof data === 'string' && data.includes('error') ? 'Backend error' : null);
       throw { message: msg || 'Failed to fetch return (API may not be implemented)', errors: (typeof data === 'object' && data?.errors) || {} } as ApiError;
     }
   },
+  /**
+   * POST /inventory/return-add
+   * Request body: name, projects_id, store_warehouses_id (array).
+   * Creates new InvReturn header. Response: status, response_code, message, data with created return record.
+   */
   createHeader: async (data: { name: string; projects_id: number | string; store_warehouses_id: (number | string)[] }): Promise<any> => {
     try {
       const response = await apiClient.post('/inventory/return-add', data);
@@ -4418,16 +4449,23 @@ export const goodsReturnAPI = {
       throw { message: error.response?.data?.message || 'Failed to fetch materials', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
+  /**
+   * POST /inventory/return-goods-add
+   * Request body: inv_return_id, projects_id, goods_type ("materials"/"machines"), return_no, date, return_from, materials_id (array).
+   * Optional: id (to update), remarkes, type.
+   * Response: status, response_code, message, data as materials/assets list for the return.
+   */
   addReturnGoods: async (payload: {
     id?: number | string | null;
     inv_return_id: number | string;
     projects_id: number | string;
-    store_warehouses_id: (number | string)[];
+    store_warehouses_id?: (number | string)[];
     return_no: string;
     date: string;
     type?: number | string;
     goods_type: 'materials' | 'machines';
     return_from: number | string;
+    remarkes?: string;
     materials_id: (number | string)[];
   }): Promise<any> => {
     try {
@@ -4456,6 +4494,12 @@ export const goodsReturnAPI = {
       throw { message: error.response?.data?.message || 'Failed to add return goods', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
+  /**
+   * POST /inventory/return-goods-details-add
+   * Request body: array of objects with inv_return_goods_id, type, materials_id, return_qty, stock_qty, projects_id, store_warehouses_id.
+   * Optional per item: id (to update), price, remarkes, activities_id.
+   * Response: status, response_code, message, data with saved details.
+   */
   addReturnDetails: async (items: Array<{
     id?: number | string | null;
     inv_return_goods_id: number | string;
@@ -4465,6 +4509,7 @@ export const goodsReturnAPI = {
     type: 'materials' | 'machines';
     return_qty: number | string;
     stock_qty?: number | string;
+    remarkes?: string;
     activities_id?: number | string;
   }>): Promise<any> => {
     try {

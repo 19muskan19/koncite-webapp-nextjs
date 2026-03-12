@@ -52,7 +52,7 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
   const projects = useProjectsFromMasters();
   const projIdForSub = projects.find((p) => String(p.id) === String(selectedProject))?.id ?? selectedProject;
   const subprojects = useSubprojectsFromMasters(projIdForSub || undefined);
-
+  
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
