@@ -1012,52 +1012,55 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
           </div>
         )}
 
-        {/* Step: Doc (PDF) */}
+        {/* Step: Doc (PDF) - Success modal (same as PR) */}
         {step === 'doc' && (
-          <div className={`rounded-xl border p-6 ${cardClass}`}>
-            <h2 className={`text-lg font-bold mb-4 ${textPrimary}`}>Quote Document</h2>
-            <div className={`p-8 rounded-lg text-center ${isDark ? 'bg-slate-800/50' : 'bg-slate-50'}`}>
-              <FileText className={`w-16 h-16 mx-auto mb-4 ${textSecondary}`} />
-              <p className={`mb-6 ${textSecondary}`}>
-                {pdfUrl ? 'Your RFQ PDF is ready. View or share the link below.' : 'Quote sent to vendors. View or share the link below.'}
-              </p>
-              <div className="flex flex-wrap items-center justify-center gap-3">
-                <button
-                  onClick={handleViewPdf}
-                  disabled={!pdfUrl}
-                  className="flex items-center gap-2 px-6 py-3 rounded-lg font-bold bg-blue-500/20 text-blue-600 hover:bg-blue-500/30 dark:text-blue-400 transition-colors disabled:opacity-70"
-                  title="Open PDF in new tab"
-                >
-                  <Eye className="w-5 h-5" /> View
-                </button>
-                <button
-                  onClick={handleSharePdf}
-                  disabled={isSubmitting}
-                  className="flex items-center gap-2 px-6 py-3 rounded-lg font-bold bg-emerald-500/20 text-emerald-600 hover:bg-emerald-500/30 dark:text-emerald-400 transition-colors disabled:opacity-70"
-                  title="Copy share link to clipboard"
-                >
-                  {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Share2 className="w-5 h-5" />}
-                  Share
-                </button>
-              </div>
-              {!pdfUrl && (
-                <button
-                  onClick={handleGeneratePdf}
-                  disabled={isSubmitting}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium mt-4 mx-auto text-[#6B8E23] hover:bg-[#6B8E23]/10 disabled:opacity-70"
-                >
-                  {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
-                  Generate PDF
-                </button>
-              )}
-            </div>
-            <div className="mt-6 flex gap-3">
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
+            <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-md max-h-[85vh] my-auto overflow-hidden flex flex-col`}>
               <button
                 onClick={() => router.push('/inventory-reports/rfq')}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold border-2 border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10"
+                className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+                title="Close"
               >
-                <ArrowLeft className="w-4 h-4" /> Back to RFQ List
+                <X className={`w-5 h-5 ${textSecondary}`} />
               </button>
+              <div className="p-6 sm:p-8 flex flex-col items-center">
+                <h2 className={`text-lg sm:text-xl font-black mb-2 ${textPrimary}`}>RFQ Created</h2>
+                <p className={`text-sm ${textSecondary} mb-6`}>Your PDF is ready. View or share below.</p>
+                <div className="flex items-center justify-center gap-2">
+                  <button
+                    onClick={handleViewPdf}
+                    disabled={!pdfUrl}
+                    className="p-2 rounded-lg bg-blue-500/20 text-blue-600 hover:bg-blue-500/30 dark:text-blue-400 disabled:opacity-50 transition-colors"
+                    title="View PDF"
+                  >
+                    <Eye className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={handleSharePdf}
+                    disabled={isSubmitting || !pdfUrl}
+                    className="p-2 rounded-lg bg-emerald-500/20 text-emerald-600 hover:bg-emerald-500/30 dark:text-emerald-400 disabled:opacity-50 transition-colors"
+                    title="Share PDF (copy link)"
+                  >
+                    {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Share2 className="w-4 h-4" />}
+                  </button>
+                </div>
+                {!pdfUrl && (
+                  <button
+                    onClick={handleGeneratePdf}
+                    disabled={isSubmitting}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium mt-4 text-[#6B8E23] hover:bg-[#6B8E23]/10 disabled:opacity-70"
+                  >
+                    {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
+                    Generate PDF
+                  </button>
+                )}
+                <button
+                  onClick={() => router.push('/inventory-reports/rfq')}
+                  className="mt-8 flex items-center gap-2 px-6 py-2 rounded-lg font-bold bg-[#6B8E23] text-white hover:bg-[#5a7a1e]"
+                >
+                  Done — Back to List
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -1083,12 +1086,17 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
                         }}
                         className={`w-full text-left p-3 rounded-lg border ${isSelected ? 'border-[#6B8E23] bg-[#6B8E23]/10' : isDark ? 'border-slate-600' : 'border-slate-200'}`}
                       >
-                        <span className={`font-medium ${textPrimary}`}>
-                          {mr.request_no ?? mr.created_by ?? mr.date ?? `MR #${id}`}
-                        </span>
-                        {(mr.request_no || mr.created_by) && mr.date && (
-                          <span className={`text-sm ${textSecondary} ml-2`}>{mr.date}</span>
-                        )}
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <span className={`font-medium ${textPrimary}`}>
+                            {mr.request_no ?? `MR #${id}`}
+                          </span>
+                          {mr.date && (
+                            <span className={`text-sm ${textSecondary}`}>{mr.date}</span>
+                          )}
+                          <span className={`text-sm ${textSecondary}`}>
+                            • {mr.users?.name ?? mr.created_by ?? mr.user?.name ?? mr.users_id?.name ?? '-'}
+                          </span>
+                        </div>
                       </button>
                     );
                   })}

@@ -22,6 +22,7 @@ import {
   ExternalLink,
   Check,
   X,
+  Eye,
   Image as ImageIcon,
 } from 'lucide-react';
 import { masterDataAPI, goodsReceiptAPI } from '@/services/api';
@@ -1152,26 +1153,46 @@ export default function GoodsReceiptFlow({
           </div>
         )}
 
+        {/* Success modal (same as PR/RFQ) */}
         {step === 'success' && (
-          <div className={`rounded-xl border p-8 ${cardClass} text-center`}>
-            <div className="mb-6">
-              <div className="w-16 h-16 rounded-full bg-[#6B8E23]/20 flex items-center justify-center mx-auto mb-4"><Check className="w-8 h-8 text-[#6B8E23]" /></div>
-              <h2 className={`text-xl font-black mb-2 ${textPrimary}`}>Well done !!!</h2>
-              <p className={`text-base ${textSecondary}`}>Inward of Goods is ready</p>
-            </div>
-            <div className="flex flex-wrap justify-center gap-4 mb-4">
-              <button onClick={() => router.push('/inventory-reports/grn-mrn-slip')} className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold bg-[#6B8E23] text-white hover:bg-[#5a7a1e]`}><Plus className="w-4 h-4" /> Add Another</button>
-            </div>
-            <div className="flex flex-wrap justify-center gap-3 mb-6">
-              <button onClick={handleViewPdf} className="flex items-center gap-2 px-5 py-2 rounded-lg font-bold border border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10"><ExternalLink className="w-4 h-4" /> View</button>
-              <button onClick={handleSharePdf} className="flex items-center gap-2 px-5 py-2 rounded-lg font-bold border border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10"><Share2 className="w-4 h-4" /> Share</button>
-            </div>
-            {pdfInfo?.url && pdfInfo?.name && (
-              <div className={`p-4 rounded-xl border ${isDark ? 'border-slate-600' : 'border-slate-200'}`}>
-                <p className={`text-sm font-bold mb-1 ${textSecondary}`}>PDF</p>
-                <p className={`font-mono text-sm ${textPrimary}`}>{pdfInfo.name || 'Inward.pdf'}</p>
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
+            <div className={`relative ${isDark ? 'bg-[#0a0a0a]' : 'bg-white'} rounded-xl border ${cardClass} w-full max-w-md max-h-[85vh] my-auto overflow-hidden flex flex-col`}>
+              <button
+                onClick={() => router.push('/inventory-reports/grn-mrn-slip')}
+                className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+                title="Close"
+              >
+                <X className={`w-5 h-5 ${textSecondary}`} />
+              </button>
+              <div className="p-6 sm:p-8 flex flex-col items-center">
+                <h2 className={`text-lg sm:text-xl font-black mb-2 ${textPrimary}`}>GRN/MRN Created</h2>
+                <p className={`text-sm ${textSecondary} mb-6`}>Your PDF is ready. View or share below.</p>
+                <div className="flex items-center justify-center gap-2">
+                  <button
+                    onClick={handleViewPdf}
+                    disabled={!pdfInfo?.url}
+                    className="p-2 rounded-lg bg-blue-500/20 text-blue-600 hover:bg-blue-500/30 dark:text-blue-400 disabled:opacity-50 transition-colors"
+                    title="View PDF"
+                  >
+                    <Eye className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={handleSharePdf}
+                    disabled={!pdfInfo?.url}
+                    className="p-2 rounded-lg bg-emerald-500/20 text-emerald-600 hover:bg-emerald-500/30 dark:text-emerald-400 disabled:opacity-50 transition-colors"
+                    title="Share PDF (copy link)"
+                  >
+                    <Share2 className="w-4 h-4" />
+                  </button>
+                </div>
+                <button
+                  onClick={() => router.push('/inventory-reports/grn-mrn-slip')}
+                  className="mt-8 flex items-center gap-2 px-6 py-2 rounded-lg font-bold bg-[#6B8E23] text-white hover:bg-[#5a7a1e]"
+                >
+                  Done — Back to List
+                </button>
               </div>
-            )}
+            </div>
           </div>
         )}
 

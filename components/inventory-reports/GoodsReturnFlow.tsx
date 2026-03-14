@@ -29,7 +29,7 @@ import {
 import { masterDataAPI, goodsReturnAPI } from '@/services/api';
 import CreateWarehouseModal from '@/components/masters/Modals/CreateWarehouseModal';
 import { getTodayDateString } from '@/utils/dateUtils';
-import { getAuthToken } from '@/services/apiClient';
+import { copyPdfUrl } from '@/utils/pdfUtils';
 
 type GoodsReturnStep = 'stores' | 'assetReturn' | 'details' | 'success';
 
@@ -373,6 +373,32 @@ export default function GoodsReturnFlow({
     }
   }, [mode, editReturnId, step]);
 
+  // Fetch return_no from projectToStoreList when assetReturn step loads.
+  // Create: omit request_id → backend generates unique 6-digit via generateUniqueNumberAndCheck.
+  // Edit: include request_id (inv_returns_id) → backend returns existing return_no from InvReturnGood.
+  useEffect(() => {
+    if (step !== 'assetReturn') return;
+    const pId = projectIdForApi();
+    let storeNumericIds = Array.from(selectedStoreIds)
+      .map((sid) => stores.find((x) => String(x.id) === sid)?.numericId ?? stores.find((x) => String(x.id) === sid)?.id)
+      .filter((x): x is string | number => x != null);
+    if (mode === 'edit' && storeNumericIds.length === 0 && editLoadedStoreIds.length > 0) {
+      storeNumericIds = [...editLoadedStoreIds];
+    }
+    if (!pId || storeNumericIds.length === 0) {
+      if (mode === 'create') setReturnNoFromBackend(null);
+      return;
+    }
+    const requestId = mode === 'edit' ? (returnHeader?.inv_returns_id ?? returnHeader?.inv_return_id ?? editReturnId ?? null) : null;
+    goodsReturnAPI
+      .projectToStoreList(pId, storeNumericIds, 'return', requestId)
+      .then((data: any) => {
+        const no = data?.invInwardRegNo ?? data?.return_no ?? data?.inv_return_reg_no;
+        setReturnNoFromBackend(no ? String(no) : null);
+      })
+      .catch(() => { if (mode === 'create') setReturnNoFromBackend(null); });
+  }, [step, selectedStoreIds, stores, mode, returnHeader?.inv_returns_id, returnHeader?.inv_return_id, editReturnId, editLoadedStoreIds]);
+
   useEffect(() => {
     if (!showProjectSelectModal) return;
     setIsLoadingProjects(true);
@@ -503,10 +529,10 @@ export default function GoodsReturnFlow({
       return;
     }
 
-    // Default: use issue-type-tag-list API
+    // Default: use issue-type-tag-list API (body: inv_issue_lists_id, project_id, store_id)
     if (pId && storeNumericIds.length > 0) {
       goodsReturnAPI
-        .getIssueTypeTagList(typeSlug || String(returnFromId), pId, storeNumericIds)
+        .getIssueTypeTagList(returnFromId, pId, storeNumericIds)
         .then((tags: any[]) => setTagOptions(Array.isArray(tags) ? tags : []))
         .catch(() => setTagOptions([]));
     } else {
@@ -1036,36 +1062,11 @@ export default function GoodsReturnFlow({
       toast.showWarning('Generate PDF first.');
       return;
     }
-    try {
-      const fullUrl = getFullPdfUrl(pdfInfo.url) || pdfInfo.url;
-      const token = getAuthToken();
-      const headers: Record<string, string> = { Accept: 'application/pdf' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-      const res = await fetch(fullUrl, { credentials: 'include', headers });
-      if (!res.ok) throw new Error('Failed to fetch PDF');
-      const blob = await res.blob();
-      const file = new File([blob], pdfInfo.name || 'Return.pdf', { type: 'application/pdf' });
-      const canShareFiles = 'share' in navigator && ('canShare' in navigator ? navigator.canShare({ files: [file] }) : true);
-      if (canShareFiles) {
-        await navigator.share({
-          files: [file],
-          title: pdfInfo.name || 'Return Report',
-          text: 'Return Report',
-        });
-        toast.showSuccess('Shared successfully.');
-      } else {
-        await navigator.clipboard.writeText(fullUrl);
-        toast.showSuccess('PDF link copied to clipboard.');
-      }
-    } catch (e: any) {
-      if (e?.name !== 'AbortError') {
-        try {
-          await navigator.clipboard.writeText(getFullPdfUrl(pdfInfo.url) || pdfInfo.url);
-          toast.showSuccess('Link copied to clipboard.');
-        } catch {
-          toast.showWarning('Could not share. Open PDF in new tab and use browser Share.');
-        }
-      }
+    const copied = await copyPdfUrl(pdfInfo.url);
+    if (copied) {
+      toast.showSuccess('PDF link copied to clipboard.');
+    } else {
+      toast.showWarning('Could not copy to clipboard.');
     }
   };
 
@@ -1505,68 +1506,55 @@ export default function GoodsReturnFlow({
           </div>
         )}
 
-        {/* Step 4: Success */}
+        {/* Success modal (same as PR/RFQ/GRN) */}
         {step === 'success' && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div className={`rounded-xl border p-8 ${cardClass} text-center max-w-md w-full shadow-xl`}>
-              <div className="mb-6">
-                <div className="w-16 h-16 rounded-full bg-[#6B8E23]/20 flex items-center justify-center mx-auto mb-4">
-                  <Check className="w-8 h-8 text-[#6B8E23]" />
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
+            <div className={`relative ${isDark ? 'bg-[#0a0a0a]' : 'bg-white'} rounded-xl border ${cardClass} w-full max-w-md max-h-[85vh] my-auto overflow-hidden flex flex-col`}>
+              <button
+                onClick={() => router.push('/inventory-reports/issue-return')}
+                className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+                title="Close"
+              >
+                <X className={`w-5 h-5 ${textSecondary}`} />
+              </button>
+              <div className="p-6 sm:p-8 flex flex-col items-center">
+                <h2 className={`text-lg sm:text-xl font-black mb-2 ${textPrimary}`}>{mode === 'edit' ? 'Goods Return Updated' : 'Goods Return Created'}</h2>
+                <p className={`text-sm ${textSecondary} mb-6`}>Your PDF is ready. View or share below.</p>
+                <div className="flex items-center justify-center gap-2">
+                  <button
+                    onClick={handleViewPdf}
+                    disabled={!pdfInfo?.url}
+                    className="p-2 rounded-lg bg-blue-500/20 text-blue-600 hover:bg-blue-500/30 dark:text-blue-400 disabled:opacity-50 transition-colors"
+                    title="View PDF"
+                  >
+                    <Eye className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={handleSharePdf}
+                    disabled={!pdfInfo?.url}
+                    className="p-2 rounded-lg bg-emerald-500/20 text-emerald-600 hover:bg-emerald-500/30 dark:text-emerald-400 disabled:opacity-50 transition-colors"
+                    title="Share PDF (copy link)"
+                  >
+                    <Share2 className="w-4 h-4" />
+                  </button>
                 </div>
-                <h2 className={`text-xl font-black mb-2 ${textPrimary}`}>Well done !!!</h2>
-                <p className={`text-base ${textSecondary}`}>{mode === 'edit' ? 'Return Goods Updated Successfully' : 'Material/Asset Return to Store is ready'}</p>
-              </div>
-              <div className="flex flex-wrap justify-center gap-4 mb-6">
-                <button
-                  onClick={() => router.push('/inventory-reports/issue-return')}
-                  className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold bg-[#6B8E23] text-white hover:bg-[#5a7a1e]`}
-                >
-                  {mode === 'edit' ? <ArrowLeft className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-                  {mode === 'edit' ? 'Back to List' : 'Add Another'}
-                </button>
-              </div>
-            <div className={`p-6 rounded-xl border ${isDark ? 'border-slate-600' : 'border-slate-200'}`}>
-              <FileText className={`w-12 h-12 mx-auto mb-3 ${textSecondary}`} />
-              <p className={`text-sm font-bold mb-2 ${textSecondary}`}>PDF</p>
-              {isSubmitting && !pdfInfo?.url ? (
-                <>
-                  <p className={`text-sm mb-4 ${textSecondary}`}>Generating PDF...</p>
-                  <div className="flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-[#6B8E23]" /></div>
-                </>
-              ) : pdfInfo?.url ? (
-                <>
-                  <p className={`text-sm mb-4 ${textSecondary}`}>Your Return PDF is ready. View or share below.</p>
-                  <div className="flex flex-wrap items-center justify-center gap-3 mt-6">
-                    <button
-                      onClick={handleViewPdf}
-                      className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-blue-500/20 text-blue-600 hover:bg-blue-500/30 dark:text-blue-400 transition-colors"
-                      title="Open PDF in new tab"
-                    >
-                      <Eye className="w-4 h-4" /> View
-                    </button>
-                    <button
-                      onClick={handleSharePdf}
-                      className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-emerald-500/20 text-emerald-600 hover:bg-emerald-500/30 dark:text-emerald-400 transition-colors"
-                      title="Share PDF"
-                    >
-                      <Share2 className="w-4 h-4" /> Share
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p className={`text-sm mb-4 ${textSecondary}`}>PDF not ready yet.</p>
+                {!pdfInfo?.url && (
                   <button
                     onClick={handleGeneratePdf}
                     disabled={isSubmitting}
-                    className="flex items-center gap-2 px-6 py-3 rounded-lg font-bold bg-[#6B8E23] text-white hover:bg-[#5a7a1e] mx-auto disabled:opacity-70"
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium mt-4 text-[#6B8E23] hover:bg-[#6B8E23]/10 disabled:opacity-70"
                   >
-                    {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Package className="w-5 h-5" />}
+                    {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
                     Generate PDF
                   </button>
-                </>
-              )}
-            </div>
+                )}
+                <button
+                  onClick={() => router.push('/inventory-reports/issue-return')}
+                  className="mt-8 flex items-center gap-2 px-6 py-2 rounded-lg font-bold bg-[#6B8E23] text-white hover:bg-[#5a7a1e]"
+                >
+                  Done — Back to List
+                </button>
+              </div>
             </div>
           </div>
         )}

@@ -20,12 +20,13 @@ import {
   ExternalLink,
   Check,
   X,
+  Eye,
 } from 'lucide-react';
 import { masterDataAPI, goodsIssueAPI } from '@/services/api';
 import CreateWarehouseModal from '@/components/masters/Modals/CreateWarehouseModal';
 import { getTodayDateString } from '@/utils/dateUtils';
 import { getAuthToken } from '@/services/apiClient';
-import { openPdfInNewTab, sharePdfAsFile } from '@/utils/pdfUtils';
+import { openPdfInNewTab, copyPdfUrl } from '@/utils/pdfUtils';
 
 type GoodsIssueStep = 'stores' | 'goodsInv' | 'details' | 'success';
 
@@ -625,18 +626,15 @@ export default function GoodsIssueFlow({
 
   const handleSharePdf = async () => {
     if (!pdfInfo?.url) {
-      toast.showWarning('No PDF available.');
+      toast.showWarning('No PDF available. Generate PDF first.');
       return;
     }
-    await sharePdfAsFile({
-      url: pdfInfo.url,
-      name: pdfInfo.name || 'Issue.pdf',
-      reportTitle: 'Issue Report',
-      getAuthToken,
-      onSuccess: () => toast.showSuccess('Shared successfully.'),
-      onCopyFallback: () => toast.showSuccess('PDF link copied to clipboard.'),
-      onError: (msg) => toast.showWarning(msg),
-    });
+    const copied = await copyPdfUrl(pdfInfo.url);
+    if (copied) {
+      toast.showSuccess('PDF link copied to clipboard.');
+    } else {
+      toast.showWarning('Could not copy to clipboard.');
+    }
   };
 
   useEffect(() => {
@@ -878,40 +876,54 @@ export default function GoodsIssueFlow({
           </div>
         )}
 
+        {/* Success modal (same as PR/RFQ/GRN) */}
         {step === 'success' && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div className={`rounded-xl border p-8 ${cardClass} text-center max-w-md w-full shadow-xl`}>
-              <div className="mb-6">
-                <div className="w-16 h-16 rounded-full bg-[#6B8E23]/20 flex items-center justify-center mx-auto mb-4"><Check className="w-8 h-8 text-[#6B8E23]" /></div>
-                <h2 className={`text-xl font-black mb-2 ${textPrimary}`}>Well done !!!</h2>
-                <p className={`text-base ${textSecondary}`}>{mode === 'edit' ? 'Issue Goods Updated Successfully' : 'Issues/Outward Goods is ready'}</p>
-              </div>
-              <div className="flex flex-wrap justify-center gap-4 mb-6">
-                <button onClick={() => router.push('/inventory-reports/issue-slip')} className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold bg-[#6B8E23] text-white hover:bg-[#5a7a1e]`}>{mode === 'edit' ? <ArrowLeft className="w-4 h-4" /> : <Plus className="w-4 h-4" />} {mode === 'edit' ? 'Back to List' : 'Add Another'}</button>
-              </div>
-              <div className={`p-4 rounded-xl border ${isDark ? 'border-slate-600' : 'border-slate-200'}`}>
-                <p className={`text-sm font-bold mb-2 ${textSecondary}`}>PDF</p>
-                {isSubmitting && !pdfInfo?.url ? (
-                  <>
-                    <p className={`text-sm ${textSecondary}`}>Generating PDF...</p>
-                    <div className="flex justify-center mt-2"><Loader2 className="w-6 h-6 animate-spin text-[#6B8E23]" /></div>
-                  </>
-                ) : pdfInfo?.url ? (
-                  <>
-                    <p className={`font-mono text-sm mb-3 ${textPrimary}`}>{pdfInfo.name || 'Issue.pdf'}</p>
-                    <div className="flex flex-wrap justify-center gap-2">
-                      <button onClick={handleViewPdf} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10"><ExternalLink className="w-4 h-4" /> View</button>
-                      <button onClick={handleSharePdf} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10"><Share2 className="w-4 h-4" /> Share</button>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <p className={`text-sm mb-3 ${textSecondary}`}>PDF not ready yet.</p>
-                    <button onClick={() => fetchPdf()} disabled={isSubmitting} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10 mx-auto">
-                      {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ExternalLink className="w-4 h-4" />} Generate PDF
-                    </button>
-                  </>
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
+            <div className={`relative ${isDark ? 'bg-[#0a0a0a]' : 'bg-white'} rounded-xl border ${cardClass} w-full max-w-md max-h-[85vh] my-auto overflow-hidden flex flex-col`}>
+              <button
+                onClick={() => router.push('/inventory-reports/issue-slip')}
+                className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+                title="Close"
+              >
+                <X className={`w-5 h-5 ${textSecondary}`} />
+              </button>
+              <div className="p-6 sm:p-8 flex flex-col items-center">
+                <h2 className={`text-lg sm:text-xl font-black mb-2 ${textPrimary}`}>{mode === 'edit' ? 'Goods Issue Updated' : 'Goods Issue Created'}</h2>
+                <p className={`text-sm ${textSecondary} mb-6`}>Your PDF is ready. View or share below.</p>
+                <div className="flex items-center justify-center gap-2">
+                  <button
+                    onClick={handleViewPdf}
+                    disabled={!pdfInfo?.url}
+                    className="p-2 rounded-lg bg-blue-500/20 text-blue-600 hover:bg-blue-500/30 dark:text-blue-400 disabled:opacity-50 transition-colors"
+                    title="View PDF"
+                  >
+                    <Eye className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={handleSharePdf}
+                    disabled={!pdfInfo?.url}
+                    className="p-2 rounded-lg bg-emerald-500/20 text-emerald-600 hover:bg-emerald-500/30 dark:text-emerald-400 disabled:opacity-50 transition-colors"
+                    title="Share PDF (copy link)"
+                  >
+                    <Share2 className="w-4 h-4" />
+                  </button>
+                </div>
+                {!pdfInfo?.url && (
+                  <button
+                    onClick={() => fetchPdf()}
+                    disabled={isSubmitting}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium mt-4 text-[#6B8E23] hover:bg-[#6B8E23]/10 disabled:opacity-70"
+                  >
+                    {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
+                    Generate PDF
+                  </button>
                 )}
+                <button
+                  onClick={() => router.push('/inventory-reports/issue-slip')}
+                  className="mt-8 flex items-center gap-2 px-6 py-2 rounded-lg font-bold bg-[#6B8E23] text-white hover:bg-[#5a7a1e]"
+                >
+                  Done — Back to List
+                </button>
               </div>
             </div>
           </div>
