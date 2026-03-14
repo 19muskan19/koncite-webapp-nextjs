@@ -21,7 +21,8 @@ import {
   Settings,
   LogOut,
   ClipboardList,
-  Warehouse
+  Warehouse,
+  Pin
 } from 'lucide-react';
 import { ViewType, ThemeType } from '@/types';
 import { useUser } from '@/contexts/UserContext';
@@ -49,6 +50,8 @@ interface SidebarProps {
   theme: ThemeType;
   sidebarOpen: boolean;
   setSidebarOpen: (open: boolean) => void;
+  sidebarPinned?: boolean;
+  setSidebarPinned?: (pinned: boolean) => void;
 }
 
 const getCompanyInitials = (name: string): string => {
@@ -58,7 +61,7 @@ const getCompanyInitials = (name: string): string => {
   return name.slice(0, 2).toUpperCase();
 };
 
-const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen }) => {
+const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen, sidebarPinned = false, setSidebarPinned }) => {
   const pathname = usePathname();
   const { user, company } = useUser();
   const router = useRouter();
@@ -99,7 +102,8 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
       icon: ClipboardList,
       children: [
         { label: 'Daily work progress', id: ViewType.DPR, path: '/work-progress-reports' },
-        { label: 'Workforce management', id: ViewType.WORKFORCE_MANAGEMENT, path: '/operations/workforce-management' }
+        { label: 'Workforce management', id: ViewType.WORKFORCE_MANAGEMENT, path: '/operations/workforce-management' },
+        { label: 'Task', id: ViewType.TASK, path: '/operations/task' }
       ] 
     },
     { 
@@ -322,8 +326,8 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
         toRemove.forEach(id => newSet.delete(id));
       return newSet;
     });
-    // Close sidebar on mobile after navigation
-    if (window.innerWidth < 1024) {
+    // Minimize sidebar when navigating (unless pinned)
+    if (!sidebarPinned) {
       setSidebarOpen(false);
     }
   };
@@ -391,6 +395,16 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
                 </div>
               </>
             )}
+            {sidebarOpen && setSidebarPinned && (
+              <button
+                onClick={() => setSidebarPinned(!sidebarPinned)}
+                className={`p-1.5 rounded transition-colors ${sidebarPinned ? 'text-[#C2D642] bg-[#C2D642]/10' : 'opacity-60 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}`}
+                title={sidebarPinned ? 'Unpin sidebar (minimize when clicking links)' : 'Pin sidebar (keep open when clicking links)'}
+                aria-label={sidebarPinned ? 'Unpin sidebar' : 'Pin sidebar'}
+              >
+                <Pin className={`w-4 h-4 ${sidebarPinned ? 'rotate-45' : ''}`} />
+              </button>
+            )}
             <button onClick={() => setSidebarOpen(!sidebarOpen)} className={`hover:bg-black/5 dark:hover:bg-white/5 rounded transition-colors ${sidebarOpen ? 'p-1' : 'p-1.5 flex-1 flex justify-center lg:flex-initial'}`} aria-label="Toggle sidebar">
               <Menu className={sidebarOpen ? 'w-4 h-4 opacity-60' : 'w-5 h-5 opacity-60 lg:w-6 lg:h-6'} />
             </button>
@@ -428,10 +442,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
                             key={child.id}
                             onClick={(e) => {
                               e.stopPropagation();
-                              // Close sidebar on mobile after logout
-                              if (window.innerWidth < 1024) {
-                                setSidebarOpen(false);
-                              }
+                              if (!sidebarPinned) setSidebarOpen(false);
                               handleLogout();
                             }}
                             className={`w-full text-left text-sm font-bold py-1 px-2 rounded-md cursor-pointer transition-colors block opacity-40 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}
@@ -508,12 +519,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
                                         href={nestedChild.path}
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          // Keep parent dropdowns open
                                           handleChildClick(e, item.id.toString(), nestedChild.path);
-                                          // Close sidebar on mobile after navigation
-                                          if (window.innerWidth < 1024) {
-                                            setSidebarOpen(false);
-                                          }
                                         }}
                                         className={`text-sm font-bold py-2 px-2 sm:py-1 rounded-md transition-colors block touch-manipulation truncate ${isActive(nestedChild.path) ? (isDark ? 'text-slate-300 bg-slate-700/30' : 'text-slate-700 bg-slate-100') : 'opacity-40 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10'}`}
                                       >
@@ -547,11 +553,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen })
                   <Link
                     href={item.path || '#'}
                     onClick={() => {
-                      expandSidebarIfMinimized();
-                      // Close sidebar on mobile after navigation
-                      if (window.innerWidth < 1024) {
-                        setSidebarOpen(false);
-                      }
+                      if (!sidebarPinned) setSidebarOpen(false);
                     }}
                     className={`flex items-center justify-between p-2.5 rounded-lg transition-all ${active ? (isDark ? 'text-slate-300 bg-slate-700/50 font-bold' : 'text-slate-700 bg-slate-100 font-bold') : 'opacity-60 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10'}`}
                   >

@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
 import { useUser } from '@/contexts/UserContext';
+import { MainSidebarProvider } from '@/contexts/MainSidebarContext';
 import { authAPI } from '@/services/api';
 import Sidebar from './Sidebar';
 
@@ -21,6 +22,15 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
   const pathname = usePathname();
   const router = useRouter();
   
+  const SIDEBAR_PIN_KEY = 'koncite-sidebar-pinned';
+
+  const [sidebarPinned, setSidebarPinned] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem(SIDEBAR_PIN_KEY) === 'true';
+    }
+    return false;
+  });
+
   // Initialize sidebar based on screen size - closed on mobile, open on desktop
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -28,6 +38,12 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
     }
     return false; // Default closed for SSR/mobile-first
   });
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(SIDEBAR_PIN_KEY, String(sidebarPinned));
+    }
+  }, [sidebarPinned]);
 
   // Set initial sidebar state on mount based on screen size
   useEffect(() => {
@@ -86,6 +102,8 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
         theme={theme} 
         sidebarOpen={sidebarOpen} 
         setSidebarOpen={setSidebarOpen}
+        sidebarPinned={sidebarPinned}
+        setSidebarPinned={setSidebarPinned}
       />
 
       {/* Main Content */}
@@ -139,11 +157,13 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
         </header>
 
         <div className={`flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar ${getThemeClass('theme')} p-3 sm:p-4`}>
-          <div className={`${
-            pathname?.startsWith('/ai-agents') || pathname?.startsWith('/document-management') ? 'max-w-full h-full' : 'max-w-[1400px] mx-auto fade-in-premium'
-          }`}>
-            {children}
-          </div>
+          <MainSidebarProvider setSidebarOpen={setSidebarOpen}>
+            <div className={`${
+              pathname?.startsWith('/ai-agents') || pathname?.startsWith('/document-management') ? 'max-w-full h-full' : 'max-w-[1400px] mx-auto fade-in-premium'
+            }`}>
+              {children}
+            </div>
+          </MainSidebarProvider>
         </div>
       </div>
     </div>

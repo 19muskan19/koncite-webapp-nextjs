@@ -4,9 +4,9 @@ import AppLayout from '@/components/AppLayout';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
 import { usePageTitle } from '@/hooks/usePageTitle';
-import { ClipboardCheck, Wrench } from 'lucide-react';
+import { FileText, Wrench } from 'lucide-react';
 
-export default function PRApprovalManagePage() {
+export default function PurchaseOrderPage() {
   usePageTitle();
   const { theme } = useTheme();
   const { isAuthenticated, isChecking } = useAuth();
@@ -38,7 +38,7 @@ export default function PRApprovalManagePage() {
               isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/15'
             }`}
           >
-            <ClipboardCheck className={`w-10 h-10 ${isDark ? 'text-[#C2D642]' : 'text-[#9AAF2E]'}`} />
+            <FileText className={`w-10 h-10 ${isDark ? 'text-[#C2D642]' : 'text-[#9AAF2E]'}`} />
           </div>
           <div className="flex items-center gap-2 mb-4">
             <Wrench className={`w-5 h-5 ${isDark ? 'text-[#C2D642]' : 'text-[#9AAF2E]'}`} />
@@ -56,7 +56,7 @@ export default function PRApprovalManagePage() {
               isDark ? 'text-slate-400' : 'text-slate-600'
             }`}
           >
-            PR Approvals is currently under development. This feature will be available in a future update.
+            Purchase Order (PO) is currently under development. This feature will be available in a future update.
           </p>
         </div>
       </div>

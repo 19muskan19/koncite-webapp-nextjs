@@ -16,11 +16,9 @@ const nextConfig = {
       },
     ];
   },
-  // Disable webpack cache to avoid Windows file locking issues
-  webpack: (config, { dev }) => {
-    if (dev) {
-      config.cache = false;
-    }
+  // Disable webpack cache to avoid Windows file locking issues on Windows
+  webpack: (config) => {
+    config.cache = false;
     return config;
   },
 }

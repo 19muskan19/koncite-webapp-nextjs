@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import { masterDataAPI, materialRequestAPI, rfqAPI, goodsReturnAPI, goodsIssueAPI, goodsReceiptAPI } from '../services/api';
 import { getLogoUrl } from '@/utils/imageUtils';
+import { copyPdfUrl } from '@/utils/pdfUtils';
 import { useRouter } from 'next/navigation';
 import { useToast } from '../contexts/ToastContext';
 import CreateProjectModal from './masters/Modals/CreateProjectModal';
@@ -97,6 +98,8 @@ const PROJECT_PAGE_SIZE = 10;
 const SUBPROJECT_PAGE_SIZE = 10;
 const MATERIAL_PAGE_SIZE = 10;
 const INVENTORY_LIST_PAGE_SIZE = 10;
+const RFQ_PAGE_SIZE = 10;
+const PR_PAGE_SIZE = 10;
 
 const INVENTORY_SECTION_VIEWS: ViewType[] = [
   ViewType.INVENTORY_PR,
@@ -396,7 +399,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
     const q = inventorySearchQuery.toLowerCase();
     return returnList.filter(
       (r: any) =>
-        (r.return_no ?? r.name ?? r.id ?? '').toString().toLowerCase().includes(q) ||
+        (r.code ?? r.return_no ?? r.name ?? r.id ?? '').toString().toLowerCase().includes(q) ||
         (r.date ?? '').toLowerCase().includes(q) ||
         (r.projects_id?.project_name ?? r.project_name ?? '').toLowerCase().includes(q)
     );
@@ -438,13 +441,13 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
   }, [prList, prSearchQuery]);
 
   const paginatedPrList = useMemo(() => {
-    const start = (prListPage - 1) * inventoryEntriesPerPage;
-    return filteredPrList.slice(start, start + inventoryEntriesPerPage);
-  }, [filteredPrList, prListPage, inventoryEntriesPerPage]);
+    const start = (prListPage - 1) * PR_PAGE_SIZE;
+    return filteredPrList.slice(start, start + PR_PAGE_SIZE);
+  }, [filteredPrList, prListPage]);
   const paginatedRfqList = useMemo(() => {
-    const start = (rfqListPage - 1) * inventoryEntriesPerPage;
-    return filteredRfqList.slice(start, start + inventoryEntriesPerPage);
-  }, [filteredRfqList, rfqListPage, inventoryEntriesPerPage]);
+    const start = (rfqListPage - 1) * RFQ_PAGE_SIZE;
+    return filteredRfqList.slice(start, start + RFQ_PAGE_SIZE);
+  }, [filteredRfqList, rfqListPage]);
   const paginatedGrnList = useMemo(() => {
     const start = (grnListPage - 1) * inventoryEntriesPerPage;
     return filteredGrnList.slice(start, start + inventoryEntriesPerPage);
@@ -834,42 +837,233 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
     }
   };
 
+  /** Build quotes_details for RFQ PDF (same as SubmitQuotes success modal) */
+  const buildRfqQuotesDetailsForPdf = (details: any[], mats: any[]) => {
+    return details.map((row: any) => {
+      const matId = row.materials?.id ?? row.materials_id ?? row.material_id ?? row.material?.id;
+      const materials = row.materials ?? row.materials_request_details?.materials ?? row.material;
+      const matched = matId != null && mats.length > 0 ? mats.find((m: any) => String(m.id ?? m.uuid ?? m.materials_id) === String(matId)) : null;
+      return {
+        id: row.id,
+        materials_id: matId,
+        materialCode: materials?.code ?? matched?.code ?? '',
+        materialName: materials?.name ?? materials?.material_name ?? matched?.name ?? matched?.material_name ?? '',
+        materialSpec: materials?.specification ?? matched?.specification ?? '',
+        materialUnit: materials?.unit ?? materials?.units ?? matched?.unit ?? matched?.units ?? '',
+        qty: row.qty ?? row.request_qty,
+        request_qty: row.request_qty ?? row.qty,
+        date: typeof (row.date ?? '') === 'string' && (row.date ?? '').includes('T') ? (row.date as string).split('T')[0] : (row.date ?? ''),
+        price: row.price,
+      };
+    });
+  };
+
+  const generateRfqPdfWithDetails = async (rfqId: string, projId?: string) => {
+    const [quoteData, mats] = await Promise.all([
+      rfqAPI.get(rfqId, projId ?? undefined),
+      masterDataAPI.getMaterials().then((m: any) => Array.isArray(m) ? m : []),
+    ]);
+    const inner = quoteData?.data ?? quoteData;
+    const details = inner?.quotesdetails ?? inner?.quotes_details ?? inner?.details ?? inner?.quote_details ?? quoteData?.quotesdetails ?? quoteData?.quotes_details ?? quoteData?.details ?? quoteData?.quote_details ?? (Array.isArray(quoteData) ? quoteData : []);
+    const arr = Array.isArray(details) ? details : [];
+    const materialsLookup = Array.isArray(mats) ? mats : [];
+    const quotesDetailsForPdf = arr.length > 0 ? buildRfqQuotesDetailsForPdf(arr, materialsLookup) : undefined;
+    return rfqAPI.generatePdf(rfqId, quotesDetailsForPdf);
+  };
+
   const handleRfqViewClick = async (rfq: any) => {
     const rfqId = rfq.id ?? rfq.uuid;
     if (!rfqId) return;
     try {
       const projId = rfq.projects_id != null ? (typeof rfq.projects_id === 'object' ? (rfq.projects_id as any)?.id : rfq.projects_id) : rfq.projects?.id;
-      const [quoteData, mats] = await Promise.all([
-        rfqAPI.get(rfqId, projId ?? undefined),
-        masterDataAPI.getMaterials().then((m: any) => Array.isArray(m) ? m : []),
-      ]);
-      const details = quoteData?.quotesdetails ?? quoteData?.quotes_details ?? quoteData?.details ?? quoteData?.quote_details ?? (Array.isArray(quoteData) ? quoteData : []);
-      const arr = Array.isArray(details) ? details : [];
-      const quotesDetailsForPdf = arr.length > 0 ? arr.map((row: any) => {
-        const matId = row.materials?.id ?? row.materials_id ?? row.material_id ?? row.material?.id;
-        const materials = row.materials ?? row.materials_request_details?.materials ?? row.material;
-        const matched = matId != null && mats.length > 0 ? mats.find((m: any) => String(m.id ?? m.uuid ?? m.materials_id) === String(matId)) : null;
-        return {
-          id: row.id,
-          materials_id: matId,
-          materialCode: materials?.code ?? matched?.code ?? '',
-          materialName: materials?.name ?? materials?.material_name ?? matched?.name ?? matched?.material_name ?? '',
-          materialSpec: materials?.specification ?? matched?.specification ?? '',
-          materialUnit: materials?.unit ?? materials?.units ?? matched?.unit ?? matched?.units ?? '',
-          qty: row.qty ?? row.request_qty,
-          request_qty: row.request_qty ?? row.qty,
-          date: typeof (row.date ?? '') === 'string' && (row.date ?? '').includes('T') ? (row.date as string).split('T')[0] : (row.date ?? ''),
-          price: row.price,
-        };
-      }) : undefined;
-      const { pdf_url } = await rfqAPI.generatePdf(rfqId, quotesDetailsForPdf);
+      const { pdf_url } = await generateRfqPdfWithDetails(String(rfqId), projId ?? undefined);
       if (!pdf_url) throw new Error('No PDF URL returned');
-      const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || '';
-      const fullUrl = pdf_url.startsWith('http') ? pdf_url : apiBase.replace(/\/api\/?$/, '') + (pdf_url.startsWith('/') ? pdf_url : '/' + pdf_url);
-      window.open(fullUrl, '_blank');
-      toast.showSuccess('PDF opened in new tab.');
+      const fullUrl = getFullPdfUrl(pdf_url) || (pdf_url.startsWith('http') ? pdf_url : '');
+      if (fullUrl) window.open(fullUrl, '_blank');
+      toast.showSuccess(fullUrl ? 'PDF opened in new tab.' : 'PDF generated.');
     } catch (e: any) {
       toast.showError(e?.message || 'Failed to load PDF.');
+    }
+  };
+
+  const handleRfqShareClick = async (rfq: any) => {
+    const rfqId = rfq.id ?? rfq.uuid;
+    if (!rfqId) return;
+    try {
+      const projId = rfq.projects_id != null ? (typeof rfq.projects_id === 'object' ? (rfq.projects_id as any)?.id : rfq.projects_id) : rfq.projects?.id;
+      const { pdf_url } = await generateRfqPdfWithDetails(String(rfqId), projId ?? undefined);
+      if (!pdf_url) throw new Error('No PDF URL returned');
+      const copied = await copyPdfUrl(pdf_url);
+      if (copied) {
+        toast.showSuccess('PDF link copied to clipboard.');
+      } else {
+        toast.showError('Could not copy to clipboard.');
+      }
+    } catch (e: any) {
+      toast.showError(e?.message || 'Failed to share PDF.');
+    }
+  };
+
+  /** Generate GRN PDF with details (same as success modal) */
+  const generateGrnPdfWithDetails = async (grn: any) => {
+    const grnId = grn?.id ?? grn?.uuid ?? grn?.inv_inwards_id;
+    if (!grnId) throw new Error('No GRN ID');
+    const editData = await goodsReceiptAPI.edit(grnId);
+    const invInwardsId = typeof editData?.inv_inwards_id === 'object' && editData?.inv_inwards_id != null
+      ? (editData.inv_inwards_id as any)?.id ?? (editData.inv_inwards_id as any)?.uuid
+      : editData?.inv_inwards_id;
+    const requestId = invInwardsId ?? editData?.id ?? grnId;
+    const detailsList = editData?.InvInwardGoodDetails ?? editData?.details ?? editData?.inward_details ?? editData?.inward_goods ?? [];
+    const inwardDetailsForPdf = Array.isArray(detailsList) && detailsList.length > 0
+      ? detailsList.map((d: any) => {
+          const mat = d?.materials_id ?? d?.materials ?? d?.material ?? d?.assets ?? d;
+          const matObj = typeof mat === 'object' && mat != null ? mat : {};
+          return {
+            id: d.id ?? undefined,
+            materials_id: typeof matObj?.id !== 'undefined' ? matObj.id : d.materials_id ?? d.material_id,
+            materialCode: matObj?.code ?? d?.code ?? '',
+            materialName: matObj?.name ?? d?.name ?? '',
+            materialSpec: matObj?.specification ?? d?.specification ?? '',
+            materialUnit: matObj?.unit_id?.unit ?? matObj?.unit ?? matObj?.units?.unit ?? d?.unit ?? '',
+            recipt_qty: d.recipt_qty ?? d.receipt_qty ?? 0,
+            reject_qty: d.reject_qty ?? 0,
+          };
+        })
+      : undefined;
+    return goodsReceiptAPI.generatePdf(requestId, inwardDetailsForPdf);
+  };
+
+  const handleGrnViewPdfClick = async (grn: any) => {
+    try {
+      const { pdf_url } = await generateGrnPdfWithDetails(grn);
+      const fullUrl = pdf_url ? getFullPdfUrl(pdf_url) : '';
+      if (fullUrl) window.open(fullUrl, '_blank');
+      toast.showSuccess(fullUrl ? 'PDF opened in new tab.' : 'PDF generated.');
+    } catch (e: any) {
+      toast.showError(e?.message || 'Failed to load PDF.');
+    }
+  };
+
+  const handleGrnShareClick = async (grn: any) => {
+    try {
+      const { pdf_url } = await generateGrnPdfWithDetails(grn);
+      if (!pdf_url) throw new Error('No PDF URL returned');
+      const copied = await copyPdfUrl(pdf_url);
+      if (copied) {
+        toast.showSuccess('PDF link copied to clipboard.');
+      } else {
+        toast.showError('Could not copy to clipboard.');
+      }
+    } catch (e: any) {
+      toast.showError(e?.message || 'Failed to share PDF.');
+    }
+  };
+
+  /** Generate Goods Return PDF with details (same as success modal) */
+  const generateReturnPdfWithDetails = async (ret: any) => {
+    const returnId = ret.inv_returns_id ?? ret.id ?? ret.uuid;
+    if (!returnId) throw new Error('No return ID');
+    const editData = await goodsReturnAPI.edit(returnId);
+    const invReturnGoodsId = editData?.id ?? editData?.inv_return_goods_id ?? editData?.uuid;
+    const detailsList = editData?.inv_return_details ?? editData?.InvReturnDetails ?? editData?.details ?? [];
+    const detailsForPdf = Array.isArray(detailsList) && detailsList.length > 0
+      ? detailsList.map((d: any) => {
+          const mat = d?.materials_id ?? d?.materials ?? d?.material ?? d;
+          const matObj = typeof mat === 'object' && mat != null ? mat : {};
+          const nested = (Array.isArray(d?.inv_return_details) ? d.inv_return_details[0] : null) ?? d?.inv_return_detail ?? d;
+          const returnQty = d.return_qty ?? d.recipt_qty ?? d.receipt_qty ?? nested?.return_qty ?? nested?.recipt_qty ?? 0;
+          return {
+            inv_return_goods_id: d.inv_return_goods_id ?? invReturnGoodsId,
+            materials_id: matObj?.id ?? d.materials_id ?? d.material_id,
+            materialCode: matObj?.code ?? d?.code ?? '',
+            materialName: matObj?.name ?? d?.name ?? '',
+            materialSpec: matObj?.specification ?? d?.specification ?? '',
+            materialUnit: matObj?.unit_id?.unit ?? matObj?.unit ?? matObj?.units?.unit ?? d?.unit ?? '',
+            return_qty: returnQty,
+            stock_qty: d.stock_qty ?? nested?.stock_qty ?? 0,
+          };
+        })
+      : undefined;
+    return goodsReturnAPI.generatePdf(returnId, detailsForPdf);
+  };
+
+  const handleReturnViewPdfClick = async (ret: any) => {
+    try {
+      const { pdf_url } = await generateReturnPdfWithDetails(ret);
+      const fullUrl = pdf_url ? getFullPdfUrl(pdf_url) : '';
+      if (fullUrl) window.open(fullUrl, '_blank');
+      toast.showSuccess(fullUrl ? 'PDF opened in new tab.' : 'PDF generated.');
+    } catch (e: any) {
+      toast.showError(e?.message || 'Failed to load PDF.');
+    }
+  };
+
+  const handleReturnShareClick = async (ret: any) => {
+    try {
+      const { pdf_url } = await generateReturnPdfWithDetails(ret);
+      if (!pdf_url) throw new Error('No PDF URL returned');
+      const copied = await copyPdfUrl(pdf_url);
+      if (copied) {
+        toast.showSuccess('PDF link copied to clipboard.');
+      } else {
+        toast.showError('Could not copy to clipboard.');
+      }
+    } catch (e: any) {
+      toast.showError(e?.message || 'Failed to share PDF.');
+    }
+  };
+
+  /** Generate Goods Issue PDF with details (same as success modal) */
+  const generateIssuePdfWithDetails = async (iss: any) => {
+    const issueId = iss.inv_issue?.id ?? iss.inv_issues_id ?? iss.id ?? iss.uuid;
+    if (!issueId) throw new Error('No issue ID');
+    const editData = await goodsIssueAPI.edit(issueId);
+    const header = editData?.inv_issue ?? editData;
+    const invIssuesId = header?.id ?? header?.uuid ?? editData?.inv_issue_id ?? editData?.id ?? issueId;
+    const invIssueListsId = editData?.inv_issue_lists_id?.id ?? editData?.inv_issue_lists_id ?? editData?.id ?? editData?.inv_issue_goods_id ?? issueId;
+    const detailsList = editData?.inv_issue_details ?? editData?.details ?? editData?.issue_details ?? [];
+    const detailsForPdf = Array.isArray(detailsList) && detailsList.length > 0
+      ? detailsList.map((d: any) => {
+          const mat = d?.materials_id ?? d?.materials ?? d?.material ?? d;
+          const matObj = typeof mat === 'object' && mat != null ? mat : {};
+          return {
+            materials_id: matObj?.id ?? d.materials_id ?? d.material_id,
+            materialCode: matObj?.code ?? d?.code ?? '',
+            materialName: matObj?.name ?? d?.name ?? '',
+            materialSpec: matObj?.specification ?? d?.specification ?? '',
+            materialUnit: matObj?.unit_id?.unit ?? matObj?.unit ?? matObj?.units?.unit ?? d?.unit ?? '',
+            issue_qty: d.issue_qty ?? d.qty ?? 0,
+            stock_qty: d.stock_qty ?? 0,
+            activityName: d.activities?.name ?? d.activity_name ?? d.activities_id?.name ?? '',
+          };
+        })
+      : undefined;
+    return goodsIssueAPI.generatePdf(invIssuesId, invIssueListsId, detailsForPdf);
+  };
+
+  const handleIssueViewPdfClick = async (iss: any) => {
+    try {
+      const { pdf_url } = await generateIssuePdfWithDetails(iss);
+      const fullUrl = pdf_url ? getFullPdfUrl(pdf_url) : '';
+      if (fullUrl) window.open(fullUrl, '_blank');
+      toast.showSuccess(fullUrl ? 'PDF opened in new tab.' : 'PDF generated.');
+    } catch (e: any) {
+      toast.showError(e?.message || 'Failed to load PDF.');
+    }
+  };
+
+  const handleIssueShareClick = async (iss: any) => {
+    try {
+      const { pdf_url } = await generateIssuePdfWithDetails(iss);
+      if (!pdf_url) throw new Error('No PDF URL returned');
+      const copied = await copyPdfUrl(pdf_url);
+      if (copied) {
+        toast.showSuccess('PDF link copied to clipboard.');
+      } else {
+        toast.showError('Could not copy to clipboard.');
+      }
+    } catch (e: any) {
+      toast.showError(e?.message || 'Failed to share PDF.');
     }
   };
 
@@ -914,7 +1108,8 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
       setPrIsEditMode(true);
       setShowProjectSelection(true);
       setPrStep('materials');
-      const editResp = await materialRequestAPI.edit(prId);
+      const projId = (typeof pr.projects_id === 'object' && pr.projects_id != null) ? (pr.projects_id as any).id : (pr.projects_id ?? pr.project_id ?? pr.projects?.id);
+      const editResp = await materialRequestAPI.edit(prId, projId ?? undefined);
       const detailsFromEdit = Array.isArray(editResp) ? editResp : (editResp && typeof editResp === 'object' && Array.isArray((editResp as any).data) ? (editResp as any).data : []);
       const firstDetail = detailsFromEdit.length > 0 ? detailsFromEdit[0] : null;
       const projectsIdRaw = firstDetail?.projects_id ?? pr.projects_id ?? pr.projects?.id;
@@ -1453,35 +1648,23 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
               </div>
               <div className={`flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 px-6 py-4 border-t border-inherit ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
                 <span className={`text-xs sm:text-sm ${textSecondary}`}>
-                  Page {prListPage} of {Math.max(1, Math.ceil(filteredPrList.length / inventoryEntriesPerPage))}
+                  Page {prListPage} of {Math.max(1, Math.ceil(filteredPrList.length / PR_PAGE_SIZE))}
                   {filteredPrList.length > 0 && (
                     <span className="ml-2">
-                      ({(prListPage - 1) * inventoryEntriesPerPage + 1}-{Math.min(prListPage * inventoryEntriesPerPage, filteredPrList.length)} of {filteredPrList.length})
+                      ({(prListPage - 1) * PR_PAGE_SIZE + 1}-{Math.min(prListPage * PR_PAGE_SIZE, filteredPrList.length)} of {filteredPrList.length}, 10 per page)
                     </span>
                   )}
                 </span>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => setPrListPage(1)} disabled={prListPage <= 1} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsLeft className={`w-4 h-4 ${textSecondary}`} /></button>
-                    <button onClick={() => setPrListPage(p => Math.max(1, p - 1))} disabled={prListPage <= 1} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronLeft className={`w-4 h-4 ${textSecondary}`} /></button>
-                    <select value={prListPage} onChange={(e) => setPrListPage(Number(e.target.value))} className={`px-2 py-1 rounded text-sm font-bold border appearance-none cursor-pointer ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}>
-                      {Array.from({ length: Math.max(1, Math.ceil(filteredPrList.length / inventoryEntriesPerPage)) }, (_, i) => i + 1).map((p) => (
-                        <option key={p} value={p}>{p}</option>
-                      ))}
-                    </select>
-                    <button onClick={() => setPrListPage(p => Math.min(Math.ceil(filteredPrList.length / inventoryEntriesPerPage), p + 1))} disabled={prListPage >= Math.ceil(filteredPrList.length / inventoryEntriesPerPage)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronRight className={`w-4 h-4 ${textSecondary}`} /></button>
-                    <button onClick={() => setPrListPage(Math.max(1, Math.ceil(filteredPrList.length / inventoryEntriesPerPage)))} disabled={prListPage >= Math.ceil(filteredPrList.length / inventoryEntriesPerPage)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsRight className={`w-4 h-4 ${textSecondary}`} /></button>
-                  </div>
-                  <div className={`h-6 w-px hidden sm:block ${isDark ? 'bg-slate-600' : 'bg-slate-200'}`} />
-                  <div className="flex items-center gap-2">
-                    <span className={`text-xs ${textSecondary}`}>Rows:</span>
-                    <select value={inventoryEntriesPerPage} onChange={(e) => { setInventoryEntriesPerPage(Number(e.target.value)); setPrListPage(1); }} className={`px-2 py-1 rounded text-sm font-bold border appearance-none cursor-pointer ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}>
-                      <option value={10}>10</option>
-                      <option value={25}>25</option>
-                      <option value={50}>50</option>
-                      <option value={100}>100</option>
-                    </select>
-                  </div>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setPrListPage(1)} disabled={prListPage <= 1} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsLeft className={`w-4 h-4 ${textSecondary}`} /></button>
+                  <button onClick={() => setPrListPage(p => Math.max(1, p - 1))} disabled={prListPage <= 1} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronLeft className={`w-4 h-4 ${textSecondary}`} /></button>
+                  <select value={prListPage} onChange={(e) => setPrListPage(Number(e.target.value))} className={`px-2 py-1 rounded text-sm font-bold border appearance-none cursor-pointer ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}>
+                    {Array.from({ length: Math.max(1, Math.ceil(filteredPrList.length / PR_PAGE_SIZE)) }, (_, i) => i + 1).map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
+                  <button onClick={() => setPrListPage(p => Math.min(Math.ceil(filteredPrList.length / PR_PAGE_SIZE), p + 1))} disabled={prListPage >= Math.ceil(filteredPrList.length / PR_PAGE_SIZE)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronRight className={`w-4 h-4 ${textSecondary}`} /></button>
+                  <button onClick={() => setPrListPage(Math.max(1, Math.ceil(filteredPrList.length / PR_PAGE_SIZE)))} disabled={prListPage >= Math.ceil(filteredPrList.length / PR_PAGE_SIZE)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsRight className={`w-4 h-4 ${textSecondary}`} /></button>
                 </div>
               </div>
             </div>
@@ -1523,9 +1706,16 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                             <button
                               onClick={() => handleRfqViewClick(rfq)}
                               className="p-2 rounded-lg bg-blue-500/20 text-blue-600 hover:bg-blue-500/30 transition-colors dark:bg-blue-500/20 dark:text-blue-400 dark:hover:bg-blue-500/30"
-                              title="View PDF (opens in new tab)"
+                              title="View"
                             >
                               <Eye className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleRfqShareClick(rfq)}
+                              className="p-2 rounded-lg bg-emerald-500/20 text-emerald-600 hover:bg-emerald-500/30 transition-colors dark:bg-emerald-500/20 dark:text-emerald-400 dark:hover:bg-emerald-500/30"
+                              title="Share PDF"
+                            >
+                              <Share2 className="w-4 h-4" />
                             </button>
                             <button
                               onClick={() => {
@@ -1554,35 +1744,23 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
               </div>
               <div className={`flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 px-6 py-4 border-t border-inherit ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
                 <span className={`text-xs sm:text-sm ${textSecondary}`}>
-                  Page {rfqListPage} of {Math.max(1, Math.ceil(filteredRfqList.length / inventoryEntriesPerPage))}
+                  Page {rfqListPage} of {Math.max(1, Math.ceil(filteredRfqList.length / RFQ_PAGE_SIZE))}
                   {filteredRfqList.length > 0 && (
                     <span className="ml-2">
-                      ({(rfqListPage - 1) * inventoryEntriesPerPage + 1}-{Math.min(rfqListPage * inventoryEntriesPerPage, filteredRfqList.length)} of {filteredRfqList.length})
+                      ({(rfqListPage - 1) * RFQ_PAGE_SIZE + 1}-{Math.min(rfqListPage * RFQ_PAGE_SIZE, filteredRfqList.length)} of {filteredRfqList.length}, 10 per page)
                     </span>
                   )}
                 </span>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => setRfqListPage(1)} disabled={rfqListPage <= 1} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsLeft className={`w-4 h-4 ${textSecondary}`} /></button>
-                    <button onClick={() => setRfqListPage(p => Math.max(1, p - 1))} disabled={rfqListPage <= 1} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronLeft className={`w-4 h-4 ${textSecondary}`} /></button>
-                    <select value={rfqListPage} onChange={(e) => setRfqListPage(Number(e.target.value))} className={`px-2 py-1 rounded text-sm font-bold border appearance-none cursor-pointer ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}>
-                      {Array.from({ length: Math.max(1, Math.ceil(filteredRfqList.length / inventoryEntriesPerPage)) }, (_, i) => i + 1).map((p) => (
-                        <option key={p} value={p}>{p}</option>
-                      ))}
-                    </select>
-                    <button onClick={() => setRfqListPage(p => Math.min(Math.ceil(filteredRfqList.length / inventoryEntriesPerPage), p + 1))} disabled={rfqListPage >= Math.ceil(filteredRfqList.length / inventoryEntriesPerPage)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronRight className={`w-4 h-4 ${textSecondary}`} /></button>
-                    <button onClick={() => setRfqListPage(Math.max(1, Math.ceil(filteredRfqList.length / inventoryEntriesPerPage)))} disabled={rfqListPage >= Math.ceil(filteredRfqList.length / inventoryEntriesPerPage)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsRight className={`w-4 h-4 ${textSecondary}`} /></button>
-                  </div>
-                  <div className={`h-6 w-px hidden sm:block ${isDark ? 'bg-slate-600' : 'bg-slate-200'}`} />
-                  <div className="flex items-center gap-2">
-                    <span className={`text-xs ${textSecondary}`}>Rows:</span>
-                    <select value={inventoryEntriesPerPage} onChange={(e) => { setInventoryEntriesPerPage(Number(e.target.value)); setRfqListPage(1); }} className={`px-2 py-1 rounded text-sm font-bold border appearance-none cursor-pointer ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}>
-                      <option value={10}>10</option>
-                      <option value={25}>25</option>
-                      <option value={50}>50</option>
-                      <option value={100}>100</option>
-                    </select>
-                  </div>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setRfqListPage(1)} disabled={rfqListPage <= 1} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsLeft className={`w-4 h-4 ${textSecondary}`} /></button>
+                  <button onClick={() => setRfqListPage(p => Math.max(1, p - 1))} disabled={rfqListPage <= 1} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronLeft className={`w-4 h-4 ${textSecondary}`} /></button>
+                  <select value={rfqListPage} onChange={(e) => setRfqListPage(Number(e.target.value))} className={`px-2 py-1 rounded text-sm font-bold border appearance-none cursor-pointer ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}>
+                    {Array.from({ length: Math.max(1, Math.ceil(filteredRfqList.length / RFQ_PAGE_SIZE)) }, (_, i) => i + 1).map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
+                  <button onClick={() => setRfqListPage(p => Math.min(Math.ceil(filteredRfqList.length / RFQ_PAGE_SIZE), p + 1))} disabled={rfqListPage >= Math.ceil(filteredRfqList.length / RFQ_PAGE_SIZE)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronRight className={`w-4 h-4 ${textSecondary}`} /></button>
+                  <button onClick={() => setRfqListPage(Math.max(1, Math.ceil(filteredRfqList.length / RFQ_PAGE_SIZE)))} disabled={rfqListPage >= Math.ceil(filteredRfqList.length / RFQ_PAGE_SIZE)} className={`p-2 rounded-lg transition-colors disabled:opacity-50 ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}><ChevronsRight className={`w-4 h-4 ${textSecondary}`} /></button>
                 </div>
               </div>
             </div>
@@ -1621,6 +1799,20 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                         <td className={`px-6 py-4 text-sm ${textPrimary}`}>{grn.projects_id?.project_name ?? grn.project_name ?? grn.projects?.name ?? '-'}</td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex justify-end gap-1">
+                            <button
+                              onClick={() => handleGrnViewPdfClick(grn)}
+                              className="p-2 rounded-lg bg-blue-500/20 text-blue-600 hover:bg-blue-500/30 transition-colors dark:bg-blue-500/20 dark:text-blue-400 dark:hover:bg-blue-500/30"
+                              title="View PDF"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleGrnShareClick(grn)}
+                              className="p-2 rounded-lg bg-emerald-500/20 text-emerald-600 hover:bg-emerald-500/30 transition-colors dark:bg-emerald-500/20 dark:text-emerald-400 dark:hover:bg-emerald-500/30"
+                              title="Share PDF (copy link)"
+                            >
+                              <Share2 className="w-4 h-4" />
+                            </button>
                             <button
                               onClick={() => router.push(`/inventory-reports/grn-mrn-slip/${grn.id ?? grn.uuid ?? grn.inv_inwards_id}`)}
                               className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
@@ -1699,13 +1891,35 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                   <tbody className="divide-y divide-inherit">
                     {paginatedReturnList.map((ret: any) => (
                       <tr key={ret.id ?? ret.uuid} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
-                        <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{ret.return_no ?? ret.name ?? ret.id ?? '-'}</td>
+                        <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{ret.code ?? ret.return_no ?? ret.name ?? ret.id ?? '-'}</td>
                         <td className={`px-6 py-4 text-sm ${textPrimary}`}>{ret.date ?? ret.created_at ?? '-'}</td>
                         <td className={`px-6 py-4 text-sm ${textPrimary}`}>{ret.projects_id?.project_name ?? ret.project_name ?? ret.projects?.name ?? '-'}</td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex justify-end gap-1">
                             <button
-                              onClick={() => router.push(`/inventory-reports/issue-return/${ret.id ?? ret.uuid}`)}
+                              onClick={() => handleReturnViewPdfClick(ret)}
+                              className="p-2 rounded-lg bg-blue-500/20 text-blue-600 hover:bg-blue-500/30 transition-colors dark:bg-blue-500/20 dark:text-blue-400 dark:hover:bg-blue-500/30"
+                              title="View PDF"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleReturnShareClick(ret)}
+                              className="p-2 rounded-lg bg-emerald-500/20 text-emerald-600 hover:bg-emerald-500/30 transition-colors dark:bg-emerald-500/20 dark:text-emerald-400 dark:hover:bg-emerald-500/30"
+                              title="Share PDF (copy link)"
+                            >
+                              <Share2 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => {
+                              const projId = ret.projects_id?.id ?? ret.projects_id ?? ret.project_id;
+                              const projName = ret.projects_id?.project_name ?? ret.project_name ?? ret.projects?.name ?? '';
+                              const params = new URLSearchParams();
+                              if (projId != null && projId !== '') params.set('projectId', String(projId));
+                              if (projName) params.set('projectName', projName);
+                              const qs = params.toString();
+                              router.push(`/inventory-reports/issue-return/${ret.inv_returns_id ?? ret.id ?? ret.uuid}${qs ? `?${qs}` : ''}`);
+                            }}
                               className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
                               title="Edit"
                             >
@@ -1788,7 +2002,24 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                         <td className="px-6 py-4 text-right">
                           <div className="flex justify-end gap-1">
                             <button
-                              onClick={() => router.push(`/inventory-reports/issue-slip/${iss.id ?? iss.uuid}`)}
+                              onClick={() => handleIssueViewPdfClick(iss)}
+                              className="p-2 rounded-lg bg-blue-500/20 text-blue-600 hover:bg-blue-500/30 transition-colors dark:bg-blue-500/20 dark:text-blue-400 dark:hover:bg-blue-500/30"
+                              title="View PDF"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleIssueShareClick(iss)}
+                              className="p-2 rounded-lg bg-emerald-500/20 text-emerald-600 hover:bg-emerald-500/30 transition-colors dark:bg-emerald-500/20 dark:text-emerald-400 dark:hover:bg-emerald-500/30"
+                              title="Share PDF (copy link)"
+                            >
+                              <Share2 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => {
+                              const editId = iss.inv_issue?.id ?? iss.inv_issues_id ?? iss.id ?? iss.uuid;
+                              router.push(`/inventory-reports/issue-slip/${editId}`);
+                            }}
                               className={`p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
                               title="Edit"
                             >
@@ -1889,7 +2120,11 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
       {/* Inventory - Project Selection Modal (multi-step for PR, Step 1 only for other inventory) */}
       {isInventorySection(currentView) && showProjectSelection && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
-          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1100px)] h-[calc(100vh-2rem)] max-h-[90vh] my-auto overflow-hidden flex flex-col`}>
+          <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full my-auto overflow-hidden flex flex-col ${
+            prStep === 'success' && currentView === ViewType.INVENTORY_PR
+              ? 'max-w-md h-auto max-h-[85vh]'
+              : 'max-w-[min(92vw,1100px)] h-[calc(100vh-2rem)] max-h-[90vh]'
+          }`}>
             <button
               onClick={handlePRCloseModal}
               className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
@@ -2218,8 +2453,12 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                                 const isSelected = prSelectedMaterials.has(mat.id);
                                 const sel = prSelectedMaterials.get(mat.id);
                                 return (
-                                  <tr key={mat.id} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} ${isSelected ? (isDark ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5') : ''}`}>
-                                    <td className="px-4 py-3">
+                                  <tr
+                                    key={mat.id}
+                                    onClick={() => handlePRToggleMaterial(mat)}
+                                    className={`cursor-pointer ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} ${isSelected ? (isDark ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5') : ''}`}
+                                  >
+                                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                                       <input
                                         type="checkbox"
                                         checked={isSelected}
@@ -2232,7 +2471,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                                     <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{mat.name}</td>
                                     <td className={`px-4 py-3 text-sm ${textPrimary}`}>{mat.specification || '-'}</td>
                                     <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{mat.unit || '-'}</td>
-                                    <td className="px-4 py-3">
+                                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                                       {isSelected ? (
                                         <input
                                           type="number"
@@ -2248,7 +2487,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                                         <span className={`text-sm ${textSecondary}`}>-</span>
                                       )}
                                     </td>
-                                    <td className="px-4 py-3">
+                                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                                       {isSelected ? (
                                         <input
                                           type="date"
@@ -2260,7 +2499,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                                         <span className={`text-sm ${textSecondary}`}>-</span>
                                       )}
                                     </td>
-                                    <td className="px-4 py-3">
+                                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                                       {isSelected ? (
                                         <select
                                           value={sel?.activityId ?? ''}
@@ -2280,7 +2519,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                                         <span className={`text-sm ${textSecondary}`}>-</span>
                                       )}
                                     </td>
-                                    <td className="px-4 py-3">
+                                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                                       {isSelected ? (
                                         <input
                                           type="text"
@@ -2337,27 +2576,32 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
               </>
             )}
 
-            {/* Step 4: PR Success - View, Share */}
+            {/* Step 4: PR Success - View, Share (same as main list) */}
             {prStep === 'success' && currentView === ViewType.INVENTORY_PR && (
               <div className="p-6 sm:p-8 flex flex-col items-center">
                 <h2 className={`text-lg sm:text-xl font-black mb-2 ${textPrimary}`}>Purchase Request Created</h2>
                 <p className={`text-sm ${textSecondary} mb-6`}>Your PDF is ready. View or share below.</p>
-                <div className="flex flex-wrap items-center justify-center gap-3">
+                <div className="flex items-center justify-center gap-2">
                   <button
-                    onClick={() => prPdfUrl && window.open(prPdfUrl, '_blank')}
+                    onClick={() => prPdfUrl && window.open(getFullPdfUrl(prPdfUrl) || prPdfUrl, '_blank')}
                     disabled={!prPdfUrl}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-blue-500/20 text-blue-600 hover:bg-blue-500/30 dark:text-blue-400 disabled:opacity-50"
+                    className="p-2 rounded-lg bg-blue-500/20 text-blue-600 hover:bg-blue-500/30 dark:text-blue-400 disabled:opacity-50 transition-colors"
                     title="View PDF"
                   >
-                    <Eye className="w-4 h-4" /> View
+                    <Eye className="w-4 h-4" />
                   </button>
                   <button
-                    onClick={() => prEditingId && handlePRShareClick({ id: prEditingId, uuid: prEditingId })}
-                    disabled={!prEditingId}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold bg-emerald-500/20 text-emerald-600 hover:bg-emerald-500/30 dark:text-emerald-400 disabled:opacity-50"
-                    title="Share PDF"
+                    onClick={async () => {
+                      if (!prPdfUrl) return;
+                      const copied = await copyPdfUrl(prPdfUrl);
+                      if (copied) toast.showSuccess('PDF link copied to clipboard.');
+                      else toast.showError('Could not copy to clipboard.');
+                    }}
+                    disabled={!prPdfUrl}
+                    className="p-2 rounded-lg bg-emerald-500/20 text-emerald-600 hover:bg-emerald-500/30 dark:text-emerald-400 disabled:opacity-50 transition-colors"
+                    title="Share PDF (copy link)"
                   >
-                    <Share2 className="w-4 h-4" /> Share
+                    <Share2 className="w-4 h-4" />
                   </button>
                 </div>
                 <button
@@ -2489,6 +2733,13 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                                 <Eye className="w-3.5 h-3.5" /> View
                               </button>
                               <button
+                                onClick={() => handleRfqShareClick(rfq)}
+                                className="flex items-center gap-1 px-2 py-1 rounded text-xs font-bold bg-emerald-500/20 text-emerald-600 dark:text-emerald-400"
+                                title="Share PDF"
+                              >
+                                <Share2 className="w-3.5 h-3.5" /> Share
+                              </button>
+                              <button
                                 onClick={() => {
                                   setShowEditPreviousRfqModal(false);
                                   const rfqId = rfq.id ?? rfq.uuid;
@@ -2563,14 +2814,20 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                     <tbody className={`divide-y ${isDark ? 'divide-slate-700' : 'divide-slate-200'}`}>
                       {paginatedReturnEditModal.map((ret: any) => (
                         <tr key={ret.id ?? ret.uuid} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
-                          <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{ret.return_no ?? ret.name ?? ret.id ?? '-'}</td>
+                          <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{ret.code ?? ret.return_no ?? ret.name ?? ret.id ?? '-'}</td>
                           <td className={`px-4 py-3 text-sm ${textPrimary}`}>{ret.date ?? ret.created_at ?? '-'}</td>
                           <td className={`px-4 py-3 text-sm ${textPrimary}`}>{ret.projects_id?.project_name ?? ret.project_name ?? ret.projects?.name ?? '-'}</td>
                           <td className="px-4 py-3 text-right">
                             <button
                               onClick={() => {
                                 setShowEditPreviousReturnModal(false);
-                                router.push(`/inventory-reports/issue-return/${ret.id ?? ret.uuid}`);
+                                const projId = ret.projects_id?.id ?? ret.projects_id ?? ret.project_id;
+                                const projName = ret.projects_id?.project_name ?? ret.project_name ?? ret.projects?.name ?? '';
+                                const params = new URLSearchParams();
+                                if (projId != null && projId !== '') params.set('projectId', String(projId));
+                                if (projName) params.set('projectName', projName);
+                                const qs = params.toString();
+                                router.push(`/inventory-reports/issue-return/${ret.inv_returns_id ?? ret.id ?? ret.uuid}${qs ? `?${qs}` : ''}`);
                               }}
                               className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${isDark ? 'bg-[#6B8E23]/20 text-[#6B8E23] hover:bg-[#6B8E23]/30' : 'bg-[#6B8E23]/10 text-[#6B8E23] hover:bg-[#6B8E23]/20'}`}
                             >

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { ThemeType } from '../../types';
-import {
+import { 
   Package,
   Search,
   ChevronUp,
@@ -70,7 +70,7 @@ const MaterialUsedVsStoreIssue: React.FC<MaterialUsedVsStoreIssueProps> = ({ the
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
   const [entriesPerPage] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
-
+  
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
@@ -402,10 +402,10 @@ const MaterialUsedVsStoreIssue: React.FC<MaterialUsedVsStoreIssueProps> = ({ the
       {/* Search */}
       <div className={`flex items-center gap-2 ${cardClass} rounded-xl border p-4`}>
         <Search className={`w-4 h-4 ${textSecondary}`} />
-        <input
-          type="text"
+            <input
+              type="text"
           placeholder="Search..."
-          value={searchQuery}
+              value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           className={`flex-1 px-3 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
         />
@@ -419,33 +419,33 @@ const MaterialUsedVsStoreIssue: React.FC<MaterialUsedVsStoreIssueProps> = ({ the
               <Loader2 className="w-10 h-10 animate-spin text-[#C2D642]" />
             </div>
           )}
-          <div className="overflow-x-auto">
+        <div className="overflow-x-auto">
             <table className="w-full min-w-[700px] text-sm">
-              <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
-                <tr>
+            <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
+              <tr>
                   <th className={`px-4 py-3 text-left font-bold ${textPrimary} cursor-pointer`} onClick={() => handleSort('code')}>
                     <span className="flex items-center gap-2">Code {getSortIcon('code')}</span>
-                  </th>
+                </th>
                   <th className={`px-4 py-3 text-left font-bold ${textPrimary} cursor-pointer`} onClick={() => handleSort('name')}>
                     <span className="flex items-center gap-2">Materials Names / Machinery Names {getSortIcon('name')}</span>
-                  </th>
+                </th>
                   <th className={`px-4 py-3 text-left font-bold ${textPrimary} cursor-pointer`} onClick={() => handleSort('specification')}>
                     <span className="flex items-center gap-2">Specification {getSortIcon('specification')}</span>
-                  </th>
+                </th>
                   <th className={`px-4 py-3 text-left font-bold ${textPrimary} cursor-pointer`} onClick={() => handleSort('unit')}>
                     <span className="flex items-center gap-2">Unit {getSortIcon('unit')}</span>
-                  </th>
+                </th>
                   <th className={`px-4 py-3 text-right font-bold ${textPrimary} cursor-pointer`} onClick={() => handleSort('issueQty')}>
                     <span className="flex items-center justify-end gap-2">Issue Qty {getSortIcon('issueQty')}</span>
-                  </th>
+                </th>
                   <th className={`px-4 py-3 text-right font-bold ${textPrimary} cursor-pointer`} onClick={() => handleSort('dprQty')}>
                     <span className="flex items-center justify-end gap-2">DPR Qty {getSortIcon('dprQty')}</span>
-                  </th>
+                </th>
                   <th className={`px-4 py-3 text-right font-bold ${textPrimary} cursor-pointer`} onClick={() => handleSort('variation')}>
                     <span className="flex items-center justify-end gap-2">Variation {getSortIcon('variation')}</span>
-                  </th>
-                </tr>
-              </thead>
+                </th>
+              </tr>
+            </thead>
               <tbody>
                 {paginated.map((row) => (
                   <tr key={row.id} className={`border-t border-inherit ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'}`}>
@@ -459,40 +459,40 @@ const MaterialUsedVsStoreIssue: React.FC<MaterialUsedVsStoreIssueProps> = ({ the
                   </tr>
                 ))}
                 {!isLoading && paginated.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className={`px-4 py-12 text-center ${textSecondary}`}>
+                <tr>
+                  <td colSpan={7} className={`px-4 py-12 text-center ${textSecondary}`}>
                       No data available. Select filters and ensure the date range has DPR or store issue records.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
           {filteredAndSorted.length > 0 && (
             <div className={`flex flex-col sm:flex-row items-center justify-between gap-4 p-4 border-t border-inherit ${isDark ? 'bg-slate-800/30' : 'bg-slate-50'}`}>
-              <div className={`text-sm ${textSecondary}`}>
+          <div className={`text-sm ${textSecondary}`}>
                 Showing {paginated.length > 0 ? (currentPage - 1) * entriesPerPage + 1 : 0} to {Math.min(currentPage * entriesPerPage, filteredAndSorted.length)} of {filteredAndSorted.length} entries
-              </div>
-              <div className="flex items-center gap-2">
-                <button
+          </div>
+          <div className="flex items-center gap-2">
+            <button
                   onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                  disabled={currentPage === 1}
+              disabled={currentPage === 1}
                   className={`p-2 rounded-lg transition-all ${isDark ? 'bg-slate-800/50 hover:bg-slate-700' : 'bg-white hover:bg-slate-50'} border border-inherit disabled:opacity-50 disabled:cursor-not-allowed`}
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </button>
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
                 <span className={`text-sm font-bold ${textPrimary}`}>Page {currentPage} of {totalPages}</span>
-                <button
+            <button
                   onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                  disabled={currentPage === totalPages || totalPages === 0}
+              disabled={currentPage === totalPages || totalPages === 0}
                   className={`p-2 rounded-lg transition-all ${isDark ? 'bg-slate-800/50 hover:bg-slate-700' : 'bg-white hover:bg-slate-50'} border border-inherit disabled:opacity-50 disabled:cursor-not-allowed`}
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-          )}
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
         </div>
+          )}
+      </div>
       )}
     </div>
   );

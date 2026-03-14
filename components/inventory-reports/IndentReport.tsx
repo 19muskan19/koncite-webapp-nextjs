@@ -169,7 +169,8 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
       let srNo = 0;
       for (const pr of filtered) {
         try {
-          const editData = await materialRequestAPI.edit(pr.id ?? pr.material_requests_id);
+          const projId = (typeof pr.projects_id === 'object' && pr.projects_id != null) ? (pr.projects_id as any).id : (pr.projects_id ?? pr.project_id ?? pr.projects?.id);
+          const editData = await materialRequestAPI.edit(pr.id ?? pr.material_requests_id, projId ?? undefined);
           const details = Array.isArray(editData) ? editData : (editData?.material_request_details ?? editData?.details ?? []);
           const list = Array.isArray(details) ? details : [];
           for (const item of list) {

@@ -6,7 +6,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { usePageTitle } from '@/hooks/usePageTitle';
 import { ClipboardCheck, Wrench } from 'lucide-react';
 
-export default function PRApprovalManagePage() {
+export default function POApprovalsPage() {
   usePageTitle();
   const { theme } = useTheme();
   const { isAuthenticated, isChecking } = useAuth();
@@ -56,7 +56,7 @@ export default function PRApprovalManagePage() {
               isDark ? 'text-slate-400' : 'text-slate-600'
             }`}
           >
-            PR Approvals is currently under development. This feature will be available in a future update.
+            PO Approvals is currently under development. This feature will be available in a future update.
           </p>
         </div>
       </div>

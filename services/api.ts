@@ -3810,16 +3810,18 @@ export const materialRequestAPI = {
   },
   /**
    * GET/POST /inventory/materials-request-list
-   * GET: no params. POST: { projectId, subprojectId? } — backend filters by projects_id, sub_projects_id
+   * GET: no params. POST: { projectId, subprojectId?, request_no? } — backend filters by projects_id, sub_projects_id, request_no
    * Response: { status, message, data: MaterialRequest[] }
    */
-  list: async (filters?: { projectId?: number | string; subprojectId?: number | string }): Promise<any[]> => {
+  list: async (filters?: { projectId?: number | string; subprojectId?: number | string; request_no?: string; status?: number | string }): Promise<any[]> => {
     try {
       let response;
-      if (filters?.projectId != null || filters?.subprojectId != null) {
+      if (filters?.projectId != null || filters?.subprojectId != null || filters?.request_no != null || filters?.status != null) {
         const body: Record<string, number | string> = {};
         if (filters.projectId != null) body.projectId = filters.projectId;
         if (filters.subprojectId != null) body.subprojectId = filters.subprojectId;
+        if (filters.request_no != null && String(filters.request_no).trim()) body.request_no = String(filters.request_no).trim();
+        if (filters.status != null) body.status = filters.status;
         response = await apiClient.post('/inventory/materials-request-list', body);
       } else {
         response = await apiClient.get('/inventory/materials-request-list');
@@ -3838,12 +3840,14 @@ export const materialRequestAPI = {
   },
   /**
    * POST /inventory/materials-request-edit
-   * Payload: { id } — Material Request id
+   * Payload: { id, project_id? } — Material Request id, project_id optional
    * Response: { status, message, data: MaterialRequestDetails[] } — array of line items for edit
    */
-  edit: async (id: number | string): Promise<any> => {
+  edit: async (id: number | string, projectId?: number | string): Promise<any> => {
     try {
-      const response = await apiClient.post('/inventory/materials-request-edit', { id });
+      const body: Record<string, unknown> = { id };
+      if (projectId != null && projectId !== '') body.project_id = projectId;
+      const response = await apiClient.post('/inventory/materials-request-edit', body);
       if (response.data?.status === false || response.data?.success === false) {
         throw new Error(response.data?.message || 'Failed to fetch material request');
       }
@@ -4060,7 +4064,7 @@ export const rfqAPI = {
       return result;
     } catch (error: any) {
       try {
-        return await materialRequestAPI.edit(id);
+        return await materialRequestAPI.edit(id, _projectsId);
       } catch {
         throw { message: error.response?.data?.message || 'Failed to load RFQ', errors: error.response?.data?.errors || {} } as ApiError;
       }
@@ -4347,27 +4351,51 @@ export const rfqAPI = {
 };
 
 // Goods Return APIs - Inventory > Goods Returns
+// Spec: return-list (GET), return-add (POST), return-edit (POST), return-goods-add (POST), return-goods-details-add (POST)
 export const goodsReturnAPI = {
+  /**
+   * GET /inventory/return-list - No request body.
+   * Returns list of returns with at least one return good.
+   * Response: status, response_code, message, data (collection with id, name, date, code/return_no, projects_id, sub_projects_id, user_id, company_id, details, remarks).
+   */
   list: async (): Promise<any[]> => {
     try {
       const response = await apiClient.get('/inventory/return-list');
-      const data = response.data?.data ?? response.data;
-      return Array.isArray(data) ? data : [];
+      const raw = response.data?.data ?? response.data;
+      const arr = Array.isArray(raw) ? raw : Array.isArray(raw?.returns) ? raw.returns : Array.isArray(raw?.data) ? raw.data : [];
+      return arr;
     } catch (error: any) {
       if (error?.response?.status === 404) return [];
       throw { message: error.response?.data?.message || 'Failed to fetch returns', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
+  /**
+   * POST /inventory/return-edit
+   * Request body: { inv_returns_id: number } - ID of the return record only.
+   * Response root is the return goods record with inv_return and inv_return_details nested inside.
+   */
   edit: async (invReturnsId: number | string): Promise<any> => {
     try {
-      const response = await apiClient.post('/inventory/return-edit', { inv_returns_id: invReturnsId });
-      return response.data?.data ?? response.data;
+      const body = { inv_returns_id: invReturnsId };
+      const response = await apiClient.post('/inventory/return-edit', body);
+      const d = response.data;
+      const inner = d?.data;
+      // Response root = return goods record (has inv_return, inv_return_details nested)
+      if (inner && typeof inner === 'object' && (inner.inv_return != null || inner.inv_return_details != null)) {
+        return inner;
+      }
+      return d?.data ?? d;
     } catch (error: any) {
       const data = error.response?.data;
       const msg = typeof data === 'object' ? data?.message : (typeof data === 'string' && data.includes('error') ? 'Backend error' : null);
       throw { message: msg || 'Failed to fetch return (API may not be implemented)', errors: (typeof data === 'object' && data?.errors) || {} } as ApiError;
     }
   },
+  /**
+   * POST /inventory/return-add
+   * Request body: name, projects_id, store_warehouses_id (array).
+   * Creates new InvReturn header. Response: status, response_code, message, data with created return record.
+   */
   createHeader: async (data: { name: string; projects_id: number | string; store_warehouses_id: (number | string)[] }): Promise<any> => {
     try {
       const response = await apiClient.post('/inventory/return-add', data);
@@ -4376,9 +4404,22 @@ export const goodsReturnAPI = {
       throw { message: error.response?.data?.message || 'Failed to create return header', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
-  projectToStoreList: async (projectId: number | string, storeIds: (number | string)[], type = 'return'): Promise<any> => {
+  /**
+   * POST /inventory/project-to-store-list (type: "return")
+   * Returns return_no in data.invInwardRegNo.
+   * - Create mode (requestId null): backend generates unique 6-digit via generateUniqueNumberAndCheck.
+   * - Edit mode (requestId = inv_returns_id): backend returns existing return_no from InvReturnGood.
+   */
+  projectToStoreList: async (
+    projectId: number | string,
+    storeIds: (number | string)[],
+    type = 'return',
+    requestId?: number | string | null
+  ): Promise<any> => {
     try {
-      const response = await apiClient.post('/inventory/project-to-store-list', { type, project_id: projectId, store_id: storeIds });
+      const payload: Record<string, unknown> = { type, project_id: projectId, store_id: storeIds };
+      if (requestId != null && requestId !== '') payload.request_id = requestId;
+      const response = await apiClient.post('/inventory/project-to-store-list', payload);
       return response.data?.data ?? response.data;
     } catch (error: any) {
       throw { message: error.response?.data?.message || 'Failed to fetch project store', errors: error.response?.data?.errors || {} } as ApiError;
@@ -4394,9 +4435,9 @@ export const goodsReturnAPI = {
       throw { message: error.response?.data?.message || 'Failed to fetch issue types', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
-  getIssueTypeTagList: async (type: string, projectId: number | string, storeIds: (number | string)[]): Promise<any[]> => {
+  getIssueTypeTagList: async (invIssueListsId: number | string, projectId: number | string, storeIds: (number | string)[]): Promise<any[]> => {
     try {
-      const response = await apiClient.post('/inventory/issue-type-tag-list', { type, project_id: projectId, store_id: storeIds });
+      const response = await apiClient.post('/inventory/issue-type-tag-list', { inv_issue_lists_id: invIssueListsId, project_id: projectId, store_id: storeIds });
       const data = response.data?.data ?? response.data;
       return Array.isArray(data) ? data : [];
     } catch (error: any) {
@@ -4418,16 +4459,22 @@ export const goodsReturnAPI = {
       throw { message: error.response?.data?.message || 'Failed to fetch materials', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
+  /**
+   * POST /inventory/return-goods-add
+   * Request body: inv_return_id, projects_id, goods_type ("materials"/"machines"), return_no, date, return_from, materials_id (array).
+   * Optional: id (to update), remarkes, type.
+   * Response: status, response_code, message, data as materials/assets list for the return.
+   */
   addReturnGoods: async (payload: {
     id?: number | string | null;
     inv_return_id: number | string;
     projects_id: number | string;
-    store_warehouses_id: (number | string)[];
     return_no: string;
     date: string;
     type?: number | string;
     goods_type: 'materials' | 'machines';
     return_from: number | string;
+    remarkes?: string;
     materials_id: (number | string)[];
   }): Promise<any> => {
     try {
@@ -4456,6 +4503,12 @@ export const goodsReturnAPI = {
       throw { message: error.response?.data?.message || 'Failed to add return goods', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
+  /**
+   * POST /inventory/return-goods-details-add
+   * Request body: array of objects with inv_return_goods_id, type, materials_id, return_qty, stock_qty, projects_id, store_warehouses_id.
+   * Optional per item: id (to update), price, remarkes, activities_id.
+   * Response: status, response_code, message, data with saved details.
+   */
   addReturnDetails: async (items: Array<{
     id?: number | string | null;
     inv_return_goods_id: number | string;
@@ -4465,7 +4518,9 @@ export const goodsReturnAPI = {
     type: 'materials' | 'machines';
     return_qty: number | string;
     stock_qty?: number | string;
-    activities_id?: number | string;
+    price?: number | string;
+    remarkes?: string;
+    activities_id?: number | string | null;
   }>): Promise<any> => {
     try {
       const response = await apiClient.post('/inventory/return-goods-details-add', items);
@@ -4619,9 +4674,9 @@ export const goodsIssueAPI = {
       throw { message: error.response?.data?.message || 'Failed to fetch issue types', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
-  getIssueTypeTagList: async (type: string, projectId: number | string, storeIds: (number | string)[]): Promise<any[]> => {
+  getIssueTypeTagList: async (invIssueListsId: number | string, projectId: number | string, storeIds: (number | string)[]): Promise<any[]> => {
     try {
-      const response = await apiClient.post('/inventory/issue-type-tag-list', { type, project_id: projectId, store_id: storeIds });
+      const response = await apiClient.post('/inventory/issue-type-tag-list', { inv_issue_lists_id: invIssueListsId, project_id: projectId, store_id: storeIds });
       const data = response.data?.data ?? response.data;
       return Array.isArray(data) ? data : [];
     } catch (error: any) {
@@ -4654,6 +4709,7 @@ export const goodsIssueAPI = {
     goods_type: 'materials' | 'machines';
     issue_to: number | string;
     materials_id: (number | string)[];
+    remarkes?: string;
   }): Promise<any> => {
     try {
       const response = await apiClient.post('/inventory/issue-goods-add', payload);
@@ -4942,6 +4998,295 @@ export const goodsReceiptAPI = {
   },
 };
 
+// Dashboard APIs - Overview, Work Progress, Stock
+export const dashboardAPI = {
+  /**
+   * POST /get-work-overview
+   * Request: { project, subproject?, date? }
+   * Response: work status, cost, timeline, DPR, labour, inventory counts
+   */
+  getWorkOverview: async (params: { project: number | string; subproject?: number | string; date?: string }): Promise<any> => {
+    try {
+      const payload: Record<string, unknown> = { project: params.project };
+      if (params.subproject != null && params.subproject !== '') payload.subproject = params.subproject;
+      if (params.date != null && params.date !== '') payload.date = params.date;
+      const response = await apiClient.post('/get-work-overview', payload);
+      return response.data?.data ?? response.data ?? {};
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch dashboard overview',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /**
+   * POST /dashboard-overview-search - alternative search endpoint
+   */
+  dashboardOverviewSearch: async (params: { project: number | string; subproject?: number | string; date?: string }): Promise<any> => {
+    try {
+      const payload: Record<string, unknown> = { project: params.project };
+      if (params.subproject != null && params.subproject !== '') payload.subproject = params.subproject;
+      if (params.date != null && params.date !== '') payload.date = params.date;
+      const response = await apiClient.post('/dashboard-overview-search', payload);
+      return response.data?.data ?? response.data ?? {};
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch dashboard overview',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /**
+   * POST /get-work-process - cost summary + chart for Work Progress tab
+   * Request: { project, subproject?, date? }
+   * Response: estimatedCost, estimatedCostForExecutedQty, balanceEstimate, excessEstimateCost, totalActivites, inProgress, notStart, completed, workProcessData
+   */
+  getWorkProcess: async (params: { project: number | string; subproject?: number | string; date?: string }): Promise<any> => {
+    try {
+      const payload: Record<string, unknown> = { project: params.project };
+      if (params.subproject != null && params.subproject !== '') payload.subproject = params.subproject;
+      if (params.date != null && params.date !== '') payload.date = params.date;
+      const response = await apiClient.post('/get-work-process', payload);
+      return response.data?.data ?? response.data ?? {};
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch work process',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /**
+   * POST /get-work-process-activities - activity lists by status
+   * Request: { project, subproject?, date?, filterName }
+   * filterName: inprogress | completed | notstart | delay
+   * Response: inProgressactivites | completedactivites | notStartactivites | delayactivites
+   */
+  getWorkProcessActivities: async (params: {
+    project: number | string;
+    subproject?: number | string;
+    date?: string;
+    filterName: 'inprogress' | 'completed' | 'notstart' | 'delay';
+  }): Promise<any[]> => {
+    try {
+      const payload: Record<string, unknown> = { project: params.project, filterName: params.filterName };
+      if (params.subproject != null && params.subproject !== '') payload.subproject = params.subproject;
+      if (params.date != null && params.date !== '') payload.date = params.date;
+      const response = await apiClient.post('/get-work-process-activities', payload);
+      const data = response.data?.data ?? response.data ?? {};
+      const key =
+        params.filterName === 'inprogress' ? 'inProgressactivites'
+        : params.filterName === 'completed' ? 'completedactivites'
+        : params.filterName === 'notstart' ? 'notStartactivites'
+        : 'delayactivites';
+      const arr = data[key] ?? data[params.filterName] ?? data.activities ?? [];
+      return Array.isArray(arr) ? arr : [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch activities',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /**
+   * POST /get-inventory-stocks - inventory stock for project/store/date
+   * Request: { project, store, date, filterName? }
+   * filterName: material | machine (default: material)
+   * Response: { materialStocks: [] } or { machineStocks: [] }
+   */
+  getInventoryStocks: async (params: {
+    project: number | string;
+    store?: number | string;
+    date: string;
+    filterName?: 'material' | 'machine';
+  }): Promise<{ materialStocks?: any[]; machineStocks?: any[] }> => {
+    try {
+      const payload: Record<string, unknown> = {
+        project: params.project,
+        date: params.date,
+        filterName: params.filterName ?? 'material',
+      };
+      if (params.store != null && params.store !== '') payload.store = params.store;
+      const response = await apiClient.post('/get-inventory-stocks', payload);
+      const data = response.data?.data ?? response.data ?? {};
+      return {
+        materialStocks: Array.isArray(data.materialStocks) ? data.materialStocks : [],
+        machineStocks: Array.isArray(data.machineStocks) ? data.machineStocks : [],
+      };
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch inventory stocks',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
+/**
+ * Task API - Team task management
+ * For now uses localStorage. Set NEXT_PUBLIC_TASK_USE_API=true to use remote API instead.
+ */
+const TASK_STORAGE_KEY = 'koncite-tasks';
+
+function getStoredTasks(): any[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem(TASK_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function setStoredTasks(tasks: any[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(TASK_STORAGE_KEY, JSON.stringify(tasks));
+  } catch (e) {
+    console.error('Failed to save tasks to localStorage', e);
+  }
+}
+
+function generateTaskId(): string {
+  return typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `task-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+export const taskAPI = {
+  getTasks: async (params?: { viewer?: string; role?: 'assigned_to' | 'assigned_by' }): Promise<any[]> => {
+    let tasks = getStoredTasks();
+    const viewer = params?.viewer?.trim().toLowerCase();
+    const role = params?.role;
+    if (viewer && role) {
+      tasks = tasks.filter((t: any) => {
+        const to = (t.assigned_to || '').toLowerCase();
+        const by = (t.assigned_by || '').toLowerCase();
+        if (role === 'assigned_to') return to === viewer;
+        if (role === 'assigned_by') return by === viewer;
+        return to === viewer || by === viewer;
+      });
+    } else if (viewer) {
+      tasks = tasks.filter((t: any) => {
+        const to = (t.assigned_to || '').toLowerCase();
+        const by = (t.assigned_by || '').toLowerCase();
+        return to === viewer || by === viewer;
+      });
+    }
+    return tasks;
+  },
+  getPeople: async (): Promise<{ names: string[] }> => {
+    const tasks = getStoredTasks();
+    const seen = new Set<string>();
+    tasks.forEach((t: any) => {
+      if (t.assigned_to) seen.add(t.assigned_to);
+      if (t.assigned_by) seen.add(t.assigned_by);
+    });
+    return { names: [...seen].sort() };
+  },
+  createTask: async (payload: {
+    title: string;
+    description?: string;
+    assigned_to: string;
+    assigned_by: string;
+    due_date?: string;
+    priority?: string;
+    status?: string;
+    tags?: string[];
+  }): Promise<any> => {
+    const tasks = getStoredTasks();
+    const task = {
+      id: generateTaskId(),
+      title: payload.title,
+      description: payload.description || '',
+      assigned_to: payload.assigned_to,
+      assigned_by: payload.assigned_by,
+      due_date: payload.due_date || '',
+      priority: payload.priority || 'medium',
+      status: payload.status || 'todo',
+      tags: payload.tags || [],
+    };
+    tasks.push(task);
+    setStoredTasks(tasks);
+    return task;
+  },
+  updateTask: async (id: string, payload: Partial<{
+    title: string;
+    description: string;
+    assigned_to: string;
+    assigned_by: string;
+    due_date: string;
+    priority: string;
+    status: string;
+    tags: string[];
+  }>): Promise<any> => {
+    const tasks = getStoredTasks();
+    const idx = tasks.findIndex((t: any) => t.id === id);
+    if (idx === -1) throw new Error('Task not found');
+    tasks[idx] = { ...tasks[idx], ...payload };
+    setStoredTasks(tasks);
+    return tasks[idx];
+  },
+  deleteTask: async (id: string): Promise<void> => {
+    const tasks = getStoredTasks().filter((t: any) => t.id !== id);
+    setStoredTasks(tasks);
+  },
+  aiQuery: async (query: string, viewer?: string | null): Promise<{ response: string }> => {
+    const tasks = getStoredTasks();
+    const today = new Date().toISOString().split('T')[0];
+    const viewerLower = (viewer || '').toLowerCase();
+    const filtered = viewerLower
+      ? tasks.filter((t: any) =>
+          (t.assigned_to || '').toLowerCase() === viewerLower ||
+          (t.assigned_by || '').toLowerCase() === viewerLower
+        )
+      : tasks;
+
+    const overdue = filtered.filter((t: any) => t.due_date && t.due_date < today && t.status !== 'done');
+    const dueToday = filtered.filter((t: any) => t.due_date === today);
+    const highPriority = filtered.filter((t: any) => t.priority === 'high' || t.priority === 'urgent');
+    const byPerson = filtered.reduce((acc: Record<string, number>, t: any) => {
+      const name = t.assigned_to || 'Unassigned';
+      acc[name] = (acc[name] || 0) + 1;
+      return acc;
+    }, {});
+    const mostTasks = Object.entries(byPerson).sort((a, b) => b[1] - a[1])[0];
+
+    const q = (query || '').toLowerCase();
+    let response = '';
+    if (q.includes('due today') || q.includes('today')) {
+      response = dueToday.length
+        ? `**Tasks due today (${dueToday.length}):**\n${dueToday.map((t: any) => `• ${t.title} (${t.assigned_to})`).join('\n')}`
+        : 'No tasks due today.';
+    } else if (q.includes('overdue')) {
+      response = overdue.length
+        ? `**Overdue tasks (${overdue.length}):**\n${overdue.map((t: any) => `• ${t.title} - Due ${t.due_date} (${t.assigned_to})`).join('\n')}`
+        : 'No overdue tasks.';
+    } else if (q.includes('high priority') || q.includes('priority')) {
+      response = highPriority.length
+        ? `**High/urgent priority (${highPriority.length}):**\n${highPriority.map((t: any) => `• ${t.title} (${t.assigned_to})`).join('\n')}`
+        : 'No high priority tasks.';
+    } else if (q.includes('most tasks') || q.includes('who has')) {
+      response = mostTasks
+        ? `**${mostTasks[0]}** has the most tasks: ${mostTasks[1]}.`
+        : 'No tasks assigned yet.';
+    } else if (q.includes('summarize') || q.includes('summary') || q.includes('all tasks')) {
+      response = `**Summary:** ${filtered.length} total tasks. ${filtered.filter((t: any) => t.status === 'done').length} done, ${filtered.filter((t: any) => t.status === 'in_progress').length} in progress, ${filtered.filter((t: any) => t.status === 'todo').length} to do. ${overdue.length} overdue.`;
+    } else if (q.includes('this week')) {
+      const weekEnd = new Date();
+      weekEnd.setDate(weekEnd.getDate() + 7);
+      const weekEndStr = weekEnd.toISOString().split('T')[0];
+      const dueWeek = filtered.filter((t: any) => t.due_date && t.due_date >= today && t.due_date <= weekEndStr);
+      response = dueWeek.length
+        ? `**Tasks due this week (${dueWeek.length}):**\n${dueWeek.map((t: any) => `• ${t.title} - ${t.due_date} (${t.assigned_to})`).join('\n')}`
+        : 'No tasks due this week.';
+    } else {
+      response = `You have ${filtered.length} tasks. Ask about "tasks due today", "overdue tasks", "high priority tasks", "who has the most tasks", or "summarize all tasks" for more details.`;
+    }
+    return { response };
+  },
+};
+
 // Export default for convenience
 export default {
   auth: authAPI,
@@ -4955,4 +5300,6 @@ export default {
   goodsReturn: goodsReturnAPI,
   goodsIssue: goodsIssueAPI,
   goodsReceipt: goodsReceiptAPI,
+  dashboard: dashboardAPI,
+  task: taskAPI,
 };

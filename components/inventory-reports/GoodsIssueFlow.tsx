@@ -20,12 +20,13 @@ import {
   ExternalLink,
   Check,
   X,
+  Eye,
 } from 'lucide-react';
 import { masterDataAPI, goodsIssueAPI } from '@/services/api';
 import CreateWarehouseModal from '@/components/masters/Modals/CreateWarehouseModal';
 import { getTodayDateString } from '@/utils/dateUtils';
 import { getAuthToken } from '@/services/apiClient';
-import { openPdfInNewTab, sharePdfAsFile } from '@/utils/pdfUtils';
+import { openPdfInNewTab, copyPdfUrl } from '@/utils/pdfUtils';
 
 type GoodsIssueStep = 'stores' | 'goodsInv' | 'details' | 'success';
 
@@ -134,6 +135,8 @@ export default function GoodsIssueFlow({
   const [isLoading, setIsLoading] = useState(true);
   const [pdfInfo, setPdfInfo] = useState<{ url?: string; name?: string } | null>(null);
   const [issueNoFromBackend, setIssueNoFromBackend] = useState<string | null>(null);
+  const [remarkes, setRemarkes] = useState<string>('');
+  const [savedIssueDetailsFromApi, setSavedIssueDetailsFromApi] = useState<any[]>([]);
 
   const projectIdForApi = () => (editProject?.numericId ?? editProject?.id ?? pNumId) || (pid && /^\d+$/.test(String(pid)) ? pid : undefined);
   const projectNameForDisplay = () => editProject?.name ?? pName;
@@ -149,42 +152,60 @@ export default function GoodsIssueFlow({
     } else if (mode === 'edit' && editIssueId) {
       goodsIssueAPI
         .edit(editIssueId)
-        .then((data) => {
-          const proj = data?.projects_id ?? data?.project;
+        .then((raw) => {
+          // Unwrap nested data if backend returns { status, data: { data: {...} } }
+          const data = raw?.data && typeof raw.data === 'object' && !Array.isArray(raw.data) && (raw.data.inv_issue != null || raw.data.inv_issue_details != null)
+            ? raw.data
+            : raw;
+          // issue-goods-edit nests header in inv_issue; data has id (inv_issue_goods), inv_issue (header), inv_issue_details
+          const header = data?.inv_issue ?? data;
+          const proj = header?.projects_id ?? data?.projects_id ?? data?.project;
           const projId = typeof proj === 'object' ? proj?.id ?? proj?.uuid : proj;
           const projName = typeof proj === 'object' ? proj?.project_name ?? proj?.name : '';
-          if (projId) {
+          const effectiveProjId = projId ?? (pid && /^\d+$/.test(String(pid)) ? pid : undefined);
+          if (effectiveProjId) {
             setEditProject({
-              id: String(projId),
+              id: String(effectiveProjId),
               name: projName || 'Project',
-              numericId: typeof proj === 'object' && proj != null ? String((proj as any).id ?? projId) : String(projId),
+              numericId: typeof proj === 'object' && proj != null ? String((proj as any).id ?? projId) : String(effectiveProjId),
             });
-            setIssueHeader(data);
-            setIssueDate(data?.date ?? data?.name ?? getTodayDateString());
-            setIssueToId(data?.issue_to ?? data?.type ?? '');
-            setTagId(data?.entry_type ?? data?.tag ?? '');
-            const storeIds = data?.store_warehouses_id ?? data?.store_warehouses ?? [];
-            const arr = Array.isArray(storeIds) ? storeIds : [];
-            setEditLoadedStoreIds(arr.map((s: any) => s?.id ?? s));
-            const detailsList = data?.details ?? data?.issue_details ?? [];
-            const headerId = data?.id ?? data?.inv_issue_id ?? data?.uuid;
-            const mapped: IssueDetailItem[] = (Array.isArray(detailsList) ? detailsList : []).map((d: any) => ({
+          }
+          // Merge inv_issues_id from inv_issue when present (data.id is inv_issue_goods, inv_issue.id is header id)
+          const invIssuesId = header?.id ?? header?.uuid ?? data?.inv_issue_id ?? data?.id ?? data?.uuid;
+          const issueHeaderData = { ...data, inv_issues_id: invIssuesId };
+          setIssueHeader(issueHeaderData);
+          setIssueNoFromBackend(data?.issue_no ?? header?.issue_no ?? header?.name ?? null);
+          setIssueDate(data?.date ?? header?.date ?? header?.name ?? getTodayDateString());
+          setIssueToId(data?.inv_issue_lists_id?.id ?? data?.inv_issue_lists_id ?? data?.issue_to ?? data?.type ?? '');
+          setTagId(data?.entry_type ?? data?.tag ?? '');
+          setRemarkes(data?.remarkes ?? data?.remarks ?? header?.remarkes ?? header?.remarks ?? '');
+          const storeIds = header?.store_id ?? header?.store_warehouses_id ?? data?.store_warehouses_id ?? data?.store_warehouses ?? [];
+          const arr = Array.isArray(storeIds) ? storeIds : [];
+          setEditLoadedStoreIds(arr.map((s: any) => s?.id ?? s));
+          // Backend returns inv_issue_details (snake_case); each item has materials_id as object
+          const detailsList = data?.inv_issue_details ?? data?.details ?? data?.issue_details ?? data?.issue_goods ?? [];
+          const headerId = data?.id ?? data?.inv_issue_id ?? data?.uuid;
+          const mapped: IssueDetailItem[] = (Array.isArray(detailsList) ? detailsList : []).map((d: any) => {
+            const mat = d?.materials_id ?? d?.materials ?? d?.material ?? d?.assets ?? d;
+            const matObj = typeof mat === 'object' && mat != null ? mat : {};
+            return {
               inv_issue_goods_id: d.inv_issue_goods_id ?? d.inv_issue_goods ?? headerId,
-              materials_id: d.materials_id ?? d.material_id ?? d.materials?.id,
-              materialNumericId: d.materials?.id ?? d.materials_id,
-              materialCode: d.materials?.code ?? d.code ?? '',
-              materialName: d.materials?.name ?? d.name ?? '',
-              materialUnit: d.materials?.units?.unit ?? d.unit ?? '',
-              materialSpec: d.materials?.specification ?? d.specification ?? '',
+              materials_id: typeof matObj?.id === 'number' || typeof matObj?.id === 'string' ? matObj.id : (d.materials_id ?? d.material_id ?? d.materials?.id),
+              materialNumericId: typeof matObj?.id !== 'undefined' ? matObj.id : (d.materials?.id ?? d.materials_id),
+              materialCode: matObj?.code ?? d?.code ?? '',
+              materialName: matObj?.name ?? d?.name ?? '',
+              materialUnit: matObj?.unit_id?.unit ?? matObj?.units?.unit ?? matObj?.unit ?? d?.unit ?? '',
+              materialSpec: matObj?.specification ?? d?.specification ?? '',
               issue_qty: d.issue_qty ?? d.qty ?? 0,
               stock_qty: d.stock_qty ?? 0,
               activities_id: d.activities_id ?? d.activity_id,
               activityName: d.activities?.name ?? d.activity_name ?? '',
               id: d.id ?? null,
-            }));
-            setDetails(mapped);
-            setGoodsType(data?.goods_type === 'machines' ? 'machines' : 'materials');
-          }
+            };
+          });
+          setDetails(mapped);
+          setExpandedDetails(new Set(mapped.map((_, i) => String(i)))); // Expand all in edit so user sees content
+          setGoodsType(data?.type === 'machines' || data?.goods_type === 'machines' ? 'machines' : 'materials');
         })
         .catch((err: any) => {
           toast.showWarning(err?.message ?? 'Failed to load issue. Redirecting...');
@@ -195,6 +216,13 @@ export default function GoodsIssueFlow({
       setIsLoading(false);
     }
   }, [mode, editIssueId, pid]);
+
+  // In edit mode, auto-advance to details step when data is loaded so user sees materials without clicking through
+  useEffect(() => {
+    if (mode === 'edit' && details.length > 0 && step === 'stores') {
+      setStep('details');
+    }
+  }, [mode, details.length, step]);
 
   const [storeRefreshKey, setStoreRefreshKey] = useState(0);
 
@@ -325,28 +353,42 @@ export default function GoodsIssueFlow({
   }, [step, selectedStoreIds, stores]);
 
   // Generate PDF on success screen mount (after issue-goods-details-add saves data)
-  useEffect(() => {
+  // API expects requestId = inv_issues_id (parent InvIssue), NOT inv_issue_goods_id
+  const fetchPdf = React.useCallback(() => {
     if (step !== 'success') return;
-    const issueHeaderId = issueHeader?.id ?? issueHeader?.inv_issues_id ?? issueHeader?.uuid ?? issueGoodsList?.[0]?.id ?? editIssueId;
-    if (!issueHeaderId) return;
+    // Use parent InvIssue id (inv_issues_id) - from issue-goods-edit: data.inv_issue.id
+    const requestId =
+      issueHeader?.inv_issues_id ??
+      issueHeader?.id ??
+      (mode === 'edit' ? editIssueId : null) ??
+      issueHeader?.uuid;
+    if (!requestId) return;
     setIsSubmitting(true);
-    const invIssueListsId = issueGoodsList?.[0]?.id ?? details?.[0]?.inv_issue_goods_id ?? issueHeaderId;
-    const detailsForPdf = details.map((d) => ({
-      materials_id: d.materials_id ?? d.materialNumericId,
-      materialCode: d.materialCode,
-      materialName: d.materialName,
-      materialSpec: d.materialSpec,
-      materialUnit: d.materialUnit,
-      issue_qty: d.issue_qty,
-      stock_qty: d.stock_qty,
-      activityName: d.activityName,
-    }));
+    const invIssueListsId = issueGoodsList?.[0]?.id ?? details?.[0]?.inv_issue_goods_id ?? issueHeader?.id ?? requestId;
+    // Use saved details from issue-goods-details-add API response when available; else map from form details
+    const detailsForPdf =
+      savedIssueDetailsFromApi.length > 0
+        ? savedIssueDetailsFromApi
+        : details.map((d) => ({
+            materials_id: d.materials_id ?? d.materialNumericId,
+            materialCode: d.materialCode,
+            materialName: d.materialName,
+            materialSpec: d.materialSpec,
+            materialUnit: d.materialUnit,
+            issue_qty: d.issue_qty,
+            stock_qty: d.stock_qty,
+            activityName: d.activityName,
+          }));
     goodsIssueAPI
-      .generatePdf(issueHeaderId, invIssueListsId, detailsForPdf)
+      .generatePdf(requestId, invIssueListsId, detailsForPdf)
       .then(({ pdf_url, name }) => setPdfInfo({ url: pdf_url, name: name ?? `Issue-${issueDate}.pdf` }))
       .catch(() => setPdfInfo(null))
       .finally(() => setIsSubmitting(false));
-  }, [step, issueHeader?.id, issueHeader?.inv_issues_id, issueHeader?.uuid, issueGoodsList, details, editIssueId]);
+  }, [step, mode, savedIssueDetailsFromApi, issueHeader?.id, issueHeader?.inv_issues_id, issueHeader?.uuid, issueGoodsList, details, editIssueId, issueDate]);
+
+  useEffect(() => {
+    if (step === 'success') fetchPdf();
+  }, [step, fetchPdf]);
 
   const handleBackClick = () => {
     if (step === 'success') setStep('details');
@@ -496,27 +538,52 @@ export default function GoodsIssueFlow({
     const storeNumericIds = Array.from(selectedStoreIds)
       .map((sid) => stores.find((x) => String(x.id) === sid)?.numericId ?? stores.find((x) => String(x.id) === sid)?.id)
       .filter((x): x is string | number => x != null);
+    const invIssuesId = issueHeader?.inv_issues_id ?? issueHeader?.id ?? editIssueId;
     const invIssueGoodsId = issueGoodsList?.[0]?.issue_id ?? issueGoodsList?.[0]?.id ?? issueHeader?.id ?? details?.[0]?.inv_issue_goods_id;
+    const materialIdsFromDetails = details
+      .filter((d) => d.materials_id != null || d.materialNumericId != null)
+      .map((d) => d.materials_id ?? d.materialNumericId);
+    const detailsPayload = details
+      .filter((d) => d.materials_id != null || d.materialNumericId != null)
+      .map((d) => ({
+        id: d.id ?? undefined,
+        inv_issue_goods_id: d.inv_issue_goods_id ?? invIssueGoodsId,
+        projects_id: pId,
+        store_warehouses_id: storeNumericIds,
+        materials_id: d.materials_id ?? d.materialNumericId,
+        type: goodsType,
+        issue_qty: d.issue_qty,
+        stock_qty: d.stock_qty,
+        activities_id: d.activities_id || undefined,
+      }));
+    if (detailsPayload.length === 0) {
+      toast.showWarning('No valid items to save.');
+      return;
+    }
     setIsSubmitting(true);
     try {
-      const payload = details
-        .filter((d) => d.materials_id != null || d.materialNumericId != null)
-        .map((d) => ({
-          id: d.id ?? null,
-          inv_issue_goods_id: d.inv_issue_goods_id ?? invIssueGoodsId,
+      // 1. Update header via issue-goods-add (edit only; create already did this in handleGoodsInvNext)
+      if (mode === 'edit') {
+        const headerPayload = {
+          id: invIssueGoodsId,
+          inv_issues_id: invIssuesId,
           projects_id: pId,
           store_warehouses_id: storeNumericIds,
-          materials_id: d.materials_id ?? d.materialNumericId,
-          type: goodsType,
-          issue_qty: d.issue_qty,
-          stock_qty: d.stock_qty,
-          activities_id: d.activities_id || undefined,
-        }));
-      if (payload.length === 0) {
-        toast.showWarning('No valid items to save.');
-        return;
+          issue_no: issueHeader?.issue_no ?? issueNoFromBackend ?? issueDate,
+          date: issueDate,
+          entry_type: tagId || undefined,
+          goods_type: goodsType,
+          issue_to: issueToId,
+          materials_id: materialIdsFromDetails,
+          remarkes: remarkes || undefined,
+        };
+        await goodsIssueAPI.addIssueGoods(headerPayload);
       }
-      await goodsIssueAPI.addIssueDetails(payload);
+      // 2. Update line items via issue-goods-details-add
+      const savedDetails = await goodsIssueAPI.addIssueDetails(detailsPayload);
+      const arr = Array.isArray(savedDetails) ? savedDetails : (savedDetails?.data ?? []);
+      setSavedIssueDetailsFromApi(arr);
+      setPdfInfo(null); // Clear stale PDF so fresh one loads for edit
       setStep('success');
     } catch (e: any) {
       toast.showWarning(e?.message ?? 'Failed to save issue details.');
@@ -559,18 +626,15 @@ export default function GoodsIssueFlow({
 
   const handleSharePdf = async () => {
     if (!pdfInfo?.url) {
-      toast.showWarning('No PDF available.');
+      toast.showWarning('No PDF available. Generate PDF first.');
       return;
     }
-    await sharePdfAsFile({
-      url: pdfInfo.url,
-      name: pdfInfo.name || 'Issue.pdf',
-      reportTitle: 'Issue Report',
-      getAuthToken,
-      onSuccess: () => toast.showSuccess('Shared successfully.'),
-      onCopyFallback: () => toast.showSuccess('PDF link copied to clipboard.'),
-      onError: (msg) => toast.showWarning(msg),
-    });
+    const copied = await copyPdfUrl(pdfInfo.url);
+    if (copied) {
+      toast.showSuccess('PDF link copied to clipboard.');
+    } else {
+      toast.showWarning('Could not copy to clipboard.');
+    }
   };
 
   useEffect(() => {
@@ -754,11 +818,23 @@ export default function GoodsIssueFlow({
                 const isExpanded = expandedDetails.has(String(i));
                 return (
                   <div key={detailKey} className={`border rounded-lg overflow-hidden ${isDark ? 'border-slate-600' : 'border-slate-200'}`}>
-                    <button type="button" onClick={() => toggleDetailExpand(i)} className={`w-full flex items-center justify-between p-4 text-left ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}`}>
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => toggleDetailExpand(i)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleDetailExpand(i); } }}
+                      className={`w-full flex items-center justify-between p-4 text-left cursor-pointer ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}`}
+                    >
                       <div className="flex-1 min-w-0"><p className={`font-bold ${textPrimary}`}>{d.materialName}</p><p className={`text-sm ${textSecondary}`}>{d.materialCode} • {d.materialUnit || '-'} • {d.materialSpec || '-'}</p></div>
-                      <button type="button" onClick={(e) => { e.stopPropagation(); removeDetail(i); }} className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg"><Trash2 className="w-4 h-4" /></button>
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => { e.stopPropagation(); removeDetail(i); }}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); removeDetail(i); } }}
+                        className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg cursor-pointer inline-flex"
+                      ><Trash2 className="w-4 h-4" /></span>
                       {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-                    </button>
+                    </div>
                     {isExpanded && (
                       <div className={`p-4 border-t ${isDark ? 'border-slate-600 bg-slate-800/30' : 'border-slate-200 bg-slate-50'}`}>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -794,32 +870,62 @@ export default function GoodsIssueFlow({
             </div>
             <div className="flex justify-end">
               <button onClick={handleDetailsNext} disabled={isSubmitting || details.length === 0} className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold ${isSubmitting || details.length === 0 ? 'opacity-50 cursor-not-allowed' : ''} bg-[#6B8E23] text-white hover:bg-[#5a7a1e]`}>
-                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Next <ArrowRight className="w-4 h-4" />
+                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null} {mode === 'edit' ? 'Save' : 'Next'} <ArrowRight className="w-4 h-4" />
               </button>
             </div>
           </div>
         )}
 
+        {/* Success modal (same as PR/RFQ/GRN) */}
         {step === 'success' && (
-          <div className={`rounded-xl border p-8 ${cardClass} text-center`}>
-            <div className="mb-6">
-              <div className="w-16 h-16 rounded-full bg-[#6B8E23]/20 flex items-center justify-center mx-auto mb-4"><Check className="w-8 h-8 text-[#6B8E23]" /></div>
-              <h2 className={`text-xl font-black mb-2 ${textPrimary}`}>Well done !!!</h2>
-              <p className={`text-base ${textSecondary}`}>Issues/Outward Goods is ready</p>
-            </div>
-            <div className="flex flex-wrap justify-center gap-4 mb-6">
-              <button onClick={() => router.push('/inventory-reports/issue-slip')} className={`flex items-center gap-2 px-6 py-2 rounded-lg font-bold bg-[#6B8E23] text-white hover:bg-[#5a7a1e]`}><Plus className="w-4 h-4" /> Add Another</button>
-            </div>
-            {pdfInfo?.url && (
-              <div className={`p-4 rounded-xl border ${isDark ? 'border-slate-600' : 'border-slate-200'}`}>
-                <p className={`text-sm font-bold mb-2 ${textSecondary}`}>PDF</p>
-                <p className={`font-mono text-sm mb-3 ${textPrimary}`}>{pdfInfo.name || 'Issue.pdf'}</p>
-                <div className="flex flex-wrap justify-center gap-2">
-                  <button onClick={handleViewPdf} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10"><ExternalLink className="w-4 h-4" /> View</button>
-                  <button onClick={handleSharePdf} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-[#6B8E23] text-[#6B8E23] hover:bg-[#6B8E23]/10"><Share2 className="w-4 h-4" /> Share</button>
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
+            <div className={`relative ${isDark ? 'bg-[#0a0a0a]' : 'bg-white'} rounded-xl border ${cardClass} w-full max-w-md max-h-[85vh] my-auto overflow-hidden flex flex-col`}>
+              <button
+                onClick={() => router.push('/inventory-reports/issue-slip')}
+                className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
+                title="Close"
+              >
+                <X className={`w-5 h-5 ${textSecondary}`} />
+              </button>
+              <div className="p-6 sm:p-8 flex flex-col items-center">
+                <h2 className={`text-lg sm:text-xl font-black mb-2 ${textPrimary}`}>{mode === 'edit' ? 'Goods Issue Updated' : 'Goods Issue Created'}</h2>
+                <p className={`text-sm ${textSecondary} mb-6`}>Your PDF is ready. View or share below.</p>
+                <div className="flex items-center justify-center gap-2">
+                  <button
+                    onClick={handleViewPdf}
+                    disabled={!pdfInfo?.url}
+                    className="p-2 rounded-lg bg-blue-500/20 text-blue-600 hover:bg-blue-500/30 dark:text-blue-400 disabled:opacity-50 transition-colors"
+                    title="View PDF"
+                  >
+                    <Eye className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={handleSharePdf}
+                    disabled={!pdfInfo?.url}
+                    className="p-2 rounded-lg bg-emerald-500/20 text-emerald-600 hover:bg-emerald-500/30 dark:text-emerald-400 disabled:opacity-50 transition-colors"
+                    title="Share PDF (copy link)"
+                  >
+                    <Share2 className="w-4 h-4" />
+                  </button>
                 </div>
+                {!pdfInfo?.url && (
+                  <button
+                    onClick={() => fetchPdf()}
+                    disabled={isSubmitting}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium mt-4 text-[#6B8E23] hover:bg-[#6B8E23]/10 disabled:opacity-70"
+                  >
+                    {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />}
+                    Generate PDF
+                  </button>
+                )}
+                <button
+                  onClick={() => router.push('/inventory-reports/issue-slip')}
+                  className="mt-8 flex items-center gap-2 px-6 py-2 rounded-lg font-bold bg-[#6B8E23] text-white hover:bg-[#5a7a1e]"
+                >
+                  Done — Back to List
+                </button>
               </div>
-            )}
+            </div>
           </div>
         )}
 
