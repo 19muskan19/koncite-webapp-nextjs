@@ -1443,7 +1443,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
         };
       case ViewType.WORKFORCE_MANAGEMENT:
         return {
-          title: 'Workforce Management',
+          title: 'Workforce',
           icon: UsersRound,
           description: 'Manage workforce, labour, and staff assignments',
           columns: ['Name', 'Role', 'Project', 'Status', 'Availability'],
