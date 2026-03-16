@@ -14,7 +14,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import DatePickerInput from '../ui/DatePickerInput';
-import { masterDataAPI, dprAPI } from '../../services/api';
+import { masterDataAPI } from '../../services/api';
 import { useToast } from '../../contexts/ToastContext';
 
 interface Project {
@@ -107,99 +107,84 @@ const ResourcesUsageFromDPR: React.FC<ResourcesUsageFromDPRProps> = ({ theme }) 
     load();
   }, [selectedProject, projects]);
 
-  const extractMaterials = (dprDetails: any): any[] => {
-    const d = dprDetails?.materials ?? dprDetails?.materials_history ?? [];
-    return Array.isArray(d) ? d : [];
-  };
-  const extractLabour = (dprDetails: any): any[] => {
-    const d = dprDetails?.labour ?? dprDetails?.labours ?? dprDetails?.labour_history ?? [];
-    return Array.isArray(d) ? d : [];
-  };
-  const extractMachinery = (dprDetails: any): any[] => {
-    const d = dprDetails?.assets ?? dprDetails?.assets_history ?? [];
-    return Array.isArray(d) ? d : [];
-  };
-
-  const mapMaterialToRow = (r: any, date?: string) => {
-    const mat = r?.materials ?? r?.material ?? r;
-    const code = mat?.code ?? r?.code ?? '-';
-    const name = mat?.name ?? r?.material_name ?? r?.materials_name ?? '-';
-    const spec = mat?.specification ?? r?.specification ?? '-';
-    const unit = mat?.unit ?? r?.unit ?? '-';
+  const mapMaterialFromApi = (r: any, date?: string) => {
     const qty = Number(r?.qty ?? r?.quantity ?? 0);
     const rate = Number(r?.rate ?? r?.rate_per_unit ?? 0);
-    const amount = qty * rate;
-    const workDetails = r?.activities?.activities ?? r?.activities?.name ?? r?.activity_name ?? '-';
-    const enteredBy = r?.user?.name ?? r?.entered_by ?? '-';
-    const remarks = r?.remarkes ?? r?.remarks ?? '-';
-    return { date, code, name, spec, unit, qty, rate, amount, workDetails, enteredBy, remarks };
+    return {
+    date: date ?? r?.date ?? '-',
+    code: r?.code ?? '-',
+    name: r?.name ?? '-',
+    spec: r?.specification ?? r?.spec ?? '-',
+    unit: r?.unit ?? '-',
+    qty,
+    rate,
+    amount: Number(r?.amount ?? qty * rate),
+    workDetails: r?.work_details ?? '-',
+    enteredBy: r?.entered_by ?? '-',
+    remarks: r?.remarks ?? r?.remarkes ?? '-',
+  };
   };
 
-  const mapLabourToRow = (r: any, date?: string) => {
-    const lab = r?.labours ?? r?.labour ?? r;
-    const code = lab?.code ?? r?.code ?? '-';
-    const details = lab?.type && lab?.category ? `${lab.type} - ${lab.category}` : (lab?.name ?? r?.labour_name ?? '-');
-    const unit = lab?.unit ?? r?.unit ?? '-';
+  const mapLabourFromApi = (r: any, date?: string) => {
     const qty = Number(r?.qty ?? r?.quantity ?? 0);
     const otQty = Number(r?.ot_qty ?? r?.overtime_qty ?? 0);
-    const rate = Number(r?.rate_per_unit ?? r?.rate ?? 0);
-    const amount = (qty + otQty) * rate;
-    const workDetails = r?.activities?.activities ?? r?.activities?.name ?? r?.activity_name ?? '-';
-    const enteredBy = r?.user?.name ?? r?.entered_by ?? '-';
-    const remarks = r?.remarkes ?? r?.remarks ?? '-';
-    const contractor = (() => {
-      const v = r?.vendors ?? r?.vendor ?? r?.contractor;
+    const rate = Number(r?.rate ?? r?.rate_per_unit ?? 0);
+    return {
+    date: date ?? r?.date ?? '-',
+    code: r?.code ?? '-',
+    details: r?.name ?? r?.labour_details ?? '-',
+    unit: r?.unit ?? '-',
+    qty,
+    otQty,
+    rate,
+    amount: Number(r?.amount ?? (qty + otQty) * rate),
+    workDetails: r?.work_details ?? '-',
+    enteredBy: r?.entered_by ?? '-',
+    remarks: r?.remarks ?? r?.remarkes ?? '-',
+    contractor: (() => {
+      const v = r?.labour_contractor ?? r?.contractor_supplier ?? r?.vendors ?? r?.vendor ?? r?.contractor;
       return !v ? '-' : typeof v === 'string' ? v : (v?.name ?? v?.registration_name ?? '-');
-    })();
-    return { date, code, details, unit, qty, otQty, rate, amount, workDetails, enteredBy, remarks, contractor };
+    })(),
+  };
   };
 
-  const mapMachineryToRow = (r: any, date?: string) => {
-    const asset = r?.assets ?? r?.asset ?? r;
-    const code = asset?.code ?? r?.code ?? '-';
-    const name = asset?.name ?? r?.asset_name ?? '-';
-    const spec = asset?.specification ?? r?.specification ?? '-';
-    const unit = asset?.unit ?? r?.unit ?? '-';
+  const mapMachineryFromApi = (r: any, date?: string) => {
     const qty = Number(r?.qty ?? r?.quantity ?? 0);
-    const rate = Number(r?.rate_per_unit ?? r?.rate ?? 0);
-    const amount = qty * rate;
-    const workDetails = r?.activities?.activities ?? r?.activities?.name ?? r?.activity_name ?? '-';
-    const enteredBy = r?.user?.name ?? r?.entered_by ?? '-';
-    const remarks = r?.remarkes ?? r?.remarks ?? '-';
-    const contractor = (() => {
-      const v = r?.vendors ?? r?.vendor ?? r?.contractor;
+    const rate = Number(r?.rate ?? r?.rate_per_unit ?? 0);
+    return {
+    date: date ?? r?.date ?? '-',
+    code: r?.code ?? '-',
+    name: r?.name ?? '-',
+    spec: r?.specification ?? r?.spec ?? '-',
+    unit: r?.unit ?? '-',
+    qty,
+    rate,
+    amount: Number(r?.amount ?? qty * rate),
+    workDetails: r?.work_details ?? '-',
+    enteredBy: r?.entered_by ?? '-',
+    remarks: r?.remarks ?? r?.remarkes ?? '-',
+    contractor: (() => {
+      const v = r?.contractor_supplier ?? r?.contractor ?? r?.vendors ?? r?.vendor;
       return !v ? '-' : typeof v === 'string' ? v : (v?.name ?? v?.registration_name ?? '-');
-    })();
-    return { date, code, name, spec, unit, qty, rate, amount, workDetails, enteredBy, remarks, contractor };
+    })(),
+  };
   };
 
   const loadDateTabData = useCallback(async () => {
-    if (!selectedProject || !fromDate) return;
+    if (!selectedProject || !selectedSubProject || !fromDate) return;
     setIsLoading(true);
     try {
       const proj = projects.find((p) => String(p.id) === String(selectedProject) || p.name === selectedProject);
       const projId = proj?.id ?? selectedProject;
       const dateStr = fromDate.length >= 10 ? fromDate.slice(0, 10) : fromDate;
-      let list = await dprAPI.getList({ project: projId, subproject: selectedSubProject || undefined, date: dateStr });
-      let arr = Array.isArray(list) ? list : [];
-      if (arr.length === 0) list = await dprAPI.getList({});
-      arr = Array.isArray(list) ? list : [];
-      const matched = arr.find((d: any) => {
-        const dDate = d?.date ?? d?.dpr_date ?? d?.name;
-        const dStr = typeof dDate === 'string' && dDate.length >= 10 ? dDate.slice(0, 10) : '';
-        if (dStr !== dateStr) return false;
-        const dProj = d?.projects_id?.id ?? d?.projects_id ?? d?.projects?.id;
-        return String(dProj) === String(projId);
-      }) || arr[0];
-      if (!matched) {
-        setDateTabData({ materials: [], labour: [], machinery: [] });
-        return;
-      }
-      const details = await dprAPI.getDetails(matched.id);
-      const raw = details?.data ?? details ?? {};
-      const materials = extractMaterials(raw).map((r: any) => mapMaterialToRow(r));
-      const labour = extractLabour(raw).map((r: any) => mapLabourToRow(r));
-      const machinery = extractMachinery(raw).map((r: any) => mapMachineryToRow(r));
+      const res = await masterDataAPI.getResourcesUsageFromDprDate({
+        project: projId,
+        subproject: selectedSubProject,
+        date: dateStr,
+      });
+      const materials = (res.material ?? []).map((r: any) => mapMaterialFromApi(r));
+      const labour = (res.labour ?? []).map((r: any) => mapLabourFromApi(r));
+      const machinery = (res.assets ?? []).map((r: any) => mapMachineryFromApi(r));
       setDateTabData({ materials, labour, machinery });
     } catch (err: any) {
       toast.showError(err?.message || 'Failed to load data');
@@ -210,37 +195,22 @@ const ResourcesUsageFromDPR: React.FC<ResourcesUsageFromDPRProps> = ({ theme }) 
   }, [selectedProject, selectedSubProject, fromDate, projects, toast]);
 
   const loadDetailsTabData = useCallback(async () => {
-    if (!selectedProject || !fromDate || !toDate) return;
+    if (!selectedProject || !selectedSubProject || !fromDate || !toDate) return;
     setIsLoading(true);
     try {
       const proj = projects.find((p) => String(p.id) === String(selectedProject) || p.name === selectedProject);
       const projId = proj?.id ?? selectedProject;
       const fromStr = fromDate.length >= 10 ? fromDate.slice(0, 10) : fromDate;
       const toStr = toDate.length >= 10 ? toDate.slice(0, 10) : toDate;
-      let list = await dprAPI.getList({ project: projId, subproject: selectedSubProject || undefined });
-      let arr = Array.isArray(list) ? list : [];
-      if (arr.length === 0) list = await dprAPI.getList({});
-      arr = Array.isArray(list) ? list : [];
-      const inRange = arr.filter((d: any) => {
-        const dDate = d?.date ?? d?.dpr_date ?? d?.name;
-        const dStr = typeof dDate === 'string' && dDate.length >= 10 ? dDate.slice(0, 10) : '';
-        if (!dStr) return false;
-        const dProj = d?.projects_id?.id ?? d?.projects_id ?? d?.projects?.id;
-        if (String(dProj) !== String(projId)) return false;
-        return dStr >= fromStr && dStr <= toStr;
+      const res = await masterDataAPI.getResourcesUsageFromDprDays({
+        project: projId,
+        subproject: selectedSubProject,
+        from_date: fromStr,
+        to_date: toStr,
       });
-      const materials: any[] = [];
-      const labour: any[] = [];
-      const machinery: any[] = [];
-      for (const d of inRange) {
-        const details = await dprAPI.getDetails(d.id);
-        const raw = details?.data ?? details ?? {};
-        const dDate = d?.date ?? d?.dpr_date ?? d?.name;
-        const dateStr = typeof dDate === 'string' && dDate.length >= 10 ? dDate.slice(0, 10) : '';
-        extractMaterials(raw).forEach((r: any) => materials.push(mapMaterialToRow(r, dateStr)));
-        extractLabour(raw).forEach((r: any) => labour.push(mapLabourToRow(r, dateStr)));
-        extractMachinery(raw).forEach((r: any) => machinery.push(mapMachineryToRow(r, dateStr)));
-      }
+      const materials = (res.material ?? []).map((r: any) => mapMaterialFromApi(r, r?.date));
+      const labour = (res.labour ?? []).map((r: any) => mapLabourFromApi(r, r?.date));
+      const machinery = (res.assets ?? []).map((r: any) => mapMachineryFromApi(r, r?.date));
       setDetailsTabData({ materials, labour, machinery });
     } catch (err: any) {
       toast.showError(err?.message || 'Failed to load data');
@@ -251,11 +221,11 @@ const ResourcesUsageFromDPR: React.FC<ResourcesUsageFromDPRProps> = ({ theme }) 
   }, [selectedProject, selectedSubProject, fromDate, toDate, projects, toast]);
 
   useEffect(() => {
-    if (viewType === 'date' && selectedProject && fromDate) loadDateTabData();
+    if (viewType === 'date' && selectedProject && selectedSubProject && fromDate) loadDateTabData();
   }, [viewType, selectedProject, selectedSubProject, fromDate, loadDateTabData]);
 
   useEffect(() => {
-    if (viewType === 'details' && selectedProject && fromDate && toDate) loadDetailsTabData();
+    if (viewType === 'details' && selectedProject && selectedSubProject && fromDate && toDate) loadDetailsTabData();
   }, [viewType, selectedProject, selectedSubProject, fromDate, toDate, loadDetailsTabData]);
 
   const handleSort = (key: string) => {
@@ -372,7 +342,7 @@ const ResourcesUsageFromDPR: React.FC<ResourcesUsageFromDPRProps> = ({ theme }) 
             </div>
           </div>
           <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Sub Project</label>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Sub Project <span className="text-red-500">*</span></label>
             <div className="relative">
               <Layers className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} z-10`} />
               <select
@@ -387,7 +357,7 @@ const ResourcesUsageFromDPR: React.FC<ResourcesUsageFromDPRProps> = ({ theme }) 
             </div>
           </div>
           <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Select From Date</label>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>From Date <span className="text-red-500">*</span></label>
             <DatePickerInput
               value={fromDate}
               onChange={(e) => { const v = e.target.value; setFromDate(v); if (v && toDate && new Date(v) > new Date(toDate)) setToDate(v); }}
@@ -397,7 +367,7 @@ const ResourcesUsageFromDPR: React.FC<ResourcesUsageFromDPRProps> = ({ theme }) 
           </div>
           {viewType === 'details' && (
           <div>
-              <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Select To Date</label>
+              <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>To Date <span className="text-red-500">*</span></label>
             <DatePickerInput
               value={toDate}
               onChange={(e) => setToDate(e.target.value)}
@@ -423,7 +393,7 @@ const ResourcesUsageFromDPR: React.FC<ResourcesUsageFromDPRProps> = ({ theme }) 
           </div>
 
       {/* Content */}
-      {selectedProject && fromDate && (viewType !== 'details' || toDate) && (
+      {selectedProject && selectedSubProject && fromDate && (viewType !== 'details' || toDate) && (
         <div className="space-y-6 relative min-h-[200px]">
           {isLoading && (
             <div className={`absolute inset-0 z-10 rounded-xl min-h-[300px] ${isDark ? 'bg-slate-900/80' : 'bg-white/80'} flex items-center justify-center`}>

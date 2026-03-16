@@ -47,7 +47,6 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [dprDetails, setDprDetails] = useState<any>(null);
-  const [dprId, setDprId] = useState<number | string | null>(null);
 
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -143,67 +142,24 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
   const loadDPRData = useCallback(async () => {
     if (!selectedProject || !fromDate) {
       setDprDetails(null);
-      setDprId(null);
       return;
     }
     setIsLoading(true);
     setDprDetails(null);
-    setDprId(null);
     try {
       const proj = projects.find((p) => String(p.id) === String(selectedProject) || p.name === selectedProject);
       const projId = proj?.id ?? selectedProject;
       const dateStr = fromDate.length >= 10 ? fromDate.slice(0, 10) : fromDate;
-      let list = await dprAPI.getList({
+      const report = await masterDataAPI.getDPRReport({
         project: projId,
         date: dateStr,
-        ...(selectedEmployee ? { userId: selectedEmployee, emp_id: selectedEmployee } : {}),
+        ...(selectedEmployee ? { emp_id: selectedEmployee } : {}),
       });
-      let arr = Array.isArray(list) ? list : [];
-      // Fallback: if filtered list is empty, try fetching all and filter client-side
-      if (arr.length === 0) {
-        list = await dprAPI.getList({});
-        arr = Array.isArray(list) ? list : [];
-      }
-      let matched = arr.find((d: any) => {
-        const dDate = d?.date ?? d?.dpr_date ?? d?.name;
-        const dDateStr = typeof dDate === 'string' && dDate.length >= 10 ? dDate.slice(0, 10) : '';
-        if (dDateStr !== dateStr) return false;
-        const dProj = d?.projects_id?.id ?? d?.projects_id ?? d?.projects?.id;
-        if (String(dProj) !== String(projId)) return false;
-        if (selectedEmployee) {
-          const dUserId = d?.user_id ?? d?.users_id?.id ?? d?.users_id ?? d?.user?.id;
-          return String(dUserId) === String(selectedEmployee);
-        }
-        return true;
-      });
-      if (!matched && arr.length > 0) matched = arr[0];
-      if (matched) {
-        try {
-          const details = await dprAPI.getDetails(matched.id);
-          setDprDetails(details?.data ?? details ?? matched);
-          setDprId(matched.id);
-        } catch (detailsErr: any) {
-          const msg = detailsErr?.message ?? detailsErr?.response?.data?.message ?? '';
-          const isActivitiesError = /activities|collection instance/i.test(String(msg));
-          if (isActivitiesError) {
-            toast.showWarning('DPR details format issue. Showing summary from list.');
-            setDprDetails(matched);
-            setDprId(matched.id);
-          } else {
-            toast.showError(msg || 'Failed to load DPR details');
-            setDprDetails(null);
-            setDprId(null);
-          }
-        }
-      } else {
-        setDprDetails(null);
-        setDprId(null);
-      }
+      setDprDetails(report);
     } catch (err: any) {
       const msg = err?.message ?? err?.response?.data?.message ?? 'Failed to load DPR data';
       toast.showError(msg);
       setDprDetails(null);
-      setDprId(null);
     } finally {
       setIsLoading(false);
     }
@@ -214,18 +170,24 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
       loadDPRData();
     } else {
       setDprDetails(null);
-      setDprId(null);
     }
   }, [selectedProject, selectedEmployee, fromDate, loadDPRData]);
 
   const handleExportPDF = async () => {
-    if (!dprId) {
-      toast.showError('No DPR to export. Please select filters first.');
+    if (!selectedProject || !fromDate) {
+      toast.showError('Please select project and date first.');
       return;
     }
+    const proj = projects.find((p) => String(p.id) === String(selectedProject) || p.name === selectedProject);
+    const projId = proj?.id ?? selectedProject;
+    const dateStr = fromDate.length >= 10 ? fromDate.slice(0, 10) : fromDate;
     setIsExporting(true);
     try {
-      const res = await dprAPI.generatePDF(dprId);
+      const res = await dprAPI.generatePDFByParams({
+        project: projId,
+        date: dateStr,
+        ...(selectedEmployee ? { emp_id: selectedEmployee } : {}),
+      });
       const url = res?.pdf_url ?? res?.data?.pdf_url;
       if (url) {
         try {
@@ -233,7 +195,7 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
           const blobUrl = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = blobUrl;
-          a.download = `dpr_${dprId}.pdf`;
+          a.download = `dpr_${projId}_${dateStr}.pdf`;
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
@@ -247,7 +209,7 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
         toast.showError('PDF URL not found');
       }
     } catch (err: any) {
-      toast.showError(err?.message || 'Failed to generate PDF');
+      toast.showError(err?.message || 'Failed to generate PDF. Backend may require dpr ID.');
     } finally {
       setIsExporting(false);
     }
@@ -264,7 +226,7 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
     return Array.isArray(d) ? d : [];
   })();
   const materials = (() => {
-    const d = dprDetails?.materials ?? dprDetails?.materials_history ?? [];
+    const d = dprDetails?.material ?? dprDetails?.materials ?? dprDetails?.materials_history ?? [];
     return Array.isArray(d) ? d : [];
   })();
   const labour = (() => {
@@ -276,11 +238,11 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
     return Array.isArray(d) ? d : [];
   })();
   const hinderances = (() => {
-    const d = dprDetails?.hindrance ?? dprDetails?.hindrances ?? dprDetails?.hinderance ?? [];
+    const d = dprDetails?.historie ?? dprDetails?.hindrance ?? dprDetails?.hindrances ?? dprDetails?.hinderance ?? [];
     return Array.isArray(d) ? d : [];
   })();
   const safety = (() => {
-    const d = dprDetails?.safety ?? dprDetails?.safeties ?? [];
+    const d = dprDetails?.safetie ?? dprDetails?.safety ?? dprDetails?.safeties ?? [];
     return Array.isArray(d) ? d : [];
   })();
 
@@ -293,7 +255,7 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
   };
 
   const parseImages = (item: any): string[] => {
-    const imgs = item?.images;
+    const imgs = item?.images ?? item?.img;
     if (Array.isArray(imgs)) return imgs.filter(Boolean);
     const img = item?.img ?? item?.image ?? item?.activities_history_img;
     if (img) return [img];
@@ -350,7 +312,7 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
           </div>
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-              Employee <span className="text-red-500">*</span>
+              Employee <span className="text-slate-400">(optional)</span>
             </label>
             <select
               value={selectedEmployee}
@@ -364,7 +326,7 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
             </select>
           </div>
           <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Select From Date</label>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Date <span className="text-red-500">*</span></label>
             <DatePickerInput
               value={fromDate}
               onChange={(e) => setFromDate(e.target.value ?? '')}
@@ -375,7 +337,7 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
           <div className="flex items-end">
             <button
               onClick={handleExportPDF}
-              disabled={!dprId || isExporting}
+              disabled={!selectedProject || !fromDate || isExporting}
               className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642]/90 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-all"
             >
               {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
@@ -417,15 +379,15 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
               <tbody>
                 {activities.map((r: any, i: number) => {
                   const act = r?.activities ?? r?.activites ?? r;
-                  const name = act?.activities ?? act?.name ?? r?.activity_name ?? '-';
-                  const unit = act?.unit ?? r?.unit ?? '-';
-                  const estQty = Number(r?.estimate_qty ?? r?.qty ?? r?.quantity ?? 0);
-                  const rate = Number(r?.rate ?? r?.est_rate ?? r?.rate_per_unit ?? 0);
-                  const amount = Number(r?.amount ?? r?.est_amount ?? estQty * rate);
+                  const name = (typeof act === 'string' ? act : (act?.activities ?? act?.name ?? r?.activity_name)) ?? '-';
+                  const unit = (typeof act === 'object' ? act?.unit : null) ?? r?.unit ?? '-';
+                  const estQty = Number(r?.est_qty ?? r?.estimate_qty ?? r?.qty ?? r?.quantity ?? 0);
+                  const rate = Number(r?.est_rate ?? r?.rate ?? r?.rate_per_unit ?? 0);
+                  const amount = Number(r?.est_amount ?? r?.amount ?? estQty * rate);
                   const completedQty = Number(r?.completed_qty ?? r?.qty ?? r?.quantity ?? 0);
-                  const estAmtCompletion = completedQty * rate;
-                  const pct = estQty > 0 ? (completedQty / estQty) * 100 : 0;
-                  const balance = estQty - completedQty;
+                  const estAmtCompletion = Number(r?.est_amount_completion ?? completedQty * rate);
+                  const pct = Number(r?.completion ?? (estQty > 0 ? (completedQty / estQty) * 100 : 0));
+                  const balance = Number(r?.balance_qty ?? estQty - completedQty);
                   const remarks = r?.remarkes ?? r?.remarks ?? '';
                   return (
                     <tr key={i} className={`border-t border-inherit ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'}`}>
@@ -469,11 +431,11 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
               <tbody>
                 {materials.map((r: any, i: number) => {
                   const mat = r?.materials ?? r?.material ?? r;
-                  const name = mat?.name ?? r?.material_name ?? r?.materials_name ?? '-';
-                  const spec = mat?.specification ?? r?.specification ?? '-';
-                  const unit = mat?.unit ?? r?.unit ?? '-';
-                  const qty = Number(r?.qty ?? r?.quantity ?? 0);
-                  const workDetails = r?.activities?.activities ?? r?.activities?.name ?? r?.activity_name ?? '-';
+                  const name = (typeof mat === 'string' ? mat : (mat?.name ?? r?.material_name ?? r?.materials_name)) ?? '-';
+                  const spec = (typeof mat === 'object' ? mat?.specification : null) ?? r?.specification ?? '-';
+                  const unit = (typeof mat === 'object' ? mat?.unit : null) ?? r?.unit ?? '-';
+                  const qty = Number(r?.qty_used ?? r?.qty ?? r?.quantity ?? 0);
+                  const workDetails = r?.work_details ?? r?.activities?.activities ?? r?.activities?.name ?? r?.activity_name ?? '-';
                   const remarks = r?.remarkes ?? r?.remarks ?? '';
                   return (
                     <tr key={i} className={`border-t border-inherit ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'}`}>
@@ -514,16 +476,16 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
               <tbody>
                 {labour.map((r: any, i: number) => {
                   const lab = r?.labours ?? r?.labour ?? r;
-                  const details = lab?.type && lab?.category ? `${lab.type} - ${lab.category}` : (lab?.name ?? r?.labour_name ?? '-');
-                  const unit = lab?.unit ?? r?.unit ?? '-';
+                  const details = r?.labour_details ?? (lab?.type && lab?.category ? `${lab.type} - ${lab.category}` : (lab?.name ?? r?.labour_name)) ?? '-';
+                  const unit = (typeof lab === 'object' ? lab?.unit : null) ?? r?.unit ?? '-';
                   const qty = Number(r?.qty ?? r?.quantity ?? 0);
                   const otQty = Number(r?.ot_qty ?? r?.overtime_qty ?? 0);
                   const contractor = (() => {
-                    const v = r?.vendors ?? r?.vendor ?? r?.contractor;
+                    const v = r?.labour_contractor ?? r?.vendors ?? r?.vendor ?? r?.contractor;
                     if (!v) return '-';
                     return typeof v === 'string' ? v : (v?.name ?? v?.registration_name ?? '-');
                   })();
-                  const rate = Number(r?.rate_per_unit ?? r?.rate ?? 0);
+                  const rate = Number(r?.rate ?? r?.rate_per_unit ?? 0);
                   const remarks = r?.remarkes ?? r?.remarks ?? '';
                   return (
                     <tr key={i} className={`border-t border-inherit ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'}`}>
@@ -565,16 +527,16 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
               <tbody>
                 {machinery.map((r: any, i: number) => {
                   const asset = r?.assets ?? r?.asset ?? r;
-                  const name = asset?.name ?? r?.asset_name ?? '-';
-                  const spec = asset?.specification ?? r?.specification ?? '-';
-                  const unit = asset?.unit ?? r?.unit ?? '-';
-                  const qty = Number(r?.qty ?? r?.quantity ?? 0);
+                  const name = r?.machinery_names ?? (typeof asset === 'object' ? asset?.name : null) ?? r?.asset_name ?? '-';
+                  const spec = (typeof asset === 'object' ? asset?.specification : null) ?? r?.specification ?? '-';
+                  const unit = (typeof asset === 'object' ? asset?.unit : null) ?? r?.unit ?? '-';
+                  const qty = Number(r?.quantity ?? r?.qty ?? 0);
                   const contractor = (() => {
-                    const v = r?.vendors ?? r?.vendor ?? r?.contractor;
+                    const v = r?.contractor ?? r?.vendors ?? r?.vendor;
                     if (!v) return '-';
                     return typeof v === 'string' ? v : (v?.name ?? v?.registration_name ?? '-');
                   })();
-                  const rate = Number(r?.rate_per_unit ?? r?.rate ?? 0);
+                  const rate = Number(r?.rate ?? r?.rate_per_unit ?? 0);
                   const remarks = r?.remarkes ?? r?.remarks ?? '';
                   return (
                     <tr key={i} className={`border-t border-inherit ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'}`}>
@@ -611,8 +573,8 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
               </thead>
               <tbody>
                 {hinderances.map((r: any, i: number) => {
-                  const title = r?.details ?? r?.title ?? r?.name ?? '-';
-                  const members = Array.isArray(r?.team_members) ? r.team_members.join(', ') : (r?.team_members ?? '-');
+                  const title = r?.hinderances_details ?? r?.details ?? r?.title ?? r?.name ?? '-';
+                  const members = Array.isArray(r?.concern_team_members) ? r.concern_team_members.join(', ') : (r?.concern_team_members ?? r?.team_members ?? '-');
                   const remarks = r?.remarkes ?? r?.remarks ?? '';
                   return (
                     <tr key={i} className={`border-t border-inherit ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'}`}>
@@ -645,8 +607,8 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
               </thead>
               <tbody>
                 {safety.map((r: any, i: number) => {
-                  const title = r?.details ?? r?.title ?? r?.name ?? '-';
-                  const members = Array.isArray(r?.team_members) ? r.team_members.join(', ') : (r?.team_members ?? '-');
+                  const title = r?.safety_problem_details ?? r?.details ?? r?.title ?? r?.name ?? '-';
+                  const members = Array.isArray(r?.concern_team_members) ? r.concern_team_members.join(', ') : (r?.concern_team_members ?? r?.team_members ?? '-');
                   const remarks = r?.remarkes ?? r?.remarks ?? '';
                   return (
                     <tr key={i} className={`border-t border-inherit ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'}`}>

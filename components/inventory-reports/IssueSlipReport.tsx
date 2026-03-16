@@ -118,7 +118,7 @@ const IssueSlipReport: React.FC<IssueSlipReportProps> = ({ theme }) => {
   }, [selectedProject]);
 
   const loadReportData = useCallback(async () => {
-    if (!selectedProject) {
+    if (!selectedProject || !selectedStore || !selectDate) {
       setTableData([]);
       return;
     }
@@ -133,21 +133,26 @@ const IssueSlipReport: React.FC<IssueSlipReportProps> = ({ theme }) => {
       try {
         const raw = await goodsIssueAPI.getReport({
           projectId: projId,
-          storeId: selectedStore || undefined,
+          storeId: selectedStore,
           issueToId: selectedIssueTo || undefined,
-          date: dateStr || undefined,
+          date: dateStr,
           search: searchQuery.trim() || undefined,
           dataType: activeTab,
+          reportType: 'issue-slip',
         });
         const arr = Array.isArray(raw) ? raw : [];
+        const wantMaterials = activeTab === 'materials';
         for (const item of arr) {
+          const itemType = (item?.type ?? 'materials').toString().toLowerCase();
+          if (wantMaterials && (itemType === 'machines' || itemType === 'assets')) continue;
+          if (!wantMaterials && (itemType === 'materials' || itemType === 'material')) continue;
           const mat = item?.materials ?? item?.material ?? item?.assets ?? item;
           const code = mat?.code ?? item?.code ?? '-';
           const name = mat?.name ?? item?.material_name ?? item?.materials_name ?? item?.assets?.name ?? '-';
           const spec = mat?.specification ?? item?.specification ?? '-';
           const unit = mat?.unit ?? item?.unit ?? (mat?.units?.unit ?? '-');
           const issueQty = Number(item?.issue_qty ?? item?.issueQty ?? 0);
-          const activities = item?.activity_name ?? item?.activities?.name ?? item?.activities ?? '-';
+          const activities = item?.activites ?? item?.activity_name ?? item?.activities?.name ?? item?.activities ?? '-';
           const issueBy = item?.issue_by ?? item?.user?.name ?? item?.created_by ?? '-';
           const issueTo = item?.issue_to_name ?? item?.issue_type_name ?? item?.issueTo ?? '-';
           const issueNo = item?.issue_no ?? item?.issueNo ?? item?.inv_issue_reg_no ?? '-';
@@ -256,7 +261,7 @@ const IssueSlipReport: React.FC<IssueSlipReportProps> = ({ theme }) => {
   }, [selectedProject, selectedStore, selectedIssueTo, selectDate, searchQuery, activeTab, projects, issueTypes, toast]);
 
   useEffect(() => {
-    if (selectedProject) loadReportData();
+    if (selectedProject && selectedStore && selectDate) loadReportData();
   }, [selectedProject, selectedStore, selectedIssueTo, selectDate, searchQuery, activeTab, loadReportData]);
 
   const handleSort = (key: string) => {
@@ -376,7 +381,7 @@ const IssueSlipReport: React.FC<IssueSlipReportProps> = ({ theme }) => {
             </div>
           </div>
           <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Store</label>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Store <span className="text-red-500">*</span></label>
             <div className="relative">
               <Warehouse className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} z-10`} />
               <select
@@ -401,7 +406,7 @@ const IssueSlipReport: React.FC<IssueSlipReportProps> = ({ theme }) => {
             </select>
           </div>
           <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Select Date</label>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Date <span className="text-red-500">*</span></label>
             <DatePickerInput
               value={selectDate}
               onChange={(e) => setSelectDate(e.target.value)}
@@ -460,7 +465,7 @@ const IssueSlipReport: React.FC<IssueSlipReportProps> = ({ theme }) => {
         </div>
       </div>
 
-      {selectedProject && (
+      {selectedProject && selectedStore && selectDate && (
         <div className={`rounded-xl border ${cardClass} overflow-hidden relative min-h-[200px]`}>
           {isLoading && (
             <div className={`absolute inset-0 z-10 ${isDark ? 'bg-slate-900/80' : 'bg-white/80'} flex items-center justify-center`}>

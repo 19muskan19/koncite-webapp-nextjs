@@ -104,7 +104,11 @@ const RFQReport: React.FC<RFQReportProps> = ({ theme }) => {
   }, []);
 
   const loadReportData = useCallback(async () => {
-    if (!selectedProject) {
+    const hasProject = Boolean(selectedProject);
+    const hasRfqNo = Boolean(rfqNo.trim());
+    const hasPrepared = Boolean(preparedBy);
+    const hasDateRange = Boolean(fromDate && toDate);
+    if (!hasProject && !hasRfqNo && !hasPrepared && !hasDateRange) {
       setTableData([]);
       return;
     }
@@ -117,7 +121,7 @@ const RFQReport: React.FC<RFQReportProps> = ({ theme }) => {
       const toStr = toDate.length >= 10 ? toDate.slice(0, 10) : toDate;
 
       const raw = await rfqAPI.getReport({
-        projectId: projId,
+        projectId: projId || undefined,
         subProjectId: selectedSubProject || undefined,
         dateForm: fromStr || undefined,
         dateTo: toStr || undefined,
@@ -161,7 +165,7 @@ const RFQReport: React.FC<RFQReportProps> = ({ theme }) => {
   }, [selectedProject, selectedSubProject, fromDate, toDate, preparedBy, rfqNo, projects, toast]);
 
   useEffect(() => {
-    if (selectedProject) loadReportData();
+    if (selectedProject || rfqNo.trim() || preparedBy || (fromDate && toDate)) loadReportData();
   }, [selectedProject, selectedSubProject, fromDate, toDate, preparedBy, rfqNo, loadReportData]);
 
   const handleSort = (key: string) => {
@@ -261,7 +265,7 @@ const RFQReport: React.FC<RFQReportProps> = ({ theme }) => {
       <div className={`rounded-xl border ${cardClass} p-4`}>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
           <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Project <span className="text-red-500">*</span></label>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Project</label>
             <div className="relative">
               <Building2 className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} z-10`} />
               <select
@@ -358,7 +362,7 @@ const RFQReport: React.FC<RFQReportProps> = ({ theme }) => {
         </div>
       </div>
 
-      {selectedProject && (
+      {(selectedProject || rfqNo.trim() || preparedBy || (fromDate && toDate)) && (
         <div className={`rounded-xl border ${cardClass} overflow-hidden relative min-h-[200px]`}>
           {isLoading && (
             <div className={`absolute inset-0 z-10 ${isDark ? 'bg-slate-900/80' : 'bg-white/80'} flex items-center justify-center`}>
@@ -395,7 +399,7 @@ const RFQReport: React.FC<RFQReportProps> = ({ theme }) => {
                 {!isLoading && paginated.length === 0 && (
                   <tr>
                     <td colSpan={8} className={`px-4 py-12 text-center ${textSecondary}`}>
-                      No data available. Select a project and ensure there are RFQs in the date range.
+                      No data available. Use project, date range, prepared by, or RFQ No to filter.
                     </td>
                   </tr>
                 )}

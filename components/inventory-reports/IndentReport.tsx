@@ -82,7 +82,9 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
   }, [selectedProject]);
 
   const loadReportData = useCallback(async () => {
-    if (!selectedProject) {
+    const hasProject = Boolean(selectedProject);
+    const hasIndentNo = Boolean(indentNo.trim());
+    if (!hasProject && !hasIndentNo) {
       setTableData([]);
       return;
     }
@@ -97,7 +99,7 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
       let rows: ReportRow[] = [];
       try {
         const raw = await materialRequestAPI.getReport({
-          projectId: projId,
+          projectId: projId || undefined,
           subProjectId: selectedSubProject || undefined,
           dateForm: fromStr || undefined,
           dateTo: toStr || undefined,
@@ -125,7 +127,7 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
         /* API may not exist - fall back to list+edit */
       }
 
-      if (rows.length === 0) {
+      if (rows.length === 0 && hasProject) {
       let prList = await materialRequestAPI.list({
         projectId: projId,
         subprojectId: selectedSubProject || undefined,
@@ -217,7 +219,7 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
   }, [selectedProject, selectedSubProject, fromDate, toDate, indentNo, projects, toast]);
 
   useEffect(() => {
-    if (selectedProject) loadReportData();
+    if (selectedProject || indentNo.trim()) loadReportData();
   }, [selectedProject, selectedSubProject, fromDate, toDate, indentNo, loadReportData]);
 
   const handleSort = (key: string) => {
@@ -320,7 +322,7 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
       <div className={`rounded-xl border ${cardClass} p-4`}>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
           <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Project <span className="text-red-500">*</span></label>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Project</label>
             <div className="relative">
               <Building2 className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} z-10`} />
               <select
@@ -371,7 +373,7 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
             />
           </div>
           <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Indent No</label>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Indent No <span className="text-slate-400">(or project + date range)</span></label>
             <input
               type="text"
               placeholder="Enter Indent No."
@@ -403,7 +405,7 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
         </div>
       </div>
 
-      {selectedProject && (
+      {(selectedProject || indentNo.trim()) && (
         <div className={`rounded-xl border ${cardClass} overflow-hidden relative min-h-[200px]`}>
           {isLoading && (
             <div className={`absolute inset-0 z-10 ${isDark ? 'bg-slate-900/80' : 'bg-white/80'} flex items-center justify-center`}>
@@ -442,7 +444,7 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
                 {!isLoading && paginated.length === 0 && (
                   <tr>
                     <td colSpan={10} className={`px-4 py-12 text-center ${textSecondary}`}>
-                      No data available. Select a project and ensure there are purchase requests in the date range.
+                      No data available. Enter Indent No or select project (and optionally date range) to view purchase requests.
                     </td>
                   </tr>
                 )}
