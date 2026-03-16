@@ -11,7 +11,7 @@ const routeTitles: Record<string, string> = {
   '/ai-agents/inventory': 'Inventory - AI Hub - KONCITE',
   '/labour-management': 'Labour Management - KONCITE',
   '/operations/labour': 'Labour Management - KONCITE',
-  '/operations/workforce-management': 'Workforce Management - KONCITE',
+  '/operations/workforce-management': 'Workforce - KONCITE',
   '/operations/task': 'Task - KONCITE',
   '/labour-strength': 'Labour Strength - KONCITE',
   '/subscription': 'Subscription - KONCITE',

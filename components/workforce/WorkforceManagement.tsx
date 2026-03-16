@@ -6,7 +6,6 @@ import Link from 'next/link';
 import { 
   Clock, 
   Users, 
-  Briefcase, 
   Camera, 
   MapPin, 
   Loader2, 
@@ -17,17 +16,48 @@ import {
   X,
   Check,
   UsersRound,
-  Edit,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  ChevronLeft,
+  ChevronRight,
+  LayoutDashboard,
+  Wallet,
+  HardHat,
+  Settings,
+  Trash2
 } from 'lucide-react';
+import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
+import {
+  getWorkers,
+  saveWorker,
+  getAttendanceRecords,
+  saveAttendanceRecord,
+  getWorkerStatusToday,
+  getContractorEntries,
+  saveContractorEntry,
+  deleteContractorEntry,
+  markEntriesAsPaid,
+  getRates,
+  saveRate,
+  getPayments,
+  savePayment,
+  getTotalOutstanding,
+  getProjects,
+  getVendors,
+  saveProject,
+  saveVendor,
+  type WorkerProfile,
+  type ContractorEntry,
+  type RateConfig,
+  type ContractorPayment,
+} from '@/utils/workforceStorage';
+import CameraCapture from './CameraCapture';
+import WorkforceDashboardTab from './WorkforceDashboardTab';
 import { masterDataAPI, teamsAPI, workforceAPI } from '@/services/api';
 import { useToast } from '@/contexts/ToastContext';
 import { useUser } from '@/contexts/UserContext';
-import CreateProjectModal from '@/components/masters/Modals/CreateProjectModal';
-import CreateVendorModal from '@/components/masters/Modals/CreateVendorModal';
 
-type TabType = 'punch' | 'staff' | 'contractor';
+type TabType = 'dashboard' | 'punch' | 'staff' | 'contractor' | 'pay';
 
 interface Labour {
   id: number | string;
@@ -81,6 +111,7 @@ interface PunchRecord {
 }
 
 const getTodayString = () => new Date().toDateString();
+const PAGINATION_PAGE_SIZE = 10;
 
 const getPunchedInEmployees = (): PunchedInEntry[] => {
   if (typeof window === 'undefined') return [];
@@ -160,7 +191,7 @@ interface WorkforceManagementProps {
 const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   const toast = useToast();
   const { isAuthenticated } = useUser();
-  const [activeTab, setActiveTab] = useState<TabType>('punch');
+  const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   const isDark = theme === 'dark';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
@@ -194,6 +225,8 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
     location: string;
   } | null>(null);
   const [isCheckingPermissions, setIsCheckingPermissions] = useState(false);
+  const [punchPage, setPunchPage] = useState(1);
+  const [staffPage, setStaffPage] = useState(1);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
@@ -216,18 +249,27 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   const staffStreamRef = useRef<MediaStream | null>(null);
 
   // === CONTRACTOR TAB ===
-  const [contractorLabours, setContractorLabours] = useState<Labour[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [contractorProjects, setContractorProjects] = useState<Array<{ id: number | string; name: string }>>([]);
-  const [isLoadingContractor, setIsLoadingContractor] = useState(false);
+  const [contractorDataLoading, setContractorDataLoading] = useState(false);
   const [showAddLabourEntryModal, setShowAddLabourEntryModal] = useState(false);
-  const [showManageRates, setShowManageRates] = useState(false);
   const [showRatesModal, setShowRatesModal] = useState(false);
-  const [labourEntryFormData, setLabourEntryFormData] = useState({
+  const [labourEntryFormData, setLabourEntryFormData] = useState<{
+    date: string;
+    project_id: string;
+    contractor_id: string;
+    category: string;
+    headCount: number | '';
+    unitsWorked: number | string;
+    otHoursPerPerson: number | string;
+  }>({
     date: new Date().toISOString().slice(0, 10),
     project_id: '',
     contractor_id: '',
-    category: 'skilled',
+    category: 'Mason',
+    headCount: 1,
+    unitsWorked: 1,
+    otHoursPerPerson: 0,
   });
   const [ratesFormData, setRatesFormData] = useState({
     vendor_id: '',
@@ -240,21 +282,52 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   });
   const [rateHistory, setRateHistory] = useState<Array<{ category: string; contractor: string; effectiveFrom: string; dailyRate: string; overtimeRate: string }>>([]);
   const [isSubmittingRate, setIsSubmittingRate] = useState(false);
-  const [contractorSearchQuery, setContractorSearchQuery] = useState('');
   const [showAddProjectModal, setShowAddProjectModal] = useState(false);
   const [showAddVendorModal, setShowAddVendorModal] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [newVendorName, setNewVendorName] = useState('');
   const [labourEntryProjectDropdownOpen, setLabourEntryProjectDropdownOpen] = useState(false);
   const [labourEntryContractorDropdownOpen, setLabourEntryContractorDropdownOpen] = useState(false);
   const [labourEntryProjectSearch, setLabourEntryProjectSearch] = useState('');
   const [labourEntryContractorSearch, setLabourEntryContractorSearch] = useState('');
   const labourEntryProjectRef = useRef<HTMLDivElement>(null);
   const labourEntryContractorRef = useRef<HTMLDivElement>(null);
+  const [logFilterProject, setLogFilterProject] = useState<string>('');
+  const [logFilterContractor, setLogFilterContractor] = useState<string>('');
+  const [logFilterDate, setLogFilterDate] = useState<string>(new Date().toISOString().slice(0, 10));
+  const [logShowAllDates, setLogShowAllDates] = useState(false);
 
   const tabs = [
+    { id: 'dashboard' as TabType, label: 'Dash', icon: LayoutDashboard },
     { id: 'punch' as TabType, label: 'Punch', icon: Clock },
     { id: 'staff' as TabType, label: 'Staff', icon: Users },
-    { id: 'contractor' as TabType, label: 'Contractor', icon: Briefcase },
+    { id: 'contractor' as TabType, label: 'Logs', icon: HardHat },
+    { id: 'pay' as TabType, label: 'Pay', icon: Wallet },
   ];
+
+  // === DASHBOARD / PAYMENTS / REPORTS state ===
+  const [dashboardProject, setDashboardProject] = useState<string>('All');
+  const [payProject, setPayProject] = useState<string>('');
+  const [payContractor, setPayContractor] = useState<string>('');
+  const [selectedPayEntryIds, setSelectedPayEntryIds] = useState<Set<string>>(new Set());
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentFormData, setPaymentFormData] = useState({
+    amount: '',
+    mode: 'Cash' as 'Cash' | 'Bank Transfer' | 'UPI' | 'Cheque',
+    reference: '',
+  });
+  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
+  const [dataVersion, setDataVersion] = useState(0);
+
+  // Reset punch page when filters change
+  useEffect(() => {
+    setPunchPage(1);
+  }, [punchType, punchSearchQuery]);
+
+  // Reset staff page when search changes
+  useEffect(() => {
+    setStaffPage(1);
+  }, [staffSearchQuery]);
 
   // Load punchedInEmployees and punch records from localStorage, clear if new day
   useEffect(() => {
@@ -295,29 +368,29 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
     }
   }, [punchType, punchInList, punchOutList, selectedLabourId]);
 
-  // Fetch labours for Punch tab (page already guards auth, so fetch when tab is punch)
+  // Fetch staff for Punch tab (page already guards auth, so fetch when tab is punch)
   useEffect(() => {
     if (activeTab !== 'punch') return;
     let cancelled = false;
     setIsLoadingLabours(true);
-    masterDataAPI
-      .getLabours({ per_page: 9999 })
+    teamsAPI
+      .getTeamsList()
       .then((data) => {
         if (!cancelled) {
           const raw = Array.isArray(data) ? data : [];
-          setLabours(raw.map((l: any) => ({
-            id: l.id ?? l.uuid,
-            uuid: l.uuid,
-            name: l.name || '',
-            category: l.category || '',
-            code: l.code,
-            unit: l.unit_id && typeof l.unit_id === 'object' ? l.unit_id : l.unit,
+          setLabours(raw.map((u: any) => ({
+            id: u.id ?? u.uuid,
+            uuid: u.uuid,
+            name: u.name || '',
+            category: u.designation || u.company_role?.name || '',
+            code: '',
+            unit: undefined,
           })));
         }
       })
       .catch((e: any) => {
         if (!cancelled) {
-          toast.showError(e?.message || 'Failed to load labours');
+          toast.showError(e?.message || 'Failed to load staff');
           setLabours([]);
         }
       })
@@ -388,51 +461,48 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
       .catch(() => setProjects([]));
   }, [isAuthenticated, showAddProfileModal]);
 
-  // Fetch contractor data: labours, vendors (contractors), projects
+  // Load contractor data: projects and contractors from master API (for Dashboard, Logs, Pay tabs)
   useEffect(() => {
-    if (activeTab !== 'contractor') return;
-    setIsLoadingContractor(true);
+    if (activeTab !== 'dashboard' && activeTab !== 'contractor' && activeTab !== 'pay') return;
+    setContractorDataLoading(true);
     Promise.all([
-      masterDataAPI.getLabours({ per_page: 9999 }),
-      masterDataAPI.getVendorTypeWiseList('contractor'),
       masterDataAPI.getProjects(),
+      masterDataAPI.getVendorTypeWiseList('contractor'),
     ])
-      .then(([labourData, vendorData, projectData]) => {
-        const raw = Array.isArray(labourData) ? labourData : [];
-        setContractorLabours(raw.map((l: any) => ({
-          id: l.id ?? l.uuid,
-          uuid: l.uuid,
-          name: l.name || '',
-          category: l.category || '',
-          code: l.code,
-          unit: l.unit_id && typeof l.unit_id === 'object' ? l.unit_id : l.unit,
-          is_active: l.is_active,
-        })));
-        setVendors(Array.isArray(vendorData) ? vendorData : []);
-        setContractorProjects(
-          (Array.isArray(projectData) ? projectData : []).map((p: any) => ({ id: p.id ?? p.uuid, name: p.name || p.project_name || '' }))
-        );
+      .then(([projectData, vendorData]) => {
+        const projects = Array.isArray(projectData) ? projectData : [];
+        const vendorsList = Array.isArray(vendorData) ? vendorData : [];
+        setContractorProjects(projects.map((p: any) => ({ id: p.id ?? p.uuid, name: p.name || p.project_name || '' })));
+        setVendors(vendorsList.map((v: any) => ({ id: v.id ?? v.uuid, name: v.name || v.contact_person_name || '' })));
       })
       .catch((e: any) => {
         toast.showError(e?.message || 'Failed to load data');
-        setContractorLabours([]);
-        setVendors([]);
         setContractorProjects([]);
+        setVendors([]);
       })
-      .finally(() => setIsLoadingContractor(false));
-  }, [activeTab]);
+      .finally(() => setContractorDataLoading(false));
+  }, [activeTab, dataVersion]);
 
-  // Refresh projects and vendors (for Add Labour modal after creating project/vendor)
+  // Refresh projects and contractors from master API
   const refreshContractorProjectsAndVendors = useCallback(() => {
     Promise.all([
-      masterDataAPI.getVendorTypeWiseList('contractor'),
       masterDataAPI.getProjects(),
+      masterDataAPI.getVendorTypeWiseList('contractor'),
     ])
-      .then(([vendorData, projectData]) => {
-        setVendors(Array.isArray(vendorData) ? vendorData : []);
-        setContractorProjects(
-          (Array.isArray(projectData) ? projectData : []).map((p: any) => ({ id: p.id ?? p.uuid, name: p.name || p.project_name || '' }))
-        );
+      .then(([projectData, vendorData]) => {
+        const projects = Array.isArray(projectData) ? projectData : [];
+        const apiProjects = projects.map((p: any) => ({ id: p.id ?? p.uuid, name: p.name || p.project_name || '' }));
+        const localProjects = getProjects();
+        const apiProjectNames = new Set(apiProjects.map((p) => (p.name || '').toLowerCase()));
+        const localOnlyProjects = localProjects.filter((lp) => lp.name && !apiProjectNames.has(lp.name.toLowerCase()));
+        setContractorProjects([...apiProjects, ...localOnlyProjects]);
+
+        const contractors = Array.isArray(vendorData) ? vendorData : [];
+        const apiVendors = contractors.map((v: any) => ({ id: v.id ?? v.uuid, name: v.name || v.contact_person_name || '' }));
+        const localVendors = getVendors();
+        const apiVendorNames = new Set(apiVendors.map((v) => (v.name || '').toLowerCase()));
+        const localOnlyVendors = localVendors.filter((lv) => lv.name && !apiVendorNames.has(lv.name.toLowerCase()));
+        setVendors([...apiVendors, ...localOnlyVendors]);
       })
       .catch(() => {});
   }, []);
@@ -704,7 +774,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   };
 
   const handleAddLabourEntry = () => {
-    const { date, project_id, contractor_id, category } = labourEntryFormData;
+    const { date, project_id, contractor_id, category, headCount, unitsWorked, otHoursPerPerson } = labourEntryFormData;
     if (!date) {
       toast.showWarning('Date is required');
       return;
@@ -717,9 +787,42 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
       toast.showWarning('Contractor is required');
       return;
     }
-    toast.showSuccess('Labor count added successfully!');
-    setShowAddLabourEntryModal(false);
-    setLabourEntryFormData({ date: new Date().toISOString().slice(0, 10), project_id: '', contractor_id: '', category: 'skilled' });
+    const project = contractorProjects.find((p) => String(p.id) === String(project_id));
+    const contractor = vendors.find((v) => String(v.id) === String(contractor_id));
+    const projectName = project?.name ?? '';
+    const contractorName = contractor?.name ?? '';
+    if (!projectName || !contractorName) {
+      toast.showWarning('Please select valid project and contractor');
+      return;
+    }
+    const h = headCount === '' ? 1 : Math.max(1, headCount);
+    const u = (unitsWorked === '' || unitsWorked === '.') ? 0 : Math.max(0, Number(unitsWorked) || 0);
+    const o = (otHoursPerPerson === '' || otHoursPerPerson === '.') ? 0 : Math.max(0, Number(otHoursPerPerson) || 0);
+    try {
+      saveContractorEntry({
+        projectName,
+        contractorName,
+        category,
+        headCount: h,
+        unitsWorked: u,
+        otHoursPerPerson: o,
+        date,
+      });
+      toast.showSuccess('Labor log added successfully!');
+      setShowAddLabourEntryModal(false);
+      setDataVersion((v) => v + 1);
+      setLabourEntryFormData({
+        date: new Date().toISOString().slice(0, 10),
+        project_id: '',
+        contractor_id: '',
+        category: 'Mason',
+        headCount: 1,
+        unitsWorked: 1,
+        otHoursPerPerson: 0,
+      });
+    } catch (e: any) {
+      toast.showError(e?.message || 'Failed to add log');
+    }
   };
 
   const handleStoreRate = async () => {
@@ -754,7 +857,6 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
         },
       ]);
       setShowRatesModal(false);
-      setShowManageRates(true);
       setRatesFormData({
         vendor_id: '',
         category: 'skilled',
@@ -771,13 +873,41 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
     }
   };
 
-  const filteredContractorLabours = contractorLabours.filter(
-    (l) =>
-      !contractorSearchQuery ||
-      [l.name, l.code, l.category].some((v) =>
-        String(v || '').toLowerCase().includes(contractorSearchQuery.toLowerCase())
-      )
-  );
+  const handleConfirmPayment = () => {
+    const amount = parseFloat(paymentFormData.amount);
+    const entryIds = Array.from(selectedPayEntryIds);
+    const unpaid = getContractorEntries().filter((e) => !e.paid && entryIds.includes(e.id));
+    if (entryIds.length === 0 || unpaid.length === 0) {
+      toast.showWarning('No entries selected');
+      return;
+    }
+    if (isNaN(amount) || amount <= 0) {
+      toast.showWarning('Enter a valid amount');
+      return;
+    }
+    const first = unpaid[0];
+    setIsSubmittingPayment(true);
+    try {
+      savePayment({
+        contractorName: first.contractorName,
+        projectName: first.projectName,
+        amount,
+        mode: paymentFormData.mode,
+        reference: paymentFormData.reference || undefined,
+        entryIds,
+        date: new Date().toISOString().slice(0, 10),
+      });
+      toast.showSuccess('Payment recorded successfully');
+      setShowPaymentModal(false);
+      setSelectedPayEntryIds(new Set());
+      setPaymentFormData({ amount: '', mode: 'Cash', reference: '' });
+      setDataVersion((v) => v + 1);
+    } catch (e: any) {
+      toast.showError(e?.message || 'Failed to record payment');
+    } finally {
+      setIsSubmittingPayment(false);
+    }
+  };
 
   return (
     <div className="space-y-4 sm:space-y-6 w-full min-w-0 max-w-full">
@@ -788,7 +918,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
             <div className={`p-2.5 sm:p-3 rounded-xl flex-shrink-0 ${isDark ? 'bg-[#6B8E23]/10' : 'bg-[#6B8E23]/5'}`}>
               <UsersRound className="w-5 h-5 sm:w-6 sm:h-6 text-[#6B8E23]" />
             </div>
-            <h1 className={`text-xl sm:text-2xl font-black tracking-tight truncate ${textPrimary}`}>Workforce Management</h1>
+            <h1 className={`text-xl sm:text-2xl font-black tracking-tight truncate ${textPrimary}`}>Workforce</h1>
           </div>
           <p className={`text-[10px] sm:text-[11px] font-bold opacity-50 uppercase tracking-widest ${textSecondary}`}>
             Attendance (Punch), Staff & Contractor management
@@ -818,6 +948,18 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
         </div>
 
         <div className="p-4 sm:p-6">
+          {/* DASHBOARD TAB */}
+          {activeTab === 'dashboard' && (
+            <WorkforceDashboardTab
+              theme={theme}
+              isDark={isDark}
+              textPrimary={textPrimary}
+              textSecondary={textSecondary}
+              borderClass={borderClass}
+              projects={contractorProjects}
+            />
+          )}
+
           {/* PUNCH TAB */}
           {activeTab === 'punch' && (
             <div className="space-y-6">
@@ -852,17 +994,17 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                 </div>
               </div>
 
-              {/* Labour table - below heading */}
+              {/* Staff table - below heading */}
               <div>
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
                   <label className={`text-sm font-bold ${textPrimary}`}>
-                    {punchType === 'punch_in' ? 'Labours (who have not punched in today)' : 'Labours (who punched in today)'}
+                    {punchType === 'punch_in' ? 'Staff (who have not punched in today)' : 'Staff (who punched in today)'}
                   </label>
                   <div className="relative w-full sm:w-64">
                     <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
                     <input
                       type="text"
-                      placeholder="Search by name or category..."
+                      placeholder="Search by name or designation..."
                       value={punchSearchQuery}
                       onChange={(e) => setPunchSearchQuery(e.target.value)}
                       disabled={isLoadingLabours}
@@ -878,7 +1020,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                       <tr className={`border-b ${borderClass} ${isDark ? 'bg-slate-800/50' : 'bg-slate-100'}`}>
                         <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Sr. No.</th>
                         <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Name</th>
-                        <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Category</th>
+                        <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Designation</th>
                         <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Action</th>
                       </tr>
                     </thead>
@@ -892,18 +1034,23 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                       ) : filteredPunchList.length === 0 ? (
                         <tr>
                           <td colSpan={4} className={`py-8 text-center text-sm ${textSecondary}`}>
-                            {punchSearchQuery.trim() ? 'No matching labours' : punchType === 'punch_in' && labours.length > 0 ? 'All labours have punched in today' : punchType === 'punch_out' ? 'No one has punched in today yet' : 'No labours available'}
+                            {punchSearchQuery.trim() ? 'No matching staff' : punchType === 'punch_in' && labours.length > 0 ? 'All staff have punched in today' : punchType === 'punch_out' ? 'No one has punched in today yet' : 'No staff available'}
                           </td>
                         </tr>
                       ) : (
-                        filteredPunchList.map((l, idx) => {
-                          const isSelected = String(l.id) === String(selectedLabourId);
-                          return (
-                            <tr
-                              key={l.id}
-                              className={`border-b border-inherit ${isSelected ? (isDark ? 'bg-[#6B8E23]/20' : 'bg-[#6B8E23]/10') : ''} hover:bg-black/5 dark:hover:bg-white/5`}
-                            >
-                              <td className={`py-3 px-4 text-sm ${textPrimary}`}>{idx + 1}</td>
+                        (() => {
+                          const punchTotal = filteredPunchList.length;
+                          const punchTotalPages = Math.ceil(punchTotal / PAGINATION_PAGE_SIZE) || 1;
+                          const punchStart = (punchPage - 1) * PAGINATION_PAGE_SIZE;
+                          const punchPaginated = filteredPunchList.slice(punchStart, punchStart + PAGINATION_PAGE_SIZE);
+                          return punchPaginated.map((l, idx) => {
+                            const isSelected = String(l.id) === String(selectedLabourId);
+                            return (
+                              <tr
+                                key={l.id}
+                                className={`border-b border-inherit ${isSelected ? (isDark ? 'bg-[#6B8E23]/20' : 'bg-[#6B8E23]/10') : ''} hover:bg-black/5 dark:hover:bg-white/5`}
+                              >
+                                <td className={`py-3 px-4 text-sm ${textPrimary}`}>{punchStart + idx + 1}</td>
                               <td className={`py-3 px-4 text-sm font-medium ${textPrimary}`}>{l.name}</td>
                               <td className={`py-3 px-4 text-sm ${textPrimary}`}>{l.category || '—'}</td>
                               <td className="py-3 px-4">
@@ -923,11 +1070,37 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                               </td>
                             </tr>
                           );
-                        })
-                      )}
+                        });
+                      })() )}
                     </tbody>
                   </table>
                 </div>
+                {filteredPunchList.length > PAGINATION_PAGE_SIZE && (
+                  <div className="flex items-center justify-between mt-3">
+                    <span className={`text-sm ${textSecondary}`}>
+                      Showing {((punchPage - 1) * PAGINATION_PAGE_SIZE) + 1}-{Math.min(punchPage * PAGINATION_PAGE_SIZE, filteredPunchList.length)} of {filteredPunchList.length}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setPunchPage((p) => Math.max(1, p - 1))}
+                        disabled={punchPage <= 1}
+                        className={`p-2 rounded-lg border ${borderClass} disabled:opacity-50 disabled:cursor-not-allowed hover:bg-black/5 dark:hover:bg-white/5`}
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+                      <span className={`text-sm font-medium ${textPrimary}`}>
+                        {punchPage} / {Math.ceil(filteredPunchList.length / PAGINATION_PAGE_SIZE) || 1}
+                      </span>
+                      <button
+                        onClick={() => setPunchPage((p) => Math.min(Math.ceil(filteredPunchList.length / PAGINATION_PAGE_SIZE), p + 1))}
+                        disabled={punchPage >= Math.ceil(filteredPunchList.length / PAGINATION_PAGE_SIZE)}
+                        className={`p-2 rounded-lg border ${borderClass} disabled:opacity-50 disabled:cursor-not-allowed hover:bg-black/5 dark:hover:bg-white/5`}
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <div className="mt-3">
                   <button
                     onClick={openPunchFlow}
@@ -935,7 +1108,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                     className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg font-bold text-sm bg-[#6B8E23] hover:bg-[#5a7a1e] text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
                     {isCheckingPermissions ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
-                    {isCheckingPermissions ? 'Checking...' : 'Capture Photo with Geo Tag & Punch'}
+                    {isCheckingPermissions ? 'Checking...' : 'Capture Photo & Punch'}
                   </button>
                 </div>
               </div>
@@ -1030,244 +1203,371 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                         <td colSpan={5} className={`py-8 text-center ${textSecondary}`}>No staff found</td>
                       </tr>
                     ) : (
-                      filteredStaff.map((s, idx) => (
-                        <tr key={s.id} className={`border-b ${borderClass} hover:bg-black/5 dark:hover:bg-white/5`}>
-                          <td className={`py-3 px-2 sm:px-4 text-sm ${textPrimary}`}>{idx + 1}</td>
-                          <td className={`py-3 px-2 sm:px-4 text-sm font-medium ${textPrimary}`}>{s.name || '—'}</td>
-                          <td className={`py-3 px-2 sm:px-4 text-sm ${textPrimary}`}>{s.email || '—'}</td>
-                          <td className={`py-3 px-2 sm:px-4 text-sm ${textPrimary}`}>{s.designation || '—'}</td>
-                          <td className={`py-3 px-2 sm:px-4 text-sm ${textPrimary}`}>{s.phone || '—'}</td>
-                        </tr>
-                      ))
+                      (() => {
+                        const staffTotal = filteredStaff.length;
+                        const staffTotalPages = Math.ceil(staffTotal / PAGINATION_PAGE_SIZE) || 1;
+                        const staffStart = (staffPage - 1) * PAGINATION_PAGE_SIZE;
+                        const staffPaginated = filteredStaff.slice(staffStart, staffStart + PAGINATION_PAGE_SIZE);
+                        return staffPaginated.map((s, idx) => (
+                          <tr key={s.id} className={`border-b ${borderClass} hover:bg-black/5 dark:hover:bg-white/5`}>
+                            <td className={`py-3 px-2 sm:px-4 text-sm ${textPrimary}`}>{staffStart + idx + 1}</td>
+                            <td className={`py-3 px-2 sm:px-4 text-sm font-medium ${textPrimary}`}>{s.name || '—'}</td>
+                            <td className={`py-3 px-2 sm:px-4 text-sm ${textPrimary}`}>{s.email || '—'}</td>
+                            <td className={`py-3 px-2 sm:px-4 text-sm ${textPrimary}`}>{s.designation || '—'}</td>
+                            <td className={`py-3 px-2 sm:px-4 text-sm ${textPrimary}`}>{s.phone || '—'}</td>
+                          </tr>
+                        ));
+                      })()
                     )}
                   </tbody>
                 </table>
               </div>
-            </div>
-          )}
-
-          {/* CONTRACTOR TAB */}
-          {activeTab === 'contractor' && (
-            <div className="space-y-6">
-              {/* Section 1: Labour Attendance */}
-              <div>
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-3">
-                  <h3 className={`text-sm font-bold ${textPrimary}`}>Labour Attendance</h3>
-                  <div className="flex gap-2">
-                    <div className="relative flex-1 sm:flex-initial sm:w-48">
-                      <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
-                      <input
-                        type="text"
-                        placeholder="Search labour types..."
-                        value={contractorSearchQuery}
-                        onChange={(e) => setContractorSearchQuery(e.target.value)}
-                        className={`w-full pl-9 pr-4 py-2 rounded-lg border ${borderClass} ${textPrimary} text-sm ${
-                          isDark ? 'bg-slate-800' : 'bg-white'
-                        }`}
-                      />
-                    </div>
+              {filteredStaff.length > PAGINATION_PAGE_SIZE && (
+                <div className={`flex flex-wrap items-center justify-between gap-2 mt-3 py-2 ${textSecondary} text-sm`}>
+                  <span>
+                    Showing {((staffPage - 1) * PAGINATION_PAGE_SIZE) + 1}-{Math.min(staffPage * PAGINATION_PAGE_SIZE, filteredStaff.length)} of {filteredStaff.length}
+                  </span>
+                  <div className="flex items-center gap-2">
                     <button
-                      onClick={() => setShowAddLabourEntryModal(true)}
-                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg font-bold text-sm bg-[#6B8E23] hover:bg-[#5a7a1e] text-white"
+                      onClick={() => setStaffPage((p) => Math.max(1, p - 1))}
+                      disabled={staffPage <= 1}
+                      className="p-1.5 rounded-lg border border-inherit hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      <Plus className="w-4 h-4" />
-                      Add Labour Entry
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <span className="font-medium">
+                      Page {staffPage} of {Math.ceil(filteredStaff.length / PAGINATION_PAGE_SIZE) || 1}
+                    </span>
+                    <button
+                      onClick={() => setStaffPage((p) => Math.min(Math.ceil(filteredStaff.length / PAGINATION_PAGE_SIZE), p + 1))}
+                      disabled={staffPage >= Math.ceil(filteredStaff.length / PAGINATION_PAGE_SIZE)}
+                      className="p-1.5 rounded-lg border border-inherit hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <ChevronRight className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
-                <div className="overflow-x-auto rounded-lg border border-inherit">
-                  <table className="w-full min-w-[500px]">
-                    <thead>
-                      <tr className={`border-b ${borderClass} ${isDark ? 'bg-slate-800/50' : 'bg-slate-100'}`}>
-                        <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>#</th>
-                        <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Name</th>
-                        <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Code</th>
-                        <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Category</th>
-                        <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Units</th>
-                        <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Status</th>
-                        <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {isLoadingContractor ? (
-                        <tr>
-                          <td colSpan={7} className={`py-8 text-center ${textSecondary}`}>
-                            <Loader2 className="w-6 h-6 animate-spin mx-auto" />
-                          </td>
-                        </tr>
-                      ) : filteredContractorLabours.length === 0 ? (
-                        <tr>
-                          <td colSpan={7} className={`py-8 text-center text-sm ${textSecondary}`}>
-                            No labour types found
-                          </td>
-                        </tr>
-                      ) : (
-                        filteredContractorLabours.map((l, idx) => (
-                          <tr key={l.id} className={`border-b border-inherit hover:bg-black/5 dark:hover:bg-white/5`}>
-                            <td className={`py-3 px-4 text-sm ${textPrimary}`}>{idx + 1}</td>
-                            <td className={`py-3 px-4 text-sm font-medium ${textPrimary}`}>{l.name || '—'}</td>
-                            <td className={`py-3 px-4 text-sm ${textPrimary}`}>{l.code || '—'}</td>
-                            <td className={`py-3 px-4 text-sm ${textPrimary}`}>{l.category || '—'}</td>
-                            <td className={`py-3 px-4 text-sm ${textPrimary}`}>{(l as any).unit?.unit || '—'}</td>
-                            <td className="py-3 px-4">
-                              <span className={`text-xs px-2 py-0.5 rounded ${(l as any).is_active !== 0 ? (isDark ? 'bg-green-900/30 text-green-400' : 'bg-green-100 text-green-700') : (isDark ? 'bg-slate-700 text-slate-400' : 'bg-slate-200 text-slate-600')}`}>
-                                {(l as any).is_active !== 0 ? 'Active' : 'Inactive'}
-                              </span>
-                            </td>
-                            <td className="py-3 px-4">
-                              <Link
-                                href="/masters/labours"
-                                className={`inline-flex items-center gap-1 text-xs font-bold ${isDark ? 'text-[#C2D642] hover:text-[#a8c235]' : 'text-[#6B8E23] hover:text-[#5a7a1e]'}`}
-                              >
-                                <Edit className="w-3.5 h-3.5" />
-                                Edit
-                              </Link>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+              )}
+            </div>
+          )}
+
+          {/* CONTRACTOR TAB (Labor Logs) */}
+          {activeTab === 'contractor' && (
+            <div className="space-y-6">
+              {/* Header: Labor Logs, Add Log, Rates icon */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <h3 className={`text-lg font-bold ${textPrimary}`}>Labor Logs</h3>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setShowRatesModal(true)}
+                    className="p-2.5 rounded-lg border border-inherit hover:bg-black/5 dark:hover:bg-white/5"
+                    title="Manage Rates"
+                  >
+                    <Settings className="w-5 h-5" />
+                  </button>
+                  <button
+                    onClick={() => setShowAddLabourEntryModal(true)}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg font-bold text-sm bg-[#6B8E23] hover:bg-[#5a7a1e] text-white"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add Log
+                  </button>
                 </div>
               </div>
 
-              {/* Section 2: Rates */}
-              <div>
-                <div className="flex items-center justify-between">
-                  <button
-                    onClick={() => setShowManageRates(!showManageRates)}
-                    className={`flex items-center gap-2 py-2 text-sm font-bold ${textPrimary}`}
+              {/* Filters: Project, Contractor, Date */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                  <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Project</label>
+                  <select
+                    value={logFilterProject}
+                    onChange={(e) => setLogFilterProject(e.target.value)}
+                    className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
                   >
-                    Manage Rates
-                    {showManageRates ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                  </button>
-                  <button
-                    onClick={() => setShowRatesModal(true)}
-                    className="text-xs font-bold px-3 py-1.5 rounded-lg bg-[#6B8E23]/20 text-[#6B8E23] hover:bg-[#6B8E23]/30"
-                  >
-                    Set Rates (Modal)
-                  </button>
+                    <option value="">All</option>
+                    {[...new Set([
+                      ...getContractorEntries().map((e) => e.projectName),
+                      ...getWorkers().map((w) => w.projectName),
+                      ...contractorProjects.map((p) => p.name),
+                    ])].filter(Boolean).sort().map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
                 </div>
-                {showManageRates && (
-                  <div className="mt-3 space-y-4">
-                    <div className={`p-4 rounded-lg border ${borderClass} ${isDark ? 'bg-slate-800/30' : 'bg-slate-50'}`}>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                          <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Contractor *</label>
-                          <select
-                            value={ratesFormData.vendor_id}
-                            onChange={(e) => setRatesFormData((p) => ({ ...p, vendor_id: e.target.value }))}
-                            className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
-                          >
-                            <option value="">— Select contractor —</option>
-                            {vendors.map((v) => (
-                              <option key={v.id} value={v.id}>
-                                {v.name}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div>
-                          <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Role/Category *</label>
-                          <select
-                            value={ratesFormData.category}
-                            onChange={(e) => setRatesFormData((p) => ({ ...p, category: e.target.value }))}
-                            className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
-                          >
-                            <option value="skilled">Skilled</option>
-                            <option value="semiskilled">Semi-skilled</option>
-                            <option value="unskilled">Unskilled</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Daily Rate *</label>
-                          <div className="flex gap-2">
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={ratesFormData.daily_rate}
-                              onChange={(e) => setRatesFormData((p) => ({ ...p, daily_rate: e.target.value }))}
-                              placeholder="Amount"
-                              className={`flex-1 px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
-                            />
-                            <select
-                              value={ratesFormData.daily_rate_unit}
-                              onChange={(e) => setRatesFormData((p) => ({ ...p, daily_rate_unit: e.target.value as 'Hour' | 'Day' }))}
-                              className={`w-24 px-2 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
-                            >
-                              <option value="Hour">Hour</option>
-                              <option value="Day">Day</option>
-                            </select>
-                          </div>
-                        </div>
-                        <div>
-                          <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Overtime Rate</label>
-                          <div className="flex gap-2">
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={ratesFormData.overtime_rate}
-                              onChange={(e) => setRatesFormData((p) => ({ ...p, overtime_rate: e.target.value }))}
-                              placeholder="0"
-                              className={`flex-1 px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
-                            />
-                            <select
-                              value={ratesFormData.overtime_unit}
-                              onChange={(e) => setRatesFormData((p) => ({ ...p, overtime_unit: e.target.value as 'Hour' | 'Day' }))}
-                              className={`w-24 px-2 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
-                            >
-                              <option value="Hour">Hour</option>
-                              <option value="Day">Day</option>
-                            </select>
-                          </div>
-                        </div>
-                        <div>
-                          <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Effective From *</label>
-                          <input
-                            type="date"
-                            value={ratesFormData.effective_from}
-                            onChange={(e) => setRatesFormData((p) => ({ ...p, effective_from: e.target.value }))}
-                            className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
-                          />
-                        </div>
-                      </div>
-                      <div className="mt-4">
-                        <button
-                          onClick={handleStoreRate}
-                          disabled={isSubmittingRate}
-                          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm bg-[#6B8E23] hover:bg-[#5a7a1e] text-white disabled:opacity-50"
-                        >
-                          {isSubmittingRate ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                          Save Rate
-                        </button>
-                      </div>
-                    </div>
-                    {/* Rate History (client-side only) */}
-                    {rateHistory.length > 0 && (
-                      <div>
-                        <h4 className={`text-sm font-bold ${textSecondary} mb-2`}>Rate History</h4>
-                        <div className="flex flex-wrap gap-3">
-                          {rateHistory.map((r, idx) => (
-                            <div
-                              key={idx}
-                              className={`p-3 rounded-lg border ${borderClass} ${isDark ? 'bg-slate-800/30' : 'bg-white'} min-w-[200px]`}
-                            >
-                              <p className={`text-xs font-bold uppercase ${textSecondary}`}>{r.category}</p>
-                              <p className={`font-bold ${textPrimary}`}>{r.contractor}</p>
-                              <p className={`text-xs ${textSecondary}`}>From: {r.effectiveFrom}</p>
-                              <p className={`text-sm ${textPrimary}`}>Daily: {r.dailyRate} / OT: {r.overtimeRate}</p>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
+                <div>
+                  <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Contractor</label>
+                  <select
+                    value={logFilterContractor}
+                    onChange={(e) => setLogFilterContractor(e.target.value)}
+                    className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                  >
+                    <option value="">All</option>
+                    {[...new Set([
+                      ...getContractorEntries().map((e) => e.contractorName),
+                      ...vendors.map((v) => v.name),
+                    ])].filter(Boolean).sort().map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Date</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="date"
+                      value={logFilterDate}
+                      onChange={(e) => setLogFilterDate(e.target.value)}
+                      disabled={logShowAllDates}
+                      className={`flex-1 px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'} disabled:opacity-50`}
+                    />
+                    <label className={`flex items-center gap-2 text-sm ${textSecondary} whitespace-nowrap`}>
+                      <input
+                        type="checkbox"
+                        checked={logShowAllDates}
+                        onChange={(e) => setLogShowAllDates(e.target.checked)}
+                      />
+                      Show All
+                    </label>
                   </div>
-                )}
+                </div>
+              </div>
+
+              {/* Log List: grouped by date */}
+              <div className="space-y-4">
+                {(() => {
+                  let entries = getContractorEntries();
+                  if (logFilterProject) entries = entries.filter((e) => e.projectName === logFilterProject);
+                  if (logFilterContractor) entries = entries.filter((e) => e.contractorName === logFilterContractor);
+                  if (!logShowAllDates && logFilterDate) {
+                    entries = entries.filter((e) => e.date === logFilterDate || new Date(e.date).toDateString() === new Date(logFilterDate).toDateString());
+                  }
+                  const byDate = entries.reduce((acc, e) => {
+                    const key = e.dateKey || new Date(e.date).toDateString();
+                    if (!acc[key]) acc[key] = [];
+                    acc[key].push(e);
+                    return acc;
+                  }, {} as Record<string, ContractorEntry[]>);
+                  const dates = Object.keys(byDate).sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+                  return dates.length === 0 ? (
+                    <div className={`py-12 text-center rounded-lg border ${borderClass} ${textSecondary}`}>
+                      No logs found. Add a log to get started.
+                    </div>
+                  ) : (
+                    dates.map((dateKey) => (
+                      <div key={dateKey}>
+                        <h4 className={`text-sm font-bold ${textPrimary} mb-2`}>
+                          {new Date(dateKey).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}
+                        </h4>
+                        <div className="overflow-x-auto rounded-lg border border-inherit">
+                          <table className="w-full min-w-[600px]">
+                            <thead>
+                              <tr className={`border-b ${borderClass} ${isDark ? 'bg-slate-800/50' : 'bg-slate-100'}`}>
+                                <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Category</th>
+                                <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Contractor · Project</th>
+                                <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Head</th>
+                                <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Units</th>
+                                <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>OT</th>
+                                <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Amount</th>
+                                <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary} w-16`}>Action</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {byDate[dateKey].map((e) => (
+                                <tr key={e.id} className={`border-b border-inherit hover:bg-black/5 dark:hover:bg-white/5`}>
+                                  <td className={`py-3 px-4 text-sm ${textPrimary}`}>{e.category}</td>
+                                  <td className={`py-3 px-4 text-sm ${textPrimary}`}>
+                                    <span className="font-medium">{e.contractorName}</span>
+                                    <span className={`text-xs ${textSecondary}`}> · {e.projectName}</span>
+                                  </td>
+                                  <td className={`py-3 px-4 text-sm ${textPrimary}`}>{e.headCount}</td>
+                                  <td className={`py-3 px-4 text-sm ${textPrimary}`}>{e.unitsWorked} day(s)</td>
+                                  <td className={`py-3 px-4 text-sm ${textPrimary}`}>{e.otHoursPerPerson} hr</td>
+                                  <td className={`py-3 px-4 text-sm font-bold ${textPrimary}`}>₹{e.amount.toLocaleString('en-IN')}</td>
+                                  <td className="py-3 px-4">
+                                    <button
+                                      onClick={() => {
+                                        deleteContractorEntry(e.id);
+                                        setDataVersion((v) => v + 1);
+                                        toast.showSuccess('Log deleted');
+                                      }}
+                                      className="p-1.5 rounded hover:bg-red-500/20 text-red-600 dark:text-red-400"
+                                      title="Delete"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ))
+                  );
+                })()}
               </div>
             </div>
           )}
+
+          {/* PAY TAB */}
+          {activeTab === 'pay' && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Project</label>
+                  <select
+                    value={payProject}
+                    onChange={(e) => setPayProject(e.target.value)}
+                    className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                  >
+                    <option value="">All</option>
+                    {[...new Set([
+                      ...getContractorEntries().map((e) => e.projectName),
+                      ...getWorkers().map((w) => w.projectName),
+                      ...contractorProjects.map((p) => p.name),
+                    ])].filter(Boolean).sort().map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Contractor</label>
+                  <select
+                    value={payContractor}
+                    onChange={(e) => setPayContractor(e.target.value)}
+                    className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                  >
+                    <option value="">All</option>
+                    {[...new Set([
+                      ...getContractorEntries().map((e) => e.contractorName),
+                      ...vendors.map((v) => v.name || ''),
+                    ])].filter(Boolean).sort().map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              {(() => {
+                const entries = getContractorEntries().filter(
+                  (e) => (!payProject || e.projectName === payProject) && (!payContractor || e.contractorName === payContractor)
+                );
+                const totalBilled = entries.reduce((s, e) => s + e.amount, 0);
+                const paidEntries = entries.filter((e) => e.paid);
+                const totalPaid = paidEntries.reduce((s, e) => s + e.amount, 0);
+                const unpaid = entries.filter((e) => !e.paid);
+                const outstanding = unpaid.reduce((s, e) => s + e.amount, 0);
+                const selectedTotal = unpaid
+                  .filter((e) => selectedPayEntryIds.has(e.id))
+                  .reduce((s, e) => s + e.amount, 0);
+                return (
+                  <>
+                    <div className={`grid grid-cols-3 gap-3 p-4 rounded-xl ${isDark ? 'bg-slate-800/50' : 'bg-slate-100'}`}>
+                      <div>
+                        <p className={`text-xs font-bold uppercase ${textSecondary}`}>Total Billed</p>
+                        <p className={`text-lg font-black ${textPrimary}`}>₹{totalBilled.toLocaleString('en-IN')}</p>
+                      </div>
+                      <div>
+                        <p className={`text-xs font-bold uppercase ${textSecondary}`}>Total Paid</p>
+                        <p className={`text-lg font-black ${textPrimary}`}>₹{totalPaid.toLocaleString('en-IN')}</p>
+                      </div>
+                      <div>
+                        <p className={`text-xs font-bold uppercase ${textSecondary}`}>Outstanding</p>
+                        <p className={`text-lg font-black ${outstanding > 0 ? 'text-red-600' : 'text-green-600'} ${textPrimary}`}>
+                          ₹{outstanding.toLocaleString('en-IN')}
+                        </p>
+                      </div>
+                    </div>
+                    <div>
+                      <h3 className={`text-sm font-bold ${textPrimary} mb-3`}>Unpaid Logs</h3>
+                      <div className="flex gap-2 mb-3">
+                        <button
+                          onClick={() => {
+                            const allSelected = unpaid.length > 0 && unpaid.every((e) => selectedPayEntryIds.has(e.id));
+                            setSelectedPayEntryIds(allSelected ? new Set() : new Set(unpaid.map((e) => e.id)));
+                          }}
+                          className="text-xs font-bold px-3 py-1.5 rounded-lg bg-[#6B8E23]/20 text-[#6B8E23]"
+                        >
+                          {unpaid.length > 0 && unpaid.every((e) => selectedPayEntryIds.has(e.id)) ? 'Deselect All' : 'Select All'}
+                        </button>
+                        <span className={`text-sm ${textSecondary}`}>Selected: ₹{selectedTotal.toLocaleString('en-IN')}</span>
+                        <button
+                          onClick={() => {
+                            const selected = unpaid.filter((e) => selectedPayEntryIds.has(e.id));
+                            setPaymentFormData((p) => ({ ...p, amount: selected.reduce((s, e) => s + e.amount, 0).toFixed(2) }));
+                            setShowPaymentModal(true);
+                          }}
+                          disabled={selectedPayEntryIds.size === 0}
+                          className="ml-auto px-4 py-2 rounded-lg font-bold text-sm bg-[#6B8E23] text-white disabled:opacity-50"
+                        >
+                          Pay Selected
+                        </button>
+                      </div>
+                      <div className="overflow-x-auto rounded-lg border border-inherit max-h-64 overflow-y-auto">
+                        <table className="w-full">
+                          <thead className={`sticky top-0 ${isDark ? 'bg-slate-800' : 'bg-slate-100'}`}>
+                            <tr className={`border-b ${borderClass}`}>
+                              <th className="text-left py-2 px-3 text-xs font-bold w-8"/>
+                              <th className={`text-left py-2 px-3 text-xs font-bold ${textSecondary}`}>Date</th>
+                              <th className={`text-left py-2 px-3 text-xs font-bold ${textSecondary}`}>Project</th>
+                              <th className={`text-left py-2 px-3 text-xs font-bold ${textSecondary}`}>Contractor</th>
+                              <th className={`text-left py-2 px-3 text-xs font-bold ${textSecondary}`}>Category</th>
+                              <th className={`text-left py-2 px-3 text-xs font-bold ${textSecondary}`}>Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {unpaid.length === 0 ? (
+                              <tr><td colSpan={6} className={`py-6 text-center text-sm ${textSecondary}`}>No unpaid logs</td></tr>
+                            ) : (
+                              unpaid.map((e) => (
+                                <tr key={e.id} className={`border-b border-inherit hover:bg-black/5`}>
+                                  <td className="py-2 px-3">
+                                    <input
+                                      type="checkbox"
+                                      checked={selectedPayEntryIds.has(e.id)}
+                                      onChange={() => setSelectedPayEntryIds((prev) => {
+                                        const next = new Set(prev);
+                                        if (next.has(e.id)) next.delete(e.id);
+                                        else next.add(e.id);
+                                        return next;
+                                      })}
+                                    />
+                                  </td>
+                                  <td className={`py-2 px-3 text-sm ${textPrimary}`}>{new Date(e.date).toLocaleDateString()}</td>
+                                  <td className={`py-2 px-3 text-sm ${textPrimary}`}>{e.projectName}</td>
+                                  <td className={`py-2 px-3 text-sm ${textPrimary}`}>{e.contractorName}</td>
+                                  <td className={`py-2 px-3 text-sm ${textPrimary}`}>{e.category}</td>
+                                  <td className={`py-2 px-3 text-sm font-bold ${textPrimary}`}>₹{e.amount.toLocaleString('en-IN')}</td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                    <div>
+                      <h3 className={`text-sm font-bold ${textPrimary} mb-3`}>Recent Payments</h3>
+                      <div className="space-y-2 max-h-48 overflow-y-auto">
+                        {getPayments()
+                          .filter((p) => (!payProject || p.projectName === payProject) && (!payContractor || p.contractorName === payContractor))
+                          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                          .slice(0, 10)
+                          .map((p) => (
+                            <div key={p.id} className={`flex justify-between items-center p-3 rounded-lg border ${borderClass}`}>
+                              <span className={`text-sm ${textPrimary}`}>{new Date(p.date).toLocaleDateString()} · {p.contractorName}</span>
+                              <span className={`text-sm font-bold ${textPrimary}`}>₹{p.amount.toLocaleString('en-IN')} · {p.mode}</span>
+                            </div>
+                          ))}
+                        {getPayments().filter((p) => (!payProject || p.projectName === payProject) && (!payContractor || p.contractorName === payContractor)).length === 0 && (
+                          <p className={`text-sm ${textSecondary}`}>No recent payments</p>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          )}
+
         </div>
       </div>
 
@@ -1436,17 +1736,23 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                 <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Worker Type *</label>
                 <div className="flex gap-2">
                   <button
+                    type="button"
                     onClick={() => setStaffFormData((p) => ({ ...p, worker_type: 'staff' }))}
-                    className={`flex-1 py-2 rounded-lg font-bold text-sm ${
-                      staffFormData.worker_type === 'staff' ? 'bg-[#6B8E23] text-white' : 'bg-slate-100 dark:bg-slate-700'
+                    className={`flex-1 min-w-0 py-2 rounded-lg font-bold text-sm border transition-colors ${
+                      staffFormData.worker_type === 'staff'
+                        ? 'bg-[#6B8E23] text-white border-[#6B8E23]'
+                        : `border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600`
                     }`}
                   >
                     Staff
                   </button>
                   <button
+                    type="button"
                     onClick={() => setStaffFormData((p) => ({ ...p, worker_type: 'own_labor' }))}
-                    className={`flex-1 py-2 rounded-lg font-bold text-sm ${
-                      staffFormData.worker_type === 'own_labor' ? 'bg-[#6B8E23] text-white' : 'bg-slate-100 dark:bg-slate-700'
+                    className={`flex-1 min-w-0 py-2 rounded-lg font-bold text-sm border transition-colors ${
+                      staffFormData.worker_type === 'own_labor'
+                        ? 'bg-[#6B8E23] text-white border-[#6B8E23]'
+                        : `border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-600`
                     }`}
                   >
                     Own Labour
@@ -1500,29 +1806,81 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
         </div>
       )}
 
-      {/* Create Project Modal (from Add Labour Entry) */}
-      <CreateProjectModal
-        theme={theme}
-        isOpen={showAddProjectModal}
-        onClose={() => setShowAddProjectModal(false)}
-        onSuccess={() => {
-          refreshContractorProjectsAndVendors();
-        }}
-      />
+      {/* Add Project Modal (local storage) */}
+      {showAddProjectModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4 bg-black/70">
+          <div className={`w-full max-w-sm rounded-2xl overflow-hidden ${cardClass} border ${borderClass}`}>
+            <div className="p-4 border-b border-inherit flex items-center justify-between">
+              <span className={`font-bold ${textPrimary}`}>Add Project</span>
+              <button onClick={() => { setShowAddProjectModal(false); setNewProjectName(''); }} className="p-1 hover:opacity-70">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <input
+                type="text"
+                placeholder="Project name"
+                value={newProjectName}
+                onChange={(e) => setNewProjectName(e.target.value)}
+                className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+              />
+              <button
+                onClick={() => {
+                  const name = newProjectName.trim();
+                  if (!name) { toast.showWarning('Enter project name'); return; }
+                  const created = saveProject(name);
+                  refreshContractorProjectsAndVendors();
+                  setLabourEntryFormData((prev) => ({ ...prev, project_id: created.id }));
+                  setShowAddProjectModal(false);
+                  setNewProjectName('');
+                  setLabourEntryProjectDropdownOpen(false);
+                }}
+                className="w-full py-2.5 rounded-lg font-bold bg-[#6B8E23] text-white"
+              >
+                Add
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
-      {/* Create Vendor Modal (from Add Labour Entry - contractor type pre-selected) */}
-      <CreateVendorModal
-        theme={theme}
-        isOpen={showAddVendorModal}
-        onClose={() => setShowAddVendorModal(false)}
-        defaultVendorType="contractor"
-        onSuccess={(createdVendor) => {
-          refreshContractorProjectsAndVendors();
-          if (createdVendor?.id) {
-            setLabourEntryFormData((prev) => ({ ...prev, contractor_id: String(createdVendor.id) }));
-          }
-        }}
-      />
+      {/* Add Vendor Modal (local storage) */}
+      {showAddVendorModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4 bg-black/70">
+          <div className={`w-full max-w-sm rounded-2xl overflow-hidden ${cardClass} border ${borderClass}`}>
+            <div className="p-4 border-b border-inherit flex items-center justify-between">
+              <span className={`font-bold ${textPrimary}`}>Add Contractor</span>
+              <button onClick={() => { setShowAddVendorModal(false); setNewVendorName(''); }} className="p-1 hover:opacity-70">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <input
+                type="text"
+                placeholder="Contractor name"
+                value={newVendorName}
+                onChange={(e) => setNewVendorName(e.target.value)}
+                className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+              />
+              <button
+                onClick={() => {
+                  const name = newVendorName.trim();
+                  if (!name) { toast.showWarning('Enter contractor name'); return; }
+                  const created = saveVendor(name);
+                  refreshContractorProjectsAndVendors();
+                  setLabourEntryFormData((prev) => ({ ...prev, contractor_id: created.id }));
+                  setShowAddVendorModal(false);
+                  setNewVendorName('');
+                  setLabourEntryContractorDropdownOpen(false);
+                }}
+                className="w-full py-2.5 rounded-lg font-bold bg-[#6B8E23] text-white"
+              >
+                Add
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add Labour Entry Modal */}
       {showAddLabourEntryModal && (
@@ -1682,10 +2040,89 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   onChange={(e) => setLabourEntryFormData((p) => ({ ...p, category: e.target.value }))}
                   className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
                 >
-                  <option value="skilled">Skilled</option>
-                  <option value="semiskilled">Semi-skilled</option>
-                  <option value="unskilled">Unskilled</option>
+                  <option value="Mason">Mason</option>
+                  <option value="Carpenter">Carpenter</option>
+                  <option value="Fitter">Fitter</option>
+                  <option value="Helper">Helper</option>
+                  <option value="Electrician">Electrician</option>
+                  <option value="Plumber">Plumber</option>
+                  <option value="Other">Other</option>
                 </select>
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Head Count</label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={labourEntryFormData.headCount}
+                    onFocus={() => setLabourEntryFormData((p) => ({ ...p, headCount: '' }))}
+                    onBlur={(e) => {
+                      const v = e.target.value.replace(/\D/g, '');
+                      if (v === '') setLabourEntryFormData((p) => ({ ...p, headCount: 1 }));
+                      else setLabourEntryFormData((p) => ({ ...p, headCount: Math.max(1, parseInt(v, 10) || 1) }));
+                    }}
+                    onChange={(e) => {
+                      const v = e.target.value.replace(/\D/g, '');
+                      if (v === '') setLabourEntryFormData((p) => ({ ...p, headCount: '' }));
+                      else {
+                        const n = parseInt(v, 10);
+                        if (!isNaN(n)) setLabourEntryFormData((p) => ({ ...p, headCount: Math.max(1, n) }));
+                      }
+                    }}
+                    className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Units (days/hrs)</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={labourEntryFormData.unitsWorked}
+                    onFocus={() => setLabourEntryFormData((p) => ({ ...p, unitsWorked: '' }))}
+                    onBlur={(e) => {
+                      const v = e.target.value.replace(/[^\d.]/g, '').replace(/\.(?=.*\.)/g, '').trim();
+                      if (v === '' || v === '.') setLabourEntryFormData((p) => ({ ...p, unitsWorked: 0 }));
+                      else setLabourEntryFormData((p) => ({ ...p, unitsWorked: Math.max(0, parseFloat(v) || 0) }));
+                    }}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      const v = raw.replace(/[^\d.]/g, '').replace(/\.(?=.*\.)/g, '');
+                      if (v === '' || v === '.') setLabourEntryFormData((p) => ({ ...p, unitsWorked: v === '' ? '' : '.' }));
+                      else {
+                        const n = parseFloat(v);
+                        if (!isNaN(n) && n >= 0) setLabourEntryFormData((p) => ({ ...p, unitsWorked: v }));
+                      }
+                    }}
+                    className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-sm font-bold ${textPrimary} mb-1`}>OT (per person)</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={labourEntryFormData.otHoursPerPerson}
+                    onFocus={() => setLabourEntryFormData((p) => ({ ...p, otHoursPerPerson: '' }))}
+                    onBlur={(e) => {
+                      const v = e.target.value.replace(/[^\d.]/g, '').replace(/\.(?=.*\.)/g, '').trim();
+                      if (v === '' || v === '.') setLabourEntryFormData((p) => ({ ...p, otHoursPerPerson: 0 }));
+                      else setLabourEntryFormData((p) => ({ ...p, otHoursPerPerson: Math.max(0, parseFloat(v) || 0) }));
+                    }}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      const v = raw.replace(/[^\d.]/g, '').replace(/\.(?=.*\.)/g, '');
+                      if (v === '') setLabourEntryFormData((p) => ({ ...p, otHoursPerPerson: '' }));
+                      else if (v === '.') setLabourEntryFormData((p) => ({ ...p, otHoursPerPerson: '.' }));
+                      else {
+                        const n = parseFloat(v);
+                        if (!isNaN(n) && n >= 0) setLabourEntryFormData((p) => ({ ...p, otHoursPerPerson: v }));
+                      }
+                    }}
+                    className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                  />
+                </div>
               </div>
               <div className="flex gap-2 pt-2">
                 <button
@@ -1703,6 +2140,76 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                     setLabourEntryProjectSearch('');
                     setLabourEntryContractorSearch('');
                   }}
+                  className="px-4 py-2.5 rounded-lg font-bold border border-inherit"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payment Modal */}
+      {showPaymentModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/70 overflow-y-auto">
+          <div className={`w-full max-w-md rounded-2xl overflow-hidden ${cardClass} border ${borderClass}`}>
+            <div className="p-4 border-b border-inherit flex items-center justify-between">
+              <span className={`font-bold ${textPrimary}`}>Confirm Payment</span>
+              <button
+                onClick={() => setShowPaymentModal(false)}
+                className="p-1 hover:opacity-70"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <div>
+                <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Amount (₹) *</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={paymentFormData.amount}
+                  onChange={(e) => setPaymentFormData((p) => ({ ...p, amount: e.target.value }))}
+                  placeholder="Enter amount"
+                  className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                />
+              </div>
+              <div>
+                <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Mode</label>
+                <select
+                  value={paymentFormData.mode}
+                  onChange={(e) => setPaymentFormData((p) => ({ ...p, mode: e.target.value as 'Cash' | 'Bank Transfer' | 'UPI' | 'Cheque' }))}
+                  className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                >
+                  <option value="Cash">Cash</option>
+                  <option value="Bank Transfer">Bank Transfer</option>
+                  <option value="UPI">UPI</option>
+                  <option value="Cheque">Cheque</option>
+                </select>
+              </div>
+              <div>
+                <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Reference / Notes</label>
+                <input
+                  type="text"
+                  value={paymentFormData.reference}
+                  onChange={(e) => setPaymentFormData((p) => ({ ...p, reference: e.target.value }))}
+                  placeholder="Optional"
+                  className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button
+                  onClick={handleConfirmPayment}
+                  disabled={isSubmittingPayment}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg font-bold bg-[#6B8E23] text-white disabled:opacity-50"
+                >
+                  {isSubmittingPayment ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                  Confirm & Settle
+                </button>
+                <button
+                  onClick={() => setShowPaymentModal(false)}
                   className="px-4 py-2.5 rounded-lg font-bold border border-inherit"
                 >
                   Cancel

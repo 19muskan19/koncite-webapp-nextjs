@@ -2844,7 +2844,7 @@ export const labourHistoryAPI = {
   },
 };
 
-// Workforce Management API - Punch, Staff, Contractor (LabourController, etc.)
+// Workforce API - Punch, Staff, Contractor (LabourController, etc.)
 export const workforceAPI = {
   /**
    * Submit punch IN/OUT with photo and GPS
