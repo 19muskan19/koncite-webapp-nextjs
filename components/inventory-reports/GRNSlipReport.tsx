@@ -59,6 +59,7 @@ interface ReportRow {
   rate: number;
   amount: number;
   poQty: number;
+  poBalance: number;
   remarks: string;
 }
 
@@ -142,7 +143,7 @@ const GRNSlipReport: React.FC<GRNSlipReportProps> = ({ theme }) => {
   }, [selectedProject]);
 
   const loadReportData = useCallback(async () => {
-    if (!selectedProject) {
+    if (!selectedProject || !selectedStore || !fromDate) {
       setTableData([]);
       return;
     }
@@ -157,14 +158,15 @@ const GRNSlipReport: React.FC<GRNSlipReportProps> = ({ theme }) => {
       try {
         const raw = await goodsReceiptAPI.getReport({
           projectId: projId,
-          storeId: selectedStore || undefined,
+          storeId: selectedStore,
           entryTypeId: selectedEntryType || undefined,
           supplierId: selectedSupplier || undefined,
-          dateFrom: fromStr || undefined,
+          from_date: fromStr,
           search: searchQuery.trim() || undefined,
           dataType: activeTab,
+          reportType: 'grn-slip',
         });
-        const arr = Array.isArray(raw) ? raw : [];
+        const arr = Array.isArray(raw) ? raw : (raw?.assets ?? []);
         let slNo = 0;
         for (const item of arr) {
           const mat = item?.materials ?? item?.material ?? item?.assets ?? item;
@@ -175,9 +177,10 @@ const GRNSlipReport: React.FC<GRNSlipReportProps> = ({ theme }) => {
           const recQty = Number(item?.recipt_qty ?? item?.receipt_qty ?? item?.receiptQty ?? 0);
           const rejQty = Number(item?.reject_qty ?? item?.reject_qty ?? item?.rejectQty ?? 0);
           const accQty = Number(item?.accepted_qty ?? item?.acceptedQty ?? recQty - rejQty);
-          const rate = Number(item?.price ?? item?.rate ?? 0);
-          const amt = rate * accQty;
+          const rate = Number(item?.price ?? item?.rate ?? item?.quote_rate ?? 0);
+          const amt = Number(item?.amount ?? rate * accQty);
           const poQty = Number(item?.po_qty ?? item?.poQty ?? 0);
+          const poBalance = Number(item?.po_balance ?? item?.poBalance ?? 0);
           const remarks = item?.remarkes ?? item?.remarks ?? '-';
           const grnNo = item?.grn_no ?? item?.grnNo ?? item?.inv_inward_reg_no ?? '-';
           const d = item?.date ?? item?.request_date ?? '-';
@@ -198,6 +201,7 @@ const GRNSlipReport: React.FC<GRNSlipReportProps> = ({ theme }) => {
             rate,
             amount: amt,
             poQty,
+            poBalance,
             remarks,
           });
         }
@@ -273,6 +277,7 @@ const GRNSlipReport: React.FC<GRNSlipReportProps> = ({ theme }) => {
                 rate,
                 amount: amt,
                 poQty,
+                poBalance: Number(d?.po_balance ?? 0),
                 remarks,
               });
             }
@@ -291,7 +296,7 @@ const GRNSlipReport: React.FC<GRNSlipReportProps> = ({ theme }) => {
   }, [selectedProject, selectedStore, selectedEntryType, selectedSupplier, fromDate, searchQuery, activeTab, projects, toast]);
 
   useEffect(() => {
-    if (selectedProject) loadReportData();
+    if (selectedProject && selectedStore && fromDate) loadReportData();
   }, [selectedProject, selectedStore, selectedEntryType, selectedSupplier, fromDate, searchQuery, activeTab, loadReportData]);
 
   const handleSort = (key: string) => {
@@ -330,7 +335,7 @@ const GRNSlipReport: React.FC<GRNSlipReportProps> = ({ theme }) => {
 
   useEffect(() => setCurrentPage(1), [tableSearch, sortConfig]);
 
-  const headers = ['Sl No', 'GRN No', 'Date', 'Code', 'Name', 'Specification', 'Unit', 'Receipt Qty', 'Reject Qty', 'Accepted Qty', 'Rate', 'Amount', 'PO Qty', 'Remarks'];
+  const headers = ['Sl No', 'GRN No', 'Date', 'Code', 'Name', 'Specification', 'Unit', 'Receipt Qty', 'Reject Qty', 'Accepted Qty', 'Rate', 'Amount', 'PO Qty', 'PO Balance', 'Remarks'];
   const handleExport = (format: string) => {
     const rows = filteredAndSorted.map((r) => [
       r.slNo,
@@ -346,6 +351,7 @@ const GRNSlipReport: React.FC<GRNSlipReportProps> = ({ theme }) => {
       formatNum(r.rate),
       formatNum(r.amount),
       formatNum(r.poQty),
+      formatNum(r.poBalance),
       r.remarks,
     ]);
     if (format === 'Copy') {
@@ -368,7 +374,7 @@ const GRNSlipReport: React.FC<GRNSlipReportProps> = ({ theme }) => {
 </head><body>
 <h1>GRN (MRN) Slip Report - ${activeTab === 'materials' ? 'Material' : 'Machines/Assets'}</h1>
 <table><thead><tr>${headers.map((h) => `<th>${h}</th>`).join('')}</tr></thead>
-<tbody>${filteredAndSorted.map((r) => `<tr><td>${r.slNo}</td><td>${r.grnNo}</td><td>${r.date}</td><td>${r.code}</td><td>${r.name}</td><td>${r.specification}</td><td>${r.unit}</td><td>${formatNum(r.receiptQty)}</td><td>${formatNum(r.rejectQty)}</td><td>${formatNum(r.acceptedQty)}</td><td>${formatNum(r.rate)}</td><td>${formatNum(r.amount)}</td><td>${formatNum(r.poQty)}</td><td>${r.remarks}</td></tr>`).join('')}</tbody></table>
+<tbody>${filteredAndSorted.map((r) => `<tr><td>${r.slNo}</td><td>${r.grnNo}</td><td>${r.date}</td><td>${r.code}</td><td>${r.name}</td><td>${r.specification}</td><td>${r.unit}</td><td>${formatNum(r.receiptQty)}</td><td>${formatNum(r.rejectQty)}</td><td>${formatNum(r.acceptedQty)}</td><td>${formatNum(r.rate)}</td><td>${formatNum(r.amount)}</td><td>${formatNum(r.poQty)}</td><td>${formatNum(r.poBalance)}</td><td>${r.remarks}</td></tr>`).join('')}</tbody></table>
 </body></html>`;
       const w = window.open('', '_blank');
       if (w) {
@@ -379,8 +385,8 @@ const GRNSlipReport: React.FC<GRNSlipReportProps> = ({ theme }) => {
     }
   };
 
-  const colKeys = ['slNo', 'grnNo', 'date', 'code', 'name', 'specification', 'unit', 'receiptQty', 'rejectQty', 'acceptedQty', 'rate', 'amount', 'poQty', 'remarks'];
-  const rightAlignKeys = ['receiptQty', 'rejectQty', 'acceptedQty', 'rate', 'amount', 'poQty'];
+  const colKeys = ['slNo', 'grnNo', 'date', 'code', 'name', 'specification', 'unit', 'receiptQty', 'rejectQty', 'acceptedQty', 'rate', 'amount', 'poQty', 'poBalance', 'remarks'];
+  const rightAlignKeys = ['receiptQty', 'rejectQty', 'acceptedQty', 'rate', 'amount', 'poQty', 'poBalance'];
 
   return (
     <div className="space-y-6 p-2 sm:p-0">
@@ -415,7 +421,7 @@ const GRNSlipReport: React.FC<GRNSlipReportProps> = ({ theme }) => {
             </div>
           </div>
           <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Store</label>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Store <span className="text-red-500">*</span></label>
             <div className="relative">
               <Warehouse className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} z-10`} />
               <select
@@ -451,7 +457,7 @@ const GRNSlipReport: React.FC<GRNSlipReportProps> = ({ theme }) => {
             </select>
           </div>
           <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Select From Date</label>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Date <span className="text-red-500">*</span></label>
             <DatePickerInput
               value={fromDate}
               onChange={(e) => setFromDate(e.target.value)}
@@ -510,7 +516,7 @@ const GRNSlipReport: React.FC<GRNSlipReportProps> = ({ theme }) => {
         </div>
       </div>
 
-      {selectedProject && (
+      {selectedProject && selectedStore && fromDate && (
         <div className={`rounded-xl border ${cardClass} overflow-hidden relative min-h-[200px]`}>
           {isLoading && (
             <div className={`absolute inset-0 z-10 ${isDark ? 'bg-slate-900/80' : 'bg-white/80'} flex items-center justify-center`}>
@@ -524,7 +530,7 @@ const GRNSlipReport: React.FC<GRNSlipReportProps> = ({ theme }) => {
                   {colKeys.map((k) => (
                     <th key={k} className={`px-4 py-3 font-bold ${textPrimary} cursor-pointer ${rightAlignKeys.includes(k) ? 'text-right' : 'text-left'}`} onClick={() => handleSort(k)}>
                       <span className="flex items-center gap-2">
-                        {k === 'slNo' ? 'Sl No' : k === 'grnNo' ? 'GRN No' : k === 'date' ? 'Date' : k === 'code' ? 'Code' : k === 'name' ? 'Name' : k === 'specification' ? 'Specification' : k === 'unit' ? 'Unit' : k === 'receiptQty' ? 'Receipt Qty' : k === 'rejectQty' ? 'Reject Qty' : k === 'acceptedQty' ? 'Accepted Qty' : k === 'rate' ? 'Rate' : k === 'amount' ? 'Amount' : k === 'poQty' ? 'PO Qty' : 'Remarks'}
+                        {k === 'slNo' ? 'Sl No' : k === 'grnNo' ? 'GRN No' : k === 'date' ? 'Date' : k === 'code' ? 'Code' : k === 'name' ? 'Name' : k === 'specification' ? 'Specification' : k === 'unit' ? 'Unit' : k === 'receiptQty' ? 'Receipt Qty' : k === 'rejectQty' ? 'Reject Qty' : k === 'acceptedQty' ? 'Accepted Qty' : k === 'rate' ? 'Rate' : k === 'amount' ? 'Amount' : k === 'poQty' ? 'PO Qty' : k === 'poBalance' ? 'PO Balance' : 'Remarks'}
                         {getSortIcon(k)}
                       </span>
                     </th>
@@ -547,13 +553,14 @@ const GRNSlipReport: React.FC<GRNSlipReportProps> = ({ theme }) => {
                     <td className={`px-4 py-3 text-right ${textPrimary}`}>{formatNum(row.rate)}</td>
                     <td className={`px-4 py-3 text-right ${textPrimary}`}>{formatNum(row.amount)}</td>
                     <td className={`px-4 py-3 text-right ${textPrimary}`}>{formatNum(row.poQty)}</td>
+                    <td className={`px-4 py-3 text-right ${textPrimary}`}>{formatNum(row.poBalance)}</td>
                     <td className={`px-4 py-3 ${textSecondary}`}>{row.remarks}</td>
                   </tr>
                 ))}
                 {!isLoading && paginated.length === 0 && (
                   <tr>
-                    <td colSpan={14} className={`px-4 py-12 text-center ${textSecondary}`}>
-                      No data available. Select a project and ensure there are GRN/MRN slips in the date range.
+                    <td colSpan={15} className={`px-4 py-12 text-center ${textSecondary}`}>
+                      No data available. Select project, store, and date. Use optional filters (supplier, entry type, search) to narrow results.
                     </td>
                   </tr>
                 )}

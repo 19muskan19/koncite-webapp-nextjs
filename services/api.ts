@@ -2579,6 +2579,365 @@ export const masterDataAPI = {
       } as ApiError;
     }
   },
+  /**
+   * Work Progress Details - POST /inventory/inventory-report
+   * type: 'work-details'
+   * Required: project|projectId, date_from|dateForm, date_to|dateTo
+   * Optional: subproject|subProjectId
+   * Response: { activities, headerDetails } - activities: sl_no, activities, unit, est_qty, est_rate, est_amount, completed_qty, est_amount_completion, completion, balance_qty
+   */
+  getWorkProgressDetailsReport: async (params: {
+    project?: string | number;
+    projectId?: string | number;
+    subproject?: string | number;
+    subProjectId?: string | number;
+    date_from?: string;
+    dateForm?: string;
+    date_to?: string;
+    dateTo?: string;
+  }): Promise<{ activities: any[]; headerDetails?: any }> => {
+    try {
+      const project = params.project ?? params.projectId;
+      const dateFrom = (params.date_from ?? params.dateForm ?? '').slice(0, 10);
+      const dateTo = (params.date_to ?? params.dateTo ?? '').slice(0, 10);
+      if (!project || !dateFrom || !dateTo) return { activities: [], headerDetails: undefined };
+      const payload: Record<string, unknown> = {
+        type: 'work-details',
+        project,
+        date_from: dateFrom,
+        date_to: dateTo,
+      };
+      const sub = params.subproject ?? params.subProjectId;
+      if (sub != null && sub !== '') payload.subproject = sub;
+      const response = await apiClient.post('/inventory/inventory-report', payload);
+      const data = response.data?.data ?? response.data;
+      const arr = data?.activities ?? data?.data ?? data;
+      return {
+        activities: Array.isArray(arr) ? arr : [],
+        headerDetails: data?.headerDetails ?? data?.header_details,
+      };
+    } catch (error: any) {
+      if (error?.response?.status === 404 || error?.response?.status === 422) return { activities: [] };
+      throw {
+        message: error.response?.data?.message || 'Failed to load work progress details',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /**
+   * DPR (Daily Progress Report) - POST /inventory/inventory-report
+   * type: 'dprs'
+   * Required: project|projectId, date|date_from|dateForm
+   * Optional: userId|emp_id (filters by user)
+   * Response: activities, material, labour, assets, historie, safetie - arrays with sl_no, etc.
+   */
+  getDPRReport: async (params: {
+    project?: string | number;
+    projectId?: string | number;
+    date?: string;
+    date_from?: string;
+    dateForm?: string;
+    userId?: string | number;
+    emp_id?: string | number;
+  }): Promise<{
+    activities: any[];
+    material: any[];
+    labour: any[];
+    assets: any[];
+    historie: any[];
+    safetie: any[];
+    [key: string]: any;
+  }> => {
+    try {
+      const project = params.project ?? params.projectId;
+      const dateStr = (params.date ?? params.date_from ?? params.dateForm ?? '').slice(0, 10);
+      if (!project || !dateStr) {
+        return {
+          activities: [],
+          material: [],
+          labour: [],
+          assets: [],
+          historie: [],
+          safetie: [],
+        };
+      }
+      const payload: Record<string, unknown> = {
+        type: 'dprs',
+        project,
+        date: dateStr,
+      };
+      const empId = params.emp_id ?? params.userId;
+      if (empId != null && empId !== '') payload.emp_id = empId;
+      const response = await apiClient.post('/inventory/inventory-report', payload);
+      const data = response.data?.data ?? response.data;
+      const toArr = (v: any) => (Array.isArray(v) ? v : []);
+      return {
+        activities: toArr(data?.activities),
+        material: toArr(data?.material ?? data?.materials),
+        labour: toArr(data?.labour ?? data?.labours),
+        assets: toArr(data?.assets),
+        historie: toArr(data?.historie ?? data?.hindrance ?? data?.hindrances),
+        safetie: toArr(data?.safetie ?? data?.safety ?? data?.safeties),
+        ...data,
+      };
+    } catch (error: any) {
+      if (error?.response?.status === 404 || error?.response?.status === 422) {
+        return {
+          activities: [],
+          material: [],
+          labour: [],
+          assets: [],
+          historie: [],
+          safetie: [],
+        };
+      }
+      throw {
+        message: error.response?.data?.message || 'Failed to load DPR report',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /**
+   * Resources Usage From DPR – By Date (single date)
+   * type: 'resources-usage-from-dpr-date'
+   * Required: project|projectId, subproject|subProjectId, date|dateForm
+   * Response: { labour, material, assets }
+   */
+  getResourcesUsageFromDprDate: async (params: {
+    project?: string | number;
+    projectId?: string | number;
+    subproject?: string | number;
+    subProjectId?: string | number;
+    date?: string;
+    dateForm?: string;
+  }): Promise<{ labour: any[]; material: any[]; assets: any[] }> => {
+    try {
+      const project = params.project ?? params.projectId;
+      const subproject = params.subproject ?? params.subProjectId;
+      const dateStr = (params.date ?? params.dateForm ?? '').slice(0, 10);
+      if (!project || !subproject || !dateStr) {
+        return { labour: [], material: [], assets: [] };
+      }
+      const payload = {
+        type: 'resources-usage-from-dpr-date',
+        project,
+        subproject,
+        date: dateStr,
+      };
+      const response = await apiClient.post('/inventory/inventory-report', payload);
+      const data = response.data?.data ?? response.data;
+      const toArr = (v: any) => (Array.isArray(v) ? v : []);
+      return {
+        labour: toArr(data?.labour),
+        material: toArr(data?.material ?? data?.materials),
+        assets: toArr(data?.assets),
+      };
+    } catch (error: any) {
+      if (error?.response?.status === 404 || error?.response?.status === 422) {
+        return { labour: [], material: [], assets: [] };
+      }
+      throw {
+        message: error.response?.data?.message || 'Failed to load resources usage by date',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /**
+   * Resources Usage From DPR – By Days (date range)
+   * type: 'resources-usage-from-dpr-days'
+   * Required: project|projectId, subproject|subProjectId, from_date|dateForm, to_date|dateTo
+   * Response: { labour, material, assets }
+   */
+  getResourcesUsageFromDprDays: async (params: {
+    project?: string | number;
+    projectId?: string | number;
+    subproject?: string | number;
+    subProjectId?: string | number;
+    from_date?: string;
+    dateForm?: string;
+    to_date?: string;
+    dateTo?: string;
+  }): Promise<{ labour: any[]; material: any[]; assets: any[] }> => {
+    try {
+      const project = params.project ?? params.projectId;
+      const subproject = params.subproject ?? params.subProjectId;
+      const fromStr = (params.from_date ?? params.dateForm ?? '').slice(0, 10);
+      const toStr = (params.to_date ?? params.dateTo ?? '').slice(0, 10);
+      if (!project || !subproject || !fromStr || !toStr) {
+        return { labour: [], material: [], assets: [] };
+      }
+      const payload = {
+        type: 'resources-usage-from-dpr-days',
+        project,
+        subproject,
+        from_date: fromStr,
+        to_date: toStr,
+      };
+      const response = await apiClient.post('/inventory/inventory-report', payload);
+      const data = response.data?.data ?? response.data;
+      const toArr = (v: any) => (Array.isArray(v) ? v : []);
+      return {
+        labour: toArr(data?.labour),
+        material: toArr(data?.material ?? data?.materials),
+        assets: toArr(data?.assets),
+      };
+    } catch (error: any) {
+      if (error?.response?.status === 404 || error?.response?.status === 422) {
+        return { labour: [], material: [], assets: [] };
+      }
+      throw {
+        message: error.response?.data?.message || 'Failed to load resources usage by days',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /**
+   * Material Used Vs Store Issue - POST /inventory/inventory-report
+   * type: 'material-used-vs-store-issue'
+   * Compares store issue quantity vs DPR usage for materials.
+   * Required: project|projectId, subproject|subProjectId, store|storeId, from_date|dateForm, to_date|dateTo
+   * Response: material array with code, name, specification, unit, issue_qty, dpr_qty, variation
+   */
+  getMaterialUsedVsStoreIssue: async (params: {
+    project?: string | number;
+    projectId?: string | number;
+    subproject?: string | number;
+    subProjectId?: string | number;
+    store?: string | number;
+    storeId?: string | number;
+    from_date?: string;
+    dateForm?: string;
+    to_date?: string;
+    dateTo?: string;
+  }): Promise<any[]> => {
+    try {
+      const project = params.project ?? params.projectId;
+      const subproject = params.subproject ?? params.subProjectId;
+      const store = params.store ?? params.storeId;
+      const fromStr = (params.from_date ?? params.dateForm ?? '').slice(0, 10);
+      const toStr = (params.to_date ?? params.dateTo ?? '').slice(0, 10);
+      if (!project || !subproject || !store || !fromStr || !toStr) {
+        return [];
+      }
+      const payload = {
+        type: 'material-used-vs-store-issue',
+        project,
+        subproject,
+        store,
+        from_date: fromStr,
+        to_date: toStr,
+      };
+      const response = await apiClient.post('/inventory/inventory-report', payload);
+      const data = response.data?.data ?? response.data;
+      const arr = data?.material ?? data?.materials ?? data ?? [];
+      return Array.isArray(arr) ? arr : [];
+    } catch (error: any) {
+      if (error?.response?.status === 404 || error?.response?.status === 422) return [];
+      throw {
+        message: error.response?.data?.message || 'Failed to load material used vs store issue report',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
+// Project Allocation / Permissions API - company_project_permissions
+// Base: /api/project-allocation-* | Auth: Bearer token, auth:company-api
+export const projectAllocationAPI = {
+  /** GET /project-allocation-list - List all project permissions */
+  list: async (): Promise<any[]> => {
+    try {
+      const response = await apiClient.get('/project-allocation-list');
+      const data = response.data?.data ?? response.data ?? [];
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch project permissions',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /** GET /project-allocation-add-form - Projects and users for add form */
+  getAddFormData: async (): Promise<{ projects: any[]; users: any[] }> => {
+    try {
+      const response = await apiClient.get('/project-allocation-add-form');
+      const data = response.data?.data ?? response.data ?? {};
+      return {
+        projects: Array.isArray(data.projects) ? data.projects : [],
+        users: Array.isArray(data.users) ? data.users : [],
+      };
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch add form data',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /** POST /project-allocation-add - Add project permission(s) */
+  add: async (params: {
+    project_id?: number;
+    project_uuid?: string;
+    user_allocation: number[];
+    sub_project_id?: number | null;
+  }): Promise<any> => {
+    try {
+      const payload: Record<string, any> = {
+        user_allocation: params.user_allocation,
+      };
+      if (params.project_id != null) payload.project_id = params.project_id;
+      if (params.project_uuid != null && params.project_uuid !== '') payload.project_uuid = params.project_uuid;
+      if (params.sub_project_id != null) payload.sub_project_id = params.sub_project_id;
+      const response = await apiClient.post('/project-allocation-add', payload);
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to add project permission',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /** GET /project-allocation-edit/{uuid} - Edit form data by project UUID */
+  getEditFormData: async (projectUuid: string): Promise<any> => {
+    try {
+      const response = await apiClient.get(`/project-allocation-edit/${encodeURIComponent(projectUuid)}`);
+      return response.data?.data ?? response.data ?? {};
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch project allocation data',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /** GET /project-allocation-project-filter/{uuid} - Subprojects for a project */
+  getSubprojects: async (projectUuid: string): Promise<any[]> => {
+    try {
+      const response = await apiClient.get(`/project-allocation-project-filter/${encodeURIComponent(projectUuid)}`);
+      const data = response.data?.data ?? response.data ?? {};
+      const list = data.subprojects ?? data.sub_projects ?? [];
+      return Array.isArray(list) ? list : [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch subprojects',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /** DELETE /project-allocation-delete/{id} - Delete permission by company_project_permissions.id */
+  delete: async (id: number | string): Promise<void> => {
+    try {
+      await apiClient.delete(`/project-allocation-delete/${id}`);
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to delete project permission',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
 };
 
 // Safety API - Matching Laravel routes (SafetyController)
@@ -3127,6 +3486,27 @@ export const dprAPI = {
   generatePDF: async (dprId: number | string): Promise<any> => {
     try {
       const response = await apiClient.post('/generate-pdf', { dpr: dprId });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to generate PDF',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /** Generate DPR PDF by project, date, emp_id (no dpr ID required). POST /generate-pdf with project, date, emp_id. */
+  generatePDFByParams: async (params: {
+    project: string | number;
+    date: string;
+    emp_id?: string | number;
+  }): Promise<any> => {
+    try {
+      const payload: Record<string, unknown> = {
+        project: params.project,
+        date: params.date.slice(0, 10),
+      };
+      if (params.emp_id != null && params.emp_id !== '') payload.emp_id = params.emp_id;
+      const response = await apiClient.post('/generate-pdf', payload);
       return response.data;
     } catch (error: any) {
       throw {
@@ -3863,22 +4243,34 @@ export const materialRequestAPI = {
   /**
    * POST /inventory/inventory-report - PR (Indent / Purchase Request) report
    * Backend type: 'pr'
-   * Request: { type: 'pr', projectId, subProjectId?, dateForm, dateTo, indentNo? }
-   * Response: data.material - array with sl_no, code, name, specification, unit, totalRequiredQty, totalRequiredDate, requiredforActivities, remarks, currentStock
+   * All filters optional. With no filters, returns all materials with material requests.
+   * Request: { type: 'pr', projectId|project?, subProjectId|subproject?, dateForm|date_from?, dateTo|date_to?, indentNo|indent_no? }
+   * Response: data.material - array with sl_no, name, specification, code, unit, totalRequiredQty, totalRequiredDate, requiredforActivities, remarks, currentStock
    */
-  getReport: async (filters: {
-    projectId: number | string;
+  getReport: async (filters?: {
+    projectId?: number | string;
+    project?: number | string;
     subProjectId?: number | string;
+    subproject?: number | string;
     dateForm?: string;
+    date_from?: string;
     dateTo?: string;
+    date_to?: string;
     indentNo?: string;
+    indent_no?: string;
   }): Promise<any[]> => {
     try {
-      const payload: Record<string, unknown> = { type: 'pr', projectId: filters.projectId };
-      if (filters.subProjectId != null && filters.subProjectId !== '') payload.subProjectId = filters.subProjectId;
-      if (filters.dateForm) payload.dateForm = filters.dateForm.slice(0, 10);
-      if (filters.dateTo) payload.dateTo = filters.dateTo.slice(0, 10);
-      if (filters.indentNo != null && String(filters.indentNo).trim()) payload.indentNo = filters.indentNo.trim();
+      const payload: Record<string, unknown> = { type: 'pr' };
+      const project = filters?.projectId ?? filters?.project;
+      if (project != null && project !== '') payload.projectId = project;
+      const subproject = filters?.subProjectId ?? filters?.subproject;
+      if (subproject != null && subproject !== '') payload.subProjectId = subproject;
+      const dateForm = (filters?.dateForm ?? filters?.date_from ?? '').slice(0, 10);
+      if (dateForm) payload.dateForm = dateForm;
+      const dateTo = (filters?.dateTo ?? filters?.date_to ?? '').slice(0, 10);
+      if (dateTo) payload.dateTo = dateTo;
+      const indentNo = (filters?.indentNo ?? filters?.indent_no ?? '').trim();
+      if (indentNo) payload.indentNo = indentNo;
       const response = await apiClient.post('/inventory/inventory-report', payload);
       const data = response.data?.data ?? response.data;
       const material = data?.material ?? data?.materials ?? data;
@@ -4321,24 +4713,39 @@ export const rfqAPI = {
   },
   /**
    * POST /inventory/inventory-report - RFQ report
-   * Request: { type: 'rfq', projectId, subProjectId?, dateForm, dateTo, prepared?, rfqno? }
-   * Response: data.material = RFQ table rows
+   * Backend type: 'rfq'
+   * All filters optional. With no filters, returns all RFQ materials.
+   * Request: { type: 'rfq', projectId|project?, subProjectId|subproject?, dateForm|date_from?, dateTo|date_to?, prepared|prepared_by?, rfqno|rfq_no? }
+   * Response: data.material - array with sl_no, code, name, specification, unit, required_qty, required_date, quote_rate
    */
-  getReport: async (filters: {
-    projectId: number | string;
+  getReport: async (filters?: {
+    projectId?: number | string;
+    project?: number | string;
     subProjectId?: number | string;
+    subproject?: number | string;
     dateForm?: string;
+    date_from?: string;
     dateTo?: string;
+    date_to?: string;
     prepared?: number | string;
+    prepared_by?: number | string;
     rfqno?: string;
+    rfq_no?: string;
   }): Promise<any[]> => {
     try {
-      const payload: Record<string, unknown> = { type: 'rfq', projectId: filters.projectId };
-      if (filters.subProjectId != null && filters.subProjectId !== '') payload.subProjectId = filters.subProjectId;
-      if (filters.dateForm) payload.dateForm = filters.dateForm.slice(0, 10);
-      if (filters.dateTo) payload.dateTo = filters.dateTo.slice(0, 10);
-      if (filters.prepared != null && filters.prepared !== '') payload.prepared = filters.prepared;
-      if (filters.rfqno != null && String(filters.rfqno).trim()) payload.rfqno = filters.rfqno.trim();
+      const payload: Record<string, unknown> = { type: 'rfq' };
+      const project = filters?.projectId ?? filters?.project;
+      if (project != null && project !== '') payload.projectId = project;
+      const subproject = filters?.subProjectId ?? filters?.subproject;
+      if (subproject != null && subproject !== '') payload.subProjectId = subproject;
+      const dateForm = (filters?.dateForm ?? filters?.date_from ?? '').slice(0, 10);
+      if (dateForm) payload.dateForm = dateForm;
+      const dateTo = (filters?.dateTo ?? filters?.date_to ?? '').slice(0, 10);
+      if (dateTo) payload.dateTo = dateTo;
+      const prepared = filters?.prepared ?? filters?.prepared_by;
+      if (prepared != null && prepared !== '') payload.prepared = prepared;
+      const rfqno = (filters?.rfqno ?? filters?.rfq_no ?? '').trim();
+      if (rfqno) payload.rfqno = rfqno;
       const response = await apiClient.post('/inventory/inventory-report', payload);
       const data = response.data?.data ?? response.data;
       const material = data?.material ?? data?.materials ?? data;
@@ -4764,28 +5171,34 @@ export const goodsIssueAPI = {
     dateFrom?: string;
     dateTo?: string;
     search?: string;
-    dataType: 'materials' | 'machines';
+    dataType?: 'materials' | 'machines';
     reportType?: 'issue-slip' | 'issue-details';
   }): Promise<any[]> => {
     try {
       const reportType = filters.reportType ?? 'issue-slip';
+      const dateStr = (filters.date ?? filters.dateFrom ?? '').toString().slice(0, 10);
+      const dateToStr = (filters.dateTo ?? '').toString().slice(0, 10);
+      const project = filters.projectId != null && filters.projectId !== '' ? filters.projectId : undefined;
+      const store = filters.storeId != null && filters.storeId !== '' ? filters.storeId : undefined;
+
+      if (reportType === 'issue-slip') {
+        if (!project || !store || !dateStr) return [];
+      }
+
       const payload: Record<string, unknown> = {
         type: reportType,
-        project: filters.projectId,
-        projectId: filters.projectId,
-        item_type: filters.dataType,
+        project: project ?? filters.projectId,
+        projectId: project ?? filters.projectId,
       };
-      if (filters.storeId != null && filters.storeId !== '') {
-        payload.store = filters.storeId;
-        payload.storeId = filters.storeId;
+      if (store != null) {
+        payload.store = store;
+        payload.storeId = store;
       }
+      if (dateStr) payload.from_date = dateStr;
+      if (reportType === 'issue-details' && dateToStr) payload.to_date = dateToStr;
+      const itemType = filters.dataType;
+      if (itemType) payload.item_type = itemType;
       if (filters.issueToId != null && filters.issueToId !== '') payload.entry_type = filters.issueToId;
-      if (filters.date) {
-        payload.from_date = filters.date.slice(0, 10);
-        payload.date = filters.date.slice(0, 10);
-      }
-      if (filters.dateFrom) payload.from_date = filters.dateFrom.slice(0, 10);
-      if (filters.dateTo) payload.to_date = filters.dateTo.slice(0, 10);
       if (filters.search != null && String(filters.search).trim()) payload.search = filters.search.trim();
       const response = await apiClient.post('/inventory/inventory-report', payload);
       const data = response.data?.data ?? response.data;
@@ -4951,44 +5364,70 @@ export const goodsReceiptAPI = {
   /**
    * POST /inventory/inventory-report - GRN/MRN Slip / GRN Details report
    * Backend types: 'grn-slip' (single date), 'grn-details' (date range)
-   * Request: { type, project, store, from_date/to_date, entry_type?, item_type, supplier?, search? }
-   * Response: data.assets (grn-slip returns fetchHeadData + assets, grn-details returns assets)
+   * GRN Slip required: project|projectId, store|storeId, from_date|date
+   * Optional: supplier, entry_type, item_type, search (GRN no or delivery ref copy number)
+   * Response: grn-slip returns { fetchHeadData, assets }; grn-details returns assets
+   * fetchHeadData: project name, date, store name/location, entry type, supplier, delivery ref, GRN number
+   * assets: sl_no, grn_no, date, code, name, specification, unit, receipt_qty, reject_qty, accepted_qty, rate, amount, po_qty, po_balance, remarks
    */
   getReport: async (filters: {
-    projectId: number | string;
+    projectId?: number | string;
+    project?: number | string;
     storeId?: number | string;
+    store?: number | string;
     entryTypeId?: number | string;
+    entry_type?: number | string;
     supplierId?: number | string;
+    supplier?: number | string;
     dateFrom?: string;
+    date?: string;
+    from_date?: string;
     dateTo?: string;
+    to_date?: string;
     search?: string;
-    dataType: 'materials' | 'machines';
+    dataType?: 'materials' | 'machines';
+    item_type?: 'materials' | 'machines';
     reportType?: 'grn-slip' | 'grn-details';
-  }): Promise<any[]> => {
+  }): Promise<any[] | { fetchHeadData?: any; assets: any[] }> => {
     try {
       const reportType = filters.reportType ?? 'grn-slip';
+      const project = filters.projectId ?? filters.project;
+      const store = filters.storeId ?? filters.store;
+      const dateStr = (filters.dateFrom ?? filters.date ?? filters.from_date ?? '').slice(0, 10);
+      const dateToStr = (filters.dateTo ?? filters.to_date ?? '').slice(0, 10);
+      const itemType = filters.dataType ?? filters.item_type ?? 'materials';
+
+      if (reportType === 'grn-slip' && (!project || !store || !dateStr)) {
+        return { assets: [], fetchHeadData: undefined };
+      }
+      if (reportType === 'grn-details' && (!project || !store || !dateStr || !dateToStr)) {
+        return [];
+      }
+
       const payload: Record<string, unknown> = {
         type: reportType,
-        project: filters.projectId,
-        projectId: filters.projectId,
-        item_type: filters.dataType,
+        project: project ?? filters.projectId,
+        projectId: project ?? filters.projectId,
+        store: store ?? filters.storeId,
+        storeId: store ?? filters.storeId,
+        from_date: dateStr,
+        date: dateStr,
+        item_type: itemType,
       };
-      if (filters.storeId != null && filters.storeId !== '') {
-        payload.store = filters.storeId;
-        payload.storeId = filters.storeId;
-      }
-      if (filters.entryTypeId != null && filters.entryTypeId !== '') payload.entry_type = filters.entryTypeId;
-      if (filters.supplierId != null && filters.supplierId !== '') payload.supplier = filters.supplierId;
-      if (filters.dateFrom) {
-        payload.from_date = filters.dateFrom.slice(0, 10);
-        payload.date = filters.dateFrom.slice(0, 10);
-      }
-      if (filters.dateTo) payload.to_date = filters.dateTo.slice(0, 10);
+      if (reportType === 'grn-details' && dateToStr) payload.to_date = dateToStr;
+      const entryType = filters.entryTypeId ?? filters.entry_type;
+      if (entryType != null && entryType !== '') payload.entry_type = entryType;
+      const supplier = filters.supplierId ?? filters.supplier;
+      if (supplier != null && supplier !== '') payload.supplier = supplier;
       if (filters.search != null && String(filters.search).trim()) payload.search = filters.search.trim();
       const response = await apiClient.post('/inventory/inventory-report', payload);
       const data = response.data?.data ?? response.data;
       const arr = data?.assets ?? data?.material ?? data?.materials ?? data;
-      return Array.isArray(arr) ? arr : [];
+      const assets = Array.isArray(arr) ? arr : [];
+      if (reportType === 'grn-slip') {
+        return { fetchHeadData: data?.fetchHeadData ?? data?.fetch_head_data, assets };
+      }
+      return assets;
     } catch (error: any) {
       if (error?.response?.status === 404 || error?.response?.status === 422) {
         return [];

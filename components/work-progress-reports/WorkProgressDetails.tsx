@@ -14,10 +14,12 @@ import {
   ChevronUp,
   ChevronDown,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Loader2
 } from 'lucide-react';
 import DatePickerInput from '../ui/DatePickerInput';
 import { useProjectsFromMasters, useSubprojectsFromMasters } from '../../hooks/useProjectsFromMasters';
+import { masterDataAPI } from '../../services/api';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -39,6 +41,24 @@ interface WorkProgressDetailsProps {
   theme: ThemeType;
 }
 
+function mapApiRowToActivity(row: any, index: number): WorkProgressActivity {
+  const n = (v: any) => (v != null && v !== '' ? Number(v) : 0);
+  const s = (v: any) => String(v ?? '');
+  return {
+    id: String(row.id ?? row.sl_no ?? index + 1),
+    slNo: index + 1,
+    activities: s(row.activities ?? row.activity ?? row.name),
+    unit: s(row.unit),
+    estimateQty: n(row.est_qty ?? row.estimate_qty ?? row.estimateQty),
+    estRate: n(row.est_rate ?? row.estRate),
+    estAmount: n(row.est_amount ?? row.estAmount),
+    completedQty: n(row.completed_qty ?? row.completedQty),
+    estAmountForCompletion: n(row.est_amount_completion ?? row.est_amount_for_completion ?? row.estAmountForCompletion),
+    completionPercentage: n(row.completion ?? row.completion_percentage ?? row.completionPercentage),
+    balanceQty: n(row.balance_qty ?? row.balanceQty),
+  };
+}
+
 const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
   const [selectedProject, setSelectedProject] = useState<string>('');
   const [selectedSubProject, setSelectedSubProject] = useState<string>('');
@@ -48,6 +68,9 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
   const [entriesPerPage, setEntriesPerPage] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
+  const [activities, setActivities] = useState<WorkProgressActivity[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const projects = useProjectsFromMasters();
   const projIdForSub = projects.find((p) => String(p.id) === String(selectedProject))?.id ?? selectedProject;
@@ -60,62 +83,6 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
   const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
   const bgSecondary = isDark ? 'bg-slate-800' : 'bg-slate-50';
 
-  // Default work progress data matching the image
-  const defaultActivities: WorkProgressActivity[] = useMemo(() => [
-    {
-      id: '1',
-      slNo: 1,
-      activities: 'Site cleaning',
-      unit: 'Sqm',
-      estimateQty: 1000,
-      estRate: 150,
-      estAmount: 150000.00,
-      completedQty: 122.00,
-      estAmountForCompletion: 18300.00,
-      completionPercentage: 12.20,
-      balanceQty: 878.00
-    },
-    {
-      id: '2',
-      slNo: 2,
-      activities: 'RCC M20',
-      unit: 'Cum',
-      estimateQty: 110,
-      estRate: 7500,
-      estAmount: 825000.00,
-      completedQty: 2.00,
-      estAmountForCompletion: 15000.00,
-      completionPercentage: 1.82,
-      balanceQty: 108.00
-    },
-    {
-      id: '3',
-      slNo: 3,
-      activities: 'Exacavation',
-      unit: 'Cum',
-      estimateQty: 150,
-      estRate: 200,
-      estAmount: 30000.00,
-      completedQty: 125.00,
-      estAmountForCompletion: 25000.00,
-      completionPercentage: 83.33,
-      balanceQty: 25.00
-    },
-    {
-      id: '4',
-      slNo: 4,
-      activities: 'PCC M15',
-      unit: 'Cum',
-      estimateQty: 250,
-      estRate: 5000,
-      estAmount: 1250000.00,
-      completedQty: 120.00,
-      estAmountForCompletion: 600000.00,
-      completionPercentage: 48.00,
-      balanceQty: 130.00
-    },
-  ], []);
-
   // Load projects from Projects component (localStorage)
   useEffect(() => {
     if (!selectedProject) setSelectedSubProject('');
@@ -124,9 +91,39 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
   // Required filters for loading table: project, fromDate, toDate
   const filtersReady = Boolean(selectedProject && fromDate && toDate);
 
+  // Fetch work progress details from API when filters are ready
+  useEffect(() => {
+    if (!filtersReady) {
+      setActivities([]);
+      return;
+    }
+    setIsLoading(true);
+    setLoadError(null);
+    masterDataAPI
+      .getWorkProgressDetailsReport({
+        project: selectedProject,
+        subproject: selectedSubProject || undefined,
+        date_from: fromDate,
+        date_to: toDate,
+      })
+      .then((res) => {
+        const rows = res?.activities ?? (Array.isArray(res) ? res : []);
+        const mapped = Array.isArray(rows) ? rows.map((r, i) => mapApiRowToActivity(r, i)) : [];
+        setActivities(mapped);
+      })
+      .catch((e: any) => {
+        setLoadError(e?.message || 'Failed to load work progress details');
+        setActivities([]);
+      })
+      .finally(() => setIsLoading(false));
+  }, [selectedProject, selectedSubProject, fromDate, toDate, filtersReady]);
+
+  // Use API activities only (no fallback demo data)
+  const activitiesSource = activities;
+
   // Filter and sort activities
   const filteredAndSortedActivities = useMemo(() => {
-    let filtered = defaultActivities.filter(activity =>
+    let filtered = activitiesSource.filter(activity =>
       activity.activities.toLowerCase().includes(searchQuery.toLowerCase()) ||
       activity.unit.toLowerCase().includes(searchQuery.toLowerCase())
     );
@@ -148,7 +145,7 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
     }
 
     return filtered;
-  }, [defaultActivities, searchQuery, sortConfig]);
+  }, [activitiesSource, searchQuery, sortConfig]);
 
   // Pagination
   const totalPages = Math.ceil(filteredAndSortedActivities.length / entriesPerPage);
@@ -535,6 +532,17 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
       {/* Work Progress Table - only when filters are selected */}
       {filtersReady ? (
       <div className={`rounded-xl border overflow-hidden ${cardClass}`}>
+        {isLoading ? (
+          <div className="flex items-center justify-center py-16 gap-3">
+            <Loader2 className={`w-8 h-8 animate-spin ${textSecondary}`} />
+            <span className={`text-sm font-bold ${textSecondary}`}>Loading work progress details...</span>
+          </div>
+        ) : loadError ? (
+          <div className="flex flex-col items-center justify-center py-16 gap-3">
+            <p className={`text-sm font-bold ${isDark ? 'text-red-400' : 'text-red-600'}`}>{loadError}</p>
+          </div>
+        ) : (
+        <>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[900px]">
             <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
@@ -646,6 +654,8 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
             </button>
           </div>
         </div>
+        </>
+        )}
       </div>
       ) : (
         <div className={`rounded-xl border p-12 text-center ${cardClass}`}>

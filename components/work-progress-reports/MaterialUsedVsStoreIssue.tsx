@@ -16,7 +16,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import DatePickerInput from '../ui/DatePickerInput';
-import { masterDataAPI, dprAPI, goodsIssueAPI } from '../../services/api';
+import { masterDataAPI } from '../../services/api';
 import { useToast } from '../../contexts/ToastContext';
 
 interface Project {
@@ -135,7 +135,7 @@ const MaterialUsedVsStoreIssue: React.FC<MaterialUsedVsStoreIssueProps> = ({ the
   }, [selectedProject, projects]);
 
   const loadReportData = useCallback(async () => {
-    if (!selectedProject || !fromDate || !toDate) {
+    if (!selectedProject || !selectedSubProject || !selectedStore || !fromDate || !toDate) {
       setTableData([]);
       return;
     }
@@ -146,121 +146,26 @@ const MaterialUsedVsStoreIssue: React.FC<MaterialUsedVsStoreIssueProps> = ({ the
       const projId = proj?.id ?? selectedProject;
       const fromStr = fromDate.length >= 10 ? fromDate.slice(0, 10) : fromDate;
       const toStr = toDate.length >= 10 ? toDate.slice(0, 10) : toDate;
-
-      // DPR materials aggregate
-      const dprMap: Record<string, { code: string; name: string; spec: string; unit: string; qty: number }> = {};
-      let dprList = await dprAPI.getList({ project: projId, subproject: selectedSubProject || undefined });
-      let dprArr = Array.isArray(dprList) ? dprList : [];
-      if (dprArr.length === 0) dprList = await dprAPI.getList({});
-      dprArr = Array.isArray(dprList) ? dprList : [];
-      const dprsInRange = dprArr.filter((d: any) => {
-        const dDate = d?.date ?? d?.dpr_date ?? d?.name;
-        const dStr = typeof dDate === 'string' && dDate.length >= 10 ? dDate.slice(0, 10) : '';
-        if (!dStr) return false;
-        const dProj = d?.projects_id?.id ?? d?.projects_id ?? d?.projects?.id;
-        if (String(dProj) !== String(projId)) return false;
-        return dStr >= fromStr && dStr <= toStr;
+      const arr = await masterDataAPI.getMaterialUsedVsStoreIssue({
+        project: projId,
+        subproject: selectedSubProject,
+        store: selectedStore,
+        from_date: fromStr,
+        to_date: toStr,
       });
-      for (const d of dprsInRange) {
-        try {
-          const details = await dprAPI.getDetails(d.id);
-          const raw = details?.data ?? details ?? {};
-          const materials = raw?.materials ?? raw?.materials_history ?? [];
-          const list = Array.isArray(materials) ? materials : [];
-          for (const r of list) {
-            const mat = r?.materials ?? r?.material ?? r;
-            const code = mat?.code ?? r?.code ?? '-';
-            const name = mat?.name ?? r?.material_name ?? r?.materials_name ?? '-';
-            const spec = mat?.specification ?? r?.specification ?? '-';
-            const unit = mat?.unit ?? r?.unit ?? '-';
-            const qty = Number(r?.qty ?? r?.quantity ?? 0);
-            if (!code || code === '-') continue;
-            const key = String(code).toLowerCase();
-            if (!dprMap[key]) dprMap[key] = { code, name, spec, unit, qty: 0 };
-            dprMap[key].qty += qty;
-          }
-        } catch {
-          /* skip */
-        }
-      }
-
-      // Store issue aggregate - from goods issue list
-      const issueMap: Record<string, number> = {};
-      try {
-        const issueList = await goodsIssueAPI.list();
-        const issues = Array.isArray(issueList) ? issueList : [];
-        for (const issue of issues) {
-          const issueProj = issue?.projects_id ?? issue?.project_id ?? issue?.projects?.id;
-          const issueStores = issue?.store_warehouses_id ?? issue?.store_id ?? issue?.store_warehouses;
-          const storeArr = Array.isArray(issueStores) ? issueStores : (issueStores != null ? [issueStores] : []);
-          const issueDate = issue?.date ?? issue?.issue_date;
-          const dStr = typeof issueDate === 'string' && issueDate.length >= 10 ? issueDate.slice(0, 10) : '';
-          if (String(issueProj) !== String(projId)) continue;
-          if (dStr && (dStr < fromStr || dStr > toStr)) continue;
-          if (selectedStore && storeArr.length > 0 && !storeArr.some((s: any) => String(s?.id ?? s) === String(selectedStore))) continue;
-          const details = issue?.issue_goods_details ?? issue?.details ?? issue?.goods_details ?? [];
-          const detailList = Array.isArray(details) ? details : [];
-          for (const d of detailList) {
-            const code = d?.materials?.code ?? d?.materialCode ?? d?.code ?? d?.materials_id;
-            const qty = Number(d?.issue_qty ?? d?.qty ?? 0);
-            if (!code) continue;
-            const key = String(code).toLowerCase();
-            issueMap[key] = (issueMap[key] ?? 0) + qty;
-          }
-          if (detailList.length === 0 && issue?.id) {
-            try {
-              const editData = await goodsIssueAPI.edit(issue.id);
-              const editDetails = editData?.issue_goods_details ?? editData?.details ?? editData?.goods_details ?? [];
-              const list = Array.isArray(editDetails) ? editDetails : [];
-              for (const d of list) {
-                const code = d?.materials?.code ?? d?.materialCode ?? d?.code ?? d?.materials_id;
-                const qty = Number(d?.issue_qty ?? d?.qty ?? 0);
-                if (!code) continue;
-                const key = String(code).toLowerCase();
-                issueMap[key] = (issueMap[key] ?? 0) + qty;
-              }
-            } catch {
-              /* skip */
-            }
-          }
-        }
-      } catch {
-        /* goods issue may not be available */
-      }
-
-      // Merge into report rows
-      const allKeys = new Set([...Object.keys(dprMap), ...Object.keys(issueMap)]);
-      const rows: ReportRow[] = [];
-      for (const key of allKeys) {
-        const dpr = dprMap[key];
-        const issueQty = issueMap[key] ?? 0;
-        const dprQty = dpr?.qty ?? 0;
-        const variation = issueQty - dprQty;
-        rows.push({
-          id: key,
-          code: dpr?.code ?? key,
-          name: dpr?.name ?? key,
-          specification: dpr?.spec ?? '-',
-          unit: dpr?.unit ?? '-',
-          issueQty,
-          dprQty,
-          variation,
-        });
-      }
-      for (const key of Object.keys(issueMap)) {
-        if (allKeys.has(key)) continue;
-        const issueQty = issueMap[key] ?? 0;
-        rows.push({
-          id: key,
-          code: key,
-          name: key,
-          specification: '-',
-          unit: '-',
-          issueQty,
-          dprQty: 0,
-          variation: issueQty,
-        });
-      }
+      const rows: ReportRow[] = (arr ?? []).map((r: any, i: number) => {
+        const code = r?.code ?? '-';
+        return {
+          id: `${code}-${i}`,
+          code,
+          name: r?.name ?? '-',
+          specification: r?.specification ?? '-',
+          unit: r?.unit ?? '-',
+          issueQty: Number(r?.issue_qty ?? 0),
+          dprQty: Number(r?.dpr_qty ?? 0),
+          variation: Number(r?.variation ?? 0),
+        };
+      });
       setTableData(rows);
     } catch (err: any) {
       toast.showError(err?.message || 'Failed to load report data');
@@ -271,7 +176,7 @@ const MaterialUsedVsStoreIssue: React.FC<MaterialUsedVsStoreIssueProps> = ({ the
   }, [selectedProject, selectedSubProject, selectedStore, fromDate, toDate, projects, toast]);
 
   useEffect(() => {
-    if (selectedProject && fromDate && toDate) loadReportData();
+    if (selectedProject && selectedSubProject && selectedStore && fromDate && toDate) loadReportData();
   }, [selectedProject, selectedSubProject, selectedStore, fromDate, toDate, loadReportData]);
 
   const handleSort = (key: string) => {
@@ -344,7 +249,7 @@ const MaterialUsedVsStoreIssue: React.FC<MaterialUsedVsStoreIssueProps> = ({ the
             </div>
           </div>
           <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Sub Project</label>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Sub Project <span className="text-red-500">*</span></label>
             <div className="relative">
               <Layers className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} z-10`} />
               <select
@@ -359,7 +264,7 @@ const MaterialUsedVsStoreIssue: React.FC<MaterialUsedVsStoreIssueProps> = ({ the
             </div>
           </div>
           <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Stores</label>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Store <span className="text-red-500">*</span></label>
             <div className="relative">
               <Warehouse className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} z-10`} />
               <select
@@ -374,7 +279,7 @@ const MaterialUsedVsStoreIssue: React.FC<MaterialUsedVsStoreIssueProps> = ({ the
             </div>
           </div>
           <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Select From Date</label>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>From Date <span className="text-red-500">*</span></label>
             <DatePickerInput
               value={fromDate}
               onChange={(e) => {
@@ -387,7 +292,7 @@ const MaterialUsedVsStoreIssue: React.FC<MaterialUsedVsStoreIssueProps> = ({ the
             />
           </div>
           <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Select To Date</label>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>To Date <span className="text-red-500">*</span></label>
             <DatePickerInput
               value={toDate}
               onChange={(e) => setToDate(e.target.value)}
@@ -412,7 +317,7 @@ const MaterialUsedVsStoreIssue: React.FC<MaterialUsedVsStoreIssueProps> = ({ the
       </div>
 
       {/* Data Table */}
-      {selectedProject && fromDate && toDate && (
+      {selectedProject && selectedSubProject && selectedStore && fromDate && toDate && (
         <div className={`rounded-xl border ${cardClass} overflow-hidden relative min-h-[200px]`}>
           {isLoading && (
             <div className={`absolute inset-0 z-10 rounded-xl ${isDark ? 'bg-slate-900/80' : 'bg-white/80'} flex items-center justify-center`}>
@@ -461,7 +366,7 @@ const MaterialUsedVsStoreIssue: React.FC<MaterialUsedVsStoreIssueProps> = ({ the
                 {!isLoading && paginated.length === 0 && (
                 <tr>
                   <td colSpan={7} className={`px-4 py-12 text-center ${textSecondary}`}>
-                      No data available. Select filters and ensure the date range has DPR or store issue records.
+                      No data available. Select all filters and ensure the date range has DPR or store issue records.
                   </td>
                 </tr>
               )}

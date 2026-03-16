@@ -143,7 +143,7 @@ const GRNDetailsReport: React.FC<GRNDetailsReportProps> = ({ theme }) => {
   }, [selectedProject]);
 
   const loadReportData = useCallback(async () => {
-    if (!selectedProject) {
+    if (!selectedProject || !selectedStore || !fromDate || !toDate) {
       setTableData([]);
       return;
     }
@@ -159,16 +159,16 @@ const GRNDetailsReport: React.FC<GRNDetailsReportProps> = ({ theme }) => {
       try {
         const raw = await goodsReceiptAPI.getReport({
           projectId: projId,
-          storeId: selectedStore || undefined,
+          storeId: selectedStore,
           entryTypeId: selectedEntryType || undefined,
           supplierId: selectedSupplier || undefined,
-          dateFrom: fromStr || undefined,
-          dateTo: toStr || undefined,
+          from_date: fromStr,
+          to_date: toStr,
           search: searchQuery.trim() || undefined,
           dataType: activeTab,
           reportType: 'grn-details',
         });
-        const arr = Array.isArray(raw) ? raw : [];
+        const arr = Array.isArray(raw) ? raw : (raw?.assets ?? []);
         for (const item of arr) {
           const mat = item?.materials ?? item?.material ?? item?.assets ?? item;
           const code = mat?.code ?? item?.code ?? '-';
@@ -178,10 +178,10 @@ const GRNDetailsReport: React.FC<GRNDetailsReportProps> = ({ theme }) => {
           const recQty = Number(item?.recipt_qty ?? item?.receipt_qty ?? item?.receiptQty ?? 0);
           const rejQty = Number(item?.reject_qty ?? item?.reject_qty ?? item?.rejectQty ?? 0);
           const accQty = Number(item?.accepted_qty ?? item?.acceptedQty ?? recQty - rejQty);
-          const rate = Number(item?.price ?? item?.rate ?? 0);
-          const amt = rate * accQty;
+          const rate = Number(item?.price ?? item?.rate ?? item?.quote_rate ?? 0);
+          const amt = Number(item?.amount ?? rate * accQty);
           const poQty = Number(item?.po_qty ?? item?.poQty ?? 0);
-          const poBalance = Math.max(0, poQty - accQty);
+          const poBalance = Number(item?.po_balance ?? item?.poBalance ?? 0);
           const remarks = item?.remarkes ?? item?.remarks ?? '-';
           const grnNo = item?.grn_no ?? item?.grnNo ?? item?.inv_inward_reg_no ?? '-';
           const d = item?.date ?? item?.request_date ?? '-';
@@ -208,7 +208,7 @@ const GRNDetailsReport: React.FC<GRNDetailsReportProps> = ({ theme }) => {
         /* API may not be available, fall through to build from list+edit */
       }
 
-      if (rows.length === 0) {
+      if (rows.length === 0 && selectedStore) {
         const inwardList = await goodsReceiptAPI.list();
         const inwards = Array.isArray(inwardList) ? inwardList : [];
         const filtered = inwards.filter((inv: any) => {
@@ -261,7 +261,7 @@ const GRNDetailsReport: React.FC<GRNDetailsReportProps> = ({ theme }) => {
               const rate = Number(d?.price ?? d?.rate ?? 0);
               const amt = rate * accQty;
               const poQty = Number(d?.po_qty ?? 0);
-              const poBalance = Math.max(0, poQty - accQty);
+              const poBalance = (d?.po_balance ?? d?.poBalance) != null ? Number(d?.po_balance ?? d?.poBalance ?? 0) : Math.max(0, poQty - accQty);
               const remarks = d?.remarkes ?? d?.remarks ?? '-';
               rows.push({
                 id: `${invId}-${d?.id ?? rows.length}`,
@@ -296,7 +296,7 @@ const GRNDetailsReport: React.FC<GRNDetailsReportProps> = ({ theme }) => {
   }, [selectedProject, selectedStore, selectedEntryType, selectedSupplier, fromDate, toDate, searchQuery, activeTab, projects, toast]);
 
   useEffect(() => {
-    if (selectedProject) loadReportData();
+    if (selectedProject && selectedStore && fromDate && toDate) loadReportData();
   }, [selectedProject, selectedStore, selectedEntryType, selectedSupplier, fromDate, toDate, searchQuery, activeTab, loadReportData]);
 
   const handleSort = (key: string) => {
@@ -420,7 +420,7 @@ const GRNDetailsReport: React.FC<GRNDetailsReportProps> = ({ theme }) => {
             </div>
           </div>
           <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Store</label>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Store <span className="text-red-500">*</span></label>
             <div className="relative">
               <Warehouse className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} z-10`} />
               <select
@@ -456,7 +456,7 @@ const GRNDetailsReport: React.FC<GRNDetailsReportProps> = ({ theme }) => {
             </select>
           </div>
           <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Select From Date</label>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>From Date <span className="text-red-500">*</span></label>
             <DatePickerInput
               value={fromDate}
               onChange={(e) => {
@@ -469,7 +469,7 @@ const GRNDetailsReport: React.FC<GRNDetailsReportProps> = ({ theme }) => {
             />
           </div>
           <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Select To Date</label>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>To Date <span className="text-red-500">*</span></label>
             <DatePickerInput
               value={toDate}
               onChange={(e) => setToDate(e.target.value)}
@@ -529,7 +529,7 @@ const GRNDetailsReport: React.FC<GRNDetailsReportProps> = ({ theme }) => {
         </div>
       </div>
 
-      {selectedProject && (
+      {selectedProject && selectedStore && fromDate && toDate && (
         <div className={`rounded-xl border ${cardClass} overflow-hidden relative min-h-[200px]`}>
           {isLoading && (
             <div className={`absolute inset-0 z-10 ${isDark ? 'bg-slate-900/80' : 'bg-white/80'} flex items-center justify-center`}>
