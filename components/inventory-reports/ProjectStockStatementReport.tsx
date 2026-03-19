@@ -20,6 +20,9 @@ import {
   Cpu,
 } from 'lucide-react';
 import { useProjectsFromMasters } from '../../hooks/useProjectsFromMasters';
+import * as XLSX from 'xlsx';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { masterDataAPI } from '../../services/api';
 import { useToast } from '../../contexts/ToastContext';
 
@@ -180,7 +183,7 @@ const ProjectStockStatementReport: React.FC<ProjectStockStatementReportProps> = 
   }, [selectedProject, selectedStore, activeTab, toast]);
 
   useEffect(() => {
-    if (selectedProject) loadReportData();
+    if (selectedProject && selectedStore) loadReportData();
   }, [selectedProject, selectedStore, activeTab, loadReportData]);
 
   const handleSort = (key: string) => {
@@ -248,7 +251,22 @@ const ProjectStockStatementReport: React.FC<ProjectStockStatementReportProps> = 
       a.click();
       URL.revokeObjectURL(a.href);
       toast.showSuccess('Downloaded');
-    } else if (format === 'PDF' || format === 'Print') {
+    } else if (format === 'PDF') {
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      doc.setFontSize(16);
+      doc.text(`Project Stock Statement - ${activeTab === 'materials' ? 'Material' : 'Assets'}`, 14, 15);
+      doc.setFontSize(10);
+      const tableHeaders = [headers];
+      const tableBody = filteredAndSorted.map((r, idx) => {
+        const base = isMaterials
+          ? [String(idx + 1), r.class ?? '-', r.code, r.name, r.specification, r.unit]
+          : [String(idx + 1), r.code, r.name, r.specification, r.unit];
+        return [...base, formatNum(r.totalInward), formatNum(r.totalIssue), formatNum(r.availableStock)];
+      });
+      autoTable(doc, { head: tableHeaders, body: tableBody, startY: 22, styles: { fontSize: 8 }, headStyles: { fillColor: [0, 51, 102], textColor: [255, 255, 255] } });
+      doc.save(`project-stock-statement-${activeTab}.pdf`);
+      toast.showSuccess('Downloaded');
+    } else if (format === 'Print') {
       const printContent = `
 <!DOCTYPE html><html><head><title>Project Stock Statement</title>
 <style>body{font-family:Arial;padding:20px} table{width:100%;border-collapse:collapse;font-size:12px} th,td{border:1px solid #000;padding:6px;text-align:left} th{background:#f0f0f0}</style>
@@ -266,7 +284,7 @@ const ProjectStockStatementReport: React.FC<ProjectStockStatementReportProps> = 
       if (w) {
         w.document.write(printContent);
         w.document.close();
-        if (format === 'Print') w.print();
+        setTimeout(() => w.print(), 100);
       }
     }
   };
@@ -315,7 +333,7 @@ const ProjectStockStatementReport: React.FC<ProjectStockStatementReportProps> = 
             </div>
           </div>
           <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Store</label>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Store <span className="text-red-500">*</span></label>
             <div className="relative">
               <Warehouse className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} z-10`} />
               <select
@@ -354,14 +372,14 @@ const ProjectStockStatementReport: React.FC<ProjectStockStatementReportProps> = 
           <button onClick={() => handleExport('PDF')} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100' : 'bg-slate-200 hover:bg-slate-300 text-slate-900'}`}><FileDown className="w-4 h-4" /> PDF</button>
           <button onClick={() => handleExport('Print')} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100' : 'bg-slate-200 hover:bg-slate-300 text-slate-900'}`}><Printer className="w-4 h-4" /> Print</button>
         </div>
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <Search className={`w-4 h-4 ${textSecondary}`} />
+        <div className="relative w-full sm:w-64">
+          <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} z-10 pointer-events-none`} />
           <input
             type="text"
             placeholder="Search table..."
             value={tableSearch}
             onChange={(e) => setTableSearch(e.target.value)}
-            className={`flex-1 sm:w-64 pl-10 pr-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+            className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
           />
         </div>
       </div>
