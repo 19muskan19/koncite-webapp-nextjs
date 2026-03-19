@@ -21,6 +21,9 @@ import {
 } from 'lucide-react';
 import DatePickerInput from '../ui/DatePickerInput';
 import { useProjectsFromMasters } from '../../hooks/useProjectsFromMasters';
+import * as XLSX from 'xlsx';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { masterDataAPI, goodsReturnAPI } from '../../services/api';
 import { useToast } from '../../contexts/ToastContext';
 
@@ -263,7 +266,7 @@ const IssueReturnReport: React.FC<IssueReturnReportProps> = ({ theme }) => {
   }, [selectedProject, selectedStore, selectedEntryType, fromDate, toDate, searchQuery, activeTab, projects, entryTypes, toast]);
 
   useEffect(() => {
-    if (selectedProject) loadReportData();
+    if (selectedProject && selectedStore && fromDate && toDate) loadReportData();
   }, [selectedProject, selectedStore, selectedEntryType, fromDate, toDate, searchQuery, activeTab, loadReportData]);
 
   const handleSort = (key: string) => {
@@ -320,16 +323,41 @@ const IssueReturnReport: React.FC<IssueReturnReportProps> = ({ theme }) => {
       const text = [headers.join('\t'), ...rows.map((row) => row.join('\t'))].join('\n');
       navigator.clipboard.writeText(text);
       toast.showSuccess('Copied to clipboard');
-    } else if (format === 'CSV' || format === 'Excel') {
+    } else if (format === 'CSV') {
       const csv = [headers.join(','), ...rows.map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))].join('\n');
       const blob = new Blob([csv], { type: 'text/csv' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `issue-return-report.${format === 'CSV' ? 'csv' : 'xlsx'}`;
+      a.download = 'issue-return-report.csv';
       a.click();
       URL.revokeObjectURL(a.href);
       toast.showSuccess('Downloaded');
-    } else if (format === 'PDF' || format === 'Print') {
+    } else if (format === 'Excel') {
+      const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Issue Return');
+      const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'issue-return-report.xlsx';
+      a.click();
+      URL.revokeObjectURL(a.href);
+      toast.showSuccess('Downloaded');
+    } else if (format === 'PDF') {
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      doc.setFontSize(16);
+      doc.text(`Issue Return Details Report - ${activeTab === 'materials' ? 'Material' : 'Machines/Assets'}`, 14, 15);
+      doc.setFontSize(10);
+      const tableHeaders = [headers];
+      const tableBody = filteredAndSorted.map((r) => [
+        r.returnNo, r.date, r.code, r.materialsMachine, r.specification, r.unit,
+        formatNum(r.returnQty), r.entryBy, formatNum(r.yetToReturnQty), r.issueTo,
+      ]);
+      autoTable(doc, { head: tableHeaders, body: tableBody, startY: 22, styles: { fontSize: 8 }, headStyles: { fillColor: [0, 51, 102], textColor: [255, 255, 255] } });
+      doc.save('issue-return-report.pdf');
+      toast.showSuccess('Downloaded');
+    } else if (format === 'Print') {
       const printContent = `
 <!DOCTYPE html><html><head><title>Issue Return Details Report</title>
 <style>body{font-family:Arial;padding:20px} table{width:100%;border-collapse:collapse;font-size:12px} th,td{border:1px solid #000;padding:6px;text-align:left} th{background:#f0f0f0}</style>
@@ -342,7 +370,7 @@ const IssueReturnReport: React.FC<IssueReturnReportProps> = ({ theme }) => {
       if (w) {
         w.document.write(printContent);
         w.document.close();
-        if (format === 'Print') w.print();
+        setTimeout(() => w.print(), 100);
       }
     }
   };
@@ -383,7 +411,7 @@ const IssueReturnReport: React.FC<IssueReturnReportProps> = ({ theme }) => {
             </div>
           </div>
           <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Store</label>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Store <span className="text-red-500">*</span></label>
             <div className="relative">
               <Warehouse className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} z-10`} />
               <select
@@ -408,7 +436,7 @@ const IssueReturnReport: React.FC<IssueReturnReportProps> = ({ theme }) => {
             </select>
           </div>
           <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Select From Date</label>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Select From Date <span className="text-red-500">*</span></label>
             <DatePickerInput
               value={fromDate}
               onChange={(e) => {
@@ -421,7 +449,7 @@ const IssueReturnReport: React.FC<IssueReturnReportProps> = ({ theme }) => {
             />
           </div>
           <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Select To Date</label>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Select To Date <span className="text-red-500">*</span></label>
             <DatePickerInput
               value={toDate}
               onChange={(e) => setToDate(e.target.value)}
@@ -469,14 +497,14 @@ const IssueReturnReport: React.FC<IssueReturnReportProps> = ({ theme }) => {
           <button onClick={() => handleExport('PDF')} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100' : 'bg-slate-200 hover:bg-slate-300 text-slate-900'}`}><FileDown className="w-4 h-4" /> PDF</button>
           <button onClick={() => handleExport('Print')} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-bold ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100' : 'bg-slate-200 hover:bg-slate-300 text-slate-900'}`}><Printer className="w-4 h-4" /> Print</button>
         </div>
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <Search className={`w-4 h-4 ${textSecondary}`} />
+        <div className="relative w-full sm:w-64">
+          <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} z-10 pointer-events-none`} />
           <input
             type="text"
             placeholder="Search table..."
             value={tableSearch}
             onChange={(e) => setTableSearch(e.target.value)}
-            className={`flex-1 sm:w-64 pl-10 pr-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+            className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
           />
         </div>
       </div>

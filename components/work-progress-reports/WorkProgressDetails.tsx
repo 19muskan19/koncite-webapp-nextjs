@@ -348,7 +348,7 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
     const projectName = projects.find((p) => String(p.id) === String(selectedProject))?.name ?? selectedProject;
     const subprojectName = subprojects.find((s) => String(s.id) === String(selectedSubProject))?.name ?? selectedSubProject;
 
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     doc.setFontSize(18);
     doc.text('Work Progress Report', 14, 15);
     doc.setFontSize(10);
@@ -376,7 +376,7 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
       body,
       startY: 32,
       styles: { fontSize: 8 },
-      headStyles: { fillColor: [240, 240, 240] },
+      headStyles: { fillColor: [0, 51, 102], textColor: [255, 255, 255] },
     });
 
     doc.save('work-progress-details.pdf');
