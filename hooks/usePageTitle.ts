@@ -14,6 +14,7 @@ const routeTitles: Record<string, string> = {
   '/operations/workforce-management': 'Workforce - KONCITE',
   '/operations/task': 'Task - KONCITE',
   '/labour-strength': 'Labour Strength - KONCITE',
+  '/profile': 'Profile - KONCITE',
   '/subscription': 'Subscription - KONCITE',
   '/project-permissions': 'Project Permissions - KONCITE',
   '/company-users/manage-teams': 'Manage Teams - KONCITE',

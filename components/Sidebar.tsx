@@ -21,8 +21,7 @@ import {
   Settings,
   LogOut,
   ClipboardList,
-  Warehouse,
-  Pin
+  Warehouse
 } from 'lucide-react';
 import { ViewType, ThemeType } from '@/types';
 import { useUser } from '@/contexts/UserContext';
@@ -212,6 +211,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen, s
       label: 'Settings', 
       icon: Settings, 
       children: [
+        { label: 'Profile', id: 'PROFILE', path: '/profile' },
         { label: 'Subscriptions and Billing', id: ViewType.SUBSCRIPTION, path: '/subscription' },
         { label: 'Logout', id: 'LOGOUT', path: '#' }
       ] 
@@ -394,16 +394,6 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen, s
                   <p className="font-bold text-sm truncate">{company?.name || user?.company_name || 'Company'}</p>
                 </div>
               </>
-            )}
-            {sidebarOpen && setSidebarPinned && (
-              <button
-                onClick={() => setSidebarPinned(!sidebarPinned)}
-                className={`p-1.5 rounded transition-colors ${sidebarPinned ? 'text-[#C2D642] bg-[#C2D642]/10' : 'opacity-60 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5'}`}
-                title={sidebarPinned ? 'Unpin sidebar (minimize when clicking links)' : 'Pin sidebar (keep open when clicking links)'}
-                aria-label={sidebarPinned ? 'Unpin sidebar' : 'Pin sidebar'}
-              >
-                <Pin className={`w-4 h-4 ${sidebarPinned ? 'rotate-45' : ''}`} />
-              </button>
             )}
             <button onClick={() => setSidebarOpen(!sidebarOpen)} className={`hover:bg-black/5 dark:hover:bg-white/5 rounded transition-colors ${sidebarOpen ? 'p-1' : 'p-1.5 flex-1 flex justify-center lg:flex-initial'}`} aria-label="Toggle sidebar">
               <Menu className={sidebarOpen ? 'w-4 h-4 opacity-60' : 'w-5 h-5 opacity-60 lg:w-6 lg:h-6'} />

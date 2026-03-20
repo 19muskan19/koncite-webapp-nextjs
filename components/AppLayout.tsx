@@ -8,12 +8,15 @@ import {
   Menu,
   Moon,
   Sun,
-  LogOut
+  LogOut,
+  User,
+  ChevronDown
 } from 'lucide-react';
 import { ThemeProvider, useTheme } from '@/contexts/ThemeContext';
 import { useUser } from '@/contexts/UserContext';
 import { MainSidebarProvider } from '@/contexts/MainSidebarContext';
 import { authAPI } from '@/services/api';
+import { getProfileImageUrl } from '@/utils/imageUtils';
 import Sidebar from './Sidebar';
 
 const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -94,6 +97,17 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
   };
 
   const getThemeClass = (prefix: string) => `${prefix}-${theme}`;
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('[data-user-menu]')) return;
+      setUserMenuOpen(false);
+    };
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, []);
 
   return (
     <div className={`flex h-screen overflow-hidden theme-${theme} transition-colors duration-500`}>
@@ -140,18 +154,55 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
               <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border border-[#1e293b]"></span>
             </button>
 
-            <div className="flex items-center gap-3 pl-4 border-l border-white/10">
-              <div className="text-right hidden md:block">
-                <p className="text-sm font-black leading-none">{user?.name || 'User'}</p>
-              </div>
+            <div className="flex items-center gap-3 pl-4 border-l border-white/10 relative" data-user-menu>
               <button
-                onClick={handleLogout}
+                onClick={() => setUserMenuOpen(!userMenuOpen)}
                 className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/10 rounded-lg transition-colors border border-white/5"
-                title="Logout"
+                aria-expanded={userMenuOpen}
+                aria-haspopup="true"
               >
-                <LogOut className="w-4 h-4" />
-                <span className="hidden sm:inline text-sm font-bold">Logout</span>
+                <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 border border-[#C2D642]/30 bg-[#C2D642]/20 flex items-center justify-center">
+                  <img
+                    src={getProfileImageUrl((user as any)?.profile_image ?? (user as any)?.profile_images ?? (user as any)?.avatar, user?.name || 'User')}
+                    alt={user?.name || 'User'}
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      const el = e.target as HTMLImageElement;
+                      el.onerror = null;
+                      el.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(user?.name || 'User')}&background=C2D642&color=fff&size=64`;
+                    }}
+                  />
+                </div>
+                <div className="text-left hidden md:block">
+                  <p className="text-sm font-black leading-none">{user?.name || 'User'}</p>
+                </div>
+                <ChevronDown className={`w-4 h-4 transition-transform ${userMenuOpen ? 'rotate-180' : ''}`} />
               </button>
+              {userMenuOpen && (
+                <div className={`absolute right-0 top-full mt-1 py-1 min-w-[180px] rounded-lg shadow-xl z-50 ${
+                  theme === 'dark' ? 'bg-slate-800 border border-slate-600' : 'bg-white border border-slate-200'
+                }`}>
+                  <Link
+                    href="/profile"
+                    onClick={() => setUserMenuOpen(false)}
+                    className={`flex items-center gap-2 px-4 py-2.5 text-sm font-semibold hover:bg-white/10 ${
+                      theme === 'dark' ? 'text-slate-100' : 'text-slate-900'
+                    }`}
+                  >
+                    <User className="w-4 h-4" />
+                    Profile
+                  </Link>
+                  <button
+                    onClick={() => { setUserMenuOpen(false); handleLogout(); }}
+                    className={`flex items-center gap-2 w-full px-4 py-2.5 text-sm font-semibold hover:bg-white/10 ${
+                      theme === 'dark' ? 'text-slate-100' : 'text-slate-900'
+                    }`}
+                  >
+                    <LogOut className="w-4 h-4" />
+                    Logout
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </header>
