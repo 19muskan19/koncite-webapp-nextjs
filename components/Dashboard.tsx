@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   LineChart,
   Line,
@@ -64,6 +64,8 @@ const getYesterday = () => {
 
 const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
   const toast = useToast();
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
@@ -106,7 +108,7 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
     if (!selectedProject) setSelectedSubProject('');
   }, [selectedProject]);
 
-  const loadOverview = useCallback(async () => {
+  const loadOverview = useCallback(async (signal?: AbortSignal) => {
     if (!selectedProject) {
       setOverviewData(null);
       return;
@@ -116,25 +118,28 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
     try {
       const proj = projects.find((p) => String(p.id) === String(selectedProject));
       const projId = proj?.id ?? selectedProject;
-      const data = await dashboardAPI.getWorkOverview({
-        project: projId,
-        subproject: selectedSubProject || undefined,
-        date: selectedDate || undefined,
-      });
-      setOverviewData(data);
+      const data = await dashboardAPI.getWorkOverview(
+        { project: projId, subproject: selectedSubProject || undefined, date: selectedDate || undefined },
+        signal ? { signal } : undefined
+      );
+      if (!signal?.aborted) setOverviewData(data);
     } catch (e: any) {
-      toast.showWarning(e?.message || 'Failed to load overview');
-      setOverviewData(null);
+      if (e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError') return;
+      toastRef.current.showWarning(e?.message || 'Failed to load overview');
+      if (!signal?.aborted) setOverviewData(null);
     } finally {
-      setIsLoading(false);
+      if (!signal?.aborted) setIsLoading(false);
     }
-  }, [selectedProject, selectedSubProject, selectedDate, projects, toast]);
+  }, [selectedProject, selectedSubProject, selectedDate, projects]);
 
   useEffect(() => {
-    if (activeTab === 'overview' && selectedProject) loadOverview();
+    if (activeTab !== 'overview' || !selectedProject) return;
+    const ac = new AbortController();
+    loadOverview(ac.signal);
+    return () => ac.abort();
   }, [activeTab, selectedProject, loadOverview]);
 
-  const loadWorkProcess = useCallback(async () => {
+  const loadWorkProcess = useCallback(async (signal?: AbortSignal) => {
     if (!selectedProject) {
       setWorkProcessData(null);
       return;
@@ -144,21 +149,21 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
     try {
       const proj = projects.find((p) => String(p.id) === String(selectedProject));
       const projId = proj?.id ?? selectedProject;
-      const data = await dashboardAPI.getWorkProcess({
-        project: projId,
-        subproject: selectedSubProject || undefined,
-        date: selectedDate || undefined,
-      });
-      setWorkProcessData(data);
+      const data = await dashboardAPI.getWorkProcess(
+        { project: projId, subproject: selectedSubProject || undefined },
+        signal ? { signal } : undefined
+      );
+      if (!signal?.aborted) setWorkProcessData(data);
     } catch (e: any) {
-      toast.showWarning(e?.message || 'Failed to load work process');
-      setWorkProcessData(null);
+      if (e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError') return;
+      toastRef.current.showWarning(e?.message || 'Failed to load work process');
+      if (!signal?.aborted) setWorkProcessData(null);
     } finally {
-      setWorkProcessLoading(false);
+      if (!signal?.aborted) setWorkProcessLoading(false);
     }
-  }, [selectedProject, selectedSubProject, selectedDate, projects, toast]);
+  }, [selectedProject, selectedSubProject, projects]);
 
-  const loadActivityList = useCallback(async () => {
+  const loadActivityList = useCallback(async (signal?: AbortSignal) => {
     if (!selectedProject) {
       setActivityList([]);
       return;
@@ -168,48 +173,65 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
     try {
       const proj = projects.find((p) => String(p.id) === String(selectedProject));
       const projId = proj?.id ?? selectedProject;
-      const list = await dashboardAPI.getWorkProcessActivities({
-        project: projId,
-        subproject: selectedSubProject || undefined,
-        date: selectedDate || undefined,
-        filterName: activityTab,
-      });
-      setActivityList(Array.isArray(list) ? list : []);
-      setActivityPage(1);
+      const list = await dashboardAPI.getWorkProcessActivities(
+        { project: projId, subproject: selectedSubProject || undefined, filterName: activityTab },
+        signal ? { signal } : undefined
+      );
+      if (!signal?.aborted) {
+        setActivityList(Array.isArray(list) ? list : []);
+        setActivityPage(1);
+      }
     } catch (e: any) {
-      toast.showWarning(e?.message || 'Failed to load activities');
-      setActivityList([]);
+      if (e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError') return;
+      toastRef.current.showWarning(e?.message || 'Failed to load activities');
+      if (!signal?.aborted) setActivityList([]);
     } finally {
-      setActivityListLoading(false);
+      if (!signal?.aborted) setActivityListLoading(false);
     }
-  }, [selectedProject, selectedSubProject, selectedDate, activityTab, projects, toast]);
+  }, [selectedProject, selectedSubProject, activityTab, projects]);
 
   useEffect(() => {
-    if (activeTab === 'workProgress' && selectedProject) loadWorkProcess();
+    if (activeTab !== 'workProgress' || !selectedProject) return;
+    const ac = new AbortController();
+    loadWorkProcess(ac.signal);
+    return () => ac.abort();
   }, [activeTab, selectedProject, loadWorkProcess]);
 
   useEffect(() => {
-    if (activeTab === 'workProgress' && selectedProject) loadActivityList();
+    if (activeTab !== 'workProgress' || !selectedProject) return;
+    const ac = new AbortController();
+    loadActivityList(ac.signal);
+    return () => ac.abort();
   }, [activeTab, selectedProject, activityTab, loadActivityList]);
 
   useEffect(() => {
-    if (activeTab === 'stock' && selectedProject) {
-      masterDataAPI
-        .getProjectWiseWarehouses(selectedProject)
-        .then((arr) => {
-          const list = Array.isArray(arr) ? arr : [];
-          setStockStores(list.map((s: any) => ({ id: s.id ?? s.store_warehouses_id ?? s.uuid, name: s.name ?? s.store_name ?? s.warehouse_name ?? '' })));
-          setSelectedStockStore('');
-        })
-        .catch(() => setStockStores([]));
-    } else {
+    if (activeTab !== 'stock' || !selectedProject) {
       setStockStores([]);
       setSelectedStockStore('');
+      return;
     }
+    let cancelled = false;
+    masterDataAPI
+      .getProjectWiseWarehouses(selectedProject)
+      .then((arr) => {
+        if (cancelled) return;
+        const list = Array.isArray(arr) ? arr : [];
+        const stores = list.map((s: any) => {
+          const storeId = s.store_warehouses_id ?? s.store_id ?? s.id ?? s.uuid;
+          return { id: storeId, name: s.name ?? s.store_name ?? s.warehouse_name ?? '' };
+        }).filter((s: any) => s.id != null && s.id !== '');
+        setStockStores(stores);
+        setSelectedStockStore(stores.length === 1 ? String(stores[0].id) : '');
+      })
+      .catch(() => {
+        if (!cancelled) setStockStores([]);
+      });
+    return () => { cancelled = true; };
   }, [activeTab, selectedProject]);
 
-  const loadInventoryStocks = useCallback(async (filterName?: 'material' | 'machine') => {
-    if (!selectedProject || !selectedDate) return;
+  const loadInventoryStocks = useCallback(async (filterName?: 'material' | 'machine', signal?: AbortSignal) => {
+    const storeVal = selectedStockStore != null ? String(selectedStockStore).trim() : '';
+    if (!selectedProject || !storeVal || !/^\d+$/.test(storeVal) || !selectedDate) return;
     const fn = filterName ?? stockTab;
     setStockLoading(true);
     setStockMaterialData([]);
@@ -217,29 +239,34 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
     try {
       const proj = projects.find((p) => String(p.id) === String(selectedProject));
       const projId = proj?.id ?? selectedProject;
-      const res = await dashboardAPI.getInventoryStocks({
-        project: projId,
-        store: selectedStockStore || undefined,
-        date: selectedDate,
-        filterName: fn,
-      });
-      const list = fn === 'material' ? (res.materialStocks ?? []) : (res.machineStocks ?? []);
-      const arr = Array.isArray(list) ? list : [];
-      if (fn === 'material') setStockMaterialData(arr);
-      else setStockMachineData(arr);
-      setStockPage(1);
+      const res = await dashboardAPI.getInventoryStocks(
+        { project: projId, store: selectedStockStore, date: selectedDate, filterName: fn },
+        signal ? { signal } : undefined
+      );
+      if (!signal?.aborted) {
+        const list = fn === 'material' ? (res.materialStocks ?? []) : (res.machineStocks ?? []);
+        const arr = Array.isArray(list) ? list : [];
+        if (fn === 'material') setStockMaterialData(arr);
+        else setStockMachineData(arr);
+        setStockPage(1);
+      }
     } catch (e: any) {
-      toast.showWarning(e?.message || 'Failed to load inventory stocks');
-      if (fn === 'material') setStockMaterialData([]);
-      else setStockMachineData([]);
+      if (e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError') return;
+      toastRef.current.showWarning(e?.message || 'Failed to load inventory stocks');
+      if (!signal?.aborted) {
+        if (fn === 'material') setStockMaterialData([]);
+        else setStockMachineData([]);
+      }
     } finally {
-      setStockLoading(false);
+      if (!signal?.aborted) setStockLoading(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- toast omitted to prevent useEffect loop
   }, [selectedProject, selectedStockStore, selectedDate, stockTab, projects]);
 
   useEffect(() => {
-    if (activeTab === 'stock' && selectedProject && selectedDate) loadInventoryStocks();
+    if (activeTab !== 'stock' || !selectedProject || !selectedStockStore || !selectedDate) return;
+    const ac = new AbortController();
+    loadInventoryStocks(undefined, ac.signal);
+    return () => ac.abort();
   }, [activeTab, selectedProject, selectedStockStore, selectedDate, stockTab, loadInventoryStocks]);
 
   const handleStockExport = (tab: 'material' | 'machine', format: 'Copy' | 'CSV' | 'Excel' | 'PDF' | 'Print') => {
@@ -294,23 +321,31 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
   };
 
   useEffect(() => {
+    let cancelled = false;
     setPrPendingLoading(true);
     const projectId = selectedProject ? (projects.find((p) => String(p.id) === String(selectedProject))?.id ?? selectedProject) : undefined;
     materialRequestAPI
       .list({ status: 0, projectId, subprojectId: selectedSubProject || undefined })
       .then((list) => {
+        if (cancelled) return;
         const arr = Array.isArray(list) ? list : [];
         setPrPendingList(arr.filter((r: any) => Number(r.status) === 0));
       })
-      .catch(() => setPrPendingList([]))
-      .finally(() => setPrPendingLoading(false));
+      .catch(() => {
+        if (!cancelled) setPrPendingList([]);
+      })
+      .finally(() => {
+        if (!cancelled) setPrPendingLoading(false);
+      });
+    return () => { cancelled = true; };
   }, [selectedProject, selectedSubProject, projects]);
 
+  // Work status: API returns inProgress, completed, notStart, totalActivites at root
   const workStatus = overviewData?.work_status ?? overviewData?.workStatus ?? {};
-  const inProgress = Number(workStatus.in_progress ?? workStatus.inProgress ?? 0);
-  const completed = Number(workStatus.completed ?? 0);
-  const notStarted = Number(workStatus.not_started ?? workStatus.notStarted ?? 0);
-  const totalActivities = Number(workStatus.total ?? workStatus.totalActivities ?? 0) || inProgress + completed + notStarted;
+  const inProgress = Number(overviewData?.inProgress ?? workStatus.in_progress ?? workStatus.inProgress ?? 0);
+  const completed = Number(overviewData?.completed ?? workStatus.completed ?? 0);
+  const notStarted = Number(overviewData?.notStart ?? workStatus.not_started ?? workStatus.notStarted ?? 0);
+  const totalActivities = Number(overviewData?.totalActivites ?? workStatus.total ?? workStatus.totalActivities ?? 0) || inProgress + completed + notStarted;
 
   const workStatusPieData = [
     { name: 'In Progress', value: inProgress, color: '#C2D642' },
@@ -318,35 +353,55 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
     { name: 'Not Started', value: notStarted, color: '#94a3b8' },
   ].filter((d) => d.value > 0);
 
+  // Cost: API returns estimatedCost, estimatedCostForExecutedQty, balanceEstimate, excessEstimateCost at root
   const costDetails = overviewData?.cost ?? overviewData?.costDetails ?? {};
-  const estimatedCost = Number(costDetails.estimatedCost ?? costDetails.estimated_cost ?? 0);
-  const costForExecuted = Number(costDetails.estimatedCostForExecutedQty ?? costDetails.estimate_cost_for_executed_qty ?? 0);
-  const balanceEstimate = Math.max(0, estimatedCost - costForExecuted);
-  const excessEstimate = Math.max(0, costForExecuted - estimatedCost);
+  const estimatedCost = Number(overviewData?.estimatedCost ?? costDetails.estimatedCost ?? costDetails.estimated_cost ?? 0);
+  const costForExecuted = Number(overviewData?.estimatedCostForExecutedQty ?? costDetails.estimatedCostForExecutedQty ?? costDetails.estimate_cost_for_executed_qty ?? 0);
+  const balanceEstimate = Number(overviewData?.balanceEstimate ?? costDetails.balanceEstimate ?? costDetails.balance_estimate ?? 0) || Math.max(0, estimatedCost - costForExecuted);
+  const excessEstimate = Number(overviewData?.excessEstimateCost ?? costDetails.excessEstimateCost ?? costDetails.excess_estimate ?? 0) || Math.max(0, costForExecuted - estimatedCost);
 
+  // Timeline: API returns totalDuration, projectcompleted, remaining, actualProgress, variation at root
   const timeline = overviewData?.timeline ?? overviewData?.timelineProgress ?? {};
-  const projectDuration = Number(timeline.projectDuration ?? timeline.project_duration ?? 0);
-  const completedDays = Number(timeline.completed ?? timeline.completed_days ?? 0);
-  const remainingDays = Number(timeline.remaining ?? timeline.remaining_days ?? 0);
-  const plannedProgress = projectDuration > 0 ? (completedDays / projectDuration) * 100 : 0;
-  const actualProgress = Number(timeline.actualProgress ?? timeline.actual_progress ?? plannedProgress);
-  const variation = actualProgress - plannedProgress;
+  const projectDuration = Number(overviewData?.totalDuration ?? timeline.projectDuration ?? timeline.project_duration ?? 0);
+  const completedDays = Number(overviewData?.projectcompleted ?? timeline.completed ?? timeline.completed_days ?? 0);
+  const remainingDays = Number(overviewData?.remaining ?? timeline.remaining ?? timeline.remaining_days ?? 0);
+  const plannedProgressArr = overviewData?.monthwiseworkProgess?.plannedProgress ?? overviewData?.plannedProgress ?? timeline.plannedProgress ?? [];
+  const plannedProgress = Array.isArray(plannedProgressArr) && plannedProgressArr.length > 0
+    ? Number(plannedProgressArr[0]) : Number(overviewData?.planeProgress ?? timeline.plannedProgress ?? 0) || (projectDuration > 0 ? (completedDays / projectDuration) * 100 : 0);
+  const actualProgressArr = overviewData?.actualProgress ?? timeline.actualProgress ?? timeline.actual_progress;
+  const actualProgress = Array.isArray(actualProgressArr) && actualProgressArr.length > 0
+    ? Number(actualProgressArr[0]) : Number(actualProgressArr ?? plannedProgress);
+  const variation = Number(overviewData?.variation ?? timeline.variation ?? 0) || actualProgress - plannedProgress;
 
-  const monthWiseData = overviewData?.monthWiseProgress ?? overviewData?.monthwiseworkProgess ?? overviewData?.month_wise_progress ?? [];
+  // Month-wise chart: API returns monthwiseworkProgess.chartData with labels + datasets
+  const monthWiseRaw = overviewData?.monthwiseworkProgess ?? overviewData?.monthWiseProgress ?? overviewData?.month_wise_progress ?? overviewData?.chartData ?? {};
+  const chartLabels = monthWiseRaw?.labels ?? monthWiseRaw?.chartData?.labels ?? overviewData?.labels ?? [];
+  const chartDatasets = monthWiseRaw?.chartData?.datasets ?? monthWiseRaw?.datasets ?? overviewData?.chartData?.datasets ?? [];
+  const actualData = chartDatasets.find((d: any) => d.label?.toLowerCase().includes('actual'))?.data ?? [];
+  const plannedData = chartDatasets.find((d: any) => d.label?.toLowerCase().includes('planned'))?.data ?? [];
+  const monthWiseData = Array.isArray(chartLabels) && chartLabels.length > 0
+    ? chartLabels.map((m: string, i: number) => ({
+        month: m,
+        actual: Number(actualData[i] ?? actualData[0] ?? 0),
+        planned: Number(plannedData[i] ?? plannedData[0] ?? 0),
+      }))
+    : [];
 
-  const dprList = overviewData?.dpr ?? overviewData?.dprs ?? overviewData?.dilyprogessreport ?? [];
+  const dprList = overviewData?.fetchDpr ?? overviewData?.dpr ?? overviewData?.dprs ?? overviewData?.dilyprogessreport ?? [];
 
+  // Labour: API returns totalLabourCount, totalLabourTotal, vendorWiseLabourListing
   const labourStrength = overviewData?.labourStrength ?? overviewData?.labour_strength ?? {};
-  const totalLabour = Number(labourStrength.total ?? labourStrength.total_count ?? 0);
-  const vendorBreakdown = labourStrength.vendor_wise ?? labourStrength.vendorWise ?? [];
+  const totalLabour = Number(overviewData?.totalLabourTotal ?? overviewData?.totalLabourCount ?? labourStrength.total ?? labourStrength.total_count ?? 0);
+  const vendorBreakdown = overviewData?.vendorWiseLabourListing ?? labourStrength.vendor_wise ?? labourStrength.vendorWise ?? [];
 
+  // Inventory: API returns purchaseRequests, goodsReceipt, issueOutward, materialReturn, pORaised at root
   const inventoryCounts = overviewData?.inventory ?? overviewData?.inventorysdata ?? overviewData?.inventory_counts ?? {};
   const pendingApprovals = Number(inventoryCounts.pendingApprovals ?? inventoryCounts.pending_approvals ?? prPendingList.length);
-  const prRaised = Number(inventoryCounts.purchaseRequestsRaised ?? inventoryCounts.pr_raised ?? 0);
-  const grnEntries = Number(inventoryCounts.goodsReceiptEntries ?? inventoryCounts.grn_entries ?? 0);
-  const issueEntries = Number(inventoryCounts.issueOutwardEntries ?? inventoryCounts.issue_entries ?? 0);
-  const poRaised = Number(inventoryCounts.poRaised ?? inventoryCounts.po_raised ?? 0);
-  const materialReturn = Number(inventoryCounts.materialReturnToStore ?? inventoryCounts.material_return ?? 0);
+  const prRaised = Number(overviewData?.purchaseRequests ?? inventoryCounts.purchaseRequestsRaised ?? inventoryCounts.pr_raised ?? 0);
+  const grnEntries = Number(overviewData?.goodsReceipt ?? inventoryCounts.goodsReceiptEntries ?? inventoryCounts.grn_entries ?? 0);
+  const issueEntries = Number(overviewData?.issueOutward ?? inventoryCounts.issueOutwardEntries ?? inventoryCounts.issue_entries ?? 0);
+  const poRaised = Number(overviewData?.pORaised ?? inventoryCounts.poRaised ?? inventoryCounts.po_raised ?? 0);
+  const materialReturn = Number(overviewData?.materialReturn ?? inventoryCounts.materialReturnToStore ?? inventoryCounts.material_return ?? 0);
 
   const tabs = [
     { id: 'overview' as const, label: 'Overview', icon: ClipboardList },
@@ -423,7 +478,7 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
                 />
               </div>
               <button
-                onClick={loadOverview}
+                onClick={() => loadOverview()}
                 disabled={!selectedProject || isLoading}
                 className="flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg bg-[#C2D642] text-slate-900 font-bold text-sm disabled:opacity-50"
               >
@@ -844,16 +899,8 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
                   ))}
                 </select>
               </div>
-              <div>
-                <label className={`block text-[10px] font-bold uppercase ${textSecondary} mb-1`}>Date</label>
-                <DatePickerInput
-                  value={selectedDate}
-                  onChange={(e: any) => setSelectedDate(e?.target?.value ?? '')}
-                  className={`w-full sm:min-w-[140px] ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}
-                />
-              </div>
               <button
-                onClick={loadWorkProcess}
+                onClick={() => loadWorkProcess()}
                 disabled={!selectedProject || workProcessLoading}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#C2D642] text-slate-900 font-bold text-sm disabled:opacity-50"
               >
@@ -904,8 +951,15 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
                   </div>
                 </div>
                 {(() => {
+                  const costLabels = ['Estimated Cost', 'Executed Cost', 'Balance', 'Excess'];
                   let chartData = workProcessData.workProcessData;
-                  if (chartData && typeof chartData === 'object' && !Array.isArray(chartData)) {
+                  if (chartData && Array.isArray(chartData) && chartData.length > 0) {
+                    // Backend returns [{y, legendText}, ...] - map to {name, value} for Recharts
+                    chartData = chartData.map((item: any, i: number) => ({
+                      name: costLabels[i] ?? item.legendText ?? `Item ${i + 1}`,
+                      value: Number(item.y ?? item.value ?? 0),
+                    }));
+                  } else if (chartData && typeof chartData === 'object' && !Array.isArray(chartData)) {
                     const obj = chartData as Record<string, unknown>;
                     chartData = [
                       { name: 'Estimated Cost', value: Number(obj.estimatedCost ?? obj.estimated_cost ?? 0) },
@@ -913,7 +967,7 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
                       { name: 'Balance', value: Number(obj.balanceEstimate ?? obj.balance ?? 0) },
                       { name: 'Excess', value: Number(obj.excessEstimateCost ?? obj.excess ?? 0) },
                     ];
-                  } else if (!chartData || !Array.isArray(chartData) || chartData.length === 0) {
+                  } else {
                     chartData = [
                       { name: 'Estimated Cost', value: Number(workProcessData.estimatedCost ?? 0) },
                       { name: 'Executed Cost', value: Number(workProcessData.estimatedCostForExecutedQty ?? 0) },
@@ -1078,9 +1132,10 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
                         </thead>
                         <tbody>
                           {(() => {
+                            const getActivityName = (a: any) => typeof a.activities === 'string' ? a.activities : (a.name ?? a.activity_name ?? a.activities?.name ?? '-');
                             const filtered = activitySearch.trim()
                               ? activityList.filter((a: any) =>
-                                  String(a.name ?? a.activity_name ?? a.activities?.name ?? '').toLowerCase().includes(activitySearch.toLowerCase())
+                                  getActivityName(a).toLowerCase().includes(activitySearch.toLowerCase())
                                 )
                               : activityList;
                             const paginated = filtered.slice((activityPage - 1) * ACTIVITY_PAGE_SIZE, activityPage * ACTIVITY_PAGE_SIZE);
@@ -1093,20 +1148,28 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
                             ) : (
                               paginated.map((a: any, i: number) => {
                                 const srNo = (activityPage - 1) * ACTIVITY_PAGE_SIZE + i + 1;
-                                const name = a.name ?? a.activity_name ?? a.activities?.name ?? '-';
-                                const unit = a.unit ?? a.units?.unit ?? a.unit_id?.unit ?? '-';
-                                const estQty = Number(a.qty ?? a.estimate_qty ?? a.planned_qty ?? 0);
-                                const rate = Number(a.rate ?? a.est_rate ?? 0);
-                                const estAmount = Number(a.amount ?? a.est_amount ?? estQty * rate) || estQty * rate;
-                                const completedQty = Number(a.completed_qty ?? a.activities_history?.reduce?.((s: number, h: any) => s + Number(h.qty ?? 0), 0) ?? a.total_qty ?? 0);
+                                const name = getActivityName(a);
+                                const unit = a.unit ?? a.units?.unit ?? a.unit_id?.unit ?? (a.unit_id ? `#${a.unit_id}` : '-');
+                                const estQty = Number(a.qty ?? a.estimate_qty ?? a.planned_qty ?? 0) || 0;
+                                const rate = Number(a.rate ?? a.est_rate ?? 0) || 0;
+                                const estAmount = Number(a.amount ?? a.est_amount ?? 0) || estQty * rate || 0;
+                                const completedQtyRaw = Number(
+                                  a.completed_qty
+                                  ?? a.activities_history?.reduce?.((s: number, h: any) => s + Number(h.qty ?? h.total_qty ?? 0), 0)
+                                  ?? a.activities_history?.[a.activities_history.length - 1]?.total_qty
+                                  ?? a.total_qty ?? 0
+                                );
+                                const completedQty = Number.isFinite(completedQtyRaw) ? completedQtyRaw : 0;
                                 const pctComplete = estQty > 0 ? (completedQty / estQty) * 100 : 0;
+                                const pctDisplay = Number.isFinite(pctComplete) ? pctComplete : 0;
                                 const excessQty = Math.max(0, completedQty - estQty);
                                 const excessAmount = excessQty * rate;
                                 const amountForCompletion = (estQty - completedQty) * rate;
                                 const plannedStart = a.start_date ?? a.planned_start_date ?? a.planned_start ?? '-';
                                 const plannedEnd = a.end_date ?? a.planned_end_date ?? a.planned_end ?? '-';
                                 const actualStart = a.actual_start ?? a.actual_start_date ?? '-';
-                                const delayDays = a.delay_days ?? (plannedEnd && actualStart ? Math.max(0, Math.ceil((new Date(actualStart).getTime() - new Date(plannedEnd).getTime()) / 86400000)) : '-');
+                                const delayDaysCalc = plannedEnd && actualStart ? Math.max(0, Math.ceil((new Date(actualStart).getTime() - new Date(plannedEnd).getTime()) / 86400000)) : null;
+                                const delayDays = a.delay_days ?? (Number.isFinite(delayDaysCalc) ? delayDaysCalc : '-');
                                 if (activityTab === 'delay') {
                                   return (
                                     <tr key={a.id ?? i} className={`border-t ${isDark ? 'border-slate-700' : 'border-slate-100'}`}>
@@ -1114,7 +1177,7 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
                                       <td className="py-3 px-4 font-medium">{name}</td>
                                       <td className="py-3 px-4">{unit}</td>
                                       <td className="py-3 px-4">{estQty.toLocaleString()}</td>
-                                      <td className="py-3 px-4">{pctComplete.toFixed(1)}%</td>
+                                      <td className="py-3 px-4">{pctDisplay.toFixed(1)}%</td>
                                       <td className="py-3 px-4">{typeof plannedStart === 'string' ? plannedStart.slice(0, 10) : plannedStart}</td>
                                       <td className="py-3 px-4">{typeof plannedEnd === 'string' ? plannedEnd.slice(0, 10) : plannedEnd}</td>
                                       <td className="py-3 px-4">{typeof actualStart === 'string' ? actualStart.slice(0, 10) : actualStart}</td>
@@ -1129,18 +1192,18 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
                                     <td className="py-3 px-4">{unit}</td>
                                     <td className="py-3 px-4">{estQty.toLocaleString()}</td>
                                     <td className="py-3 px-4">{rate.toLocaleString()}</td>
-                                    <td className="py-3 px-4">{estAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                                    <td className="py-3 px-4">{(Number.isFinite(estAmount) ? estAmount : 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                                     <td className="py-3 px-4">{completedQty.toLocaleString()}</td>
-                                    <td className="py-3 px-4">{amountForCompletion.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                                    <td className="py-3 px-4">{(Number.isFinite(amountForCompletion) ? amountForCompletion : 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
                                     <td className="py-3 px-4">
-                                      <span className={`font-bold ${pctComplete >= 100 ? 'text-emerald-500' : pctComplete > 0 ? 'text-amber-500' : 'text-slate-400'}`}>
-                                        {pctComplete.toFixed(1)}%
+                                      <span className={`font-bold ${pctDisplay >= 100 ? 'text-emerald-500' : pctDisplay > 0 ? 'text-amber-500' : 'text-slate-400'}`}>
+                                        {pctDisplay.toFixed(1)}%
                                       </span>
                                     </td>
                                     {activityTab !== 'notstart' && (
                                       <>
-                                        <td className="py-3 px-4">{excessQty > 0 ? excessQty.toLocaleString() : '-'}</td>
-                                        <td className="py-3 px-4">{excessAmount > 0 ? excessAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '-'}</td>
+                                        <td className="py-3 px-4">{excessQty > 0 ? (Number.isFinite(excessQty) ? excessQty : 0).toLocaleString() : '-'}</td>
+                                        <td className="py-3 px-4">{excessAmount > 0 ? (Number.isFinite(excessAmount) ? excessAmount : 0).toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '-'}</td>
                                       </>
                                     )}
                                   </tr>
@@ -1154,7 +1217,7 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
                     {(() => {
                       const filtered = activitySearch.trim()
                         ? activityList.filter((a: any) =>
-                            String(a.name ?? a.activity_name ?? a.activities?.name ?? '').toLowerCase().includes(activitySearch.toLowerCase())
+                            (typeof a.activities === 'string' ? a.activities : (a.name ?? a.activity_name ?? a.activities?.name ?? '')).toLowerCase().includes(activitySearch.toLowerCase())
                           )
                         : activityList;
                       const totalPages = Math.max(1, Math.ceil(filtered.length / ACTIVITY_PAGE_SIZE));
@@ -1214,7 +1277,7 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
                 </select>
               </div>
               <div>
-                <label htmlFor="from_subproject_stocks" className={`block text-[10px] font-bold uppercase ${textSecondary} mb-1`}>Store</label>
+                <label htmlFor="from_subproject_stocks" className={`block text-[10px] font-bold uppercase ${textSecondary} mb-1`}>Store *</label>
                 <select
                   id="from_subproject_stocks"
                   value={selectedStockStore}
@@ -1239,7 +1302,7 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
               </div>
               <button
                 onClick={() => loadInventoryStocks()}
-                disabled={!selectedProject || !selectedDate || stockLoading}
+                disabled={!selectedProject || !selectedStockStore || !/^\d+$/.test(String(selectedStockStore || '')) || !selectedDate || stockLoading}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#C2D642] text-slate-900 font-bold text-sm disabled:opacity-50"
               >
                 {stockLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
@@ -1252,6 +1315,11 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
             <div className={`p-12 rounded-2xl border ${cardClass} text-center`}>
               <Warehouse className={`w-16 h-16 mx-auto mb-4 opacity-30 ${textSecondary}`} />
               <p className={`font-bold text-lg ${textSecondary}`}>Select a project to view stock</p>
+            </div>
+          ) : !selectedStockStore ? (
+            <div className={`p-12 rounded-2xl border ${cardClass} text-center`}>
+              <Warehouse className={`w-16 h-16 mx-auto mb-4 opacity-30 ${textSecondary}`} />
+              <p className={`font-bold text-lg ${textSecondary}`}>Select a store to view stock</p>
             </div>
           ) : (
             <>
@@ -1362,17 +1430,21 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
                               return paginated.length === 0 ? (
                                 <tr>
                                   <td colSpan={6} className="py-12 text-center">
-                                    <p className={textSecondary}>No data available</p>
+                                    <p className={textSecondary}>
+                                      {stockMaterialData.length === 0
+                                        ? 'No stock data for this project/store/date. Try a different selection or ensure inventory exists.'
+                                        : 'No matching results for search.'}
+                                    </p>
                                   </td>
                                 </tr>
                               ) : (
                                 paginated.map((s: any, i: number) => {
                                   const mat = s.materials ?? s.material ?? s;
-                                  const code = mat?.code ?? s?.code ?? '-';
-                                  const name = mat?.name ?? s?.name ?? '-';
-                                  const spec = mat?.specification ?? s?.specification ?? '-';
-                                  const unit = mat?.units?.unit ?? mat?.unit ?? s?.unit ?? '-';
-                                  const qty = Number(s.total_qty ?? s.qty ?? s.stock_qty ?? 0);
+                                  const code = mat?.code ?? s?.code ?? s?.material_code ?? '-';
+                                  const name = mat?.name ?? s?.name ?? s?.material_name ?? mat?.material_name ?? '-';
+                                  const spec = mat?.specification ?? s?.specification ?? s?.spec ?? '-';
+                                  const unit = mat?.units?.unit ?? mat?.unit ?? s?.unit ?? s?.units?.unit ?? '-';
+                                  const qty = Number(s.total_qty ?? s.qty ?? s.stock_qty ?? s.quantity ?? 0);
                                   const clsVal = mat?.class ?? s?.class ?? null;
                                   const clsStr = clsVal != null ? (typeof clsVal === 'object' ? (clsVal?.name ?? '-') : String(clsVal)) : '-';
                                   return (
@@ -1519,17 +1591,21 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
                               return paginated.length === 0 ? (
                                 <tr>
                                   <td colSpan={5} className="py-12 text-center">
-                                    <p className={textSecondary}>No data available</p>
+                                    <p className={textSecondary}>
+                                      {stockMachineData.length === 0
+                                        ? 'No stock data for this project/store/date. Try a different selection or ensure inventory exists.'
+                                        : 'No matching results for search.'}
+                                    </p>
                                   </td>
                                 </tr>
                               ) : (
                                 paginated.map((s: any, i: number) => {
                                   const mat = s.assets ?? s.asset ?? s;
-                                  const code = mat?.code ?? s?.code ?? '-';
-                                  const name = mat?.name ?? s?.name ?? '-';
-                                  const spec = mat?.specification ?? s?.specification ?? '-';
-                                  const unit = mat?.units?.unit ?? mat?.unit ?? s?.unit ?? '-';
-                                  const qty = Number(s.total_qty ?? s.qty ?? s.stock_qty ?? 0);
+                                  const code = mat?.code ?? s?.code ?? s?.asset_code ?? '-';
+                                  const name = mat?.name ?? s?.name ?? s?.asset_name ?? mat?.asset_name ?? '-';
+                                  const spec = mat?.specification ?? s?.specification ?? s?.spec ?? '-';
+                                  const unit = mat?.units?.unit ?? mat?.unit ?? s?.unit ?? s?.units?.unit ?? '-';
+                                  const qty = Number(s.total_qty ?? s.qty ?? s.stock_qty ?? s.quantity ?? 0);
                                   return (
                                     <tr key={s.id ?? i} className={`border-t ${isDark ? 'border-slate-700' : 'border-slate-100'}`}>
                                       <td className="py-3 px-4 font-medium">{code}</td>

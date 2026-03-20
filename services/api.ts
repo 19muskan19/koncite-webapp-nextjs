@@ -477,9 +477,7 @@ export const userAPI = {
    */
   getProfile: async (): Promise<{ data?: any; user?: any; status?: boolean }> => {
     try {
-      console.log('🔵 Calling /profile-list API...');
       const response = await apiClient.get('/profile-list');
-      console.log('✅ /profile-list response:', response.data);
       
       // Handle response structure: { status: true, response_code: 200, message: "...", data: { ...user... } }
       if (response.data?.status && response.data?.data) {
@@ -494,19 +492,12 @@ export const userAPI = {
       // Fallback for other response structures
       return response.data;
     } catch (error: any) {
-      console.error('❌ /profile-list API error:', error);
-      // Preserve status code for proper error handling
+      const status = error.response?.status;
       const apiError: ApiError & { status?: number } = {
-        message: error.response?.data?.message || 'Failed to fetch profile',
+        message: error.response?.data?.message || (status === 500 ? 'Server error loading profile' : 'Failed to fetch profile'),
         errors: error.response?.data?.errors || {},
-        status: error.response?.status,
+        status,
       };
-      
-      // If 404, log a warning but still throw so caller can handle it
-      if (error.response?.status === 404) {
-        console.warn('User profile endpoint /profile-list not found (404). User data will be sourced from login/OTP response.');
-      }
-      
       throw apiError;
     }
   },
@@ -569,37 +560,19 @@ export const masterDataAPI = {
   // Route: GET /project-list -> projectlist()
   getProjects: async (): Promise<any[]> => {
     try {
-      console.log('🔵 Calling GET /project-list API...');
       const response = await apiClient.get('/project-list');
-      console.log('✅ /project-list response:', response.data);
-      console.log('Response structure:', {
-        status: response.data?.status,
-        response_code: response.data?.response_code,
-        message: response.data?.message,
-        dataType: Array.isArray(response.data?.data) ? 'array' : typeof response.data?.data,
-        dataLength: Array.isArray(response.data?.data) ? response.data.data.length : 'not array',
-        isDataArray: Array.isArray(response.data),
-      });
       
       // Handle response structure: { status: true, response_code: 200, message: "...", data: [...] }
       let projects: any[] = [];
       if (response.data?.data && Array.isArray(response.data.data)) {
         projects = response.data.data;
-        console.log('✅ Extracted projects from response.data.data:', projects.length);
       } else if (Array.isArray(response.data)) {
         projects = response.data;
-        console.log('✅ Using response.data as array:', projects.length);
-      } else {
-        console.warn('⚠️ Unexpected response structure:', response.data);
-        projects = [];
       }
-      
-      console.log('📦 Returning projects:', projects);
       return projects;
     } catch (error: any) {
-      console.error('❌ /project-list API error:', error);
       throw {
-        message: error.response?.data?.message || 'Failed to fetch projects',
+        message: error.response?.data?.message || (error.response?.status === 500 ? 'Server error loading projects' : 'Failed to fetch projects'),
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
@@ -2234,7 +2207,9 @@ export const masterDataAPI = {
   getProjectWiseWarehouses: async (projectId: number | string): Promise<any[]> => {
     try {
       const response = await apiClient.post('/project-wise-store-list', { project_id: projectId });
-      return response.data.data || response.data || [];
+      const data = response.data?.data ?? response.data;
+      const arr = Array.isArray(data) ? data : (data?.data ?? data?.stores ?? data?.warehouses ?? []);
+      return Array.isArray(arr) ? arr : [];
     } catch (error: any) {
       throw {
         message: error.response?.data?.message || 'Failed to fetch project warehouses',
@@ -5437,21 +5412,26 @@ export const goodsReceiptAPI = {
   },
 };
 
-// Dashboard APIs - Overview, Work Progress, Stock
+// Dashboard APIs - Aligned with Laravel DashboardController routes
+// Endpoints: get-work-overview, get-work-process, get-work-process-activities, get-inventory-stocks, get-inward-stocks
 export const dashboardAPI = {
   /**
-   * POST /get-work-overview
-   * Request: { project, subproject?, date? }
-   * Response: work status, cost, timeline, DPR, labour, inventory counts
+   * POST get-work-overview - Work overview (Overview tab) -> workstatus
+   * Request: { project (required), subproject?, date? }
+   * Response: monthwiseworkProgess, estimatedCost, balanceEstimate, excessEstimateCost, totalActivites, inProgress, notStart, completed, timeline, DPR, labour, inventory
    */
-  getWorkOverview: async (params: { project: number | string; subproject?: number | string; date?: string }): Promise<any> => {
+  getWorkOverview: async (
+    params: { project: number | string; subproject?: number | string; date?: string },
+    config?: { signal?: AbortSignal }
+  ): Promise<any> => {
     try {
       const payload: Record<string, unknown> = { project: params.project };
       if (params.subproject != null && params.subproject !== '') payload.subproject = params.subproject;
       if (params.date != null && params.date !== '') payload.date = params.date;
-      const response = await apiClient.post('/get-work-overview', payload);
+      const response = await apiClient.post('/get-work-overview', payload, config);
       return response.data?.data ?? response.data ?? {};
     } catch (error: any) {
+      if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') throw error;
       throw {
         message: error.response?.data?.message || 'Failed to fetch dashboard overview',
         errors: error.response?.data?.errors || {},
@@ -5459,7 +5439,7 @@ export const dashboardAPI = {
     }
   },
   /**
-   * POST /dashboard-overview-search - alternative search endpoint
+   * POST /dashboard-overview-search - alternative search endpoint (fallback)
    */
   dashboardOverviewSearch: async (params: { project: number | string; subproject?: number | string; date?: string }): Promise<any> => {
     try {
@@ -5476,18 +5456,21 @@ export const dashboardAPI = {
     }
   },
   /**
-   * POST /get-work-process - cost summary + chart for Work Progress tab
-   * Request: { project, subproject?, date? }
+   * POST get-work-process - Cost summary + chart for Work Progress tab -> workprocess
+   * Request: { project (required), subproject? }
    * Response: estimatedCost, estimatedCostForExecutedQty, balanceEstimate, excessEstimateCost, totalActivites, inProgress, notStart, completed, workProcessData
    */
-  getWorkProcess: async (params: { project: number | string; subproject?: number | string; date?: string }): Promise<any> => {
+  getWorkProcess: async (
+    params: { project: number | string; subproject?: number | string; date?: string },
+    config?: { signal?: AbortSignal }
+  ): Promise<any> => {
     try {
       const payload: Record<string, unknown> = { project: params.project };
       if (params.subproject != null && params.subproject !== '') payload.subproject = params.subproject;
-      if (params.date != null && params.date !== '') payload.date = params.date;
-      const response = await apiClient.post('/get-work-process', payload);
+      const response = await apiClient.post('/get-work-process', payload, config);
       return response.data?.data ?? response.data ?? {};
     } catch (error: any) {
+      if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') throw error;
       throw {
         message: error.response?.data?.message || 'Failed to fetch work process',
         errors: error.response?.data?.errors || {},
@@ -5495,22 +5478,25 @@ export const dashboardAPI = {
     }
   },
   /**
-   * POST /get-work-process-activities - activity lists by status
-   * Request: { project, subproject?, date?, filterName }
+   * POST get-work-process-activities - Activity lists by status -> getworkProcessActivities
+   * Request: { project (required), subproject?, date?, filterName (required) }
    * filterName: inprogress | completed | notstart | delay
    * Response: inProgressactivites | completedactivites | notStartactivites | delayactivites
    */
-  getWorkProcessActivities: async (params: {
-    project: number | string;
-    subproject?: number | string;
-    date?: string;
-    filterName: 'inprogress' | 'completed' | 'notstart' | 'delay';
-  }): Promise<any[]> => {
+  getWorkProcessActivities: async (
+    params: {
+      project: number | string;
+      subproject?: number | string;
+      date?: string;
+      filterName: 'inprogress' | 'completed' | 'notstart' | 'delay';
+    },
+    config?: { signal?: AbortSignal }
+  ): Promise<any[]> => {
     try {
       const payload: Record<string, unknown> = { project: params.project, filterName: params.filterName };
       if (params.subproject != null && params.subproject !== '') payload.subproject = params.subproject;
       if (params.date != null && params.date !== '') payload.date = params.date;
-      const response = await apiClient.post('/get-work-process-activities', payload);
+      const response = await apiClient.post('/get-work-process-activities', payload, config);
       const data = response.data?.data ?? response.data ?? {};
       const key =
         params.filterName === 'inprogress' ? 'inProgressactivites'
@@ -5520,6 +5506,7 @@ export const dashboardAPI = {
       const arr = data[key] ?? data[params.filterName] ?? data.activities ?? [];
       return Array.isArray(arr) ? arr : [];
     } catch (error: any) {
+      if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') throw error;
       throw {
         message: error.response?.data?.message || 'Failed to fetch activities',
         errors: error.response?.data?.errors || {},
@@ -5527,33 +5514,84 @@ export const dashboardAPI = {
     }
   },
   /**
-   * POST /get-inventory-stocks - inventory stock for project/store/date
-   * Request: { project, store, date, filterName? }
+   * POST get-inventory-stocks - Inventory stocks by project/store/date -> getstocksinventory
+   * Request: { project (required), store (required), date (required), filterName? }
    * filterName: material | machine (default: material)
    * Response: { materialStocks: [] } or { machineStocks: [] }
    */
-  getInventoryStocks: async (params: {
-    project: number | string;
-    store?: number | string;
-    date: string;
-    filterName?: 'material' | 'machine';
-  }): Promise<{ materialStocks?: any[]; machineStocks?: any[] }> => {
+  getInventoryStocks: async (
+    params: {
+      project: number | string;
+      store: number | string;
+      date: string;
+      filterName?: 'material' | 'machine';
+    },
+    config?: { signal?: AbortSignal }
+  ): Promise<{ materialStocks?: any[]; machineStocks?: any[] }> => {
     try {
+      const projectNum = /^\d+$/.test(String(params.project)) ? Number(params.project) : params.project;
+      const storeStr = params.store != null ? String(params.store).trim() : '';
+      const storeNum = /^\d+$/.test(storeStr) ? Number(storeStr) : null;
+      if (storeNum === null) {
+        throw { message: 'Store is required', errors: {} } as ApiError;
+      }
+      let dateStr = params.date ? String(params.date).trim().replace(/\//g, '-') : '';
+      if (dateStr.length === 10 && /^\d{2}-\d{2}-\d{4}$/.test(dateStr)) {
+        const [d, m, y] = dateStr.split('-');
+        dateStr = `${y}-${m}-${d}`;
+      }
+      dateStr = dateStr.slice(0, 10);
+      if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        throw { message: 'Valid date (YYYY-MM-DD) is required', errors: {} } as ApiError;
+      }
       const payload: Record<string, unknown> = {
-        project: params.project,
-        date: params.date,
+        project: projectNum,
+        store: storeNum,
+        date: dateStr,
         filterName: params.filterName ?? 'material',
       };
-      if (params.store != null && params.store !== '') payload.store = params.store;
-      const response = await apiClient.post('/get-inventory-stocks', payload);
+      const response = await apiClient.post('/get-inventory-stocks', payload, config);
       const data = response.data?.data ?? response.data ?? {};
+      const materialStocks = data.materialStocks ?? data.material_stocks ?? [];
+      const machineStocks = data.machineStocks ?? data.machine_stocks ?? [];
       return {
-        materialStocks: Array.isArray(data.materialStocks) ? data.materialStocks : [],
-        machineStocks: Array.isArray(data.machineStocks) ? data.machineStocks : [],
+        materialStocks: Array.isArray(materialStocks) ? materialStocks : [],
+        machineStocks: Array.isArray(machineStocks) ? machineStocks : [],
       };
     } catch (error: any) {
+      if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') throw error;
+      const status = error.response?.status;
+      const data = error.response?.data;
+      let message = data?.message || 'Failed to fetch inventory stocks';
+      if (status === 422 && data?.errors && typeof data.errors === 'object') {
+        const errParts = Object.entries(data.errors).map(([k, v]) => `${k}: ${Array.isArray(v) ? v[0] : v}`);
+        if (errParts.length > 0) message = `Validation failed: ${errParts.join('; ')}`;
+      }
+      throw { message, errors: data?.errors || {} } as ApiError;
+    }
+  },
+  /**
+   * POST get-inward-stocks - Inward stocks (goods receipt) by date/project/store -> getInwardStocks
+   * Request: { date (required), project (required), store (required) }
+   * Response: Array of inward records
+   */
+  getInwardStocks: async (params: { date: string; project: number | string; store: number | string }): Promise<any[]> => {
+    try {
+      let dateStr = params.date ? String(params.date).trim().replace(/\//g, '-') : '';
+      if (dateStr.length === 10 && /^\d{2}-\d{2}-\d{4}$/.test(dateStr)) {
+        const [d, m, y] = dateStr.split('-');
+        dateStr = `${y}-${m}-${d}`;
+      }
+      dateStr = dateStr.slice(0, 10);
+      const projectNum = /^\d+$/.test(String(params.project)) ? Number(params.project) : params.project;
+      const storeNum = /^\d+$/.test(String(params.store)) ? Number(params.store) : params.store;
+      const payload = { date: dateStr, project: projectNum, store: storeNum };
+      const response = await apiClient.post('/get-inward-stocks', payload);
+      const data = response.data?.data ?? response.data ?? [];
+      return Array.isArray(data) ? data : [];
+    } catch (error: any) {
       throw {
-        message: error.response?.data?.message || 'Failed to fetch inventory stocks',
+        message: error.response?.data?.message || 'Failed to fetch inward stocks',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
