@@ -49,7 +49,7 @@ export default function DashboardTab({ isDark }: DashboardTabProps) {
                 <CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#334155' : '#e2e8f0'} />
                 <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke={isDark ? '#94a3b8' : '#64748b'} />
                 <YAxis tick={{ fontSize: 11 }} stroke={isDark ? '#94a3b8' : '#64748b'} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}k`} />
-                <Tooltip formatter={(v: number) => [`₹${v.toLocaleString()}`, 'Amount']} contentStyle={{ backgroundColor: isDark ? '#1e293b' : '#fff', border: `1px solid ${isDark ? '#334155' : '#e2e8f0'}` }} />
+                <Tooltip formatter={(v: number | undefined) => [`₹${v != null ? v.toLocaleString() : '—'}`, 'Amount']} contentStyle={{ backgroundColor: isDark ? '#1e293b' : '#fff', border: `1px solid ${isDark ? '#334155' : '#e2e8f0'}` }} />
                 <Bar dataKey="amount" fill="#C2D642" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -66,7 +66,7 @@ export default function DashboardTab({ isDark }: DashboardTabProps) {
                       <Cell key={i} fill={entry.color} stroke={isDark ? '#0f172a' : '#fff'} strokeWidth={2} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(v: number) => [`${v}%`, 'Share']} contentStyle={{ backgroundColor: isDark ? '#1e293b' : '#fff', border: `1px solid ${isDark ? '#334155' : '#e2e8f0'}` }} />
+                  <Tooltip formatter={(v: number | undefined) => [`${v != null ? v : '—'}%`, 'Share']} contentStyle={{ backgroundColor: isDark ? '#1e293b' : '#fff', border: `1px solid ${isDark ? '#334155' : '#e2e8f0'}` }} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
