@@ -22,7 +22,7 @@ function hasNestedList(node: React.ReactNode): boolean {
   if (React.isValidElement(node)) {
     const type = (node as React.ReactElement).type;
     if (type === 'ul' || type === 'ol') return true;
-    const child = (node as React.ReactElement).props?.children;
+    const child = (node as React.ReactElement<{ children?: React.ReactNode }>).props?.children;
     return hasNestedList(child);
   }
   return false;

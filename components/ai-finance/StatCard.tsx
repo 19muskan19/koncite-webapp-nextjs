@@ -32,7 +32,7 @@ export default function StatCard({ icon, title, value, trend, variant = 'emerald
   return (
     <div className={cn('rounded-lg border p-3 transition-all duration-200 overflow-hidden hover:shadow-md hover:border-[#C2D642]/40', cardClass, className)}>
       <div className="flex flex-col">
-        <div className={cn('p-1.5 rounded-md w-fit', s.iconBg)}>{React.cloneElement(icon as React.ReactElement, { className: cn('w-4 h-4 sm:w-5 sm:h-5', s.icon) })}</div>
+        <div className={cn('p-1.5 rounded-md w-fit', s.iconBg)}>{React.cloneElement(icon as React.ReactElement<{ className?: string }>, { className: cn('w-4 h-4 sm:w-5 sm:h-5', s.icon) })}</div>
         <p className={cn('text-[9px] font-bold uppercase tracking-wide mt-2', textSecondary)}>{title}</p>
         <p className={cn('mt-0.5 text-base sm:text-lg font-black', textPrimary)}>{formatCurrency(value)}</p>
         {trend != null && (
