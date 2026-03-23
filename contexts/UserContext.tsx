@@ -72,9 +72,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       
       // Try to fetch user profile, but don't fail if endpoint doesn't exist
       try {
-        console.log('UserContext: Fetching user profile from /profile-list...');
         const response = await userAPI.getProfile();
-        console.log('UserContext: Profile response:', response);
         
         // Handle response structure: { status: true, data: { ...user... }, user: { ...user... } }
         // The user data is directly in response.data (not nested in data.user)
@@ -82,8 +80,6 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         
         // Accept user data when we have id or email (name can be null and will show fallback in UI)
         if (userData && (userData.id || userData.email)) {
-          console.log('UserContext: Setting user from profile:', userData.name || userData.email);
-          console.log('UserContext: User company_id:', userData.company_id);
           setUser(userData);
           // Company from profile: nested company or company_name (entered at signup)
           const profileCompany = userData.company || userData.company_data || userData.companies;
@@ -96,49 +92,29 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             setCompany({ name: userData.company_name, logo: userData.company_logo || null });
           }
         } else {
-          console.warn('UserContext: Profile fetched but no valid user data (id/email):', response);
           setUser(null);
         }
       } catch (profileErr: any) {
-        // Check for 404 or if error response status is 404
-        const is404 = profileErr.status === 404 || 
-                      profileErr.response?.status === 404 ||
-                      (profileErr.message && profileErr.message.includes('404'));
-        
-        if (is404) {
-          console.log('UserContext: Profile endpoint not available (404), user will be set from login event');
-          setUser(null); // Will be set when userLoggedIn event fires
-          // Don't throw - this is expected if endpoint doesn't exist
-          return;
-        } else {
-          // Log the full error for debugging
-          console.error('UserContext: Error fetching profile:', {
-            error: profileErr,
-            status: profileErr.status || profileErr.response?.status,
-            message: profileErr.message || profileErr.response?.data?.message,
-            response: profileErr.response?.data
-          });
-          // Don't throw - just log and continue, user will be set from login event
+        const status = profileErr.status ?? profileErr.response?.status;
+        const is404 = status === 404;
+        const is500 = status === 500;
+        // 404: endpoint may not exist. 500: backend error - continue without blocking
+        if (is404 || is500) {
           setUser(null);
           return;
         }
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('UserContext: Profile fetch failed', { status, message: profileErr.message });
+        }
+        setUser(null);
+        return;
       }
     } catch (err: any) {
-      // Only log non-404 errors
-      const is404 = err.status === 404 || 
-                    err.response?.status === 404 ||
-                    (err.message && err.message.includes('404'));
-      
-      if (!is404) {
-        console.error('UserContext: Failed to fetch user profile:', {
-          error: err,
-          status: err.status || err.response?.status,
-          message: err.message || err.response?.data?.message,
-          response: err.response?.data
-        });
+      const status = err.status ?? err.response?.status;
+      const is404 = status === 404;
+      const is500 = status === 500;
+      if (!is404 && !is500) {
         setError(err.message || err.response?.data?.message || 'Failed to load user profile');
-      } else {
-        console.log('UserContext: Profile endpoint not found (404) - this is expected if endpoint doesn\'t exist');
       }
       
       setUser(null);

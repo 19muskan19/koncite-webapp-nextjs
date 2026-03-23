@@ -1,21 +1,13 @@
 'use client';
 
-import dynamic from 'next/dynamic';
+import React from 'react';
 import AppLayout from '@/components/AppLayout';
+import AIFinance from '@/components/ai-finance';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
 import { usePageTitle } from '@/hooks/usePageTitle';
 
-const Dashboard = dynamic(() => import('@/components/Dashboard'), {
-  loading: () => (
-    <div className="flex items-center justify-center min-h-[400px]">
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#C2D642]"></div>
-    </div>
-  ),
-  ssr: false,
-});
-
-export default function DashboardPage() {
+export default function AIFinancePage() {
   usePageTitle();
   const { theme } = useTheme();
   const { isAuthenticated, isChecking } = useAuth();
@@ -23,7 +15,7 @@ export default function DashboardPage() {
   if (isChecking) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#C2D642]" />
       </div>
     );
   }
@@ -34,7 +26,9 @@ export default function DashboardPage() {
 
   return (
     <AppLayout>
-      <Dashboard theme={theme} />
+      <div className="h-[calc(100vh-3.5rem)] min-h-0">
+        <AIFinance theme={theme} />
+      </div>
     </AppLayout>
   );
 }

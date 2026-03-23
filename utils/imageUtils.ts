@@ -35,3 +35,21 @@ export function getLogoUrl(
   const name = (displayName || 'U').trim() || 'U';
   return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=${backgroundColor}&color=fff&size=128`;
 }
+
+/**
+ * Resolve user profile image URL. Backend may return filename (e.g. 177307577119.jpg).
+ * Returns full storage URL or ui-avatars fallback.
+ */
+export function getProfileImageUrl(value: string | null | undefined, fallbackName: string): string {
+  if (!value || typeof value !== 'string' || !value.trim()) {
+    return `https://ui-avatars.com/api/?name=${encodeURIComponent(fallbackName || '')}&background=C2D642&color=fff&size=128`;
+  }
+  const trimmed = value.trim();
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:')) {
+    return trimmed;
+  }
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging.koncite.com/api';
+  const storageBase = String(apiBase).replace(/\/api\/?$/, '');
+  const path = trimmed.startsWith('storage/') ? trimmed : trimmed.includes('/') ? `storage/${trimmed}` : `storage/profile_image/${trimmed}`;
+  return path.startsWith('/') ? `${storageBase}${path}` : `${storageBase}/${path}`;
+}

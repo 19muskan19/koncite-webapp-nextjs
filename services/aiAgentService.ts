@@ -2,9 +2,9 @@
  * AI Agent Service for AI Hub (DPR, Inventory)
  *
  * Uses /api/ai-agent/* endpoints with agent parameter.
- * DMS uses 'doc_mgmt'. Backend expects snake_case agent IDs.
- * - DPR workspace -> agent: 'dpr_agent'
- * - Inventory workspace -> agent: 'inventory_agent'
+ * Agent sent in request payload based on dropdown selection:
+ * - DPR -> agent: 'dpr_inventory'
+ * - Inventory -> agent: 'inventory_agent'
  *
  * Override via env: NEXT_PUBLIC_AI_AGENT_DPR, NEXT_PUBLIC_AI_AGENT_INVENTORY
  */
@@ -14,12 +14,12 @@ import apiClient from './apiClient';
 export type AiAgentType = string;
 
 const WORKSPACE_TO_AGENT: Record<string, AiAgentType> = {
-  DPR: process.env.NEXT_PUBLIC_AI_AGENT_DPR ?? 'dpr_agent',
+  DPR: process.env.NEXT_PUBLIC_AI_AGENT_DPR ?? 'dpr_inventory',
   Inventory: process.env.NEXT_PUBLIC_AI_AGENT_INVENTORY ?? 'inventory_agent',
 };
 
 export function getAgentForWorkspace(workspace: string): AiAgentType {
-  return WORKSPACE_TO_AGENT[workspace] ?? WORKSPACE_TO_AGENT['DPR'] ?? 'dpr_agent';
+  return WORKSPACE_TO_AGENT[workspace] ?? WORKSPACE_TO_AGENT['DPR'] ?? 'dpr_inventory';
 }
 
 export interface AiSession {
@@ -97,10 +97,11 @@ export async function createAgentSession(
   agent: AiAgentType,
   name?: string
 ): Promise<AiSession> {
-  const { data } = await apiClient.post<AiSession>('/ai-agent/sessions', {
-    agent,
-    name: name ?? `${agent} Chat - ${new Date().toLocaleDateString()}`,
-  });
+  const payload =
+    agent === 'inventory_agent'
+      ? { agent: 'inventory_agent', name: name ?? 'Inventory Chat' }
+      : { agent, name: name ?? `${agent} Chat - ${new Date().toLocaleDateString()}` };
+  const { data } = await apiClient.post<AiSession>('/ai-agent/sessions', payload);
   return data;
 }
 

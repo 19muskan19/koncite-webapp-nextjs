@@ -1,17 +1,20 @@
 /**
  * AI Agent Service (Next.js)
  *
- * Flow: Next.js → Laravel (AiAgentController) → Python AI service (AiAgentService)
- *
- * Backend (Laravel) agent values: 'dpr_inventory' | 'doc_mgmt'
- * - AI Hub: dpr_inventory (Laravel forwards Bearer token to Python for Laravel API calls)
- * - DMS: doc_mgmt (Laravel uses context JWT)
- *
- * Laravel AiAgentService → Python:
+ * DPR (agent = dpr_inventory):
  * - createSession: POST /api/sessions { agent, name, user_id }
- * - sendMessage: POST /api/chat { session_id, message, agent, project_id, user_id, files (base64[]), file_names[] }
- * - listSessions: GET /api/sessions?user_id=
- * - getSession: GET /api/sessions/{id}?user_id=
+ * - sendMessage: POST /api/chat { message, agent, session_id, user_id, project_id, files, file_names }
+ *
+ * Inventory (agent = inventory_agent):
+ * - createSession: POST /api/sessions { agent, name, user_id }
+ * - sendMessage: POST /api/chat { message, agent, session_id, user_id, project_id, files }
+ *
+ * Document Mgmt (agent = doc_mgmt):
+ * - createSession: POST /api/sessions { agent, name, user_id }
+ * - sendMessage: POST /api/chat { message, agent, session_id, user_id, project_id, files, file_names }
+ * - Requires context JWT with Koncite document scope; file-only requests supported (message optional)
+ *
+ * user_id from JWT (Bearer token). Paths may be /ai-agent/sessions, /ai-agent/chat (Laravel routes).
  */
 
 import apiClient from './apiClient';
@@ -113,10 +116,18 @@ export async function createSession(
   name?: string,
   agent: string = AGENT_DOC_MGMT
 ): Promise<CreateSessionResponse> {
-  const { data } = await apiClient.post<CreateSessionResponse>('/ai-agent/sessions', {
-    agent,
-    name: name ?? (agent === AGENT_DPR_INVENTORY ? getDefaultDprSessionName() : `DMS Chat - ${new Date().toLocaleDateString()}`),
-  });
+  const payload =
+    agent === 'inventory_agent'
+      ? { agent: 'inventory_agent', name: name ?? 'Inventory Chat' }
+      : agent === 'dpr_inventory'
+        ? { agent: 'dpr_inventory', name: name ?? getDefaultDprSessionName() }
+        : agent === 'doc_mgmt'
+          ? { agent: 'doc_mgmt', name: name ?? 'Document Chat' }
+          : {
+              agent,
+              name: name ?? `DMS Chat - ${new Date().toLocaleDateString()}`,
+            };
+  const { data } = await apiClient.post<CreateSessionResponse>('/ai-agent/sessions', payload);
   return data;
 }
 
@@ -172,14 +183,15 @@ export async function sendMessage(
 
   if (hasFiles) {
     const formData = new FormData();
-    formData.append('session_id', sessionId);
-    formData.append('message', message || '');
+    formData.append('message', message || 'Files attached.');
     formData.append('agent', agent);
+    formData.append('session_id', sessionId);
     if (options?.projectId != null) {
       formData.append('project_id', String(options.projectId));
     }
     for (const file of options!.files!) {
       formData.append('files[]', file);
+      formData.append('file_names[]', file.name);
     }
     const { data } = await apiClient.post<ChatResponse>('/ai-agent/chat', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -188,12 +200,38 @@ export async function sendMessage(
     return data;
   }
 
-  const { data } = await apiClient.post<ChatResponse>('/ai-agent/chat', {
-    session_id: sessionId,
-    message: message || '',
-    agent,
-    project_id: options?.projectId != null ? String(options.projectId) : null,
-  }, { timeout: 60000 });
+  const payload =
+    agent === 'inventory_agent'
+      ? {
+          message: message || '',
+          agent: 'inventory_agent',
+          session_id: sessionId,
+          project_id: options?.projectId != null ? String(options.projectId) : null,
+        }
+      : agent === 'dpr_inventory'
+        ? {
+            message: message || '',
+            agent: 'dpr_inventory',
+            session_id: sessionId,
+            project_id: options?.projectId != null ? String(options.projectId) : null,
+          }
+        : agent === 'doc_mgmt'
+          ? {
+              message: message || '',
+              agent: 'doc_mgmt',
+              session_id: sessionId,
+              project_id: options?.projectId != null ? String(options.projectId) : null,
+            }
+          : {
+              session_id: sessionId,
+              message: message || '',
+              agent,
+              project_id: options?.projectId != null ? String(options.projectId) : null,
+            };
+
+  const { data } = await apiClient.post<ChatResponse>('/ai-agent/chat', payload, {
+    timeout: 60000,
+  });
   return data;
 }
 

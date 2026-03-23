@@ -1,62 +1,24 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import AppLayout from '@/components/AppLayout';
+import UserProfileModal from '@/components/UserProfileModal';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
 import { usePageTitle } from '@/hooks/usePageTitle';
 import { useUser } from '@/contexts/UserContext';
-import { useToast } from '@/contexts/ToastContext';
-import { userAPI } from '@/services/api';
-import { Shield, Loader2, User, Mail } from 'lucide-react';
+import { User, Mail, Phone, Pencil, X } from 'lucide-react';
+import { getProfileImageUrl } from '@/utils/imageUtils';
+import { cn } from '@/utils/cn';
 
 export default function ProfilePage() {
   usePageTitle();
+  const router = useRouter();
   const { theme } = useTheme();
   const { isAuthenticated, isChecking } = useAuth();
   const { user, refreshUser } = useUser();
-  const toast = useToast();
-  const [twoFactorUpdating, setTwoFactorUpdating] = useState(false);
-  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
-  const skipNextSyncRef = React.useRef(false);
-
-  useEffect(() => {
-    if (skipNextSyncRef.current) {
-      skipNextSyncRef.current = false;
-      return;
-    }
-    const fromUser = (user?.two_factor_status ?? 'off').toString().toLowerCase() === 'on';
-    setTwoFactorEnabled(fromUser);
-  }, [user?.two_factor_status]);
-
-  const handleTwoFactorToggle = async () => {
-    if (twoFactorUpdating) return;
-    const newStatus = twoFactorEnabled ? 'off' : 'on';
-    setTwoFactorEnabled(!twoFactorEnabled);
-    setTwoFactorUpdating(true);
-    try {
-      const payload: Record<string, any> = {
-        two_factor_status: newStatus,
-      };
-      if (user?.name != null) payload.name = user.name;
-      if (user?.country_code != null) payload.country_code = user.country_code;
-      if (user?.phone != null) payload.phone = user.phone;
-      if (user?.country != null) payload.country = user.country;
-      if (user?.state != null) payload.state = user.state;
-      if (user?.city != null) payload.city = user.city;
-      if (user?.dob != null) payload.dob = user.dob;
-      if (user?.designation != null) payload.designation = user.designation;
-      await userAPI.updateProfile(payload);
-      toast.showSuccess(newStatus === 'on' ? 'Two-factor authentication enabled' : 'Two-factor authentication disabled');
-      skipNextSyncRef.current = true;
-      await refreshUser();
-    } catch (err: any) {
-      setTwoFactorEnabled(twoFactorEnabled);
-      toast.showError(err.message || 'Failed to update two-factor authentication');
-    } finally {
-      setTwoFactorUpdating(false);
-    }
-  };
+  const [editModalOpen, setEditModalOpen] = useState(false);
 
   if (isChecking) {
     return (
@@ -75,67 +37,86 @@ export default function ProfilePage() {
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-500';
 
+  const profileImageUrl = getProfileImageUrl(
+    (user as any)?.profile_image ?? (user as any)?.profile_images ?? (user as any)?.avatar,
+    user?.name || 'User'
+  );
+
+  const handleClose = () => router.push('/dashboard');
+
   return (
     <AppLayout>
-      <div className="max-w-2xl mx-auto">
-        <h1 className={`text-2xl font-black mb-6 ${textPrimary}`}>User Profile</h1>
+      <div className="max-w-2xl mx-auto relative">
+        <button
+          onClick={handleClose}
+          className={cn('absolute top-0 right-0 p-2 rounded-lg transition-colors', isDark ? 'hover:bg-slate-800 text-slate-400' : 'hover:bg-slate-200 text-slate-500')}
+          title="Close"
+          aria-label="Close and go to dashboard"
+        >
+          <X className="w-5 h-5" />
+        </button>
+        <h1 className={`text-2xl font-black mb-6 pr-12 ${textPrimary}`}>User Profile</h1>
 
         {/* Profile info */}
         <div className={`rounded-xl border p-6 mb-6 ${cardBg}`}>
-          <h2 className={`text-lg font-bold mb-4 flex items-center gap-2 ${textPrimary}`}>
-            <User className="w-5 h-5" />
-            Account Information
-          </h2>
-          <div className="space-y-3">
-            <div>
-              <span className={`text-xs font-semibold uppercase tracking-wide ${textSecondary}`}>Name</span>
-              <p className={`mt-1 font-semibold ${textPrimary}`}>{user?.name || '—'}</p>
-            </div>
-            <div>
-              <span className={`text-xs font-semibold uppercase tracking-wide ${textSecondary}`}>Email</span>
-              <p className={`mt-1 font-semibold flex items-center gap-2 ${textPrimary}`}>
-                <Mail className="w-4 h-4" />
-                {user?.email || '—'}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Two-factor authentication */}
-        <div className={`rounded-xl border p-6 ${cardBg}`}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Shield className={`w-5 h-5 ${textSecondary}`} />
-              <div>
-                <h2 className={`text-lg font-bold ${textPrimary}`}>Two-factor authentication</h2>
-                <p className={`text-sm mt-0.5 ${textSecondary}`}>
-                  {twoFactorEnabled ? 'OTP will be required when signing in' : 'Require OTP when signing in'}
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={handleTwoFactorToggle}
-              disabled={twoFactorUpdating}
-              role="switch"
-              aria-checked={twoFactorEnabled}
-              className={`relative w-12 h-7 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#C2D642]/50 disabled:opacity-50 flex-shrink-0 ${
-                twoFactorEnabled ? 'bg-[#C2D642]' : isDark ? 'bg-slate-600' : 'bg-slate-300'
-              }`}
-            >
-              <span
-                className={`absolute top-1.5 left-1.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
-                  twoFactorEnabled ? 'translate-x-5' : 'translate-x-0'
-                }`}
+          <div className="flex flex-col sm:flex-row sm:items-start gap-6">
+            <div className="flex-shrink-0">
+              <img
+                src={profileImageUrl}
+                alt={user?.name || 'Profile'}
+                className="w-24 h-24 rounded-full object-cover border-2 border-[#C2D642]/30"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(user?.name || '')}&background=C2D642&color=fff&size=96`;
+                }}
               />
-              {twoFactorUpdating && (
-                <span className="absolute inset-0 flex items-center justify-center">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
-                </span>
-              )}
-            </button>
+            </div>
+            <div className="flex-1 min-w-0">
+              <h2 className={`text-lg font-bold mb-4 flex items-center gap-2 ${textPrimary}`}>
+                <User className="w-5 h-5" />
+                Account Information
+              </h2>
+              <div className="space-y-3">
+                <div>
+                  <span className={`text-xs font-semibold uppercase tracking-wide ${textSecondary}`}>Name</span>
+                  <p className={`mt-1 font-semibold ${textPrimary}`}>{user?.name || '—'}</p>
+                </div>
+                <div>
+                  <span className={`text-xs font-semibold uppercase tracking-wide ${textSecondary}`}>Email</span>
+                  <p className={`mt-1 font-semibold flex items-center gap-2 ${textPrimary}`}>
+                    <Mail className="w-4 h-4 flex-shrink-0" />
+                    {user?.email || '—'}
+                  </p>
+                </div>
+                {(user?.phone || (user as any)?.country_code) && (
+                  <div>
+                    <span className={`text-xs font-semibold uppercase tracking-wide ${textSecondary}`}>Phone</span>
+                    <p className={`mt-1 font-semibold flex items-center gap-2 ${textPrimary}`}>
+                      <Phone className="w-4 h-4 flex-shrink-0" />
+                      {(user as any)?.country_code ? `${(user as any).country_code} ` : ''}{user?.phone || '—'}
+                    </p>
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => setEditModalOpen(true)}
+                className="mt-4 flex items-center gap-2 px-4 py-2 rounded-lg bg-[#C2D642] text-slate-900 font-bold text-sm hover:bg-[#A8B838] transition-colors"
+              >
+                <Pencil className="w-4 h-4" />
+                Edit Profile
+              </button>
+            </div>
           </div>
         </div>
       </div>
+
+      <UserProfileModal
+        isOpen={editModalOpen}
+        onClose={() => {
+          setEditModalOpen(false);
+          refreshUser();
+          router.push('/dashboard');
+        }}
+      />
     </AppLayout>
   );
 }

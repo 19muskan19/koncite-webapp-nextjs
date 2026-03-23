@@ -15,6 +15,19 @@ function getTextFromNode(node: React.ReactNode): string {
   return '';
 }
 
+/** Check if node tree contains nested ul/ol (avoids button-in-button) */
+function hasNestedList(node: React.ReactNode): boolean {
+  if (node == null) return false;
+  if (Array.isArray(node)) return node.some(hasNestedList);
+  if (React.isValidElement(node)) {
+    const type = (node as React.ReactElement).type;
+    if (type === 'ul' || type === 'ol') return true;
+    const child = (node as React.ReactElement).props?.children;
+    return hasNestedList(child);
+  }
+  return false;
+}
+
 /** Check if line looks like a markdown table row (pipe-separated) */
 function isTableRow(line: string): boolean {
   const t = line.trim();
@@ -393,14 +406,25 @@ export default function ChatMarkdownViewer({
         const meetsMinLength = text.length >= minLen || isShortDprOption;
         const skipYesNoFilter = (isDprOptionalDetailsOption && /^no\s*$/i.test(text.trim())) || isDprYesNoOption;
         const looksLikeOption = !isFreeFormConfirmationContext && meetsMinLength && !isExplanatoryOrInstruction && (!isYesNoOrFreeFormPrompt || skipYesNoFilter) && (isConfirmationContext || hasOptionLikePhrase || hasConfirmationFormat || isProjectListItem || isSubprojectListItem || isDprAddOption || isActivityListItem || isDprProgressOption || isDprOptionalDetailsOption || isDprReviewSubmitOption || isDprYesNoOption);
-        if (looksLikeOption) {
+        const hasNested = hasNestedList(children);
+        if (looksLikeOption && !hasNested) {
           return (
             <li className="leading-tight">
-              <button
-                type="button"
+              <div
+                role="button"
+                tabIndex={0}
                 onClick={(e) => {
-                  const btnText = (e.currentTarget as HTMLElement).textContent?.trim();
+                  const el = e.currentTarget;
+                  const btnText = el.textContent?.trim();
                   if (btnText && onOptionClick) onOptionClick(btnText);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    const el = e.currentTarget;
+                    const btnText = el.textContent?.trim();
+                    if (btnText && onOptionClick) onOptionClick(btnText);
+                  }
                 }}
                 className={`w-full text-left px-3 py-2 rounded-lg border transition-all cursor-pointer font-medium text-sm ${
                   isDark
@@ -409,7 +433,7 @@ export default function ChatMarkdownViewer({
                 }`}
               >
                 {children}
-              </button>
+              </div>
             </li>
           );
         }

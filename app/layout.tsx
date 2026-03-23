@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import ClientThemeProvider from '@/components/ClientThemeProvider'
 import { ToastProvider } from '@/contexts/ToastContext'
 import { UserProvider } from '@/contexts/UserContext'
+import { ProjectsProvider } from '@/contexts/ProjectsContext'
 import './globals.css'
 
 export const metadata: Metadata = {
@@ -23,11 +24,11 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className="font-sans antialiased">
         <ClientThemeProvider>
-          <ToastProvider>
-            <UserProvider>
+          <UserProvider>
+            <ProjectsProvider>
               {children}
-            </UserProvider>
-          </ToastProvider>
+            </ProjectsProvider>
+          </UserProvider>
         </ClientThemeProvider>
       </body>
     </html>
