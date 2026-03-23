@@ -51,6 +51,12 @@ interface ReportRow {
   requestQuantity: number;
   requestDate: string;
   price: number;
+  /** For client-side filtering by subproject */
+  prSubProjectId?: string | number;
+  /** For client-side filtering by date */
+  prDate?: string;
+  /** For client-side filtering by prepared by */
+  preparedById?: string | number;
 }
 
 interface RFQReportProps {
@@ -110,8 +116,7 @@ const RFQReport: React.FC<RFQReportProps> = ({ theme }) => {
     const hasProject = Boolean(selectedProject);
     const hasRfqNo = Boolean(rfqNo.trim());
     const hasPrepared = Boolean(preparedBy);
-    const hasDateRange = Boolean(fromDate && toDate);
-    if (!hasProject && !hasRfqNo && !hasPrepared && !hasDateRange) {
+    if (!hasProject && !hasRfqNo && !hasPrepared) {
       setTableData([]);
       return;
     }
@@ -120,14 +125,9 @@ const RFQReport: React.FC<RFQReportProps> = ({ theme }) => {
     try {
       const proj = projects.find((p) => String(p.id) === String(selectedProject) || p.name === selectedProject);
       const projId = proj?.id ?? selectedProject;
-      const fromStr = fromDate.length >= 10 ? fromDate.slice(0, 10) : fromDate;
-      const toStr = toDate.length >= 10 ? toDate.slice(0, 10) : toDate;
 
       const raw = await rfqAPI.getReport({
         projectId: projId || undefined,
-        subProjectId: selectedSubProject || undefined,
-        dateForm: fromStr || undefined,
-        dateTo: toStr || undefined,
         prepared: preparedBy || undefined,
         rfqno: rfqNo.trim() || undefined,
       });
@@ -145,6 +145,8 @@ const RFQReport: React.FC<RFQReportProps> = ({ theme }) => {
         const reqDate = item?.required_date ?? item?.date ?? item?.request_date ?? item?.requestDate ?? '-';
         const dateStr = typeof reqDate === 'string' && reqDate.length >= 10 ? reqDate.slice(0, 10) : (reqDate || '-');
         const price = Number(item?.quote_rate ?? item?.price ?? 0);
+        const spId = item?.sub_projects_id?.id ?? item?.sub_projects_id ?? item?.subproject_id;
+        const prepId = item?.prepared_by?.id ?? item?.prepared_by ?? item?.user_id ?? item?.users_id;
         slNo++;
         rows.push({
           id: `${item?.id ?? slNo}-${slNo}`,
@@ -156,6 +158,9 @@ const RFQReport: React.FC<RFQReportProps> = ({ theme }) => {
           requestQuantity: qty,
           requestDate: dateStr,
           price,
+          prDate: dateStr,
+          prSubProjectId: spId,
+          preparedById: prepId,
         });
       }
       setTableData(rows);
@@ -165,13 +170,11 @@ const RFQReport: React.FC<RFQReportProps> = ({ theme }) => {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedProject, selectedSubProject, fromDate, toDate, preparedBy, rfqNo, projects, toast]);
+  }, [selectedProject, preparedBy, rfqNo, projects, toast]);
 
-  const canLoadByProject = selectedProject && selectedSubProject && fromDate && toDate;
-  const canLoadByOther = rfqNo.trim() || preparedBy;
   useEffect(() => {
-    if (canLoadByProject || canLoadByOther) loadReportData();
-  }, [selectedProject, selectedSubProject, fromDate, toDate, preparedBy, rfqNo, loadReportData]);
+    if (selectedProject || rfqNo.trim() || preparedBy) loadReportData();
+  }, [selectedProject, preparedBy, rfqNo, loadReportData]);
 
   const handleSort = (key: string) => {
     setSortConfig((prev) => (prev?.key === key && prev?.direction === 'asc' ? { key, direction: 'desc' } : { key, direction: 'asc' }));
@@ -183,23 +186,37 @@ const RFQReport: React.FC<RFQReportProps> = ({ theme }) => {
   };
 
   const filteredAndSorted = useMemo(() => {
-    let out = tableData.filter(
-      (r) =>
-        searchQuery.trim() === '' ||
-        [r.code, r.materialsNames, r.specification, r.unit].some((v) =>
+    const fromStr = fromDate.length >= 10 ? fromDate.slice(0, 10) : '';
+    const toStr = toDate.length >= 10 ? toDate.slice(0, 10) : '';
+
+    let out = tableData.filter((r) => {
+      if (selectedSubProject && r.prSubProjectId != null && String(r.prSubProjectId) !== String(selectedSubProject)) return false;
+      if (fromStr && r.prDate) {
+        const d = r.prDate.slice(0, 10);
+        if (d < fromStr) return false;
+      }
+      if (toStr && r.prDate) {
+        const d = r.prDate.slice(0, 10);
+        if (d > toStr) return false;
+      }
+      if (searchQuery.trim() !== '') {
+        const match = [r.code, r.materialsNames, r.specification, r.unit].some((v) =>
           String(v).toLowerCase().includes(searchQuery.toLowerCase())
-        )
-    );
+        );
+        if (!match) return false;
+      }
+      return true;
+    });
     if (sortConfig) {
       out = [...out].sort((a, b) => {
-        const av = (a as any)[sortConfig.key];
-        const bv = (b as any)[sortConfig.key];
+        const av = (a as any)[sortConfig!.key];
+        const bv = (b as any)[sortConfig!.key];
         const cmp = typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av ?? '').localeCompare(String(bv ?? ''));
         return sortConfig.direction === 'asc' ? cmp : -cmp;
       });
     }
     return out;
-  }, [tableData, searchQuery, sortConfig]);
+  }, [tableData, searchQuery, sortConfig, selectedSubProject, fromDate, toDate]);
 
   const totalPages = Math.max(1, Math.ceil(filteredAndSorted.length / entriesPerPage));
   const paginated = useMemo(() => {
@@ -207,7 +224,7 @@ const RFQReport: React.FC<RFQReportProps> = ({ theme }) => {
     return filteredAndSorted.slice(start, start + entriesPerPage);
   }, [filteredAndSorted, currentPage, entriesPerPage]);
 
-  useEffect(() => setCurrentPage(1), [searchQuery, sortConfig]);
+  useEffect(() => setCurrentPage(1), [searchQuery, sortConfig, selectedSubProject, fromDate, toDate]);
 
   const handleExport = (format: string) => {
     const headers = ['Sl.no', 'Code', 'Materials Names', 'Specification', 'Unit', 'Request Quantity', 'Request Date', 'Quote Rate'];
@@ -317,7 +334,7 @@ const RFQReport: React.FC<RFQReportProps> = ({ theme }) => {
                 onChange={(e) => setSelectedSubProject(e.target.value)}
                 className={`w-full pl-10 pr-10 py-2 rounded-lg text-sm border appearance-none cursor-pointer ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
               >
-                <option value="">Select Sub Project</option>
+                <option value="">All Sub Projects</option>
                 {subprojects.map((s) => <option key={String(s.id)} value={String(s.id)}>{s.name}</option>)}
               </select>
             </div>
@@ -392,7 +409,7 @@ const RFQReport: React.FC<RFQReportProps> = ({ theme }) => {
         </div>
       </div>
 
-      {(canLoadByProject || canLoadByOther) && (
+      {(selectedProject || rfqNo.trim() || preparedBy) && (
         <div className={`rounded-xl border ${cardClass} overflow-hidden relative min-h-[200px]`}>
           {isLoading && (
             <div className={`absolute inset-0 z-10 ${isDark ? 'bg-slate-900/80' : 'bg-white/80'} flex items-center justify-center`}>
@@ -429,7 +446,9 @@ const RFQReport: React.FC<RFQReportProps> = ({ theme }) => {
                 {!isLoading && paginated.length === 0 && (
                   <tr>
                     <td colSpan={8} className={`px-4 py-12 text-center ${textSecondary}`}>
-                      No data available. Use project, date range, prepared by, or RFQ No to filter.
+                      {tableData.length === 0
+                        ? 'Select a project, enter RFQ No, or select Prepared by to load data. Use subproject and date filters to narrow results.'
+                        : 'No data matches the current filters. Try adjusting subproject or date range.'}
                     </td>
                   </tr>
                 )}

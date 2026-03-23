@@ -5,6 +5,10 @@ const nextConfig = {
   images: {
     domains: ['ui-avatars.com', 'picsum.photos'],
   },
+  // Mitigate ChunkLoadError (loading chunk app/layout timeout) - use Turbopack in dev
+  experimental: {
+    optimizePackageImports: ['lucide-react', 'recharts'],
+  },
   // Proxy API requests through Next.js to avoid CORS when frontend and backend are different origins
   async rewrites() {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging.koncite.com/api';

@@ -340,18 +340,24 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
     return () => { cancelled = true; };
   }, [selectedProject, selectedSubProject, projects]);
 
-  // Work status: API returns inProgress, completed, notStart, totalActivites at root
+  // Work status: API returns inProgress, completed, notStart, totalActivites at root, or workStatusData [{y, legendText}]
   const workStatus = overviewData?.work_status ?? overviewData?.workStatus ?? {};
   const inProgress = Number(overviewData?.inProgress ?? workStatus.in_progress ?? workStatus.inProgress ?? 0);
   const completed = Number(overviewData?.completed ?? workStatus.completed ?? 0);
   const notStarted = Number(overviewData?.notStart ?? workStatus.not_started ?? workStatus.notStarted ?? 0);
   const totalActivities = Number(overviewData?.totalActivites ?? workStatus.total ?? workStatus.totalActivities ?? 0) || inProgress + completed + notStarted;
 
-  const workStatusPieData = [
-    { name: 'In Progress', value: inProgress, color: '#C2D642' },
-    { name: 'Completed', value: completed, color: '#22c55e' },
-    { name: 'Not Started', value: notStarted, color: '#94a3b8' },
-  ].filter((d) => d.value > 0);
+  const workStatusDataApi = overviewData?.workStatusData ?? overviewData?.work_status_data ?? [];
+  const STATUS_COLORS: Record<string, string> = { 'In Progress': '#C2D642', 'Completed': '#22c55e', 'Not started': '#94a3b8', 'Not Started': '#94a3b8' };
+  const workStatusPieData = Array.isArray(workStatusDataApi) && workStatusDataApi.length > 0
+    ? workStatusDataApi
+        .filter((d: any) => d.legendText !== 'Total Activities' && Number(d.y ?? d.value ?? 0) > 0)
+        .map((d: any) => ({ name: d.legendText ?? d.label ?? 'Unknown', value: Number(d.y ?? d.value ?? 0), color: STATUS_COLORS[d.legendText ?? ''] ?? '#94a3b8' }))
+    : [
+        { name: 'In Progress', value: inProgress, color: '#C2D642' },
+        { name: 'Completed', value: completed, color: '#22c55e' },
+        { name: 'Not Started', value: notStarted, color: '#94a3b8' },
+      ].filter((d) => d.value > 0);
 
   // Cost: API returns estimatedCost, estimatedCostForExecutedQty, balanceEstimate, excessEstimateCost at root
   const costDetails = overviewData?.cost ?? overviewData?.costDetails ?? {};
@@ -367,19 +373,23 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
   const remainingDays = Number(overviewData?.remaining ?? timeline.remaining ?? timeline.remaining_days ?? 0);
   const plannedProgressArr = overviewData?.monthwiseworkProgess?.plannedProgress ?? overviewData?.plannedProgress ?? timeline.plannedProgress ?? [];
   const plannedProgress = Array.isArray(plannedProgressArr) && plannedProgressArr.length > 0
-    ? Number(plannedProgressArr[0]) : Number(overviewData?.planeProgress ?? timeline.plannedProgress ?? 0) || (projectDuration > 0 ? (completedDays / projectDuration) * 100 : 0);
-  const actualProgressArr = overviewData?.actualProgress ?? timeline.actualProgress ?? timeline.actual_progress;
+    ? Number(plannedProgressArr[plannedProgressArr.length - 1]) : Number(overviewData?.planeProgress ?? timeline.plannedProgress ?? 0) || (projectDuration > 0 ? (completedDays / projectDuration) * 100 : 0);
+  const actualProgressArr = overviewData?.monthwiseworkProgess?.actualProgress ?? overviewData?.actualProgress ?? timeline.actualProgress ?? timeline.actual_progress;
   const actualProgress = Array.isArray(actualProgressArr) && actualProgressArr.length > 0
-    ? Number(actualProgressArr[0]) : Number(actualProgressArr ?? plannedProgress);
+    ? Number(actualProgressArr[actualProgressArr.length - 1]) : Number(actualProgressArr ?? plannedProgress);
   const variation = Number(overviewData?.variation ?? timeline.variation ?? 0) || actualProgress - plannedProgress;
 
-  // Month-wise chart: API returns monthwiseworkProgess.chartData with labels + datasets
+  // Month-wise chart: API returns monthwiseworkProgess { labels, chartData: { labels, datasets } }
   const monthWiseRaw = overviewData?.monthwiseworkProgess ?? overviewData?.monthWiseProgress ?? overviewData?.month_wise_progress ?? overviewData?.chartData ?? {};
-  const chartLabels = monthWiseRaw?.labels ?? monthWiseRaw?.chartData?.labels ?? overviewData?.labels ?? [];
   const chartDatasets = monthWiseRaw?.chartData?.datasets ?? monthWiseRaw?.datasets ?? overviewData?.chartData?.datasets ?? [];
   const actualData = chartDatasets.find((d: any) => d.label?.toLowerCase().includes('actual'))?.data ?? [];
   const plannedData = chartDatasets.find((d: any) => d.label?.toLowerCase().includes('planned'))?.data ?? [];
-  const monthWiseData = Array.isArray(chartLabels) && chartLabels.length > 0
+  const dataLen = Math.max(actualData.length, plannedData.length, 0);
+  const chartLabelsRaw = monthWiseRaw?.labels ?? monthWiseRaw?.chartData?.labels ?? overviewData?.labels ?? [];
+  const chartLabels = Array.isArray(chartLabelsRaw) && dataLen > 0
+    ? (chartLabelsRaw.length >= dataLen ? chartLabelsRaw.slice(0, dataLen) : [...chartLabelsRaw, ...Array.from({ length: dataLen - chartLabelsRaw.length }, (_, i) => `M${i + 1}`)])
+    : [];
+  const monthWiseData = chartLabels.length > 0
     ? chartLabels.map((m: string, i: number) => ({
         month: m,
         actual: Number(actualData[i] ?? actualData[0] ?? 0),
@@ -439,7 +449,7 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
             <h3 className={`text-xs font-black uppercase tracking-widest ${textSecondary} mb-4`}>Filters</h3>
             <div className="flex flex-col sm:flex-row flex-wrap gap-3 sm:gap-4 items-stretch sm:items-end">
               <div>
-                <label className={`block text-[10px] font-bold uppercase ${textSecondary} mb-1`}>Project *</label>
+                <label className={`block text-[10px] font-bold uppercase ${textSecondary} mb-1`}>Project <span className="text-red-500">*</span></label>
                 <select
                   value={selectedProject}
                   onChange={(e) => setSelectedProject(e.target.value)}
@@ -763,20 +773,25 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
                         <p className={`text-xs font-bold uppercase ${textSecondary}`}>Vendor-wise</p>
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                           <div className="space-y-2">
-                            {vendorBreakdown.map((v: any, i: number) => (
-                              <div key={i} className="flex justify-between">
-                                <span>{v.vendor_name ?? v.name ?? '-'}</span>
-                                <span className="font-bold">{v.quantity ?? v.count ?? 0}</span>
-                              </div>
-                            ))}
+                            {vendorBreakdown.map((v: any, i: number) => {
+                              const vendorName = v.vendor?.name ?? v.vendor_name ?? v.name ?? '-';
+                              const labourTotal = Number(v.labour_total ?? v.labourTotal ?? v.labour_count ?? v.quantity ?? v.count ?? 0);
+                              return (
+                                <div key={i} className="flex justify-between">
+                                  <span>{vendorName}</span>
+                                  <span className="font-bold">{labourTotal}</span>
+                                </div>
+                              );
+                            })}
                           </div>
                           <div className="h-[180px] sm:h-[220px]">
                             <ResponsiveContainer width="100%" height="100%">
                               <BarChart
-                                data={vendorBreakdown.map((v: any) => ({
-                                  name: (v.vendor_name ?? v.name ?? '-').slice(0, 12),
-                                  count: Number(v.quantity ?? v.count ?? 0),
-                                }))}
+                                data={vendorBreakdown.map((v: any) => {
+                                  const vendorName = v.vendor?.name ?? v.vendor_name ?? v.name ?? '-';
+                                  const labourTotal = Number(v.labour_total ?? v.labourTotal ?? v.labour_count ?? v.quantity ?? v.count ?? 0);
+                                  return { name: vendorName.slice(0, 12), count: labourTotal };
+                                })}
                                 layout="vertical"
                                 margin={{ top: 5, right: 20, left: 0, bottom: 5 }}
                               >
@@ -873,7 +888,7 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
             <h3 className={`text-xs font-black uppercase tracking-widest ${textSecondary} mb-4`}>Filters</h3>
             <div className="flex flex-col sm:flex-row flex-wrap gap-3 sm:gap-4 items-stretch sm:items-end">
               <div>
-                <label className={`block text-[10px] font-bold uppercase ${textSecondary} mb-1`}>Project *</label>
+                <label className={`block text-[10px] font-bold uppercase ${textSecondary} mb-1`}>Project <span className="text-red-500">*</span></label>
                 <select
                   value={selectedProject}
                   onChange={(e) => setSelectedProject(e.target.value)}
@@ -1010,21 +1025,30 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
                 return activityPieData.length > 0 ? (
                   <div className={`p-6 rounded-2xl border ${cardClass}`}>
                     <h3 className={`text-sm font-black uppercase tracking-widest mb-4 ${textSecondary}`}>Activity Status Overview</h3>
-                    <div className="flex flex-col sm:flex-row gap-6 items-center">
-                      <div className="h-[180px] w-[180px] sm:h-[220px] sm:w-[220px] shrink-0">
-                        <ResponsiveContainer width="100%" height="100%">
-                          <PieChart>
-                            <Pie data={activityPieData} cx="50%" cy="50%" innerRadius={45} outerRadius={90} dataKey="value" paddingAngle={2}>
-                              {activityPieData.map((entry, i) => (
-                                <Cell key={i} fill={entry.color} />
-                              ))}
-                            </Pie>
-                            <Tooltip />
-                            <Legend />
-                          </PieChart>
-                        </ResponsiveContainer>
+                    <div className="flex flex-col sm:flex-row gap-6 items-center sm:items-center">
+                      <div className="flex flex-col items-center shrink-0">
+                        <div className="h-[180px] w-[180px] sm:h-[200px] sm:w-[200px]">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                              <Pie data={activityPieData} cx="50%" cy="50%" innerRadius={45} outerRadius={90} dataKey="value" paddingAngle={2}>
+                                {activityPieData.map((entry, i) => (
+                                  <Cell key={i} fill={entry.color} />
+                                ))}
+                              </Pie>
+                              <Tooltip />
+                            </PieChart>
+                          </ResponsiveContainer>
+                        </div>
+                        <div className="flex flex-wrap justify-center gap-x-4 gap-y-1.5 mt-3">
+                          {activityPieData.map((entry, i) => (
+                            <div key={i} className="flex items-center gap-2">
+                              <span className="w-3 h-3 rounded-sm shrink-0" style={{ backgroundColor: entry.color }} />
+                              <span className={`text-xs font-medium ${textPrimary}`}>{entry.name}</span>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                      <div className={`grid grid-cols-2 gap-3 ${textPrimary}`}>
+                      <div className={`grid grid-cols-2 gap-3 ${textPrimary} w-full sm:w-auto sm:flex-1 max-w-[240px] sm:max-w-none`}>
                         <div className={`p-3 rounded-lg ${isDark ? 'bg-slate-800/50' : 'bg-slate-100'}`}>
                           <p className="text-[10px] font-bold uppercase text-[#C2D642]">In Progress</p>
                           <p className="text-xl font-black">{wpInProgress}</p>
@@ -1263,7 +1287,7 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
           <div id="filter-form-stocks" className={`p-4 rounded-xl border ${cardClass}`}>
             <div className="flex flex-col sm:flex-row flex-wrap gap-3 sm:gap-6 items-stretch sm:items-end">
               <div>
-                <label htmlFor="from_project_stocks" className={`block text-[10px] font-bold uppercase ${textSecondary} mb-1`}>Project *</label>
+                <label htmlFor="from_project_stocks" className={`block text-[10px] font-bold uppercase ${textSecondary} mb-1`}>Project <span className="text-red-500">*</span></label>
                 <select
                   id="from_project_stocks"
                   value={selectedProject}

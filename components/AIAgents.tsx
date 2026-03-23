@@ -14,7 +14,6 @@ import {
   extractReplyFromResponse,
   getSessionIdFromResponse,
   getDefaultDprSessionName,
-  AGENT_DPR_INVENTORY,
   AGENT_DOC_MGMT,
   type AiSession,
 } from '@/services/dmsAiService';
@@ -133,14 +132,27 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
     });
   };
 
-  // Load sessions from API on mount (filtered by agent - only DPR/Inventory, not DMS)
+  // Load sessions from API - DPR sessions in DPR UI, Inventory sessions in Inventory UI
   const loadSessions = useCallback(async () => {
     try {
       const agentKey = selectedAgent === 'dpr' ? 'DPR' : 'Inventory';
-      const rawList = await listAgentSessions(getAgentForWorkspace(agentKey));
-      const list = (Array.isArray(rawList) ? rawList : []).filter(
-        (s: AiSession) => (s as { agent?: string }).agent !== AGENT_DOC_MGMT
-      );
+      const expectedAgent = getAgentForWorkspace(agentKey);
+      const rawList = await listAgentSessions(expectedAgent);
+      const list = (Array.isArray(rawList) ? rawList : []).filter((s: AiSession) => {
+        const sAgent = (s as { agent?: string }).agent;
+        const sName = String((s as { name?: string }).name || '').trim();
+        if (sAgent === AGENT_DOC_MGMT) return false;
+        if (sAgent && sAgent !== expectedAgent) return false;
+        if (!sAgent) {
+          const isDprByName = sName.toLowerCase().startsWith('dpr-');
+          const isInventoryByName =
+            sName.toLowerCase().startsWith('inventory-') ||
+            sName.toLowerCase().startsWith('inventory chat');
+          if (selectedAgent === 'dpr') return isDprByName;
+          if (selectedAgent === 'inventory') return isInventoryByName;
+        }
+        return true;
+      });
       const mapped = list.map((s: AiSession & { chat_history?: unknown[] }) => {
         const id = String(s.session_id ?? s.id ?? '');
         const preview = (s.name as string) || 'New session';
@@ -192,6 +204,8 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
   }, [toast, selectedAgent]);
 
   useEffect(() => {
+    setCurrentSessionId('');
+    setMessages([]);
     loadSessions();
   }, [loadSessions]);
 
@@ -206,10 +220,16 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
     }
   }, [messages, currentSessionId]);
 
+  const getDefaultSessionName = () => {
+    if (selectedAgent === 'inventory') return 'Inventory Chat';
+    return getDefaultDprSessionName();
+  };
+
   const handleNewSession = async () => {
     setAiState('thinking');
     try {
-      const res = await createSession(undefined, AGENT_DPR_INVENTORY);
+      const agent = getAgentForWorkspace(selectedAgent === 'dpr' ? 'DPR' : 'Inventory');
+      const res = await createSession(getDefaultSessionName(), agent);
       const sessionId = getSessionIdFromResponse(res);
       if (!sessionId) {
         throw new Error('Could not create session');
@@ -217,7 +237,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
       const currentTime = formatSessionTime() || new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
       const newSession = {
         id: sessionId,
-        preview: (res as { name?: string }).name ?? getDefaultDprSessionName(),
+        preview: (res as { name?: string }).name ?? getDefaultSessionName(),
         time: currentTime,
         messages: [],
       };
@@ -327,13 +347,14 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
     setAiState('thinking');
 
     let sessionId = currentSessionId;
+    const agent = getAgentForWorkspace(selectedAgent === 'dpr' ? 'DPR' : 'Inventory');
     if (!sessionId || !sessions.some(s => s.id === sessionId)) {
       try {
-        const res = await createSession(undefined, AGENT_DPR_INVENTORY);
+        const res = await createSession(getDefaultSessionName(), agent);
         sessionId = getSessionIdFromResponse(res);
         if (!sessionId) throw new Error('No session ID');
         setCurrentSessionId(sessionId);
-        const newSession = { id: sessionId, preview: (res as { name?: string }).name ?? getDefaultDprSessionName(), time: currentTime, messages: [] };
+        const newSession = { id: sessionId, preview: (res as { name?: string }).name ?? getDefaultSessionName(), time: currentTime, messages: [] };
         setSessions(prev => [newSession, ...prev]);
       } catch (err: unknown) {
         const msg = (err as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
@@ -348,7 +369,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
       const response = await sendMessage(
         sessionId,
         messageContent || 'Files attached.',
-        { agent: AGENT_DPR_INVENTORY, files: filesToSend.length > 0 ? filesToSend : undefined }
+        { agent, files: filesToSend.length > 0 ? filesToSend : undefined }
       );
       const replyText = extractReplyFromResponse(response);
       const aiMsg: Message = {
@@ -546,15 +567,15 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
           </div>
           <button
             onClick={handleNewSession}
-            disabled={aiState === 'thinking' || selectedAgent === 'inventory'}
+            disabled={aiState === 'thinking'}
             className={`w-full flex items-center justify-center gap-1.5 px-2.5 sm:px-3 py-2 rounded-lg text-[11px] sm:text-xs font-bold transition-all touch-manipulation min-h-[38px] ${isDark ? 'bg-[#C2D642] hover:bg-[#A8B838] text-white' : 'bg-[#C2D642] hover:bg-[#A8B838] text-white'} shadow-md disabled:opacity-60 disabled:cursor-not-allowed`}
           >
             <Plus className="w-3.5 h-3.5 flex-shrink-0" /> <span className="truncate">New Session</span>
           </button>
         </div>
 
-        {/* Recent Sessions - only for DPR */}
-        <div className={`flex-1 min-h-0 flex flex-col overflow-hidden pt-2 sm:pt-3 ${selectedAgent === 'inventory' ? 'hidden' : ''}`}>
+        {/* Recent Sessions */}
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden pt-2 sm:pt-3">
           <p className={`text-[9px] font-bold uppercase tracking-wider mb-1.5 px-2 sm:px-3 flex-shrink-0 ${textSecondary}`}>RECENT SESSIONS</p>
           <div className={`flex-1 min-h-0 overflow-y-auto p-1.5 sm:p-2 md:p-3 pt-0 custom-scrollbar`}>
           <div className="space-y-1.5">
@@ -588,8 +609,8 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
           </div>
         </div>
 
-        {/* AI State Indicator - only for DPR */}
-        <div className={`p-2 sm:p-2.5 md:p-3 border-t flex-shrink-0 ${isDark ? 'border-[#404040]' : 'border-gray-200'} ${selectedAgent === 'inventory' ? 'hidden' : ''}`}>
+        {/* AI State Indicator */}
+        <div className={`p-2 sm:p-2.5 md:p-3 border-t flex-shrink-0 ${isDark ? 'border-[#404040]' : 'border-gray-200'}`}>
           <div className={`w-full flex items-center gap-1.5 md:gap-2 px-2.5 py-1.5 rounded-lg ${isDark ? 'bg-[#2d2d2d]/50' : 'bg-white'}`}>
             <div className={`w-1.5 h-1.5 md:w-2 md:h-2 rounded-full flex-shrink-0 ${
               aiState === 'thinking' 
@@ -616,20 +637,6 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
 
       {/* Chat Area */}
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
-        {selectedAgent === 'inventory' ? (
-          /* Inventory - Coming Soon */
-          <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
-            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 ${isDark ? 'bg-[#2d2d2d] border border-[#404040]' : 'bg-gray-100 border border-gray-200'}`}>
-              <Bot className={`w-10 h-10 ${textSecondary}`} />
-            </div>
-            <h3 className={`text-lg sm:text-xl font-black mb-2 ${textPrimary}`}>Inventory</h3>
-            <p className={`text-sm sm:text-base font-medium max-w-md mb-4 ${textSecondary}`}>
-              Inventory functionality is coming soon. Stock status, material tracking, and related features will be available in a future update.
-            </p>
-            <p className={`text-xs font-bold uppercase tracking-wider ${textSecondary}`}>Stay tuned</p>
-          </div>
-        ) : (
-          <>
         {/* Chat Header */}
         <div className={`p-2 sm:p-3 md:p-4 border-b flex-shrink-0 ${isDark ? 'border-[#404040]' : 'border-gray-200'} flex items-center justify-between ${bgSecondary}`}>
           <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
@@ -645,7 +652,9 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
             </div>
             <div className="min-w-0 flex-1">
               <h3 className={`text-xs sm:text-sm font-black truncate ${textPrimary}`}>Workspace Chat</h3>
-              <p className={`text-[9px] md:text-[10px] font-bold uppercase tracking-wider hidden sm:block truncate ${textSecondary}`}>DPR & INVENTORY AGENT</p>
+              <p className={`text-[9px] md:text-[10px] font-bold uppercase tracking-wider hidden sm:block truncate ${textSecondary}`}>
+                {selectedAgent === 'dpr' ? 'DPR' : 'INVENTORY'} AGENT
+              </p>
             </div>
           </div>
           {/* <div className="flex items-center gap-2">
@@ -669,10 +678,10 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
                 <Bot className="w-6 h-6 sm:w-8 sm:h-8 md:w-9 md:h-9 text-white" />
               </div>
               <p className={`text-base sm:text-lg md:text-xl font-bold max-w-[280px] sm:max-w-md ${isDark ? 'text-[#C2D642]' : 'text-[#7c8a2e]'}`}>
-                You're connected to the DPR & Inventory Agent.
+                You're connected to the {selectedAgent === 'dpr' ? 'DPR' : 'Inventory'} Agent.
               </p>
               <p className={`text-[11px] sm:text-xs md:text-sm font-normal mt-1.5 sm:mt-2 max-w-[280px] sm:max-w-md ${isDark ? 'text-slate-400' : 'text-[#4B5563]'}`}>
-                Ask me to file a DPR, get stock status, or review today's work.
+                {selectedAgent === 'dpr' ? "Ask me to file a DPR, get stock status, or review today's work." : "Ask me about stock status, material tracking, or inventory reports."}
               </p>
             </div>
           )}
@@ -822,8 +831,6 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
             </div>
           )}
         </div>
-          </>
-        )}
       </div>
     </div>
   );

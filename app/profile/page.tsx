@@ -1,17 +1,20 @@
 'use client';
 
 import React, { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import AppLayout from '@/components/AppLayout';
 import UserProfileModal from '@/components/UserProfileModal';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
 import { usePageTitle } from '@/hooks/usePageTitle';
 import { useUser } from '@/contexts/UserContext';
-import { User, Mail, Phone, Pencil } from 'lucide-react';
+import { User, Mail, Phone, Pencil, X } from 'lucide-react';
 import { getProfileImageUrl } from '@/utils/imageUtils';
+import { cn } from '@/utils/cn';
 
 export default function ProfilePage() {
   usePageTitle();
+  const router = useRouter();
   const { theme } = useTheme();
   const { isAuthenticated, isChecking } = useAuth();
   const { user, refreshUser } = useUser();
@@ -39,10 +42,20 @@ export default function ProfilePage() {
     user?.name || 'User'
   );
 
+  const handleClose = () => router.push('/dashboard');
+
   return (
     <AppLayout>
-      <div className="max-w-2xl mx-auto">
-        <h1 className={`text-2xl font-black mb-6 ${textPrimary}`}>User Profile</h1>
+      <div className="max-w-2xl mx-auto relative">
+        <button
+          onClick={handleClose}
+          className={cn('absolute top-0 right-0 p-2 rounded-lg transition-colors', isDark ? 'hover:bg-slate-800 text-slate-400' : 'hover:bg-slate-200 text-slate-500')}
+          title="Close"
+          aria-label="Close and go to dashboard"
+        >
+          <X className="w-5 h-5" />
+        </button>
+        <h1 className={`text-2xl font-black mb-6 pr-12 ${textPrimary}`}>User Profile</h1>
 
         {/* Profile info */}
         <div className={`rounded-xl border p-6 mb-6 ${cardBg}`}>
@@ -101,6 +114,7 @@ export default function ProfilePage() {
         onClose={() => {
           setEditModalOpen(false);
           refreshUser();
+          router.push('/dashboard');
         }}
       />
     </AppLayout>

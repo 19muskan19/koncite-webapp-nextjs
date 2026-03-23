@@ -47,6 +47,10 @@ interface ReportRow {
   requiredForActivities: string;
   remarks: string;
   currentStock: number;
+  /** For client-side filtering by subproject */
+  prSubProjectId?: string | number;
+  /** For client-side filtering by date */
+  prDate?: string;
 }
 
 interface IndentReportProps {
@@ -96,22 +100,20 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
     try {
       const proj = projects.find((p) => String(p.id) === String(selectedProject) || p.name === selectedProject);
       const projId = proj?.id ?? selectedProject;
-      const fromStr = fromDate.length >= 10 ? fromDate.slice(0, 10) : fromDate;
-      const toStr = toDate.length >= 10 ? toDate.slice(0, 10) : toDate;
 
       let rows: ReportRow[] = [];
       try {
         const raw = await materialRequestAPI.getReport({
           projectId: projId || undefined,
-          subProjectId: selectedSubProject || undefined,
-          dateForm: fromStr || undefined,
-          dateTo: toStr || undefined,
           indentNo: indentNo.trim() || undefined,
         });
         const arr = Array.isArray(raw) ? raw : [];
         let srNo = 0;
         for (const item of arr) {
           srNo++;
+          const reqDate = item?.totalRequiredDate ?? item?.required_date ?? '-';
+          const dateStr = typeof reqDate === 'string' && reqDate.length >= 10 ? reqDate.slice(0, 10) : (reqDate || '-');
+          const spId = item?.sub_projects_id?.id ?? item?.sub_projects_id ?? item?.subproject_id;
           rows.push({
             id: `${item?.sl_no ?? srNo}-${srNo}`,
             srNo,
@@ -120,10 +122,12 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
             specification: item?.specification ?? '-',
             unit: typeof item?.unit === 'object' ? (item?.unit?.unit ?? '-') : (item?.unit ?? '-'),
             requiredQty: Number(item?.totalRequiredQty ?? item?.required_qty ?? 0),
-            requiredDate: item?.totalRequiredDate ?? item?.required_date ?? '-',
+            requiredDate: dateStr,
             requiredForActivities: item?.requiredforActivities ?? item?.required_for_activities ?? '-',
             remarks: item?.remarks ?? '-',
             currentStock: Number(item?.currentStock ?? item?.current_stock ?? 0),
+            prDate: dateStr,
+            prSubProjectId: spId,
           });
         }
       } catch {
@@ -133,7 +137,6 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
       if (rows.length === 0 && hasProject) {
       let prList = await materialRequestAPI.list({
         projectId: projId,
-        subprojectId: selectedSubProject || undefined,
       });
       let prArr = Array.isArray(prList) ? prList : [];
       if (prArr.length === 0) {
@@ -145,15 +148,6 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
         if (indentNo.trim()) {
           const reqNo = pr?.request_no ?? pr?.req_no ?? pr?.name ?? pr?.id ?? '';
           if (!String(reqNo).toLowerCase().includes(indentNo.trim().toLowerCase())) return false;
-        }
-        if (fromStr && toStr) {
-          const prDate = pr?.date ?? pr?.created_at ?? pr?.name;
-          const dStr = typeof prDate === 'string' && prDate.length >= 10 ? prDate.slice(0, 10) : '';
-          if (dStr && (dStr < fromStr || dStr > toStr)) return false;
-        }
-        if (selectedSubProject) {
-          const spId = pr?.sub_projects_id?.id ?? pr?.sub_projects_id ?? pr?.subproject_id;
-          if (String(spId) !== String(selectedSubProject)) return false;
         }
         return true;
       });
@@ -174,10 +168,13 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
       let srNo = 0;
       for (const pr of filtered) {
         try {
-          const projId = (typeof pr.projects_id === 'object' && pr.projects_id != null) ? (pr.projects_id as any).id : (pr.projects_id ?? pr.project_id ?? pr.projects?.id);
-          const editData = await materialRequestAPI.edit(pr.id ?? pr.material_requests_id, projId ?? undefined);
+          const prProjId = (typeof pr.projects_id === 'object' && pr.projects_id != null) ? (pr.projects_id as any).id : (pr.projects_id ?? pr.project_id ?? pr.projects?.id);
+          const editData = await materialRequestAPI.edit(pr.id ?? pr.material_requests_id, prProjId ?? undefined);
           const details = Array.isArray(editData) ? editData : (editData?.material_request_details ?? editData?.details ?? []);
           const list = Array.isArray(details) ? details : [];
+          const prDate = pr?.date ?? pr?.created_at ?? '';
+          const prDateStr = typeof prDate === 'string' && prDate.length >= 10 ? prDate.slice(0, 10) : '';
+          const prSpId = pr?.sub_projects_id?.id ?? pr?.sub_projects_id ?? pr?.subproject_id;
           for (const item of list) {
             const mat = item?.materials ?? item?.material ?? item;
             const code = mat?.code ?? item?.code ?? '-';
@@ -185,8 +182,8 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
             const spec = mat?.specification ?? item?.specification ?? '-';
             const unit = mat?.unit ?? item?.unit ?? (mat?.units?.unit ?? '-');
             const qty = Number(item?.qty ?? item?.required_qty ?? item?.request_qty ?? 0);
-            const reqDate = item?.date ?? item?.required_date ?? item?.requiredDate ?? '-';
-            const dateStr = typeof reqDate === 'string' && reqDate.length >= 10 ? reqDate.slice(0, 10) : (reqDate || '-');
+            const reqDate = item?.date ?? item?.required_date ?? item?.requiredDate ?? prDateStr;
+            const dateStr = typeof reqDate === 'string' && reqDate.length >= 10 ? reqDate.slice(0, 10) : (reqDate || prDateStr || '-');
             const act = item?.activities ?? item?.activity;
             const activityName = act?.name ?? act?.activities ?? item?.activity_name ?? '-';
             const remarks = item?.remarkes ?? item?.remarks ?? '-';
@@ -205,6 +202,8 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
               requiredForActivities: activityName,
               remarks,
               currentStock,
+              prDate: dateStr || prDateStr,
+              prSubProjectId: prSpId,
             });
           }
         } catch {
@@ -219,11 +218,11 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedProject, selectedSubProject, fromDate, toDate, indentNo, projects, toast]);
+  }, [selectedProject, indentNo, projects, toast]);
 
   useEffect(() => {
-    if ((selectedProject && selectedSubProject && fromDate && toDate) || indentNo.trim()) loadReportData();
-  }, [selectedProject, selectedSubProject, fromDate, toDate, indentNo, loadReportData]);
+    if (selectedProject || indentNo.trim()) loadReportData();
+  }, [selectedProject, indentNo, loadReportData]);
 
   const handleSort = (key: string) => {
     setSortConfig((prev) => (prev?.key === key && prev?.direction === 'asc' ? { key, direction: 'desc' } : { key, direction: 'asc' }));
@@ -235,23 +234,37 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
   };
 
   const filteredAndSorted = useMemo(() => {
-    let out = tableData.filter(
-      (r) =>
-        searchQuery.trim() === '' ||
-        [r.code, r.materials, r.specification, r.unit, r.requiredForActivities, r.remarks].some((v) =>
+    const fromStr = fromDate.length >= 10 ? fromDate.slice(0, 10) : '';
+    const toStr = toDate.length >= 10 ? toDate.slice(0, 10) : '';
+
+    let out = tableData.filter((r) => {
+      if (selectedSubProject && r.prSubProjectId != null && String(r.prSubProjectId) !== String(selectedSubProject)) return false;
+      if (fromStr && r.prDate) {
+        const d = r.prDate.slice(0, 10);
+        if (d < fromStr) return false;
+      }
+      if (toStr && r.prDate) {
+        const d = r.prDate.slice(0, 10);
+        if (d > toStr) return false;
+      }
+      if (searchQuery.trim() !== '') {
+        const match = [r.code, r.materials, r.specification, r.unit, r.requiredForActivities, r.remarks].some((v) =>
           String(v).toLowerCase().includes(searchQuery.toLowerCase())
-        )
-    );
+        );
+        if (!match) return false;
+      }
+      return true;
+    });
     if (sortConfig) {
       out = [...out].sort((a, b) => {
-        const av = (a as any)[sortConfig.key];
-        const bv = (b as any)[sortConfig.key];
+        const av = (a as any)[sortConfig!.key];
+        const bv = (b as any)[sortConfig!.key];
         const cmp = typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av ?? '').localeCompare(String(bv ?? ''));
         return sortConfig.direction === 'asc' ? cmp : -cmp;
       });
     }
     return out;
-  }, [tableData, searchQuery, sortConfig]);
+  }, [tableData, searchQuery, sortConfig, selectedSubProject, fromDate, toDate]);
 
   const totalPages = Math.max(1, Math.ceil(filteredAndSorted.length / entriesPerPage));
   const paginated = useMemo(() => {
@@ -259,7 +272,7 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
     return filteredAndSorted.slice(start, start + entriesPerPage);
   }, [filteredAndSorted, currentPage, entriesPerPage]);
 
-  useEffect(() => setCurrentPage(1), [searchQuery, sortConfig]);
+  useEffect(() => setCurrentPage(1), [searchQuery, sortConfig, selectedSubProject, fromDate, toDate]);
 
   const handleExport = (format: string) => {
     const headers = ['Sr.No', 'Code', 'Materials', 'Specification', 'Unit', 'Required qty', 'Required date', 'Required for Activities', 'Remarks', 'Current Stock'];
@@ -389,7 +402,7 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
                 onChange={(e) => setSelectedSubProject(e.target.value)}
                 className={`w-full pl-10 pr-10 py-2 rounded-lg text-sm border appearance-none cursor-pointer ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
               >
-                <option value="">Select Sub Project</option>
+                <option value="">All Sub Projects</option>
                 {subprojects.map((s) => <option key={String(s.id)} value={String(s.id)}>{s.name}</option>)}
               </select>
             </div>
@@ -450,7 +463,7 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
         </div>
       </div>
 
-      {((selectedProject && selectedSubProject && fromDate && toDate) || indentNo.trim()) && (
+      {(selectedProject || indentNo.trim()) && (
         <div className={`rounded-xl border ${cardClass} overflow-hidden relative min-h-[200px]`}>
           {isLoading && (
             <div className={`absolute inset-0 z-10 ${isDark ? 'bg-slate-900/80' : 'bg-white/80'} flex items-center justify-center`}>
@@ -489,7 +502,9 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
                 {!isLoading && paginated.length === 0 && (
                   <tr>
                     <td colSpan={10} className={`px-4 py-12 text-center ${textSecondary}`}>
-                      No data available. Enter Indent No or select project (and optionally date range) to view purchase requests.
+                      {tableData.length === 0
+                        ? 'Select a project or enter Indent No to load data. Use subproject and date filters to narrow results.'
+                        : 'No data matches the current filters. Try adjusting subproject or date range.'}
                     </td>
                   </tr>
                 )}

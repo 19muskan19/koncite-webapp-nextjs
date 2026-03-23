@@ -7,6 +7,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { useUser } from '@/contexts/UserContext';
 import { userAPI, commonAPI } from '@/services/api';
 import { sortCountryCodes, findCountryByDialCode } from '@/utils/countryCodeUtils';
+import { getProfileImageUrl } from '@/utils/imageUtils';
 
 interface CountryCode {
   code: string;
@@ -63,7 +64,9 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onClose }) 
   const [countrySearchQuery, setCountrySearchQuery] = useState('');
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
   const [twoFactorUpdating, setTwoFactorUpdating] = useState(false);
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
   const skipNext2FASyncRef = useRef(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isOpen && countries.length === 0 && !isLoadingCountries) fetchCountries();
@@ -175,6 +178,15 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onClose }) 
     }
   }, [formData.countryCode, countryCodes, countries]);
 
+  useEffect(() => {
+    if (formData.profileImage) {
+      const url = URL.createObjectURL(formData.profileImage);
+      setObjectUrl(url);
+      return () => URL.revokeObjectURL(url);
+    }
+    setObjectUrl(null);
+  }, [formData.profileImage]);
+
   const fetchCountries = async () => {
     setIsLoadingCountries(true);
     try {
@@ -262,6 +274,17 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onClose }) 
     setFormData((prev) => ({ ...prev, profileImage: e.target.files?.[0] || null }));
     if (errors.profileImage) setErrors((prev) => ({ ...prev, profileImage: undefined }));
   };
+
+  const handleClearProfileImage = () => {
+    setFormData((prev) => ({ ...prev, profileImage: null }));
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const currentProfileImageUrl = getProfileImageUrl(
+    (user as any)?.profile_image ?? (user as any)?.profile_images ?? (user as any)?.avatar,
+    user?.name || 'User'
+  );
+  const displayImageUrl = formData.profileImage && objectUrl ? objectUrl : currentProfileImageUrl;
 
   const handleTwoFactorToggle = async () => {
     if (twoFactorUpdating) return;
@@ -531,14 +554,39 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onClose }) 
           <div>
             <label className={`block text-sm font-semibold mb-2 ${textPrimary}`}>Profile Image (Optional)</label>
             <p className={`text-xs mb-2 ${textSecondary}`}>JPEG, PNG, JPG or GIF. Max 2MB</p>
-            <input
-              type="file"
-              name="profile_image"
-              accept="image/jpeg,image/png,image/jpg,image/gif"
-              onChange={handleFileChange}
-              className={`w-full px-4 py-3 border ${borderClass} rounded-lg ${inputBg} ${textPrimary} file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-[#C2D642] file:text-white hover:file:bg-[#A8B838] cursor-pointer`}
-            />
-            {formData.profileImage && <p className="text-xs text-green-500 mt-1">Selected: {formData.profileImage.name}</p>}
+            <div className="flex items-center gap-4 flex-wrap">
+              <div className="relative flex-shrink-0">
+                <img
+                  src={displayImageUrl}
+                  alt="Profile preview"
+                  className="w-20 h-20 rounded-full object-cover border-2 border-[#C2D642]/30"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = `https://ui-avatars.com/api/?name=${encodeURIComponent(user?.name || '')}&background=C2D642&color=fff&size=80`;
+                  }}
+                />
+                {formData.profileImage && (
+                  <button
+                    type="button"
+                    onClick={handleClearProfileImage}
+                    className={`absolute -top-1 -right-1 p-1 rounded-full ${isDark ? 'bg-slate-700 hover:bg-slate-600' : 'bg-slate-200 hover:bg-slate-300'} transition-colors`}
+                    title="Cancel image selection"
+                    aria-label="Cancel image selection"
+                  >
+                    <X className={`w-4 h-4 ${textSecondary}`} />
+                  </button>
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  name="profile_image"
+                  accept="image/jpeg,image/png,image/jpg,image/gif"
+                  onChange={handleFileChange}
+                  className={`w-full px-4 py-3 border ${borderClass} rounded-lg ${inputBg} ${textPrimary} file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-[#C2D642] file:text-white hover:file:bg-[#A8B838] cursor-pointer`}
+                />
+              </div>
+            </div>
           </div>
 
           {/* Two-factor authentication toggle */}

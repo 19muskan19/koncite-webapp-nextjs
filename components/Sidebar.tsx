@@ -21,7 +21,8 @@ import {
   Settings,
   LogOut,
   ClipboardList,
-  Warehouse
+  Warehouse,
+  Banknote
 } from 'lucide-react';
 import { ViewType, ThemeType } from '@/types';
 import { useUser } from '@/contexts/UserContext';
@@ -126,6 +127,13 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen, s
         { label: 'Goods Issue', id: ViewType.INVENTORY_ISSUE_SLIP, path: '/inventory-reports/issue-slip' },
         { label: 'Goods Returns', id: ViewType.INVENTORY_ISSUE_RETURN, path: '/inventory-reports/issue-return' }
       ] 
+    },
+    { 
+      id: ViewType.AI_FINANCE, 
+      label: 'AI Finance', 
+      icon: Banknote, 
+      path: '/ai-finance',
+      activeWhenPrefix: '/ai-finance'
     },
     { 
       id: ViewType.AI_AGENTS, 
