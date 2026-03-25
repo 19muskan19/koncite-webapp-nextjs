@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { sortCountryCodes, findCountryByDialCode } from '@/utils/countryCodeUtils';
+import { getProfileImageUrl } from '@/utils/imageUtils';
 
 interface CountryCode {
   code: string;
@@ -36,24 +37,6 @@ interface CountryCode {
 
 const getFlagUrl = (countryCode: string) =>
   `https://flagcdn.com/w20/${countryCode.toLowerCase()}.png`;
-
-/** Resolve profile image URL - backend returns filename (e.g. 177307577119.jpg), build full storage URL */
-function resolveProfileImageUrl(value: string | null | undefined, fallbackName: string): string {
-  if (!value || typeof value !== 'string') {
-    return `https://ui-avatars.com/api/?name=${encodeURIComponent(fallbackName || '')}&background=6B8E23&color=fff&size=128`;
-  }
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return `https://ui-avatars.com/api/?name=${encodeURIComponent(fallbackName || '')}&background=6B8E23&color=fff&size=128`;
-  }
-  if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:')) {
-    return trimmed;
-  }
-  const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging.koncite.com/api';
-  const storageBase = String(apiBase).replace(/\/api\/?$/, '');
-  const path = trimmed.startsWith('storage/') ? trimmed : trimmed.includes('/') ? `storage/${trimmed}` : `storage/profile_image/${trimmed}`;
-  return path.startsWith('/') ? `${storageBase}${path}` : `${storageBase}/${path}`;
-}
 
 interface UserData {
   id: string;
@@ -91,7 +74,10 @@ const ROLE_ID_TO_NAME: Record<string, string> = {
 function mapApiStaffToUserData(apiUser: any): UserData {
   const id = String(apiUser.id ?? apiUser.uuid ?? '');
   const uuid = apiUser.uuid ? String(apiUser.uuid) : undefined;
-  const profilePhoto = resolveProfileImageUrl(apiUser.profile_images, apiUser.name || '');
+  const profilePhoto = getProfileImageUrl(
+    apiUser.profile_image ?? apiUser.profile_images ?? apiUser.avatar ?? apiUser.profile_picture,
+    apiUser.name || ''
+  );
   const rp = apiUser.reporting_person ?? apiUser.reportingPerson;
   const rpId = typeof rp === 'object' && rp ? (rp.id ?? null) : (rp || null);
   const rpIsObject = typeof rp === 'object' && rp;
@@ -849,6 +835,7 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
                             src={user.profilePhoto}
                             alt={user.name}
                             className="w-full h-full object-cover"
+                            referrerPolicy="no-referrer"
                             onError={(e) => {
                               e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(user.name || '')}&background=6B8E23&color=fff&size=128`;
                             }}

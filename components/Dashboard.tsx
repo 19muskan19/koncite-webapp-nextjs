@@ -84,7 +84,13 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
   const [workProcessData, setWorkProcessData] = useState<any>(null);
   const [workProcessLoading, setWorkProcessLoading] = useState(false);
   const [activityTab, setActivityTab] = useState<'inprogress' | 'completed' | 'notstart' | 'delay'>('inprogress');
-  const [activityList, setActivityList] = useState<any[]>([]);
+  /** Same source as filter badges — populated by parallel get-work-process-activities (all four filters). */
+  const [activityBuckets, setActivityBuckets] = useState<{
+    inprogress: any[];
+    completed: any[];
+    notstart: any[];
+    delay: any[];
+  } | null>(null);
   const [activityListLoading, setActivityListLoading] = useState(false);
   const [activitySearch, setActivitySearch] = useState('');
   const [activityPage, setActivityPage] = useState(1);
@@ -163,32 +169,67 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
     }
   }, [selectedProject, selectedSubProject, projects]);
 
-  const loadActivityList = useCallback(async (signal?: AbortSignal) => {
+  /** Load all four activity lists in parallel so badge counts match the table (same API as rows). */
+  const loadAllActivityBuckets = useCallback(async (signal?: AbortSignal) => {
     if (!selectedProject) {
-      setActivityList([]);
+      setActivityBuckets(null);
       return;
     }
     setActivityListLoading(true);
-    setActivityList([]);
+    setActivityBuckets(null);
     try {
       const proj = projects.find((p) => String(p.id) === String(selectedProject));
       const projId = proj?.id ?? selectedProject;
-      const list = await dashboardAPI.getWorkProcessActivities(
-        { project: projId, subproject: selectedSubProject || undefined, filterName: activityTab },
-        signal ? { signal } : undefined
-      );
-      if (!signal?.aborted) {
-        setActivityList(Array.isArray(list) ? list : []);
-        setActivityPage(1);
-      }
+      const base = { project: projId, subproject: selectedSubProject || undefined };
+      const opts = signal ? { signal } : undefined;
+      const [inprogress, completed, notstart, delay] = await Promise.all([
+        dashboardAPI.getWorkProcessActivities({ ...base, filterName: 'inprogress' }, opts),
+        dashboardAPI.getWorkProcessActivities({ ...base, filterName: 'completed' }, opts),
+        dashboardAPI.getWorkProcessActivities({ ...base, filterName: 'notstart' }, opts),
+        dashboardAPI.getWorkProcessActivities({ ...base, filterName: 'delay' }, opts),
+      ]);
+      if (signal?.aborted) return;
+      setActivityBuckets({
+        inprogress: Array.isArray(inprogress) ? inprogress : [],
+        completed: Array.isArray(completed) ? completed : [],
+        notstart: Array.isArray(notstart) ? notstart : [],
+        delay: Array.isArray(delay) ? delay : [],
+      });
+      setActivityPage(1);
     } catch (e: any) {
       if (e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError') return;
       toastRef.current.showWarning(e?.message || 'Failed to load activities');
-      if (!signal?.aborted) setActivityList([]);
+      if (!signal?.aborted) setActivityBuckets(null);
     } finally {
       if (!signal?.aborted) setActivityListLoading(false);
     }
-  }, [selectedProject, selectedSubProject, activityTab, projects]);
+  }, [selectedProject, selectedSubProject, projects]);
+
+  const activityList = React.useMemo(() => {
+    if (!activityBuckets) return [];
+    return activityBuckets[activityTab] ?? [];
+  }, [activityBuckets, activityTab]);
+
+  /** Counts shown on filter chips + pie: prefer bucket lengths (aligned with list); else work-process summary while loading. */
+  const activityStatusCounts = React.useMemo(() => {
+    if (activityBuckets) {
+      return {
+        inProgress: activityBuckets.inprogress.length,
+        completed: activityBuckets.completed.length,
+        notStart: activityBuckets.notstart.length,
+        delay: activityBuckets.delay.length,
+      };
+    }
+    if (workProcessData) {
+      return {
+        inProgress: Number(workProcessData.inProgress ?? 0),
+        completed: Number(workProcessData.completed ?? 0),
+        notStart: Number(workProcessData.notStart ?? 0),
+        delay: Number(workProcessData.delay ?? 0),
+      };
+    }
+    return { inProgress: 0, completed: 0, notStart: 0, delay: 0 };
+  }, [activityBuckets, workProcessData]);
 
   useEffect(() => {
     if (activeTab !== 'workProgress' || !selectedProject) return;
@@ -200,9 +241,13 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
   useEffect(() => {
     if (activeTab !== 'workProgress' || !selectedProject) return;
     const ac = new AbortController();
-    loadActivityList(ac.signal);
+    loadAllActivityBuckets(ac.signal);
     return () => ac.abort();
-  }, [activeTab, selectedProject, activityTab, loadActivityList]);
+  }, [activeTab, selectedProject, selectedSubProject, loadAllActivityBuckets]);
+
+  useEffect(() => {
+    setActivityPage(1);
+  }, [activityTab]);
 
   useEffect(() => {
     if (activeTab !== 'stock' || !selectedProject) {
@@ -915,11 +960,14 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
                 </select>
               </div>
               <button
-                onClick={() => loadWorkProcess()}
-                disabled={!selectedProject || workProcessLoading}
+                onClick={() => {
+                  void loadWorkProcess();
+                  void loadAllActivityBuckets();
+                }}
+                disabled={!selectedProject || workProcessLoading || activityListLoading}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#C2D642] text-slate-900 font-bold text-sm disabled:opacity-50"
               >
-                {workProcessLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                {workProcessLoading || activityListLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                 Load
               </button>
             </div>
@@ -1012,10 +1060,10 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
 
               {/* Activity Status Overview - Pie Chart */}
               {(() => {
-                const wpInProgress = Number(workProcessData.inProgress ?? 0);
-                const wpCompleted = Number(workProcessData.completed ?? 0);
-                const wpNotStart = Number(workProcessData.notStart ?? 0);
-                const wpDelay = Number(workProcessData.delay ?? 0);
+                const wpInProgress = activityStatusCounts.inProgress;
+                const wpCompleted = activityStatusCounts.completed;
+                const wpNotStart = activityStatusCounts.notStart;
+                const wpDelay = activityStatusCounts.delay;
                 const activityPieData = [
                   { name: 'In Progress', value: wpInProgress, color: '#C2D642' },
                   { name: 'Completed', value: wpCompleted, color: '#22c55e' },
@@ -1093,7 +1141,13 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
                         <t.icon className="w-4 h-4" />
                         {t.label}
                         <span className={`text-[10px] px-1.5 py-0.5 rounded ${activityTab === t.id ? 'bg-white/20' : 'bg-slate-500/20'}`}>
-                          {t.id === 'inprogress' ? (workProcessData.inProgress ?? 0) : t.id === 'completed' ? (workProcessData.completed ?? 0) : t.id === 'notstart' ? (workProcessData.notStart ?? 0) : (t.id === 'delay' && activityTab === 'delay' ? activityList.length : (workProcessData.delay ?? 0))}
+                          {t.id === 'inprogress'
+                            ? activityStatusCounts.inProgress
+                            : t.id === 'completed'
+                              ? activityStatusCounts.completed
+                              : t.id === 'notstart'
+                                ? activityStatusCounts.notStart
+                                : activityStatusCounts.delay}
                         </span>
                       </button>
                     ))}
@@ -1184,7 +1238,8 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
                                   ?? a.total_qty ?? 0
                                 );
                                 const completedQty = Number.isFinite(completedQtyRaw) ? completedQtyRaw : 0;
-                                const pctComplete = estQty > 0 ? (completedQty / estQty) * 100 : 0;
+                                const pctComplete =
+                                  estQty > 0 ? (completedQty / estQty) * 100 : completedQty > 0 ? 100 : 0;
                                 const pctDisplay = Number.isFinite(pctComplete) ? pctComplete : 0;
                                 const excessQty = Math.max(0, completedQty - estQty);
                                 const excessAmount = excessQty * rate;

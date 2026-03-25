@@ -13,6 +13,7 @@ import DatePickerInput from '../ui/DatePickerInput';
 import { masterDataAPI, teamsAPI, dprAPI } from '../../services/api';
 import { useToast } from '../../contexts/ToastContext';
 import { API_BASE_URL } from '../../services/apiClient';
+import { computeWorkProgressBalanceQty } from '../../utils/workProgress';
 
 interface Project {
   id: string | number;
@@ -387,7 +388,7 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
                   const completedQty = Number(r?.completed_qty ?? r?.qty ?? r?.quantity ?? 0);
                   const estAmtCompletion = Number(r?.est_amount_completion ?? completedQty * rate);
                   const pct = Number(r?.completion ?? (estQty > 0 ? (completedQty / estQty) * 100 : 0));
-                  const balance = Number(r?.balance_qty ?? estQty - completedQty);
+                  const balance = computeWorkProgressBalanceQty(estQty, completedQty);
                   const remarks = r?.remarkes ?? r?.remarks ?? '';
                   return (
                     <tr key={i} className={`border-t border-inherit ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'}`}>

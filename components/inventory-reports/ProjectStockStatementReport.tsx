@@ -123,8 +123,21 @@ const ProjectStockStatementReport: React.FC<ProjectStockStatementReportProps> = 
           const unit = mat?.unit ?? item?.unit ?? (mat?.units?.unit ?? '-');
           const cls = mat?.class ?? item?.class ?? item?.class_of_materials ?? '';
           const totalInward = Number(item?.total_inward ?? item?.totalInward ?? 0);
-          const totalIssue = Number(item?.total_issue ?? item?.totalIssue ?? 0);
-          const availableStock = Number(item?.available_stock ?? item?.availableStock ?? (totalInward - totalIssue));
+          const totalIssueApi = Number(item?.total_issue ?? item?.totalIssue ?? 0);
+          const availRaw = item?.available_stock ?? item?.availableStock;
+          const hasExplicitAvail = availRaw != null && availRaw !== '';
+          // Backend may send gross issues in total_issue while available_stock already nets returns.
+          // Show net issue = inward − available so Total Issue matches stock math (same as user expectation).
+          let totalIssue: number;
+          let availableStock: number;
+          if (hasExplicitAvail) {
+            availableStock = Number(availRaw);
+            const netIssue = totalInward - availableStock;
+            totalIssue = Number.isFinite(netIssue) ? Math.max(0, netIssue) : totalIssueApi;
+          } else {
+            totalIssue = totalIssueApi;
+            availableStock = totalInward - totalIssue;
+          }
           rows.push({
             id: `${item?.id ?? i}-${rows.length}`,
             ...(dataType === 'materials' ? { class: typeof cls === 'object' ? (cls?.name ?? '-') : (cls ?? '-') } : {}),

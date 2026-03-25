@@ -20,6 +20,7 @@ import {
 import DatePickerInput from '../ui/DatePickerInput';
 import { useProjectsFromMasters, useSubprojectsFromMasters } from '../../hooks/useProjectsFromMasters';
 import { masterDataAPI } from '../../services/api';
+import { computeWorkProgressBalanceQty } from '../../utils/workProgress';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -44,18 +45,20 @@ interface WorkProgressDetailsProps {
 function mapApiRowToActivity(row: any, index: number): WorkProgressActivity {
   const n = (v: any) => (v != null && v !== '' ? Number(v) : 0);
   const s = (v: any) => String(v ?? '');
+  const estimateQty = n(row.est_qty ?? row.estimate_qty ?? row.estimateQty);
+  const completedQty = n(row.completed_qty ?? row.completedQty);
   return {
     id: String(row.id ?? row.sl_no ?? index + 1),
     slNo: index + 1,
     activities: s(row.activities ?? row.activity ?? row.name),
     unit: s(row.unit),
-    estimateQty: n(row.est_qty ?? row.estimate_qty ?? row.estimateQty),
+    estimateQty,
     estRate: n(row.est_rate ?? row.estRate),
     estAmount: n(row.est_amount ?? row.estAmount),
-    completedQty: n(row.completed_qty ?? row.completedQty),
+    completedQty,
     estAmountForCompletion: n(row.est_amount_completion ?? row.est_amount_for_completion ?? row.estAmountForCompletion),
     completionPercentage: n(row.completion ?? row.completion_percentage ?? row.completionPercentage),
-    balanceQty: n(row.balance_qty ?? row.balanceQty),
+    balanceQty: computeWorkProgressBalanceQty(estimateQty, completedQty),
   };
 }
 

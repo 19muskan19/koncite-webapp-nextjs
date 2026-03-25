@@ -989,7 +989,7 @@ export const masterDataAPI = {
   searchCompanies: async (searchQuery: string): Promise<any[]> => {
     try {
       console.log('🔍 Calling POST /companies-search with query:', searchQuery);
-      const response = await apiClient.post('/companies-search', { search: searchQuery });
+      const response = await apiClient.post('/companies-search', { search_keyword: searchQuery });
       console.log('✅ /companies-search response:', response.data);
       
       // Handle response structure: { status: true, data: [...] } or direct array
@@ -1011,55 +1011,31 @@ export const masterDataAPI = {
     }
   },
   // Route: GET /companies-edit/{uuid} -> edit()
-  getCompany: async (uuid: string): Promise<any> => {
+  // Note: Laravel edit() uses where('id', $uuid) - pass numeric id for the route param
+  getCompany: async (idOrUuid: string): Promise<any> => {
     try {
-      const uuidParam = String(uuid).trim();
-      console.log('📖 Calling GET /companies-edit/' + uuidParam);
-      console.log('Company UUID details:', {
-        original: uuid,
-        trimmed: uuidParam,
-        length: uuidParam.length,
-        type: typeof uuidParam
-      });
+      const param = String(idOrUuid).trim();
+      console.log('📖 Calling GET /companies-edit/' + param);
       
-      const response = await apiClient.get(`/companies-edit/${encodeURIComponent(uuidParam)}`);
+      const response = await apiClient.get(`/companies-edit/${encodeURIComponent(param)}`);
       console.log('✅ /companies-edit response:', response.data);
-      console.log('Response status:', response.status);
       
-      // Handle response structure: { status: true, data: {...} } or direct object
-      let result = null;
+      // Handle response: { status, response_code, message, data: CompaniesResources }
+      let result = response.data?.data ?? response.data ?? null;
       
-      if (response.data) {
-        // Check if response has nested data structure
-        if (response.data.data !== undefined) {
-          result = response.data.data;
-        } else if (response.data.status && response.data.data !== undefined) {
-          result = response.data.data;
-        } else {
-          result = response.data;
-        }
-      }
-      
-      // If result is still null or empty, return empty object to avoid null errors
-      if (!result || (typeof result === 'object' && Object.keys(result).length === 0 && result.constructor === Object)) {
+      if (!result || (typeof result === 'object' && Object.keys(result).length === 0)) {
         console.warn('⚠️ Company data is null or empty in API response');
         result = {};
       }
       
       console.log('✅ Extracted company data:', result);
-      console.log('Result type:', typeof result);
-      console.log('Result keys:', Object.keys(result));
       return result;
     } catch (error: any) {
       console.error('❌ /companies-edit error:', error);
       console.error('Error details:', {
         status: error.response?.status,
-        statusText: error.response?.statusText,
         data: error.response?.data,
-        message: error.response?.data?.message,
-        url: error.config?.url,
-        method: error.config?.method,
-        uuid: uuid
+        param: idOrUuid
       });
       
       const errorMessage = error.response?.data?.message || 
@@ -4168,15 +4144,32 @@ export const materialRequestAPI = {
    * GET: no params. POST: { projectId, subprojectId?, request_no? } — backend filters by projects_id, sub_projects_id, request_no
    * Response: { status, message, data: MaterialRequest[] }
    */
-  list: async (filters?: { projectId?: number | string; subprojectId?: number | string; request_no?: string; status?: number | string }): Promise<any[]> => {
+  list: async (filters?: {
+    projectId?: number | string;
+    subprojectId?: number | string;
+    request_no?: string;
+    status?: number | string;
+    /** Optional — backend may filter MR list by date range */
+    date_from?: string;
+    date_to?: string;
+  }): Promise<any[]> => {
     try {
       let response;
-      if (filters?.projectId != null || filters?.subprojectId != null || filters?.request_no != null || filters?.status != null) {
+      if (
+        filters?.projectId != null ||
+        filters?.subprojectId != null ||
+        filters?.request_no != null ||
+        filters?.status != null ||
+        (filters?.date_from != null && String(filters.date_from).trim()) ||
+        (filters?.date_to != null && String(filters.date_to).trim())
+      ) {
         const body: Record<string, number | string> = {};
         if (filters.projectId != null) body.projectId = filters.projectId;
         if (filters.subprojectId != null) body.subprojectId = filters.subprojectId;
         if (filters.request_no != null && String(filters.request_no).trim()) body.request_no = String(filters.request_no).trim();
         if (filters.status != null) body.status = filters.status;
+        if (filters.date_from != null && String(filters.date_from).trim()) body.date_from = String(filters.date_from).trim();
+        if (filters.date_to != null && String(filters.date_to).trim()) body.date_to = String(filters.date_to).trim();
         response = await apiClient.post('/inventory/materials-request-list', body);
       } else {
         response = await apiClient.get('/inventory/materials-request-list');
@@ -4410,7 +4403,7 @@ export const rfqAPI = {
       try {
         return await materialRequestAPI.list(_filters);
       } catch {
-        return [];
+      return [];
       }
     }
   },

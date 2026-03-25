@@ -164,12 +164,15 @@ interface SafetyEntry {
   details?: string;
   image?: string; // legacy single - normalized to images when loading
   images?: string[];
-  teamMembers?: string[];
+  /** Single company user (teams pivot id) — sent as company_users_id */
+  company_users_id?: string;
+  /** When API returns company_users_id as object without numeric id — show name/phone in UI */
+  companyUserDisplay?: { name: string; email?: string; phone?: string };
   remarks?: string;
-  date?: string; // from updated_at or created_at for report
 }
 
 interface TeamMember {
+  /** company_users_id for API (not user uuid) */
   id: string;
   name: string;
   email: string;
@@ -181,9 +184,9 @@ interface HindranceEntry {
   details?: string;
   image?: string; // legacy single - normalized to images when loading
   images?: string[];
-  teamMembers?: string[];
+  company_users_id?: string;
+  companyUserDisplay?: { name: string; email?: string; phone?: string };
   remarks?: string;
-  date?: string; // from updated_at or created_at for report
 }
 
 interface SelectedLabour {
@@ -206,6 +209,64 @@ interface DPRProps {
 const PAGE_SIZE = 10;
 
 const DPR_BASE = '/work-progress-reports';
+
+/** DB column `company_users_id` is INT (pivot id). UUIDs must not be sent — they truncate / fail in MySQL. */
+function normalizeNumericCompanyUsersId(raw: unknown): string {
+  if (raw == null || raw === '') return '';
+  const s = String(raw).trim();
+  return /^\d+$/.test(s) ? s : '';
+}
+
+/**
+ * teams-list often exposes the company_users row as numeric `id` (see WorkforceManagement mapping).
+ * Prefer explicit company_users_* fields, then fall back to `id` only when it is numeric (never UUID).
+ */
+function resolveTeamsListCompanyUsersId(u: any): string {
+  const candidates = [
+    u?.company_users_id,
+    u?.company_user_id,
+    u?.company_users?.id,
+    u?.company_user?.id,
+    u?.pivot?.company_users_id,
+    u?.pivot?.id,
+    u?.id,
+  ];
+  for (const c of candidates) {
+    const n = normalizeNumericCompanyUsersId(c);
+    if (n) return n;
+  }
+  return '';
+}
+
+/** API may return company_users_id as a nested user object — extract numeric pivot id */
+function normalizeCompanyUsersIdField(raw: unknown): string {
+  if (raw == null || raw === '') return '';
+  if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
+    const o = raw as Record<string, unknown>;
+    return normalizeNumericCompanyUsersId(o.id ?? o.company_users_id ?? o.company_user_id);
+  }
+  return normalizeNumericCompanyUsersId(raw);
+}
+
+function teamMemberFromApiNestedUser(obj: unknown): TeamMember | null {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+  const o = obj as Record<string, unknown>;
+  const id = normalizeNumericCompanyUsersId(o.id ?? o.company_users_id ?? o.company_user_id);
+  if (!id) return null;
+  const name = String(o.name ?? '').trim();
+  if (!name) return null;
+  const email = String(o.email ?? o.phone ?? o.contact_number ?? '').trim();
+  return { id, name, email: email || '—' };
+}
+
+function mergeTeamMembersFromApiRows(rows: any[], prev: TeamMember[]): TeamMember[] {
+  const byId = new Map(prev.map((m) => [m.id, m]));
+  rows.forEach((item) => {
+    const tm = teamMemberFromApiNestedUser(item?.company_users_id);
+    if (tm && !byId.has(tm.id)) byId.set(tm.id, tm);
+  });
+  return Array.from(byId.values());
+}
 
 /** Cache for DPR list - instant display on remount, project names, throttle */
 const DPR_LIST_CACHE = {
@@ -2308,11 +2369,13 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       try {
         const staffList = await teamsAPI.getTeamsList();
         const raw = Array.isArray(staffList) ? staffList : [];
-        const members: TeamMember[] = raw.map((u: any) => ({
-          id: u.uuid || String(u.id),
-          name: u.name || '',
-          email: u.email || ''
-        })).filter((m: TeamMember) => m.name);
+        const members: TeamMember[] = raw
+          .map((u: any) => {
+            const id = resolveTeamsListCompanyUsersId(u);
+            if (!id) return null;
+            return { id, name: u.name || '', email: u.email || '' };
+          })
+          .filter((m): m is TeamMember => m != null && !!m.name);
         setTeamMembers(members);
       } catch (err: any) {
         console.warn('Staff list API failed, using fallback:', err?.message);
@@ -2321,11 +2384,13 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           const saved = localStorage.getItem('manageTeamsUsers') || localStorage.getItem('users');
           const parsed = saved ? JSON.parse(saved) : [];
           const list = Array.isArray(parsed) ? parsed : [];
-          const fallback: TeamMember[] = list.map((u: any) => ({
-            id: u.uuid || u.id || String(Date.now()),
-            name: u.name || '',
-            email: u.email || ''
-          })).filter((m: TeamMember) => m.name);
+          const fallback: TeamMember[] = list
+            .map((u: any) => {
+              const id = resolveTeamsListCompanyUsersId(u);
+              if (!id) return null;
+              return { id, name: u.name || '', email: u.email || '' };
+            })
+            .filter((m): m is TeamMember => m != null && !!m.name);
           setTeamMembers(fallback);
         } catch (e) {
           setTeamMembers([]);
@@ -2352,23 +2417,47 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     return combined.filter(Boolean).map((u: string) => resolveImageUrl(String(u)));
   };
 
-  /** Extract date (YYYY-MM-DD) from ISO timestamp for report display */
-  const extractDateFromTimestamp = (ts: string | null | undefined): string => {
-    if (!ts || typeof ts !== 'string') return '';
-    const m = ts.match(/^(\d{4}-\d{2}-\d{2})/);
-    return m ? m[1] : '';
+  const pickCompanyUsersIdFromItem = (item: any): string => {
+    const fromRoot = normalizeCompanyUsersIdField(
+      item?.company_users_id ?? item?.company_user_id
+    );
+    if (fromRoot) return fromRoot;
+    const tm = item?.team_members;
+    if (!Array.isArray(tm) || tm.length === 0) return '';
+    const first = tm[0];
+    if (first == null) return '';
+    if (typeof first === 'object') {
+      return normalizeCompanyUsersIdField(
+        first.company_users_id ?? first.company_user_id ?? first.id ?? first
+      );
+    }
+    return normalizeNumericCompanyUsersId(first);
   };
 
   /** Map API item to SafetyEntry - used by both fetch-dpr-history-edit and safety-list */
-  const mapItemToSafetyEntry = (item: any) => ({
-    id: item.uuid || String(item.id),
-    serverId: item.id,
-    details: item.details || item.description || item.name || '',
-    images: parseImagesFromItem(item),
-    teamMembers: Array.isArray(item.team_members) ? item.team_members.map((m: any) => String(m?.id ?? m)) : Array.isArray(item.teamMembers) ? item.teamMembers : [],
-    remarks: item.remarks || '',
-    date: extractDateFromTimestamp(item.updated_at ?? item.created_at),
-  });
+  const mapItemToSafetyEntry = (item: any) => {
+    const raw = item?.company_users_id;
+    let companyUserDisplay: SafetyEntry['companyUserDisplay'];
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      const id = normalizeCompanyUsersIdField(raw);
+      if (!id && raw.name) {
+        companyUserDisplay = {
+          name: String(raw.name),
+          email: String(raw.email ?? ''),
+          phone: String(raw.phone ?? ''),
+        };
+      }
+    }
+    return {
+      id: item.uuid || String(item.id),
+      serverId: item.id,
+      details: item.details || item.description || item.name || '',
+      images: parseImagesFromItem(item),
+      company_users_id: pickCompanyUsersIdFromItem(item),
+      companyUserDisplay,
+      remarks: item.remarks || '',
+    };
+  };
 
   // SafetyDPR: fetch-dpr-history-edit (edit mode) or safety-list when screen loads
   useEffect(() => {
@@ -2415,6 +2504,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             return true;
           });
         setSafetyEntries(mapped);
+        setTeamMembers((prev) => mergeTeamMembersFromApiRows(filtered, prev));
       } catch (err: any) {
         toast.showError(err?.message || 'Failed to load safety list');
       } finally {
@@ -2425,15 +2515,29 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   }, [showSafetySelection, isAuthenticated, editingDprId, dprIdRes, selectedProject, selectedSubproject]);
 
   /** Map API item to HindranceEntry - used by both fetch-dpr-history-edit and hinderance-list */
-  const mapItemToHindranceEntry = (item: any) => ({
-    id: item.uuid || String(item.id),
-    serverId: item.id,
-    details: item.details || item.description || item.name || '',
-    images: parseImagesFromItem(item),
-    teamMembers: Array.isArray(item.team_members) ? item.team_members.map((m: any) => String(m?.id ?? m)) : Array.isArray(item.teamMembers) ? item.teamMembers : [],
-    remarks: item.remarks || '',
-    date: extractDateFromTimestamp(item.updated_at ?? item.created_at),
-  });
+  const mapItemToHindranceEntry = (item: any) => {
+    const raw = item?.company_users_id;
+    let companyUserDisplay: HindranceEntry['companyUserDisplay'];
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+      const id = normalizeCompanyUsersIdField(raw);
+      if (!id && raw.name) {
+        companyUserDisplay = {
+          name: String(raw.name),
+          email: String(raw.email ?? ''),
+          phone: String(raw.phone ?? ''),
+        };
+      }
+    }
+    return {
+      id: item.uuid || String(item.id),
+      serverId: item.id,
+      details: item.details || item.description || item.name || '',
+      images: parseImagesFromItem(item),
+      company_users_id: pickCompanyUsersIdFromItem(item),
+      companyUserDisplay,
+      remarks: item.remarks || '',
+    };
+  };
 
   // HinderanceDPR: fetch-dpr-history-edit (edit mode) or hinderance-list when screen loads
   useEffect(() => {
@@ -2480,6 +2584,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             return true;
           });
         setHindranceEntries(mapped);
+        setTeamMembers((prev) => mergeTeamMembersFromApiRows(filtered, prev));
       } catch (err: any) {
         toast.showError(err?.message || 'Failed to load hinderance list');
       } finally {
@@ -2684,8 +2789,13 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     }));
   };
 
-  const handleSafetyEntryTeamMembersChange = (id: string, memberIds: string[]) => {
-    setSafetyEntries(prev => prev.map(e => e.id === id ? { ...e, teamMembers: memberIds } : e));
+  const handleSafetyEntryCompanyUserChange = (entryId: string, companyUsersId: string) => {
+    const cuid = normalizeNumericCompanyUsersId(companyUsersId) || undefined;
+    setSafetyEntries((prev) =>
+      prev.map((e) =>
+        e.id === entryId ? { ...e, company_users_id: cuid, companyUserDisplay: undefined } : e
+      )
+    );
   };
 
   const handleSafetyEntryRemarksChange = (id: string, remarks: string) => {
@@ -2770,8 +2880,13 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     }));
   };
 
-  const handleHindranceEntryTeamMembersChange = (id: string, memberIds: string[]) => {
-    setHindranceEntries(prev => prev.map(e => e.id === id ? { ...e, teamMembers: memberIds } : e));
+  const handleHindranceEntryCompanyUserChange = (entryId: string, companyUsersId: string) => {
+    const cuid = normalizeNumericCompanyUsersId(companyUsersId) || undefined;
+    setHindranceEntries((prev) =>
+      prev.map((e) =>
+        e.id === entryId ? { ...e, company_users_id: cuid, companyUserDisplay: undefined } : e
+      )
+    );
   };
 
   const handleHindranceEntryRemarksChange = (id: string, remarks: string) => {
@@ -2811,7 +2926,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     fd.append('name', (entry.details || '').substring(0, 100) || 'Safety');
     fd.append('details', entry.details || '');
     fd.append('remarks', entry.remarks || '');
-    (entry.teamMembers || []).forEach((id) => fd.append('team_members[]', String(id)));
+    const cuid = normalizeNumericCompanyUsersId(entry.company_users_id);
+    if (cuid) fd.append('company_users_id', cuid);
     const imgs = entry.images || (entry.image ? [entry.image] : []);
     const uploadableImg = imgs.find((u): u is string => typeof u === 'string' && u.startsWith('data:'));
     if (uploadableImg) {
@@ -2836,7 +2952,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     fd.append('name', (entry.details || '').substring(0, 100) || 'Hindrance');
     fd.append('details', entry.details || '');
     fd.append('remarks', entry.remarks || '');
-    (entry.teamMembers || []).forEach((id) => fd.append('team_members[]', String(id)));
+    const cuid = normalizeNumericCompanyUsersId(entry.company_users_id);
+    if (cuid) fd.append('company_users_id', cuid);
     const imgs = entry.images || (entry.image ? [entry.image] : []);
     const uploadableImg = imgs.find((u): u is string => typeof u === 'string' && u.startsWith('data:'));
     if (uploadableImg) {
@@ -2971,7 +3088,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         formData.append(`safety[${idx}][name]`, (entry.details || '').substring(0, 100) || 'Safety');
         formData.append(`safety[${idx}][details]`, entry.details || '');
         formData.append(`safety[${idx}][remarks]`, entry.remarks || '');
-        (entry.teamMembers || []).forEach((id) => formData.append(`safety[${idx}][team_members][]`, String(id)));
+        const scuid = normalizeNumericCompanyUsersId(entry.company_users_id);
+        if (scuid) formData.append(`safety[${idx}][company_users_id]`, scuid);
       });
       newSafetyEntries.forEach((entry, idx) => {
         const imgs = entry.images || (entry.image ? [entry.image] : []);
@@ -2991,7 +3109,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         formData.append(`hinderance[${idx}][name]`, (entry.details || '').substring(0, 100) || 'Hindrance');
         formData.append(`hinderance[${idx}][details]`, entry.details || '');
         formData.append(`hinderance[${idx}][remarks]`, entry.remarks || '');
-        (entry.teamMembers || []).forEach((id) => formData.append(`hinderance[${idx}][team_members][]`, String(id)));
+        const hcuid = normalizeNumericCompanyUsersId(entry.company_users_id);
+        if (hcuid) formData.append(`hinderance[${idx}][company_users_id]`, hcuid);
       });
       newHindranceEntries.forEach((entry, idx) => {
         const imgs = entry.images || (entry.image ? [entry.image] : []);
@@ -4928,9 +5047,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                     <thead>
                       <tr className={`border-b ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>SR No</th>
-                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Date</th>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Safety Problem Details</th>
-                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Tag Team Members</th>
+                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Tag Team Member</th>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Remarks</th>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}></th>
                       </tr>
@@ -4940,7 +5058,6 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                         <React.Fragment key={entry.id}>
                           <tr className={isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'}>
                             <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{(safetyPage - 1) * PAGE_SIZE + index + 1}</td>
-                            <td className={`px-6 py-4 text-sm ${textPrimary}`}>{entry.date || '—'}</td>
                             <td className="px-6 py-4">
                               <input
                                 type="text"
@@ -4954,11 +5071,15 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                             </td>
                             <td className="px-6 py-4">
                               <TeamMembersDropdown
+                                mode="single"
                                 teamMembers={teamMembers}
-                                value={entry.teamMembers || []}
-                                onChange={(memberIds) => handleSafetyEntryTeamMembersChange(entry.id, memberIds)}
+                                value={entry.company_users_id || ''}
+                                onChange={(companyUsersId) => handleSafetyEntryCompanyUserChange(entry.id, companyUsersId)}
                                 isDark={isDark}
-                                placeholder="Select team members"
+                                placeholder="Select team member"
+                                apiDisplay={
+                                  entry.company_users_id ? null : entry.companyUserDisplay ?? null
+                                }
                               />
                             </td>
                             <td className="px-6 py-4">
@@ -4977,7 +5098,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                             </td>
                           </tr>
                           <tr className={isDark ? 'bg-slate-800/20' : 'bg-slate-50/50'}>
-                            <td colSpan={6} className="px-6 py-3 border-t-0">
+                            <td colSpan={5} className="px-6 py-3 border-t-0">
                               <div className="flex flex-wrap gap-2 items-center">
                                 <span className={`text-xs font-bold ${textSecondary} mr-2`}>Images:</span>
                                 {(entry.images || (entry.image ? [entry.image] : [])).length > 0 ? (
@@ -5090,9 +5211,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                     <thead>
                       <tr className={`border-b ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>SR No</th>
-                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Date</th>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Hindrance Problem Details</th>
-                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Tag Team Members</th>
+                        <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Tag Team Member</th>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Remarks</th>
                         <th className={`px-6 py-3 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}></th>
                       </tr>
@@ -5102,7 +5222,6 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                         <React.Fragment key={entry.id}>
                           <tr className={isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'}>
                             <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{(hindrancePage - 1) * PAGE_SIZE + index + 1}</td>
-                            <td className={`px-6 py-4 text-sm ${textPrimary}`}>{entry.date || '—'}</td>
                             <td className="px-6 py-4">
                               <input
                                 type="text"
@@ -5114,11 +5233,15 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                             </td>
                             <td className="px-6 py-4">
                               <TeamMembersDropdown
+                                mode="single"
                                 teamMembers={teamMembers}
-                                value={entry.teamMembers || []}
-                                onChange={(memberIds) => handleHindranceEntryTeamMembersChange(entry.id, memberIds)}
+                                value={entry.company_users_id || ''}
+                                onChange={(companyUsersId) => handleHindranceEntryCompanyUserChange(entry.id, companyUsersId)}
                                 isDark={isDark}
-                                placeholder="Select team members"
+                                placeholder="Select team member"
+                                apiDisplay={
+                                  entry.company_users_id ? null : entry.companyUserDisplay ?? null
+                                }
                               />
                             </td>
                             <td className="px-6 py-4">
@@ -5137,7 +5260,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                             </td>
                           </tr>
                           <tr className={isDark ? 'bg-slate-800/20' : 'bg-slate-50/50'}>
-                            <td colSpan={6} className="px-6 py-3 border-t-0">
+                            <td colSpan={5} className="px-6 py-3 border-t-0">
                               <div className="flex flex-wrap gap-2 items-center">
                                 <span className={`text-xs font-bold ${textSecondary} mr-2`}>Images:</span>
                                 {(entry.images || (entry.image ? [entry.image] : [])).length > 0 ? (

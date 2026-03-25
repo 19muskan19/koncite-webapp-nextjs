@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import CreateCompanyModal from './Modals/CreateCompanyModal';
 import { masterDataAPI } from '../../services/api';
-import { getLogoUrl } from '@/utils/imageUtils';
+import { getLogoUrl, extractCompanyLogoFromApi, getInitialsAvatarUrl } from '@/utils/imageUtils';
 import { useUser } from '../../contexts/UserContext';
 import * as XLSX from 'xlsx';
 
@@ -48,6 +48,21 @@ interface Company {
 interface CompaniesProps {
   theme: ThemeType;
 }
+
+// Ensure projects/employees from API are always numbers (API may return objects like {})
+const toSafeNumber = (val: unknown): number => {
+  if (typeof val === 'number' && !Number.isNaN(val)) return val;
+  const n = Number(val);
+  return Number.isNaN(n) ? 0 : n;
+};
+
+// Ensure registrationNo is always a string (API may return empty object {})
+const toSafeString = (val: unknown): string => {
+  if (val == null) return '';
+  if (typeof val === 'string') return val.trim();
+  if (typeof val === 'number' && !Number.isNaN(val)) return String(val);
+  return '';
+};
 
 const Companies: React.FC<CompaniesProps> = ({ theme }) => {
   const toast = useToast();
@@ -141,7 +156,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
       // Transform API response to match Company interface
       const transformedCompanies = fetchedCompanies.map((company: any) => {
         const companyName = company.registration_name || company.name || '';
-        const logoUrl = company.logo || company.logo_url;
+        const logoUrl = extractCompanyLogoFromApi(company);
         
         // Preserve original numeric ID for API calls (backend expects numeric id)
         // API returns: { id: 107, uuid: "ecfa3c96-..." }
@@ -160,13 +175,14 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
           name: companyName,
           code: company.code || '',
           address: company.registered_address || company.address || '',
-          registrationNo: company.company_registration_no || company.registration_no || company.registrationNo || '',
-          logo: getLogoUrl(logoUrl, companyName, '6366f1'),
+          registrationNo: toSafeString(company.company_registration_no ?? company.registration_no ?? company.registrationNo),
+          // Store raw logo URL from API; getLogoUrl used at render for resolution + fallback
+          logo: logoUrl || '',
           contact: company.phone || company.contact || '',
           email: company.email || '',
           status: company.status || (company.is_active === 1 || company.is_active === true ? 'Pending' : 'Closed'),
-          projects: company.projects_count || company.projects || 0,
-          employees: company.employees_count || company.employees || 0,
+          projects: toSafeNumber(company.projects_count ?? company.projects),
+          employees: toSafeNumber(company.employees_count ?? company.employees),
           createdAt: company.created_at || company.createdAt,
           updatedAt: company.updated_at || company.updatedAt,
         };
@@ -390,21 +406,22 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
         setFormData({
           registrationName: company.name,
           registeredAddress: company.address,
-          companyRegistrationNo: company.registrationNo,
+          companyRegistrationNo: company.registrationNo || '',
           logo: null,
-          logoPreview: company.logo || null
+          logoPreview: (typeof company.logo === 'string' ? company.logo : null) || null
         });
         setShowCompanyModal(true);
         return;
       }
       
-      // Safely extract data with null checks
+      // Safely extract data with null checks (CompaniesResources from GET /companies-edit/{id})
+      // Note: Backend uses where('id', $uuid) - pass numeric id; company_registration_no may be {}
       setFormData({
         registrationName: companyData?.registration_name || companyData?.name || company.name || '',
         registeredAddress: companyData?.registered_address || companyData?.address || company.address || '',
-        companyRegistrationNo: companyData?.company_registration_no || companyData?.registration_no || company.registrationNo || '',
+        companyRegistrationNo: toSafeString(companyData?.company_registration_no ?? companyData?.registration_no ?? company.registrationNo),
         logo: null,
-        logoPreview: companyData?.logo || companyData?.logo_url || company.logo || null
+        logoPreview: (typeof companyData?.logo === 'string' ? companyData.logo : '') || (typeof companyData?.logo_url === 'string' ? companyData.logo_url : '') || (typeof company.logo === 'string' ? company.logo : '') || null
       });
     } catch (error: any) {
       console.error('❌ Failed to fetch company details:', error);
@@ -420,9 +437,9 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
       setFormData({
         registrationName: company.name || '',
         registeredAddress: company.address || '',
-        companyRegistrationNo: company.registrationNo || '',
+        companyRegistrationNo: toSafeString(company.registrationNo),
         logo: null,
-        logoPreview: company.logo || null
+        logoPreview: (typeof company.logo === 'string' ? company.logo : null) || null
       });
       
       // Still open the modal with cached data
@@ -682,13 +699,13 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
         name: company.registration_name || company.name || '',
         code: company.code || '',
         address: company.registered_address || company.address || '',
-        registrationNo: company.company_registration_no || company.registration_no || company.registrationNo || '',
-        logo: company.logo || company.logo_url || '',
+        registrationNo: toSafeString(company.company_registration_no ?? company.registration_no ?? company.registrationNo),
+        logo: (typeof company.logo === 'string' ? company.logo : '') || (typeof company.logo_url === 'string' ? company.logo_url : '') || '',
         contact: company.phone || company.contact || '',
         email: company.email || '',
         status: company.status || (company.is_active === 1 || company.is_active === true ? 'Pending' : 'Closed'),
-        projects: company.projects_count || company.projects || 0,
-        employees: company.employees_count || company.employees || 0,
+        projects: toSafeNumber(company.projects_count ?? company.projects),
+        employees: toSafeNumber(company.employees_count ?? company.employees),
         createdAt: company.created_at || company.createdAt,
         updatedAt: company.updated_at || company.updatedAt,
       }));
@@ -793,10 +810,11 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
     }
     
     // First priority: Use the projects count from the API response (from companies-list)
-    // This is the most accurate count from the backend
-    if (viewingCompany.projects !== undefined && viewingCompany.projects !== null) {
-      console.log(`📊 Using API projects count for company "${viewingCompany.name}":`, viewingCompany.projects);
-      return viewingCompany.projects;
+    // Only use if it's a valid number (API may return objects like {})
+    const p = viewingCompany.projects;
+    if (typeof p === 'number' && !Number.isNaN(p)) {
+      console.log(`📊 Using API projects count for company "${viewingCompany.name}":`, p);
+      return p;
     }
     
     // Fallback: Count projects where companies_id matches the company's numeric ID
@@ -831,8 +849,8 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
       company.contact || '-',
       company.email || '-',
       company.status,
-      company.projects?.toString() || '0',
-      company.employees?.toString() || '0'
+      String(toSafeNumber(company.projects)),
+      String(toSafeNumber(company.employees))
     ]);
 
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
@@ -1077,9 +1095,10 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                       alt={company.name}
                       className="w-full h-full object-cover"
                       loading="lazy"
+                      referrerPolicy="no-referrer"
                       onError={(e) => {
                         const target = e.target as HTMLImageElement;
-                        target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(company.name)}&background=6366f1&color=fff&size=128`;
+                        target.src = getInitialsAvatarUrl(company.name, '6366f1');
                       }}
                     />
                   </div>
@@ -1203,9 +1222,10 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                       src={getLogoUrl(viewingCompany.logo, viewingCompany.name, '6366f1')}
                       alt={viewingCompany.name}
                       className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
                       onError={(e) => {
                         const target = e.target as HTMLImageElement;
-                        target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(viewingCompany.name)}&background=6366f1&color=fff&size=128`;
+                        target.src = getInitialsAvatarUrl(viewingCompany.name, '6366f1');
                       }}
                     />
                   </div>
@@ -1234,7 +1254,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                     <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>
                       Company Registration No
                     </label>
-                    <p className={`text-sm font-bold ${textPrimary}`}>{viewingCompany.registrationNo}</p>
+                    <p className={`text-sm font-bold ${textPrimary}`}>{viewingCompany.registrationNo || '-'}</p>
                   </div>
 
                   {viewingCompany.contact && (
@@ -1272,7 +1292,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                       <label className={`block text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>
                         Employees
                       </label>
-                      <p className={`text-xl font-black ${textPrimary}`}>{viewingCompany.employees || 0}</p>
+                      <p className={`text-xl font-black ${textPrimary}`}>{typeof viewingCompany.employees === 'number' ? viewingCompany.employees : 0}</p>
                     </div>
                   </div>
                 </div>
