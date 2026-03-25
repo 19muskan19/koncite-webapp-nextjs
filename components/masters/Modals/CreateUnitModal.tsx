@@ -19,7 +19,13 @@ interface Unit {
   status?: 'Active' | 'Inactive';
 }
 
-type EditingUnitRow = { numericId?: number | string; unit: string; unit_coversion?: string; unit_coversion_factor?: string };
+type EditingUnitRow = {
+  numericId?: number | string;
+  uuid?: string;
+  unit: string;
+  unit_coversion?: string;
+  unit_coversion_factor?: string;
+};
 
 interface CreateUnitModalProps {
   theme: ThemeType;
@@ -28,7 +34,17 @@ interface CreateUnitModalProps {
   onSuccess?: () => void;
   /** When editing: array of all conversion rows for this unit (enables multi-row form like Create) */
   editingUnitRows?: EditingUnitRow[] | null;
-  existingUnits?: Array<{ id?: string; numericId?: number | string; uuid?: string; unit?: string; name?: string; unit_coversion?: string; conversion?: string; unit_coversion_factor?: string; factor?: string }>;
+  existingUnits?: Array<{
+    id?: string;
+    numericId?: number | string;
+    uuid?: string;
+    unit?: string;
+    name?: string;
+    unit_coversion?: string;
+    conversion?: string;
+    unit_coversion_factor?: string;
+    factor?: string;
+  }>;
 }
 
 const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
@@ -40,7 +56,13 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
   existingUnits = []
 }) => {
   const toast = useToast();
-  type UnitRow = { numericId?: number | string; unit: string; unit_coversion: string; unit_coversion_factor: string };
+  type UnitRow = {
+    numericId?: number | string;
+    uuid?: string;
+    unit: string;
+    unit_coversion: string;
+    unit_coversion_factor: string;
+  };
   const [rows, setRows] = useState<UnitRow[]>([{ unit: '', unit_coversion: '', unit_coversion_factor: '' }]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -57,6 +79,7 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
     if (isOpen && editingUnitRows && editingUnitRows.length > 0) {
       const loadedRows: UnitRow[] = editingUnitRows.map((r) => ({
         numericId: r.numericId,
+        uuid: r.uuid,
         unit: r.unit || '',
         unit_coversion: r.unit_coversion || '',
         unit_coversion_factor: r.unit_coversion_factor || ''
@@ -154,6 +177,32 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
     return true;
   };
 
+  /** Payload rows for Laravel `unitBulkEdit`: id or uuid, unit, conversion fields (null when cleared). */
+  const rowToBulkEditPayload = (row: UnitRow) => {
+    const unitName = row.unit.trim();
+    const conv = (row.unit_coversion || '').trim();
+    const factor = (row.unit_coversion_factor || '').trim();
+    const idNum = row.numericId != null ? Number(row.numericId) : NaN;
+    const item: {
+      id?: number;
+      uuid?: string;
+      unit: string;
+      unit_coversion: string | null;
+      unit_coversion_factor: string | null;
+    } = {
+      unit: unitName,
+      unit_coversion: conv || null,
+      unit_coversion_factor: conv ? factor || null : null,
+    };
+    const u = row.uuid && String(row.uuid).trim();
+    if (!Number.isNaN(idNum) && idNum > 0) {
+      item.id = idNum;
+    } else if (u) {
+      item.uuid = u;
+    }
+    return item;
+  };
+
   const handleSubmit = async () => {
     if (!validateForm()) return;
 
@@ -170,41 +219,73 @@ const CreateUnitModal: React.FC<CreateUnitModalProps> = ({
         for (const id of toDelete) {
           await masterDataAPI.deleteUnit(id);
         }
-        for (const row of toUpdate) {
-          const payload: Record<string, any> = { unit: row.unit.trim() };
-          if (row.unit_coversion?.trim()) {
-            payload.unit_coversion = row.unit_coversion.trim();
-            payload.unit_coversion_factor = (row.unit_coversion_factor ?? '').trim();
+
+        const summaryParts: string[] = [];
+
+        if (toUpdate.length > 0) {
+          const bulkPayload = toUpdate.map(rowToBulkEditPayload);
+          const missingKey = bulkPayload.filter((it) => it.id == null && !(it.uuid && it.uuid.length));
+          if (missingKey.length > 0) {
+            toast.showError('Some rows are missing a unit id. Please refresh and try again.');
+            return;
           }
-          await masterDataAPI.updateUnit(String(row.numericId), payload);
+          const bulkRes = await masterDataAPI.bulkEditUnits(bulkPayload);
+          if (bulkRes?.message) summaryParts.push(String(bulkRes.message));
         }
+
         if (toCreate.length > 0) {
           const bulkItems = toCreate.map((row) => {
-            const item: { unit: string; unit_coversion?: string; unit_coversion_factor?: string } = { unit: row.unit.trim() };
+            const item: { unit: string; unit_coversion?: string | null; unit_coversion_factor?: string | null } = {
+              unit: row.unit.trim(),
+            };
             if (row.unit_coversion?.trim()) {
               item.unit_coversion = row.unit_coversion.trim();
-              item.unit_coversion_factor = (row.unit_coversion_factor ?? '').trim();
+              item.unit_coversion_factor = (row.unit_coversion_factor ?? '').trim() || null;
             }
             return item;
           });
-          await masterDataAPI.createUnitsBulk(bulkItems);
+          const result = await masterDataAPI.createUnitsBulk(bulkItems);
+          if (result?.message) summaryParts.push(String(result.message));
         }
-        toast.showSuccess('Unit updated successfully!');
+
+        const combined = summaryParts.join(' ').trim();
+        if (combined) {
+          const lower = combined.toLowerCase();
+          const looksPartial =
+            lower.includes('already present') ||
+            lower.includes('already available') ||
+            lower.includes('not found') ||
+            lower.includes('skipped');
+          if (looksPartial) toast.showWarning(combined);
+          else toast.showSuccess(combined);
+        } else {
+          toast.showSuccess('Unit saved.');
+        }
+
         onSuccess?.();
         onClose();
       } else {
         const bulkItems = validRows.map((row) => {
-          const item: { unit: string; unit_coversion?: string; unit_coversion_factor?: string } = { unit: row.unit.trim() };
+          const item: { unit: string; unit_coversion?: string | null; unit_coversion_factor?: string | null } = {
+            unit: row.unit.trim(),
+          };
           if (row.unit_coversion?.trim()) {
             item.unit_coversion = row.unit_coversion.trim();
-            item.unit_coversion_factor = (row.unit_coversion_factor?.trim() ?? '') || '';
+            item.unit_coversion_factor = (row.unit_coversion_factor?.trim() ?? '') || null;
           }
           return item;
         });
         const result = await masterDataAPI.createUnitsBulk(bulkItems);
-        const msg = result?.message ?? (result?.data?.created?.length === validRows.length
-          ? `${validRows.length} unit(s) created successfully!`
-          : `${result?.data?.created?.length ?? 0} created. ${result?.data?.already_present?.length ?? 0} already present.`);
+        const data = result?.data ?? result;
+        const created = data?.created;
+        const already = data?.already_present;
+        const createdLen = Array.isArray(created) ? created.length : 0;
+        const apLen = Array.isArray(already) ? already.length : 0;
+        const msg =
+          result?.message ??
+          (createdLen === validRows.length && apLen === 0
+            ? `${validRows.length} unit(s) created successfully!`
+            : `${createdLen} created.${apLen > 0 ? ` ${apLen} already present.` : ''}`);
         toast.showSuccess(msg);
         onSuccess?.();
         onClose();

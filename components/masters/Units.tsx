@@ -28,13 +28,39 @@ interface Unit {
   is_active?: number; // API field (1 = active, 0 = inactive)
 }
 
+/**
+ * Laravel `edit` / `delete` use `where('id', $param)` despite the route name — value must be numeric PK.
+ */
+function unitPkForIdRoute(u: Pick<Unit, 'numericId' | 'id'>): string | null {
+  if (u.numericId != null && String(u.numericId).trim() !== '') {
+    const n = Number(u.numericId);
+    if (!Number.isNaN(n) && n > 0) return String(n);
+  }
+  const raw = String(u.id ?? '').trim();
+  if (/^\d+$/.test(raw)) return raw;
+  return null;
+}
+
+/** Rows for the edit modal from table data (always available); works even if GET /unit-edit fails. */
+function buildEditingRowsFromGroup(group: Unit[]) {
+  return group.map((u) => ({
+    numericId: u.numericId ?? unitPkForIdRoute(u) ?? undefined,
+    uuid: u.uuid,
+    unit: u.unit || u.name || '',
+    unit_coversion: u.unit_coversion || u.conversion || '',
+    unit_coversion_factor: u.unit_coversion_factor || u.factor || '',
+  }));
+}
+
 const Units: React.FC<UnitsProps> = ({ theme }) => {
   const toast = useToast();
   const { isAuthenticated } = useUser();
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
-  const [editingUnitRows, setEditingUnitRows] = useState<Array<{ numericId?: number | string; unit: string; unit_coversion?: string; unit_coversion_factor?: string }> | null>(null);
+  const [editingUnitRows, setEditingUnitRows] = useState<
+    Array<{ numericId?: number | string; uuid?: string; unit: string; unit_coversion?: string; unit_coversion_factor?: string }>
+  | null>(null);
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [units, setUnits] = useState<Unit[]>([]);
@@ -73,8 +99,8 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
       // Transform API response to match Unit interface
       // API returns: { id: 1432, uuid: "78f5bc1f-...", unit: "cft", ... }
       const transformedUnits: Unit[] = fetchedUnits.map((unit: any) => {
-        const numericId = unit.id; // This is the numeric ID from database (e.g., 1432)
-        const uuid = unit.uuid; // UUID if available
+        const numericId = unit.id ?? unit.unit_id ?? unit.units_id;
+        const uuid = unit.uuid;
         
         // Handle is_active: can be 1, "1", true, or undefined/null
         // IMPORTANT: Only default to Active if is_active is truly undefined/null
@@ -172,8 +198,8 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
       const searchResults = await masterDataAPI.searchUnits(query);
       // Transform API response to match Unit interface
       const transformedUnits: Unit[] = searchResults.map((unit: any) => {
-        const numericId = unit.id; // Numeric ID from database
-        const uuid = unit.uuid; // UUID if available
+        const numericId = unit.id ?? unit.unit_id ?? unit.units_id;
+        const uuid = unit.uuid;
         
         // Handle is_active: can be 1, "1", true, or undefined/null
         const isActiveValue = unit.is_active;
@@ -232,38 +258,48 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
 
   const handleEditUnit = async (group: Unit[]) => {
     const firstUnit = group[0];
-    const unitId = firstUnit?.uuid ?? firstUnit?.numericId ?? firstUnit?.id;
-    if (!unitId) {
-      toast.showError('Cannot edit: unit ID not found');
+    const unitPk = unitPkForIdRoute(firstUnit);
+
+    // Open modal immediately with list row(s) so fields are never blank; GET only refines row 1.
+    const rowsFromList = buildEditingRowsFromGroup(group);
+    setEditingUnitRows(rowsFromList);
+    setShowCreateModal(true);
+
+    if (!unitPk) {
+      toast.showWarning(
+        'Could not resolve numeric id for this unit. Fields are from the list only — refresh if data looks wrong.'
+      );
       return;
     }
 
     setEditingUnitLoading(true);
     try {
-      // Call unit-edit API to fetch fresh unit data
-      const apiData = await masterDataAPI.getUnit(String(unitId));
+      // GET /unit-edit/{id} — id in URL path (no body). Backend uses where('id', $id).
+      const apiData = await masterDataAPI.getUnit(unitPk);
 
-      // Build first row from API response
       const firstRow = {
-        numericId: apiData.id ?? apiData.uuid ?? firstUnit.numericId ?? firstUnit.id,
+        numericId: apiData.id ?? firstUnit.numericId ?? unitPkForIdRoute(firstUnit) ?? undefined,
+        uuid: apiData.uuid ?? firstUnit.uuid,
         unit: apiData.unit ?? apiData.name ?? firstUnit.unit ?? firstUnit.name ?? '',
         unit_coversion: apiData.unit_coversion ?? apiData.conversion ?? '',
         unit_coversion_factor: apiData.unit_coversion_factor ?? apiData.factor ?? ''
       };
 
-      // Additional rows from group (conversion entries) - API returns one unit, use list for rest
       const restRows = group.slice(1).map((u) => ({
-        numericId: u.numericId ?? u.id,
+        numericId: u.numericId ?? unitPkForIdRoute(u) ?? undefined,
+        uuid: u.uuid,
         unit: u.unit || u.name || '',
         unit_coversion: u.unit_coversion || u.conversion || '',
         unit_coversion_factor: u.unit_coversion_factor || u.factor || ''
       }));
 
       setEditingUnitRows([firstRow, ...restRows]);
-      setShowCreateModal(true);
     } catch (error: any) {
       console.error('Failed to fetch unit for edit:', error);
-      toast.showError(error?.message || 'Failed to load unit. Please try again.');
+      toast.showError(
+        error?.message ||
+          'Could not load latest unit from server. You can still edit using the values shown from the list.'
+      );
     } finally {
       setEditingUnitLoading(false);
     }
@@ -273,8 +309,9 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
     if (!window.confirm(`Are you sure you want to delete this unit${group.length > 1 ? ' and all its conversions' : ''}?`)) return;
     try {
       for (const u of group) {
-        const deleteId = u.numericId ?? u.id;
-        await masterDataAPI.deleteUnit(String(deleteId));
+        const deleteId = unitPkForIdRoute(u);
+        if (!deleteId) continue;
+        await masterDataAPI.deleteUnit(deleteId);
       }
       toast.showSuccess('Unit deleted successfully');
       await fetchUnits();
@@ -334,9 +371,13 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
     let failed = 0;
     try {
       for (const unit of units) {
-        const deleteId = unit.numericId ?? unit.id;
+        const deleteId = unitPkForIdRoute(unit);
+        if (!deleteId) {
+          failed++;
+          continue;
+        }
         try {
-          await masterDataAPI.deleteUnit(String(deleteId));
+          await masterDataAPI.deleteUnit(deleteId);
           deleted++;
         } catch (err) {
           failed++;
@@ -787,6 +828,11 @@ const Units: React.FC<UnitsProps> = ({ theme }) => {
 
       {/* Create Unit Modal */}
       <CreateUnitModal
+        key={
+          editingUnitRows?.length
+            ? `edit-${editingUnitRows.map((r, i) => r.numericId ?? r.uuid ?? `r${i}`).join('-')}`
+            : 'create'
+        }
         theme={theme}
         isOpen={showCreateModal}
         onClose={() => {

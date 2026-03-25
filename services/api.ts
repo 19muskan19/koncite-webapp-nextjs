@@ -2012,7 +2012,7 @@ export const masterDataAPI = {
       } as ApiError;
     }
   },
-  createUnitsBulk: async (items: Array<{ unit: string; unit_coversion?: string; unit_coversion_factor?: string }>): Promise<any> => {
+  createUnitsBulk: async (items: Array<{ unit: string; unit_coversion?: string | null; unit_coversion_factor?: string | null }>): Promise<any> => {
     try {
       const payload = { f: items };
       console.log('📦 Creating units (bulk) - POST /unit-add');
@@ -2025,6 +2025,34 @@ export const masterDataAPI = {
       console.error('❌ Error response:', error.response?.data);
       throw {
         message: error.response?.data?.message || 'Failed to create units',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /**
+   * Bulk edit units — POST /unit-bulk-edit with body { f: [...] }.
+   * Each row: id XOR uuid, plus unit, unit_coversion, unit_coversion_factor (Laravel UnitController::unitBulkEdit).
+   */
+  bulkEditUnits: async (
+    items: Array<{
+      id?: number;
+      uuid?: string;
+      unit: string;
+      unit_coversion?: string | null;
+      unit_coversion_factor?: string | null;
+    }>
+  ): Promise<any> => {
+    try {
+      const payload = { f: items };
+      console.log('📦 Bulk editing units - POST /unit-bulk-edit');
+      const response = await apiClient.post('/unit-bulk-edit', payload);
+      console.log('✅ Unit bulk edit API response:', response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Unit bulk edit error:', error);
+      console.error('❌ Error response:', error.response?.data);
+      throw {
+        message: error.response?.data?.message || 'Failed to update units',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
@@ -2067,9 +2095,7 @@ export const masterDataAPI = {
   },
   getUnit: async (uuid: string): Promise<any> => {
     try {
-      // Route: GET /unit-edit/{uuid}
-      // Backend uses where('id', $uuid) - but route parameter is named 'uuid'
-      // Try UUID first, then fallback to numeric ID if UUID format doesn't match
+      // Route: GET /unit-edit/{param} — Laravel UnitController::edit uses where('id', $param); pass numeric PK.
       const idParam = String(uuid).trim();
       console.log('📖 Fetching unit details - GET /unit-edit/' + idParam);
       console.log('📖 ID details:', {
@@ -2078,7 +2104,10 @@ export const masterDataAPI = {
         isNumeric: !isNaN(Number(idParam)),
         isUUID: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idParam)
       });
-      const response = await apiClient.get(`/unit-edit/${encodeURIComponent(idParam)}`);
+      const response = await apiClient.get(`/unit-edit/${encodeURIComponent(idParam)}`, {
+        // Also send id as query param so DevTools shows a request “payload”; path param is canonical for Laravel.
+        params: { id: idParam },
+      });
       console.log('✅ Unit edit API response:', response.data);
       const unitData = response.data.data || response.data || {};
       console.log('✅ Extracted unit data:', unitData);
@@ -2123,12 +2152,13 @@ export const masterDataAPI = {
       console.log('📝 is_active value being sent:', data.is_active, 'Type:', typeof data.is_active);
       console.log('📝 Status change:', data.is_active === 1 ? 'ACTIVE' : 'INACTIVE/DISABLED');
       
-      // Ensure is_active is explicitly included and is a number (1 or 0)
-      const updateData = { 
-        ...data, 
+      const updateData: Record<string, any> = {
+        ...data,
         updateId: uuid,
-        is_active: data.is_active !== undefined ? Number(data.is_active) : (data.is_active === 0 ? 0 : 1)
       };
+      if (data.is_active !== undefined) {
+        updateData.is_active = Number(data.is_active);
+      }
       
       console.log('📝 Final payload being sent:', JSON.stringify(updateData, null, 2));
       console.log('📝 Verifying is_active in payload:', updateData.is_active, 'Type:', typeof updateData.is_active);

@@ -31,9 +31,17 @@ const nextConfig = {
       },
     ];
   },
-  // Disable webpack cache to avoid Windows file locking issues on Windows
-  webpack: (config) => {
-    config.cache = false;
+  // Avoid persistent webpack disk cache on Windows (can hit EPERM / locking) but keep a fast dev cache.
+  // config.cache = false caused very slow rebuilds → ChunkLoadError timeouts loading app/layout.js
+  webpack: (config, { dev }) => {
+    if (dev) {
+      config.cache = { type: 'memory' };
+      // Default chunk wait is short; slow Windows disk/AV can cause ChunkLoadError on app/layout.js
+      config.output = {
+        ...config.output,
+        chunkLoadTimeout: 300000,
+      };
+    }
     return config;
   },
 }
