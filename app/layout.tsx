@@ -1,9 +1,11 @@
 import type { Metadata } from 'next'
-import ClientThemeProvider from '@/components/ClientThemeProvider'
-import { ToastProvider } from '@/contexts/ToastContext'
-import { UserProvider } from '@/contexts/UserContext'
-import { ProjectsProvider } from '@/contexts/ProjectsContext'
+import dynamic from 'next/dynamic'
 import './globals.css'
+
+const RootProviders = dynamic(() => import('@/components/RootProviders'), {
+  ssr: true,
+  loading: () => null,
+})
 
 export const metadata: Metadata = {
   title: 'KONCITE - Construction Platform',
@@ -23,13 +25,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className="font-sans antialiased">
-        <ClientThemeProvider>
-          <UserProvider>
-            <ProjectsProvider>
-              {children}
-            </ProjectsProvider>
-          </UserProvider>
-        </ClientThemeProvider>
+        <RootProviders>{children}</RootProviders>
       </body>
     </html>
   )

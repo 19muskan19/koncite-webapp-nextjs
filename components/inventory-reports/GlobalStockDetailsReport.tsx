@@ -33,6 +33,20 @@ interface ReportRow {
   totalStockQty: number;
 }
 
+/** One row per material; qty broken out by project column + total */
+interface PivotRow {
+  id: string;
+  code: string;
+  name: string;
+  specification: string;
+  unit: string;
+  byProject: Record<string, number>;
+  totalQty: number;
+}
+
+const materialGroupKey = (r: Pick<ReportRow, 'code' | 'name' | 'specification' | 'unit'>) =>
+  [r.code, r.name, r.specification, r.unit].join('\x1e');
+
 interface GlobalStockDetailsReportProps {
   theme: ThemeType;
 }
@@ -156,24 +170,88 @@ const GlobalStockDetailsReport: React.FC<GlobalStockDetailsReportProps> = ({ the
     return sortConfig.direction === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />;
   };
 
+  const { projectColumns, pivotRows } = useMemo(() => {
+    const projSet = new Set<string>();
+    const groups = new Map<
+      string,
+      { code: string; name: string; specification: string; unit: string; projectQty: Map<string, number> }
+    >();
+
+    for (const r of tableData) {
+      const key = materialGroupKey(r);
+      const projName = (r.project || '-').trim() || '-';
+      projSet.add(projName);
+      if (!groups.has(key)) {
+        groups.set(key, {
+          code: r.code,
+          name: r.name,
+          specification: r.specification,
+          unit: r.unit,
+          projectQty: new Map(),
+        });
+      }
+      const g = groups.get(key)!;
+      const prev = g.projectQty.get(projName) ?? 0;
+      g.projectQty.set(projName, prev + r.totalStockQty);
+    }
+
+    const sortedProjects = Array.from(projSet).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+
+    const rows: PivotRow[] = [];
+    for (const [key, g] of groups) {
+      const byProject: Record<string, number> = {};
+      let totalQty = 0;
+      for (const p of sortedProjects) {
+        const q = g.projectQty.get(p) ?? 0;
+        byProject[p] = q;
+        totalQty += q;
+      }
+      rows.push({
+        id: key,
+        code: g.code,
+        name: g.name,
+        specification: g.specification,
+        unit: g.unit,
+        byProject,
+        totalQty,
+      });
+    }
+
+    return { projectColumns: sortedProjects, pivotRows: rows };
+  }, [tableData]);
+
   const filteredAndSorted = useMemo(() => {
-    let out = tableData.filter(
-      (r) =>
-        tableSearch.trim() === '' ||
-        [r.code, r.name, r.specification, r.unit, r.project].some((v) =>
-          String(v).toLowerCase().includes(tableSearch.toLowerCase())
-        )
-    );
+    const q = tableSearch.trim().toLowerCase();
+    let out = pivotRows.filter((r) => {
+      if (!q) return true;
+      const inBase = [r.code, r.name, r.specification, r.unit].some((v) => String(v).toLowerCase().includes(q));
+      if (inBase) return true;
+      return projectColumns.some((p) => String(r.byProject[p] ?? '').includes(q) || p.toLowerCase().includes(q));
+    });
+
     if (sortConfig) {
+      const sk = sortConfig.key;
       out = [...out].sort((a, b) => {
-        const av = (a as any)[sortConfig.key];
-        const bv = (b as any)[sortConfig.key];
-        const cmp = typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av ?? '').localeCompare(String(bv ?? ''));
+        let av: string | number;
+        let bv: string | number;
+        if (sk === 'totalQty') {
+          av = a.totalQty;
+          bv = b.totalQty;
+        } else if (sk.startsWith('project:')) {
+          const p = sk.slice('project:'.length);
+          av = a.byProject[p] ?? 0;
+          bv = b.byProject[p] ?? 0;
+        } else {
+          av = (a as any)[sk] ?? '';
+          bv = (b as any)[sk] ?? '';
+        }
+        const cmp =
+          typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av ?? '').localeCompare(String(bv ?? ''));
         return sortConfig.direction === 'asc' ? cmp : -cmp;
       });
     }
     return out;
-  }, [tableData, tableSearch, sortConfig]);
+  }, [pivotRows, projectColumns, tableSearch, sortConfig]);
 
   const totalPages = Math.max(1, Math.ceil(filteredAndSorted.length / entriesPerPage));
   const paginated = useMemo(() => {
@@ -183,8 +261,11 @@ const GlobalStockDetailsReport: React.FC<GlobalStockDetailsReportProps> = ({ the
 
   useEffect(() => setCurrentPage(1), [tableSearch, sortConfig]);
 
-  const headers = ['Sl.no', 'Code', 'Name', 'Specification', 'Unit', 'Project', 'Total Stock QTY'];
-  const colKeys = ['code', 'name', 'specification', 'unit', 'project', 'totalStockQty'];
+  const baseHeaders = ['Code', 'Name', 'Specification', 'Unit'];
+  const headers = useMemo(
+    () => ['Sl.no', ...baseHeaders, ...projectColumns, 'Total'],
+    [projectColumns]
+  );
 
   const handleExport = (format: string) => {
     const rows = filteredAndSorted.map((r, idx) => [
@@ -193,15 +274,16 @@ const GlobalStockDetailsReport: React.FC<GlobalStockDetailsReportProps> = ({ the
       r.name,
       r.specification,
       r.unit,
-      r.project,
-      formatNum(r.totalStockQty),
+      ...projectColumns.map((p) => formatNum(r.byProject[p] ?? 0)),
+      formatNum(r.totalQty),
     ]);
     if (format === 'Copy') {
       const text = [headers.join('\t'), ...rows.map((row) => row.join('\t'))].join('\n');
       navigator.clipboard.writeText(text);
       toast.showSuccess('Copied to clipboard');
     } else if (format === 'CSV') {
-      const csv = [headers.join(','), ...rows.map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))].join('\n');
+      const esc = (c: unknown) => `"${String(c).replace(/"/g, '""')}"`;
+      const csv = [headers.map(esc).join(','), ...rows.map((row) => row.map(esc).join(','))].join('\n');
       const blob = new Blob([csv], { type: 'text/csv' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -228,9 +310,22 @@ const GlobalStockDetailsReport: React.FC<GlobalStockDetailsReportProps> = ({ the
       doc.setFontSize(10);
       const tableHeaders = [headers];
       const tableBody = filteredAndSorted.map((r, idx) => [
-        String(idx + 1), r.code, r.name, r.specification, r.unit, r.project, formatNum(r.totalStockQty),
+        String(idx + 1),
+        r.code,
+        r.name,
+        r.specification,
+        r.unit,
+        ...projectColumns.map((p) => formatNum(r.byProject[p] ?? 0)),
+        formatNum(r.totalQty),
       ]);
-      autoTable(doc, { head: tableHeaders, body: tableBody, startY: 22, styles: { fontSize: 8 }, headStyles: { fillColor: [0, 51, 102], textColor: [255, 255, 255] } });
+      autoTable(doc, {
+        head: tableHeaders,
+        body: tableBody,
+        startY: 22,
+        styles: { fontSize: 7 },
+        headStyles: { fillColor: [0, 51, 102], textColor: [255, 255, 255] },
+        horizontalPageBreak: true,
+      });
       doc.save(`global-stock-details-${activeTab}.pdf`);
       toast.showSuccess('Downloaded');
     } else if (format === 'Print') {
@@ -240,7 +335,12 @@ const GlobalStockDetailsReport: React.FC<GlobalStockDetailsReportProps> = ({ the
 </head><body>
 <h1>Global Stock Details - ${activeTab === 'materials' ? 'Material' : 'Assets'}</h1>
 <table><thead><tr>${headers.map((h) => `<th>${h}</th>`).join('')}</tr></thead>
-<tbody>${filteredAndSorted.map((r, idx) => `<tr><td>${idx + 1}</td><td>${r.code}</td><td>${r.name}</td><td>${r.specification}</td><td>${r.unit}</td><td>${r.project}</td><td>${formatNum(r.totalStockQty)}</td></tr>`).join('')}</tbody></table>
+<tbody>${filteredAndSorted
+        .map(
+          (r, idx) =>
+            `<tr><td>${idx + 1}</td><td>${r.code}</td><td>${r.name}</td><td>${r.specification}</td><td>${r.unit}</td>${projectColumns.map((p) => `<td class="text-right">${formatNum(r.byProject[p] ?? 0)}</td>`).join('')}<td class="text-right">${formatNum(r.totalQty)}</td></tr>`
+        )
+        .join('')}</tbody></table>
 </body></html>`;
       const w = window.open('', '_blank');
       if (w) {
@@ -251,7 +351,7 @@ const GlobalStockDetailsReport: React.FC<GlobalStockDetailsReportProps> = ({ the
     }
   };
 
-  const rightAlignKeys = ['totalStockQty'];
+  const staticSortKeys = ['code', 'name', 'specification', 'unit'] as const;
 
   return (
     <div className="space-y-6 p-2 sm:p-0">
@@ -313,35 +413,65 @@ const GlobalStockDetailsReport: React.FC<GlobalStockDetailsReportProps> = ({ the
           </div>
         )}
         <div className="overflow-x-auto table-responsive">
-          <table className="w-full min-w-[700px] text-sm">
+          <table className="w-full min-w-[800px] text-sm">
             <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
               <tr>
-                <th className={`px-4 py-3 font-bold ${textPrimary} text-left`}>Sl.no</th>
-                {colKeys.map((k) => (
-                  <th key={k} className={`px-4 py-3 font-bold ${textPrimary} cursor-pointer ${rightAlignKeys.includes(k) ? 'text-right' : 'text-left'}`} onClick={() => handleSort(k)}>
+                <th className={`px-3 py-3 font-bold ${textPrimary} text-left whitespace-nowrap`}>Sl.no</th>
+                {staticSortKeys.map((k) => (
+                  <th
+                    key={k}
+                    className={`px-3 py-3 font-bold ${textPrimary} cursor-pointer text-left whitespace-nowrap`}
+                    onClick={() => handleSort(k)}
+                  >
                     <span className="flex items-center gap-2">
-                      {k === 'code' ? 'Code' : k === 'name' ? 'Name' : k === 'specification' ? 'Specification' : k === 'unit' ? 'Unit' : k === 'project' ? 'Project' : 'Total Stock QTY'}
+                      {k === 'code' ? 'Code' : k === 'name' ? 'Name' : k === 'specification' ? 'Specification' : 'Unit'}
                       {getSortIcon(k)}
                     </span>
                   </th>
                 ))}
+                {projectColumns.map((p) => (
+                  <th
+                    key={`col-${p}`}
+                    className={`px-3 py-3 font-bold ${textPrimary} cursor-pointer text-right whitespace-nowrap max-w-[140px] truncate`}
+                    title={p}
+                    onClick={() => handleSort(`project:${p}`)}
+                  >
+                    <span className="flex items-center justify-end gap-2">
+                      {p}
+                      {getSortIcon(`project:${p}`)}
+                    </span>
+                  </th>
+                ))}
+                <th
+                  className={`px-3 py-3 font-bold ${textPrimary} cursor-pointer text-right whitespace-nowrap`}
+                  onClick={() => handleSort('totalQty')}
+                >
+                  <span className="flex items-center justify-end gap-2">
+                    Total
+                    {getSortIcon('totalQty')}
+                  </span>
+                </th>
               </tr>
             </thead>
             <tbody>
               {paginated.map((row, idx) => (
                 <tr key={row.id} className={`border-t border-inherit ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'}`}>
-                  <td className={`px-4 py-3 ${textPrimary}`}>{(currentPage - 1) * entriesPerPage + idx + 1}</td>
-                  <td className={`px-4 py-3 ${textPrimary}`}>{row.code}</td>
-                  <td className={`px-4 py-3 ${textPrimary}`}>{row.name}</td>
-                  <td className={`px-4 py-3 ${textSecondary}`}>{row.specification}</td>
-                  <td className={`px-4 py-3 ${textSecondary}`}>{row.unit}</td>
-                  <td className={`px-4 py-3 ${textPrimary}`}>{row.project}</td>
-                  <td className={`px-4 py-3 text-right ${textPrimary}`}>{formatNum(row.totalStockQty)}</td>
+                  <td className={`px-3 py-3 ${textPrimary} whitespace-nowrap`}>{(currentPage - 1) * entriesPerPage + idx + 1}</td>
+                  <td className={`px-3 py-3 ${textPrimary}`}>{row.code}</td>
+                  <td className={`px-3 py-3 ${textPrimary}`}>{row.name}</td>
+                  <td className={`px-3 py-3 ${textSecondary} max-w-[200px]`}>{row.specification}</td>
+                  <td className={`px-3 py-3 ${textSecondary} whitespace-nowrap`}>{row.unit}</td>
+                  {projectColumns.map((p) => (
+                    <td key={`${row.id}-${p}`} className={`px-3 py-3 text-right tabular-nums ${textPrimary}`}>
+                      {formatNum(row.byProject[p] ?? 0)}
+                    </td>
+                  ))}
+                  <td className={`px-3 py-3 text-right tabular-nums font-bold ${textPrimary}`}>{formatNum(row.totalQty)}</td>
                 </tr>
               ))}
               {!isLoading && dataLoaded && paginated.length === 0 && (
                 <tr>
-                  <td colSpan={7} className={`px-4 py-12 text-center ${textSecondary}`}>
+                  <td colSpan={6 + projectColumns.length} className={`px-4 py-12 text-center ${textSecondary}`}>
                     No data available. Select a tab to load {activeTab === 'materials' ? 'material' : 'assets'} stock.
                   </td>
                 </tr>

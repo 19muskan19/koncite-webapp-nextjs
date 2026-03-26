@@ -1,12 +1,15 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ThemeType } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
 import { useSidebar } from '@/contexts/SidebarContext';
-import { X, Upload, Loader2 } from 'lucide-react';
+import { X, Upload, Loader2, ChevronDown, Search } from 'lucide-react';
+import { sortCountryCodes, findCountryByDialCode } from '@/utils/countryCodeUtils';
+import { parseClientPhonePartsFromApi } from '@/utils/clientPhoneUtils';
 import DatePickerInput from '@/components/ui/DatePickerInput';
 import { masterDataAPI, teamsAPI } from '@/services/api';
+import { extractProjectLogoFromApi, getLogoUrl } from '@/utils/imageUtils';
 
 interface Project {
   id: string;
@@ -24,11 +27,21 @@ interface Project {
   projectManager?: string;
 }
 
+interface CountryCode {
+  code: string;
+  dialCode: string;
+  name: string;
+  flag: string;
+}
+
+const getFlagUrl = (countryCode: string) =>
+  `https://flagcdn.com/w20/${countryCode.toLowerCase()}.png`;
+
 interface CreateProjectModalProps {
   theme: ThemeType;
   isOpen: boolean;
   onClose: () => void;
-  onSuccess?: () => void;
+  onSuccess?: (createdProject?: any) => void;
   defaultProjects?: Project[];
   userProjects?: Project[];
   onProjectCreated?: (project: Project) => void;
@@ -56,6 +69,10 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   const [isLoadingCompanies, setIsLoadingCompanies] = useState(false);
   const [staff, setStaff] = useState<Array<{ id: string; name: string; email?: string; roleType?: string }>>([]);
   const [isLoadingStaff, setIsLoadingStaff] = useState(false);
+  const [countryCodes, setCountryCodes] = useState<CountryCode[]>([]);
+  const [isLoadingCountryCodes, setIsLoadingCountryCodes] = useState(false);
+  const [isClientCountryDropdownOpen, setIsClientCountryDropdownOpen] = useState(false);
+  const [clientCountrySearchQuery, setClientCountrySearchQuery] = useState('');
   const [formData, setFormData] = useState({
     project_name: '',
     address: '',
@@ -74,9 +91,9 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     client_company_address: '',
     client_designation: '',
     client_email: '',
-    client_phone: '',
     client_mobile: '',
-    country_code: '',
+    client_country_code: '',
+    client_country_code_iso: '',
     company_country_code: '',
     // Optional fields
     project_completed: 'no' as 'yes' | 'no',
@@ -117,9 +134,9 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         client_company_address: '',
         client_designation: '',
         client_email: '',
-        client_phone: '',
         client_mobile: '',
-        country_code: '',
+        client_country_code: '',
+        client_country_code_iso: '',
         company_country_code: '',
         project_completed: 'no',
         project_completed_date: '',
@@ -171,6 +188,53 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     fetchCompanies();
   }, [isOpen]);
 
+  const parseDialCode = (c: any): string => {
+    const root = (c.idd?.root || '').replace(/\+/g, '');
+    const suffixes = c.idd?.suffixes || [];
+    const first = suffixes[0];
+    if (root === '1' || (c.cca2 === 'US' || c.cca2 === 'CA')) return '1';
+    if (root === '7') return '7';
+    if (first && String(first).length >= 3) return root;
+    if (first) return root + String(first);
+    return root;
+  };
+
+  const fetchClientCountryCodes = async () => {
+    setIsLoadingCountryCodes(true);
+    try {
+      const response = await fetch('https://restcountries.com/v3.1/all?fields=name,cca2,idd,flags');
+      if (!response.ok) throw new Error('Failed to fetch countries');
+      const data = await response.json();
+      const fromApi: CountryCode[] = data
+        .filter((c: any) => c.idd?.root && c.cca2)
+        .map((c: any) => {
+          const dialCode = parseDialCode(c);
+          return {
+            code: c.cca2,
+            dialCode,
+            name: c.name?.common || c.name?.official || '',
+            flag: c.flags?.png || getFlagUrl(c.cca2),
+          };
+        })
+        .filter((c: CountryCode) => c.dialCode);
+      const byCode = new Map<string, CountryCode>();
+      fromApi.forEach((c) => byCode.set(c.code, c));
+      setCountryCodes(sortCountryCodes(Array.from(byCode.values())));
+    } catch (error) {
+      console.error('Error fetching country codes:', error);
+      setCountryCodes([]);
+    } finally {
+      setIsLoadingCountryCodes(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen && countryCodes.length === 0 && !isLoadingCountryCodes) {
+      fetchClientCountryCodes();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
   // Load staff from Admin > User Management > Teams (teams-list API; fallback to localStorage)
   useEffect(() => {
     if (!isOpen) return;
@@ -209,100 +273,174 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       .finally(() => setIsLoadingStaff(false));
   }, [isOpen]);
 
-  // Populate form when editingProject is provided
+  // Populate form when editingProject is provided (runs once per edit — no `companies` dep so
+  // we don't re-apply empty fallbacks and wipe client fields when the company list loads).
   useEffect(() => {
-    if (isOpen && editingProject && companies.length > 0) {
+    if (isOpen && editingProject) {
+      const ep = editingProject as any;
+      const cli =
+        ep.client && typeof ep.client === 'object' && !Array.isArray(ep.client) ? ep.client : null;
       console.log('📝 Populating form with editing project data:', editingProject);
-      console.log('📋 Available companies:', companies.length);
-      
-      // Extract company ID - try multiple possible field names
-      // The API returns companies_id as numeric ID, but we might receive it in different formats
-      let companyId = (editingProject as any).companies_id || 
-                     (editingProject as any).company_id || 
-                     (editingProject as any).companyId || 
-                     '';
-      
-      // Convert to string and ensure we have a valid match
-      companyId = String(companyId).trim();
-      
-      // Try to find matching company in the dropdown list
-      // Match by numeric ID (companies_id is numeric)
-      const matchedCompany = companies.find((c: any) => {
-        const cId = String(c.numericId || c.id || '');
-        return cId === companyId || String(c.id) === companyId;
-      });
-      
-      if (matchedCompany) {
-        // Use the numeric ID from the matched company
-        companyId = String(matchedCompany.numericId || matchedCompany.id);
-        console.log('✅ Found matching company:', {
-          companyName: matchedCompany.registration_name || matchedCompany.name,
-          companyId: companyId,
-          matchedCompanyId: matchedCompany.numericId || matchedCompany.id
-        });
-      } else if (companyId) {
-        console.warn('⚠️ Company ID not found in companies list:', companyId);
-        console.warn('Available company IDs:', companies.map((c: any) => ({
-          id: c.id,
-          numericId: c.numericId,
-          uuid: c.uuid,
-          name: c.registration_name || c.name
-        })));
-      }
-      
-      console.log('🏢 Final Company ID for form:', companyId, 'Type:', typeof companyId);
-      
-      // Populate ALL form fields from editingProject to preserve all previously filled data
-      // Extract own_project_or_contractor from API response directly, or derive from isContractor
-      const ownProjectOrContractor = (editingProject as any).own_project_or_contractor || 
-                                     (editingProject.isContractor ? 'yes' : (editingProject.isContractor === false ? 'no' : ''));
-      
-      setFormData(prev => ({
+
+      // Best-effort company id from API (normalized when companies load — separate effect below)
+      const companyId = String(
+        ep.companies_id ?? ep.company_id ?? ep.companyId ?? ''
+      ).trim();
+
+      const ownProjectOrContractor =
+        ep.own_project_or_contractor ||
+        (editingProject.isContractor ? 'yes' : editingProject.isContractor === false ? 'no' : '');
+
+      const normDate = (d: string | undefined) => {
+        if (!d || typeof d !== 'string') return '';
+        const s = d.trim();
+        return s.length >= 10 ? s.slice(0, 10) : s;
+      };
+
+      const projectName =
+        ep.project_name || editingProject.name || '';
+      const address =
+        ep.address || editingProject.location || '';
+      const startDate = normDate(
+        ep.planned_start_date || editingProject.startDate || ''
+      );
+      const endDate = normDate(
+        ep.planned_end_date || editingProject.endDate || ''
+      );
+
+      let clientCountryCode =
+        ep.client_country_code ||
+        cli?.client_country_code ||
+        cli?.country_code ||
+        ep.country_code ||
+        '';
+      const clientCountryIso =
+        ep.client_country_code_iso ||
+        cli?.client_country_code_iso ||
+        cli?.country_code_iso ||
+        ep.country_code_iso ||
+        '';
+      const phoneParts = parseClientPhonePartsFromApi(
+        clientCountryCode || undefined,
+        ep.client_phone || cli?.client_phone,
+        ep.client_mobile || cli?.client_mobile
+      );
+      clientCountryCode = phoneParts.dialCode;
+      const clientMobile = phoneParts.mobile10;
+
+      setFormData((prev) => ({
         ...prev,
-        project_name: editingProject.name || '',
-        address: editingProject.location || '',
-        own_project_or_contractor: ownProjectOrContractor,
-        planned_start_date: editingProject.startDate || '',
-        planned_end_date: editingProject.endDate || '',
-        companies_id: companyId, // Use matched company ID
-        project_incharge: String((editingProject as any).tag_project_incharge ?? (editingProject as any).project_incharge ?? '') || '',
-        logo: null, // Reset file input (user can upload new logo if needed)
-        logoPreview: editingProject.logo || null, // Show existing logo as preview
-        // Client fields - populate ALL fields from editingProject
-        client_name: (editingProject as any).client_name || '',
-        client_address: (editingProject as any).client_address || '',
-        client_point_of_contact_name: (editingProject as any).client_point_of_contact_name || (editingProject as any).client_contact_name || '',
-        client_company_name: (editingProject as any).client_company_name || '',
-        client_company_address: (editingProject as any).client_company_address || '',
-        client_designation: (editingProject as any).client_designation || '',
-        client_email: (editingProject as any).client_email || '',
-        client_phone: (editingProject as any).client_phone || '',
-        client_mobile: (editingProject as any).client_mobile || '',
-        country_code: (editingProject as any).country_code || '',
-        company_country_code: (editingProject as any).company_country_code || '',
-        project_completed: (editingProject as any).project_completed || 'no',
-        project_completed_date: (editingProject as any).project_completed_date || '',
-      }));
-      
-      console.log('✅ Form fully populated with all fields:', {
-        project_name: editingProject.name,
-        address: editingProject.location,
-        own_project_or_contractor: editingProject.isContractor ? 'yes' : (editingProject.isContractor === false ? 'no' : ''),
+        project_name: projectName,
+        address,
+        own_project_or_contractor: ownProjectOrContractor as 'yes' | 'no' | '',
+        planned_start_date: startDate,
+        planned_end_date: endDate,
         companies_id: companyId,
-        planned_start_date: editingProject.startDate,
-        planned_end_date: editingProject.endDate,
-        client_name: (editingProject as any).client_name,
-        project_incharge: (editingProject as any).tag_project_incharge ?? (editingProject as any).project_incharge,
-        allFields: Object.keys(editingProject)
-      });
-    } else if (isOpen && editingProject && companies.length === 0) {
-      // Wait for companies to load before populating
-      console.log('⏳ Waiting for companies to load before populating form...');
-    } else if (isOpen && !editingProject && !projectUpdateId) {
-      // Reset form for new project (only if not editing)
-      console.log('🆕 Resetting form for new project');
+        project_incharge: String(ep.tag_project_incharge ?? ep.project_incharge ?? '') || '',
+        logo: null,
+        // Only real uploaded logo from API — not list-row placeholder (ui-avatars)
+        logoPreview: (() => {
+          const raw = extractProjectLogoFromApi(ep);
+          if (!raw) return null;
+          return getLogoUrl(raw, projectName, '6366f1');
+        })(),
+        client_name: ep.client_name || cli?.client_name || cli?.name || '',
+        client_address:
+          ep.client_address ||
+          cli?.client_address ||
+          cli?.address ||
+          cli?.client_company_address ||
+          '',
+        client_point_of_contact_name:
+          ep.client_point_of_contact_name ||
+          ep.client_contact_name ||
+          cli?.client_point_of_contact_name ||
+          cli?.client_contact_name ||
+          cli?.point_of_contact_name ||
+          cli?.contact_name ||
+          cli?.client_name ||
+          ep.client_name ||
+          '',
+        client_company_name: ep.client_company_name || cli?.client_company_name || '',
+        client_company_address: ep.client_company_address || cli?.client_company_address || '',
+        client_designation: ep.client_designation || cli?.client_designation || '',
+        client_email: ep.client_email || cli?.client_email || '',
+        client_mobile: clientMobile,
+        client_country_code: clientCountryCode,
+        client_country_code_iso: clientCountryIso,
+        company_country_code: ep.company_country_code || cli?.company_country_code || '',
+        project_completed: ep.project_completed === 'yes' || ep.project_completed === true ? 'yes' : 'no',
+        project_completed_date: normDate(ep.project_completed_date || ''),
+      }));
+
+      console.log('✅ Form populated for edit:', { project_name: projectName, companies_id: companyId });
     }
-  }, [isOpen, editingProject, projectUpdateId, companies]);
+  }, [isOpen, editingProject]);
+
+  // After companies load, normalize tag company id to match dropdown (does not touch client fields)
+  useEffect(() => {
+    if (!isOpen || !editingProject || companies.length === 0) return;
+    const ep = editingProject as any;
+    let companyId = String(ep.companies_id ?? ep.company_id ?? ep.companyId ?? '').trim();
+    if (!companyId) return;
+    const matchedCompany = companies.find((c: any) => {
+      const cId = String(c.numericId ?? c.id ?? '');
+      return cId === companyId || String(c.id) === companyId || String(c.uuid) === companyId;
+    });
+    if (!matchedCompany) return;
+    const normalized = String(matchedCompany.numericId ?? matchedCompany.id ?? companyId);
+    setFormData((prev) => (prev.companies_id === normalized ? prev : { ...prev, companies_id: normalized }));
+  }, [isOpen, editingProject, companies]);
+
+  // When RestCountries list loads, fill dial code from ISO if API only returned ISO (common for +1 / IN)
+  useEffect(() => {
+    if (!isOpen || !editingProject || countryCodes.length === 0) return;
+    setFormData((prev) => {
+      if (String(prev.client_country_code || '').trim()) return prev;
+      const ep = editingProject as any;
+      const cli =
+        ep.client && typeof ep.client === 'object' && !Array.isArray(ep.client) ? ep.client : null;
+      const iso =
+        ep.client_country_code_iso ||
+        cli?.client_country_code_iso ||
+        cli?.country_code_iso ||
+        ep.country_code_iso ||
+        '';
+      if (!iso || typeof iso !== 'string') return prev;
+      const c = countryCodes.find((x) => x.code === iso);
+      if (!c) return prev;
+      return { ...prev, client_country_code: c.dialCode, client_country_code_iso: c.code };
+    });
+  }, [isOpen, editingProject, countryCodes]);
+
+  // Reset form when opening for new project only (deps exclude companies — avoids wiping input when companies load)
+  useEffect(() => {
+    if (!isOpen || editingProject || projectUpdateId) return;
+    setFormData({
+      project_name: '',
+      address: '',
+      own_project_or_contractor: '',
+      planned_start_date: '',
+      planned_end_date: '',
+      companies_id: '',
+      project_incharge: '',
+      logo: null,
+      logoPreview: null,
+      client_name: '',
+      client_address: '',
+      client_point_of_contact_name: '',
+      client_company_name: '',
+      client_company_address: '',
+      client_designation: '',
+      client_email: '',
+      client_mobile: '',
+      client_country_code: '',
+      client_country_code_iso: '',
+      company_country_code: '',
+      project_completed: 'no',
+      project_completed_date: '',
+    });
+  }, [isOpen, editingProject, projectUpdateId]);
 
   const compressImage = (file: File, maxWidth: number = 200, maxHeight: number = 200, quality: number = 0.7): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -374,7 +512,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       }
     }
     // Phone fields: digits only, max 10
-    if (name === 'client_phone' || name === 'client_mobile') {
+    if (name === 'client_mobile') {
       const digitsOnly = value.replace(/\D/g, '').slice(0, 10);
       updates[name] = digitsOnly;
     }
@@ -394,9 +532,9 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         client_company_address: '',
         client_designation: '',
         client_email: '',
-        client_phone: '',
         client_mobile: '',
-        country_code: '',
+        client_country_code: '',
+        client_country_code_iso: '',
         company_country_code: '',
       });
     } else if (value === 'no') {
@@ -410,9 +548,9 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         client_company_address: '',
         client_designation: '',
         client_email: '',
-        client_phone: '',
         client_mobile: '',
-        country_code: '',
+        client_country_code: '',
+        client_country_code_iso: '',
         company_country_code: '',
       });
     } else {
@@ -449,18 +587,13 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       if (!formData.client_point_of_contact_name.trim()) missingFields.push('Client Point of Contact Name');
       if (!formData.client_designation.trim()) missingFields.push('Client Designation');
       if (!formData.client_email.trim()) missingFields.push('Client Email');
-      if (!formData.client_phone.trim()) missingFields.push('Client Phone');
+      if (!formData.client_country_code.trim()) missingFields.push('Client Mobile Country Code');
+      if (!formData.client_mobile.trim()) missingFields.push('Client Mobile Number');
     }
 
-    // 3. Phone validation: 10 digits, numbers only (client_phone required when contractor; client_mobile optional)
+    // 3. Mobile validation: 10 digits, numbers only (client_mobile required when contractor)
     const phoneRegex = /^\d{10}$/;
-    if (formData.own_project_or_contractor === 'yes' && formData.client_phone.trim()) {
-      if (!phoneRegex.test(formData.client_phone.trim())) {
-        toast.showWarning('Client Phone must be exactly 10 digits (numbers only).');
-        return;
-      }
-    }
-    if (formData.client_mobile.trim()) {
+    if (formData.own_project_or_contractor === 'yes' && formData.client_mobile.trim()) {
       if (!phoneRegex.test(formData.client_mobile.trim())) {
         toast.showWarning('Client Mobile must be exactly 10 digits (numbers only).');
         return;
@@ -521,10 +654,11 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         projectFormData.append('client_point_of_contact_name', formData.client_point_of_contact_name.trim());
         projectFormData.append('client_designation', formData.client_designation.trim());
         projectFormData.append('client_email', formData.client_email.trim().toLowerCase());
-        projectFormData.append('client_phone', formData.client_phone.trim());
-        if (formData.client_mobile) {
-          projectFormData.append('client_mobile', formData.client_mobile.trim());
-        }
+        // Backend requires client_phone when contractor; send full number (country_code + mobile) for compatibility
+        projectFormData.append('client_phone', `${formData.client_country_code}${formData.client_mobile}`.trim());
+        projectFormData.append('client_country_code', formData.client_country_code.trim());
+        projectFormData.append('client_country_code_iso', formData.client_country_code_iso || '');
+        projectFormData.append('client_mobile', formData.client_mobile.trim());
       }
       
       // 3. If projectUpdateId exists → UPDATE, else CREATE
@@ -543,9 +677,9 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         
         // Call onSuccess to refresh the project list
         if (onSuccess) {
-          onSuccess();
+          onSuccess(response?.data?.data ?? response?.data);
         }
-        
+
         // Close the modal
         onClose();
       } else {
@@ -560,6 +694,12 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         response = await masterDataAPI.createProject(projectFormData);
         toast.showSuccess('Project created successfully!');
         
+        // Call onSuccess with created project data (includes logo) for optimistic UI display
+        const createdData = response?.data?.data ?? response?.data;
+        if (onSuccess) {
+          onSuccess(createdData);
+        }
+
         // Reset form
         setFormData({
           project_name: '',
@@ -578,18 +718,13 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
           client_company_address: '',
           client_designation: '',
           client_email: '',
-          client_phone: '',
           client_mobile: '',
-          country_code: '',
+          client_country_code: '',
+          client_country_code_iso: '',
           company_country_code: '',
           project_completed: 'no',
           project_completed_date: '',
         });
-        
-        // Call onSuccess to refresh the project list
-        if (onSuccess) {
-          onSuccess();
-        }
         
         // Close the modal
         onClose();
@@ -822,26 +957,156 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                       />
                     </div>
 
-                    {/* Mobile Number */}
+                    {/* Mobile Number with Country Code */}
                     <div>
                       <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                        Mobile Number
+                        Mobile Number <span className="text-red-500">*</span>
                       </label>
-                      <input
-                        type="tel"
-                        name="client_mobile"
-                        value={formData.client_mobile}
-                        onChange={handleInputChange}
-                        placeholder="Enter Client Mobile Number"
-                        maxLength={10}
-                        inputMode="numeric"
-                        pattern="[0-9]*"
-                        className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                          isDark 
-                            ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
-                            : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-                        } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                      />
+                      <div className="flex gap-2">
+                        <div className="relative flex-shrink-0">
+                          {isLoadingCountryCodes ? (
+                            <div className={`w-24 px-3 py-3 border ${isDark ? 'border-slate-700' : 'border-slate-200'} rounded-lg ${isDark ? 'bg-slate-800/50' : 'bg-white'} flex items-center justify-center`}>
+                              <Loader2 className="w-4 h-4 animate-spin text-[#C2D642]" />
+                            </div>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => setIsClientCountryDropdownOpen(!isClientCountryDropdownOpen)}
+                                className={`flex items-center gap-1.5 px-2 sm:px-3 py-3 border rounded-lg focus:ring-2 focus:ring-[#C2D642]/20 outline-none min-w-[100px] hover:opacity-90 transition-colors ${
+                                  isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
+                                }`}
+                              >
+                                {formData.client_country_code && countryCodes.length > 0 ? (
+                                  (() => {
+                                    const sel = findCountryByDialCode(countryCodes, formData.client_country_code, formData.client_country_code_iso);
+                                    return sel ? (
+                                      <>
+                                        <img
+                                          src={sel.flag || getFlagUrl(sel.code)}
+                                          alt=""
+                                          className="w-5 h-4 object-cover rounded border border-slate-300"
+                                          loading="lazy"
+                                          onError={(e) => {
+                                            const target = e.target as HTMLImageElement;
+                                            target.src = getFlagUrl(sel.code);
+                                          }}
+                                        />
+                                        <span className="text-sm font-medium">+{sel.dialCode}</span>
+                                      </>
+                                    ) : (
+                                      <span className={`text-sm ${textSecondary}`}>Select code</span>
+                                    );
+                                  })()
+                                ) : (
+                                  <span className={`text-sm ${textSecondary}`}>Select code</span>
+                                )}
+                                <ChevronDown className={`w-4 h-4 transition-transform ${isClientCountryDropdownOpen ? 'rotate-180' : ''}`} />
+                              </button>
+                              {isClientCountryDropdownOpen && (
+                                <>
+                                  <div
+                                    className="fixed inset-0 z-40"
+                                    onClick={() => { setIsClientCountryDropdownOpen(false); setClientCountrySearchQuery(''); }}
+                                  />
+                                  <div className={`absolute top-full left-0 mt-1 z-[60] w-[min(90vw,288px)] max-h-72 overflow-hidden border rounded-lg shadow-xl flex flex-col ${isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+                                    {countryCodes.length > 0 ? (
+                                      <>
+                                        <div className="p-2 border-b border-inherit flex-shrink-0">
+                                          <div className="relative">
+                                            <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
+                                            <input
+                                              type="text"
+                                              value={clientCountrySearchQuery}
+                                              onChange={(e) => setClientCountrySearchQuery(e.target.value)}
+                                              placeholder="Search country or code..."
+                                              className={`w-full pl-9 pr-3 py-2 rounded-lg text-sm border ${isDark ? 'border-slate-600 bg-slate-800 text-slate-100' : 'border-slate-300 bg-white text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                                              autoFocus
+                                              autoComplete="off"
+                                            />
+                                          </div>
+                                        </div>
+                                        <div className="overflow-y-auto max-h-52 p-2">
+                                          {(() => {
+                                            const filtered = countryCodes.filter((cc) => {
+                                              const q = clientCountrySearchQuery.trim().toLowerCase();
+                                              if (!q) return true;
+                                              return (
+                                                cc.name.toLowerCase().includes(q) ||
+                                                cc.code.toLowerCase().includes(q) ||
+                                                cc.dialCode.includes(q)
+                                              );
+                                            });
+                                            if (filtered.length === 0) {
+                                              return (
+                                                <div className={`p-4 text-center text-sm ${textSecondary}`}>
+                                                  No countries found
+                                                </div>
+                                              );
+                                            }
+                                            return filtered.map((countryCode) => (
+                                              <button
+                                                key={`${countryCode.code}-${countryCode.dialCode}`}
+                                                type="button"
+                                                onClick={() => {
+                                                  setFormData((prev) => ({
+                                                    ...prev,
+                                                    client_country_code: countryCode.dialCode,
+                                                    client_country_code_iso: countryCode.code,
+                                                  }));
+                                                  setIsClientCountryDropdownOpen(false);
+                                                  setClientCountrySearchQuery('');
+                                                }}
+                                                className={`w-full flex items-center gap-3 px-3 py-2 rounded-md transition-colors ${
+                                                  (formData.client_country_code_iso ? formData.client_country_code_iso === countryCode.code : formData.client_country_code === countryCode.dialCode)
+                                                    ? isDark ? 'bg-[#C2D642]/20' : 'bg-[#C2D642]/10'
+                                                    : isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'
+                                                }`}
+                                              >
+                                                <img
+                                                  src={countryCode.flag || getFlagUrl(countryCode.code)}
+                                                  alt={countryCode.name}
+                                                  className="w-6 h-4 object-cover rounded border border-slate-300"
+                                                  loading="lazy"
+                                                  onError={(e) => {
+                                                    const target = e.target as HTMLImageElement;
+                                                    target.src = getFlagUrl(countryCode.code);
+                                                  }}
+                                                />
+                                                <span className={`flex-1 text-left text-sm ${textPrimary}`}>{countryCode.name}</span>
+                                                <span className={`text-sm ${textSecondary}`}>+{countryCode.dialCode}</span>
+                                              </button>
+                                            ));
+                                          })()}
+                                        </div>
+                                      </>
+                                    ) : (
+                                      <div className="p-4">
+                                        <p className={`text-sm ${textSecondary}`}>Loading countries...</p>
+                                      </div>
+                                    )}
+                                  </div>
+                                </>
+                              )}
+                            </>
+                          )}
+                        </div>
+                        <input
+                          type="tel"
+                          name="client_mobile"
+                          value={formData.client_mobile}
+                          onChange={handleInputChange}
+                          placeholder="Enter Client Mobile Number"
+                          maxLength={10}
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          className={`flex-1 px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                            isDark
+                              ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]'
+                              : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+                          } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                        />
+                      </div>
                       <p className={`text-xs mt-1 ${textSecondary}`}>Numbers only, 10 digits</p>
                     </div>
                   </div>
@@ -865,29 +1130,6 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                             : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
                         } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
                       />
-                    </div>
-
-                    {/* Phone Number */}
-                    <div>
-                      <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
-                        Phone Number <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="tel"
-                        name="client_phone"
-                        value={formData.client_phone}
-                        onChange={handleInputChange}
-                        placeholder="Enter Client Phone Number"
-                        maxLength={10}
-                        inputMode="numeric"
-                        pattern="[0-9]*"
-                        className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
-                          isDark 
-                            ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]' 
-                            : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
-                        } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-                      />
-                      <p className={`text-xs mt-1 ${textSecondary}`}>Numbers only, 10 digits</p>
                     </div>
                   </div>
                 </div>

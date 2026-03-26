@@ -38,14 +38,13 @@ import {
   deleteContractorEntry,
   markEntriesAsPaid,
   getRates,
+  getRateForDate,
   saveRate,
   getPayments,
   savePayment,
   getTotalOutstanding,
   getProjects,
   getVendors,
-  saveProject,
-  saveVendor,
   type WorkerProfile,
   type ContractorEntry,
   type RateConfig,
@@ -53,6 +52,7 @@ import {
 } from '@/utils/workforceStorage';
 import CameraCapture from './CameraCapture';
 import WorkforceDashboardTab from './WorkforceDashboardTab';
+import CreateVendorModal from '@/components/masters/Modals/CreateVendorModal';
 import { masterDataAPI, teamsAPI, workforceAPI } from '@/services/api';
 import { useToast } from '@/contexts/ToastContext';
 import { useUser } from '@/contexts/UserContext';
@@ -75,6 +75,7 @@ interface StaffUser {
   designation: string;
   phone?: string;
   profile_images?: string;
+  worker_type?: 'staff' | 'own_labor'; // staff = from teams, own_labor = from Add Profile
 }
 
 interface Vendor {
@@ -82,6 +83,15 @@ interface Vendor {
   name: string;
   uuid?: string;
 }
+
+interface LabourEntryRow {
+  category: string;
+  headCount: number | '';
+  unitsWorked: number | string;
+  otHoursPerPerson: number | string;
+}
+
+const defaultLabourRow = (): LabourEntryRow => ({ category: 'Mason', headCount: 1, unitsWorked: 1, otHoursPerPerson: 0 });
 
 // Punch: All punch data stored in localStorage (as of now - backend may not persist)
 // punchedInEmployees: who punched in today (for Punch OUT list)
@@ -235,6 +245,8 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   const [isLoadingStaff, setIsLoadingStaff] = useState(false);
   const [showAddProfileModal, setShowAddProfileModal] = useState(false);
   const [staffSearchQuery, setStaffSearchQuery] = useState('');
+  const [staffFilter, setStaffFilter] = useState<'staff' | 'own_labor'>('staff'); // Staff (from Teams) | Own Labour
+  const [staffFilterDropdownOpen, setStaffFilterDropdownOpen] = useState(false);
   const [projects, setProjects] = useState<Array<{ id: number | string; name: string }>>([]);
   const [staffFormData, setStaffFormData] = useState({
     name: '',
@@ -247,6 +259,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   const staffFileInputRef = useRef<HTMLInputElement>(null);
   const staffCameraRef = useRef<HTMLVideoElement>(null);
   const staffStreamRef = useRef<MediaStream | null>(null);
+  const staffFilterDropdownRef = useRef<HTMLDivElement>(null);
 
   // === CONTRACTOR TAB ===
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -258,18 +271,12 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
     date: string;
     project_id: string;
     contractor_id: string;
-    category: string;
-    headCount: number | '';
-    unitsWorked: number | string;
-    otHoursPerPerson: number | string;
+    labourRows: LabourEntryRow[];
   }>({
     date: new Date().toISOString().slice(0, 10),
     project_id: '',
     contractor_id: '',
-    category: 'Mason',
-    headCount: 1,
-    unitsWorked: 1,
-    otHoursPerPerson: 0,
+    labourRows: [defaultLabourRow()],
   });
   const [ratesFormData, setRatesFormData] = useState({
     vendor_id: '',
@@ -282,10 +289,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   });
   const [rateHistory, setRateHistory] = useState<Array<{ category: string; contractor: string; effectiveFrom: string; dailyRate: string; overtimeRate: string }>>([]);
   const [isSubmittingRate, setIsSubmittingRate] = useState(false);
-  const [showAddProjectModal, setShowAddProjectModal] = useState(false);
   const [showAddVendorModal, setShowAddVendorModal] = useState(false);
-  const [newProjectName, setNewProjectName] = useState('');
-  const [newVendorName, setNewVendorName] = useState('');
   const [labourEntryProjectDropdownOpen, setLabourEntryProjectDropdownOpen] = useState(false);
   const [labourEntryContractorDropdownOpen, setLabourEntryContractorDropdownOpen] = useState(false);
   const [labourEntryProjectSearch, setLabourEntryProjectSearch] = useState('');
@@ -309,6 +313,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   const [dashboardProject, setDashboardProject] = useState<string>('All');
   const [payProject, setPayProject] = useState<string>('');
   const [payContractor, setPayContractor] = useState<string>('');
+  const [payPeriodFilter, setPayPeriodFilter] = useState<'all' | 'weekly' | 'fortnight' | 'monthly'>('all');
   const [selectedPayEntryIds, setSelectedPayEntryIds] = useState<Set<string>>(new Set());
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentFormData, setPaymentFormData] = useState({
@@ -324,10 +329,10 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
     setPunchPage(1);
   }, [punchType, punchSearchQuery]);
 
-  // Reset staff page when search changes
+  // Reset staff page when search or filter changes
   useEffect(() => {
     setStaffPage(1);
-  }, [staffSearchQuery]);
+  }, [staffSearchQuery, staffFilter]);
 
   // Load punchedInEmployees and punch records from localStorage, clear if new day
   useEffect(() => {
@@ -439,6 +444,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
             designation: u.designation || u.company_role?.name || '—',
             phone: u.phone || u.contact_number || '',
             profile_images: u.profile_images,
+            worker_type: (u.worker_type === 'own_labor' ? 'own_labor' : 'staff') as 'staff' | 'own_labor',
           }))
         );
       })
@@ -507,7 +513,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
       .catch(() => {});
   }, []);
 
-  // Close labour entry dropdowns when clicking outside
+  // Close labour entry dropdowns and staff filter dropdown when clicking outside
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (labourEntryProjectRef.current && !labourEntryProjectRef.current.contains(e.target as Node)) {
@@ -515,6 +521,9 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
       }
       if (labourEntryContractorRef.current && !labourEntryContractorRef.current.contains(e.target as Node)) {
         setLabourEntryContractorDropdownOpen(false);
+      }
+      if (staffFilterDropdownRef.current && !staffFilterDropdownRef.current.contains(e.target as Node)) {
+        setStaffFilterDropdownOpen(false);
       }
     };
     document.addEventListener('mousedown', handler);
@@ -715,13 +724,18 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
     }
   };
 
-  const filteredStaff = staffList.filter(
-    (s) =>
+  const filteredStaff = staffList.filter((s) => {
+    const matchesFilter =
+      staffFilter === 'staff'
+        ? (s.worker_type ?? 'staff') !== 'own_labor'
+        : s.worker_type === 'own_labor';
+    const matchesSearch =
       !staffSearchQuery ||
       [s.name, s.email, s.designation, s.phone].some((v) =>
         String(v || '').toLowerCase().includes(staffSearchQuery.toLowerCase())
-      )
-  );
+      );
+    return matchesFilter && matchesSearch;
+  });
 
   const handleAddProfileSubmit = async () => {
     const { name, project_id, designation, worker_type, profile_images } = staffFormData;
@@ -763,6 +777,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
             designation: u.designation || u.company_role?.name || '—',
             phone: u.phone || u.contact_number || '',
             profile_images: u.profile_images,
+            worker_type: (u.worker_type === 'own_labor' ? 'own_labor' : 'staff') as 'staff' | 'own_labor',
           }))
         );
       });
@@ -774,7 +789,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   };
 
   const handleAddLabourEntry = () => {
-    const { date, project_id, contractor_id, category, headCount, unitsWorked, otHoursPerPerson } = labourEntryFormData;
+    const { date, project_id, contractor_id, labourRows } = labourEntryFormData;
     if (!date) {
       toast.showWarning('Date is required');
       return;
@@ -795,30 +810,36 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
       toast.showWarning('Please select valid project and contractor');
       return;
     }
-    const h = headCount === '' ? 1 : Math.max(1, headCount);
-    const u = (unitsWorked === '' || unitsWorked === '.') ? 0 : Math.max(0, Number(unitsWorked) || 0);
-    const o = (otHoursPerPerson === '' || otHoursPerPerson === '.') ? 0 : Math.max(0, Number(otHoursPerPerson) || 0);
+    const validRows = labourRows.filter(
+      (r) => r.category && r.headCount !== '' && r.headCount >= 1
+    );
+    if (validRows.length === 0) {
+      toast.showWarning('Add at least one labour type with valid head count or units');
+      return;
+    }
     try {
-      saveContractorEntry({
-        projectName,
-        contractorName,
-        category,
-        headCount: h,
-        unitsWorked: u,
-        otHoursPerPerson: o,
-        date,
-      });
-      toast.showSuccess('Labor log added successfully!');
+      for (const row of validRows) {
+        const h = row.headCount === '' ? 1 : Math.max(1, row.headCount);
+        const u = (row.unitsWorked === '' || row.unitsWorked === '.') ? 0 : Math.max(0, Number(row.unitsWorked) || 0);
+        const o = (row.otHoursPerPerson === '' || row.otHoursPerPerson === '.') ? 0 : Math.max(0, Number(row.otHoursPerPerson) || 0);
+        saveContractorEntry({
+          projectName,
+          contractorName,
+          category: row.category,
+          headCount: h,
+          unitsWorked: u,
+          otHoursPerPerson: o,
+          date,
+        });
+      }
+      toast.showSuccess(`Labour log added successfully! (${validRows.length} type${validRows.length > 1 ? 's' : ''})`);
       setShowAddLabourEntryModal(false);
       setDataVersion((v) => v + 1);
       setLabourEntryFormData({
         date: new Date().toISOString().slice(0, 10),
         project_id: '',
         contractor_id: '',
-        category: 'Mason',
-        headCount: 1,
-        unitsWorked: 1,
-        otHoursPerPerson: 0,
+        labourRows: [defaultLabourRow()],
       });
     } catch (e: any) {
       toast.showError(e?.message || 'Failed to add log');
@@ -1160,17 +1181,66 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
           {activeTab === 'staff' && (
             <div className="space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                <div className="relative flex-1 max-w-xs sm:max-w-md">
-                  <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
-                  <input
-                    type="text"
-                    placeholder="Search by name, email, designation..."
-                    value={staffSearchQuery}
-                    onChange={(e) => setStaffSearchQuery(e.target.value)}
-                    className={`w-full pl-9 pr-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${
-                      isDark ? 'bg-slate-800' : 'bg-white'
-                    } text-sm`}
-                  />
+                <div className="flex flex-wrap items-center gap-3 flex-1">
+                  {/* Staff / Own Labour filter dropdown */}
+                  <div className="relative" ref={staffFilterDropdownRef}>
+                    <button
+                      type="button"
+                      onClick={() => setStaffFilterDropdownOpen((o) => !o)}
+                      className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg border ${borderClass} ${
+                        isDark ? 'bg-slate-800' : 'bg-white'
+                      } ${textPrimary} text-sm font-medium min-w-[180px] justify-between`}
+                    >
+                      <span>{staffFilter === 'staff' ? 'Staff (from Teams)' : 'Own Labour'}</span>
+                      {staffFilterDropdownOpen ? <ChevronUp className="w-4 h-4 shrink-0" /> : <ChevronDown className="w-4 h-4 shrink-0" />}
+                    </button>
+                    {staffFilterDropdownOpen && (
+                      <div
+                        className={`absolute top-full left-0 mt-1 z-10 min-w-[180px] rounded-lg border ${borderClass} shadow-lg ${
+                          isDark ? 'bg-slate-800' : 'bg-white'
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setStaffFilter('staff');
+                            setStaffFilterDropdownOpen(false);
+                          }}
+                          className={`w-full px-4 py-2.5 text-left text-sm flex items-center justify-between ${
+                            staffFilter === 'staff' ? 'bg-[#C2D642]/20 text-[#6B8E23] font-semibold' : ''
+                          } hover:bg-black/5 dark:hover:bg-white/5`}
+                        >
+                          Staff (from Teams)
+                          {staffFilter === 'staff' && <Check className="w-4 h-4" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setStaffFilter('own_labor');
+                            setStaffFilterDropdownOpen(false);
+                          }}
+                          className={`w-full px-4 py-2.5 text-left text-sm flex items-center justify-between ${
+                            staffFilter === 'own_labor' ? 'bg-[#C2D642]/20 text-[#6B8E23] font-semibold' : ''
+                          } hover:bg-black/5 dark:hover:bg-white/5`}
+                        >
+                          Own Labour
+                          {staffFilter === 'own_labor' && <Check className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="relative flex-1 max-w-xs sm:max-w-md">
+                    <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
+                    <input
+                      type="text"
+                      placeholder="Search by name, email, designation..."
+                      value={staffSearchQuery}
+                      onChange={(e) => setStaffSearchQuery(e.target.value)}
+                      className={`w-full pl-9 pr-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${
+                        isDark ? 'bg-slate-800' : 'bg-white'
+                      } text-sm`}
+                    />
+                  </div>
                 </div>
                 <button
                   onClick={() => setShowAddProfileModal(true)}
@@ -1412,7 +1482,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
           {/* PAY TAB */}
           {activeTab === 'pay' && (
             <div className="space-y-6">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
                   <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Project</label>
                   <select
@@ -1446,11 +1516,47 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                     ))}
                   </select>
                 </div>
+                <div>
+                  <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Period</label>
+                  <select
+                    value={payPeriodFilter}
+                    onChange={(e) => setPayPeriodFilter(e.target.value as 'all' | 'weekly' | 'fortnight' | 'monthly')}
+                    className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                  >
+                    <option value="all">All</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="fortnight">Fortnight</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
+                </div>
               </div>
               {(() => {
-                const entries = getContractorEntries().filter(
-                  (e) => (!payProject || e.projectName === payProject) && (!payContractor || e.contractorName === payContractor)
-                );
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const periodCutoff = (() => {
+                  if (payPeriodFilter === 'weekly') {
+                    const d = new Date(today);
+                    d.setDate(d.getDate() - 7);
+                    return d.getTime();
+                  }
+                  if (payPeriodFilter === 'fortnight') {
+                    const d = new Date(today);
+                    d.setDate(d.getDate() - 14);
+                    return d.getTime();
+                  }
+                  if (payPeriodFilter === 'monthly') {
+                    const d = new Date(today);
+                    d.setDate(d.getDate() - 30);
+                    return d.getTime();
+                  }
+                  return 0;
+                })();
+                const entries = getContractorEntries().filter((e) => {
+                  const matchProject = !payProject || e.projectName === payProject;
+                  const matchContractor = !payContractor || e.contractorName === payContractor;
+                  const matchPeriod = periodCutoff === 0 || new Date(e.date).getTime() >= periodCutoff;
+                  return matchProject && matchContractor && matchPeriod;
+                });
                 const totalBilled = entries.reduce((s, e) => s + e.amount, 0);
                 const paidEntries = entries.filter((e) => e.paid);
                 const totalPaid = paidEntries.reduce((s, e) => s + e.amount, 0);
@@ -1510,7 +1616,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                               <th className={`text-left py-2 px-3 text-xs font-bold ${textSecondary}`}>Date</th>
                               <th className={`text-left py-2 px-3 text-xs font-bold ${textSecondary}`}>Project</th>
                               <th className={`text-left py-2 px-3 text-xs font-bold ${textSecondary}`}>Contractor</th>
-                              <th className={`text-left py-2 px-3 text-xs font-bold ${textSecondary}`}>Category</th>
+                              <th className={`text-left py-2 px-3 text-xs font-bold ${textSecondary}`}>Category / Labour Details</th>
                               <th className={`text-left py-2 px-3 text-xs font-bold ${textSecondary}`}>Amount</th>
                             </tr>
                           </thead>
@@ -1518,27 +1624,38 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                             {unpaid.length === 0 ? (
                               <tr><td colSpan={6} className={`py-6 text-center text-sm ${textSecondary}`}>No unpaid logs</td></tr>
                             ) : (
-                              unpaid.map((e) => (
-                                <tr key={e.id} className={`border-b border-inherit hover:bg-black/5`}>
-                                  <td className="py-2 px-3">
-                                    <input
-                                      type="checkbox"
-                                      checked={selectedPayEntryIds.has(e.id)}
-                                      onChange={() => setSelectedPayEntryIds((prev) => {
-                                        const next = new Set(prev);
-                                        if (next.has(e.id)) next.delete(e.id);
-                                        else next.add(e.id);
-                                        return next;
-                                      })}
-                                    />
-                                  </td>
-                                  <td className={`py-2 px-3 text-sm ${textPrimary}`}>{new Date(e.date).toLocaleDateString()}</td>
-                                  <td className={`py-2 px-3 text-sm ${textPrimary}`}>{e.projectName}</td>
-                                  <td className={`py-2 px-3 text-sm ${textPrimary}`}>{e.contractorName}</td>
-                                  <td className={`py-2 px-3 text-sm ${textPrimary}`}>{e.category}</td>
-                                  <td className={`py-2 px-3 text-sm font-bold ${textPrimary}`}>₹{e.amount.toLocaleString('en-IN')}</td>
-                                </tr>
-                              ))
+                              unpaid.map((e) => {
+                                const rateInfo = getRateForDate(e.projectName, e.contractorName, e.category, e.date);
+                                const unitLabel = rateInfo.unit === 'Hr' ? 'hrs' : 'days';
+                                const otUnitLabel = rateInfo.otUnit === 'Hr' ? 'hrs' : 'days';
+                                const labourDetails = `${e.category} · ${e.headCount} pax · ${e.unitsWorked} ${unitLabel} · ${e.otHoursPerPerson} ${otUnitLabel} OT`;
+                                return (
+                                  <tr key={e.id} className={`border-b border-inherit hover:bg-black/5`}>
+                                    <td className="py-2 px-3">
+                                      <input
+                                        type="checkbox"
+                                        checked={selectedPayEntryIds.has(e.id)}
+                                        onChange={() => setSelectedPayEntryIds((prev) => {
+                                          const next = new Set(prev);
+                                          if (next.has(e.id)) next.delete(e.id);
+                                          else next.add(e.id);
+                                          return next;
+                                        })}
+                                      />
+                                    </td>
+                                    <td className={`py-2 px-3 text-sm ${textPrimary}`}>{new Date(e.date).toLocaleDateString()}</td>
+                                    <td className={`py-2 px-3 text-sm ${textPrimary}`}>{e.projectName}</td>
+                                    <td className={`py-2 px-3 text-sm ${textPrimary}`}>{e.contractorName}</td>
+                                    <td className={`py-2 px-3 text-sm ${textPrimary}`} title={labourDetails}>
+                                      <span className="font-medium">{e.category}</span>
+                                      <span className={`block text-xs ${textSecondary} mt-0.5`}>
+                                        {e.headCount} pax · {e.unitsWorked} {unitLabel} · {e.otHoursPerPerson} {otUnitLabel} OT
+                                      </span>
+                                    </td>
+                                    <td className={`py-2 px-3 text-sm font-bold ${textPrimary}`}>₹{e.amount.toLocaleString('en-IN')}</td>
+                                  </tr>
+                                );
+                              })
                             )}
                           </tbody>
                         </table>
@@ -1806,81 +1923,29 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
         </div>
       )}
 
-      {/* Add Project Modal (local storage) */}
-      {showAddProjectModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4 bg-black/70">
-          <div className={`w-full max-w-sm rounded-2xl overflow-hidden ${cardClass} border ${borderClass}`}>
-            <div className="p-4 border-b border-inherit flex items-center justify-between">
-              <span className={`font-bold ${textPrimary}`}>Add Project</span>
-              <button onClick={() => { setShowAddProjectModal(false); setNewProjectName(''); }} className="p-1 hover:opacity-70">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-4 space-y-4">
-              <input
-                type="text"
-                placeholder="Project name"
-                value={newProjectName}
-                onChange={(e) => setNewProjectName(e.target.value)}
-                className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
-              />
-              <button
-                onClick={() => {
-                  const name = newProjectName.trim();
-                  if (!name) { toast.showWarning('Enter project name'); return; }
-                  const created = saveProject(name);
-                  refreshContractorProjectsAndVendors();
-                  setLabourEntryFormData((prev) => ({ ...prev, project_id: created.id }));
-                  setShowAddProjectModal(false);
-                  setNewProjectName('');
-                  setLabourEntryProjectDropdownOpen(false);
-                }}
-                className="w-full py-2.5 rounded-lg font-bold bg-[#6B8E23] text-white"
-              >
-                Add
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Add Vendor Modal (local storage) */}
-      {showAddVendorModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4 bg-black/70">
-          <div className={`w-full max-w-sm rounded-2xl overflow-hidden ${cardClass} border ${borderClass}`}>
-            <div className="p-4 border-b border-inherit flex items-center justify-between">
-              <span className={`font-bold ${textPrimary}`}>Add Contractor</span>
-              <button onClick={() => { setShowAddVendorModal(false); setNewVendorName(''); }} className="p-1 hover:opacity-70">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-            <div className="p-4 space-y-4">
-              <input
-                type="text"
-                placeholder="Contractor name"
-                value={newVendorName}
-                onChange={(e) => setNewVendorName(e.target.value)}
-                className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
-              />
-              <button
-                onClick={() => {
-                  const name = newVendorName.trim();
-                  if (!name) { toast.showWarning('Enter contractor name'); return; }
-                  const created = saveVendor(name);
-                  refreshContractorProjectsAndVendors();
-                  setLabourEntryFormData((prev) => ({ ...prev, contractor_id: created.id }));
-                  setShowAddVendorModal(false);
-                  setNewVendorName('');
-                  setLabourEntryContractorDropdownOpen(false);
-                }}
-                className="w-full py-2.5 rounded-lg font-bold bg-[#6B8E23] text-white"
-              >
-                Add
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Add Contractor Modal - full vendor creation form (same as Masters > Vendors) */}
+      <CreateVendorModal
+        theme={theme}
+        isOpen={showAddVendorModal}
+        onClose={() => {
+          setShowAddVendorModal(false);
+          setLabourEntryContractorDropdownOpen(false);
+        }}
+        onSuccess={(createdVendor?: any, formData?: any) => {
+          const vendorId = createdVendor?.id ?? createdVendor?.uuid;
+          if (vendorId != null) {
+            setVendors((prev) => [
+              { id: vendorId, name: createdVendor?.name || formData?.name || '', uuid: createdVendor?.uuid },
+              ...prev,
+            ]);
+            setLabourEntryFormData((prev) => ({ ...prev, contractor_id: String(vendorId) }));
+            refreshContractorProjectsAndVendors();
+          }
+          setShowAddVendorModal(false);
+          setLabourEntryContractorDropdownOpen(false);
+        }}
+        defaultVendorType="contractor"
+      />
 
       {/* Add Labour Entry Modal */}
       {showAddLabourEntryModal && (
@@ -1936,18 +2001,6 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                         onClick={(e) => e.stopPropagation()}
                         className={`flex-1 min-w-0 py-1.5 px-2 rounded border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-900' : 'bg-slate-50'} text-sm`}
                       />
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setLabourEntryProjectDropdownOpen(false);
-                          setShowAddProjectModal(true);
-                        }}
-                        className="p-2 rounded-lg hover:bg-[#6B8E23]/20 text-[#6B8E23] transition-colors"
-                        title="Add project"
-                      >
-                        <Plus className="w-5 h-5" />
-                      </button>
                     </div>
                     <div className="overflow-y-auto flex-1">
                       {contractorProjects
@@ -2033,95 +2086,193 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   </div>
                 )}
               </div>
+              {/* Labour Details - multiple categories */}
               <div>
-                <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Category *</label>
-                <select
-                  value={labourEntryFormData.category}
-                  onChange={(e) => setLabourEntryFormData((p) => ({ ...p, category: e.target.value }))}
-                  className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
-                >
-                  <option value="Mason">Mason</option>
-                  <option value="Carpenter">Carpenter</option>
-                  <option value="Fitter">Fitter</option>
-                  <option value="Helper">Helper</option>
-                  <option value="Electrician">Electrician</option>
-                  <option value="Plumber">Plumber</option>
-                  <option value="Other">Other</option>
-                </select>
-              </div>
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Head Count</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    value={labourEntryFormData.headCount}
-                    onFocus={() => setLabourEntryFormData((p) => ({ ...p, headCount: '' }))}
-                    onBlur={(e) => {
-                      const v = e.target.value.replace(/\D/g, '');
-                      if (v === '') setLabourEntryFormData((p) => ({ ...p, headCount: 1 }));
-                      else setLabourEntryFormData((p) => ({ ...p, headCount: Math.max(1, parseInt(v, 10) || 1) }));
-                    }}
-                    onChange={(e) => {
-                      const v = e.target.value.replace(/\D/g, '');
-                      if (v === '') setLabourEntryFormData((p) => ({ ...p, headCount: '' }));
-                      else {
-                        const n = parseInt(v, 10);
-                        if (!isNaN(n)) setLabourEntryFormData((p) => ({ ...p, headCount: Math.max(1, n) }));
-                      }
-                    }}
-                    className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
-                  />
+                <div className="flex items-center justify-between mb-2">
+                  <label className={`block text-sm font-bold ${textPrimary}`}>Labour Details</label>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setLabourEntryFormData((p) => ({
+                        ...p,
+                        labourRows: [...p.labourRows, defaultLabourRow()],
+                      }))
+                    }
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold bg-[#6B8E23]/20 text-[#6B8E23] hover:bg-[#6B8E23]/30 transition-colors"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add Type
+                  </button>
                 </div>
-                <div>
-                  <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Units (days/hrs)</label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={labourEntryFormData.unitsWorked}
-                    onFocus={() => setLabourEntryFormData((p) => ({ ...p, unitsWorked: '' }))}
-                    onBlur={(e) => {
-                      const v = e.target.value.replace(/[^\d.]/g, '').replace(/\.(?=.*\.)/g, '').trim();
-                      if (v === '' || v === '.') setLabourEntryFormData((p) => ({ ...p, unitsWorked: 0 }));
-                      else setLabourEntryFormData((p) => ({ ...p, unitsWorked: Math.max(0, parseFloat(v) || 0) }));
-                    }}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      const v = raw.replace(/[^\d.]/g, '').replace(/\.(?=.*\.)/g, '');
-                      if (v === '' || v === '.') setLabourEntryFormData((p) => ({ ...p, unitsWorked: v === '' ? '' : '.' }));
-                      else {
-                        const n = parseFloat(v);
-                        if (!isNaN(n) && n >= 0) setLabourEntryFormData((p) => ({ ...p, unitsWorked: v }));
-                      }
-                    }}
-                    className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
-                  />
-                </div>
-                <div>
-                  <label className={`block text-sm font-bold ${textPrimary} mb-1`}>OT (per person)</label>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={labourEntryFormData.otHoursPerPerson}
-                    onFocus={() => setLabourEntryFormData((p) => ({ ...p, otHoursPerPerson: '' }))}
-                    onBlur={(e) => {
-                      const v = e.target.value.replace(/[^\d.]/g, '').replace(/\.(?=.*\.)/g, '').trim();
-                      if (v === '' || v === '.') setLabourEntryFormData((p) => ({ ...p, otHoursPerPerson: 0 }));
-                      else setLabourEntryFormData((p) => ({ ...p, otHoursPerPerson: Math.max(0, parseFloat(v) || 0) }));
-                    }}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      const v = raw.replace(/[^\d.]/g, '').replace(/\.(?=.*\.)/g, '');
-                      if (v === '') setLabourEntryFormData((p) => ({ ...p, otHoursPerPerson: '' }));
-                      else if (v === '.') setLabourEntryFormData((p) => ({ ...p, otHoursPerPerson: '.' }));
-                      else {
-                        const n = parseFloat(v);
-                        if (!isNaN(n) && n >= 0) setLabourEntryFormData((p) => ({ ...p, otHoursPerPerson: v }));
-                      }
-                    }}
-                    className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
-                  />
+                <div className="space-y-4">
+                  {labourEntryFormData.labourRows.map((row, idx) => {
+                    const project = contractorProjects.find((p) => String(p.id) === String(labourEntryFormData.project_id));
+                    const contractor = vendors.find((v) => String(v.id) === String(labourEntryFormData.contractor_id));
+                    const projectName = project?.name ?? '';
+                    const contractorName = contractor?.name ?? '';
+                    const rateInfo =
+                      projectName && contractorName
+                        ? getRateForDate(projectName, contractorName, row.category, labourEntryFormData.date)
+                        : null;
+                    const unitLabel = rateInfo?.unit === 'Hr' ? 'hrs' : 'days';
+                    const otUnitLabel = rateInfo?.otUnit === 'Hr' ? 'hrs' : 'days';
+                    return (
+                      <div
+                        key={idx}
+                        className={`p-3 rounded-lg border ${borderClass} ${isDark ? 'bg-slate-800/30' : 'bg-slate-50'}`}
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <span className={`text-xs font-bold ${textSecondary}`}>Type {idx + 1}</span>
+                          {labourEntryFormData.labourRows.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setLabourEntryFormData((p) => ({
+                                  ...p,
+                                  labourRows: p.labourRows.filter((_, i) => i !== idx),
+                                }))
+                              }
+                              className={`text-xs ${textSecondary} hover:text-red-500`}
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+                        <div className="space-y-3">
+                          <div>
+                            <label className={`block text-xs font-bold ${textPrimary} mb-1`}>Category</label>
+                            <select
+                              value={row.category}
+                              onChange={(e) =>
+                                setLabourEntryFormData((p) => ({
+                                  ...p,
+                                  labourRows: p.labourRows.map((r, i) => (i === idx ? { ...r, category: e.target.value } : r)),
+                                }))
+                              }
+                              className={`w-full px-3 py-2 rounded-lg border ${borderClass} ${textPrimary} text-sm ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                            >
+                              <option value="Mason">Mason</option>
+                              <option value="Carpenter">Carpenter</option>
+                              <option value="Fitter">Fitter</option>
+                              <option value="Helper">Helper</option>
+                              <option value="Electrician">Electrician</option>
+                              <option value="Plumber">Plumber</option>
+                              <option value="Other">Other</option>
+                            </select>
+                          </div>
+                          <div className="grid grid-cols-3 gap-3">
+                            <div>
+                              <label className={`block text-xs font-bold ${textPrimary} mb-1`}>
+                                Head Count <span className={textSecondary}>({unitLabel})</span>
+                              </label>
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                value={row.headCount}
+                                onFocus={() =>
+                                  setLabourEntryFormData((p) => ({
+                                    ...p,
+                                    labourRows: p.labourRows.map((r, i) => (i === idx ? { ...r, headCount: '' } : r)),
+                                  }))
+                                }
+                                onBlur={(e) => {
+                                  const v = e.target.value.replace(/\D/g, '');
+                                  setLabourEntryFormData((p) => ({
+                                    ...p,
+                                    labourRows: p.labourRows.map((r, i) =>
+                                      i === idx ? { ...r, headCount: v === '' ? 1 : Math.max(1, parseInt(v, 10) || 1) } : r
+                                    ),
+                                  }));
+                                }}
+                                onChange={(e) => {
+                                  const v = e.target.value.replace(/\D/g, '');
+                                  setLabourEntryFormData((p) => ({
+                                    ...p,
+                                    labourRows: p.labourRows.map((r, i) =>
+                                      i === idx
+                                        ? { ...r, headCount: v === '' ? '' : Math.max(1, parseInt(v, 10) || 1) }
+                                        : r
+                                    ),
+                                  }));
+                                }}
+                                className={`w-full px-3 py-2 rounded-lg border ${borderClass} ${textPrimary} text-sm ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                              />
+                            </div>
+                            <div>
+                              <label className={`block text-xs font-bold ${textPrimary} mb-1`}>
+                                Units ({unitLabel})
+                              </label>
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                value={row.unitsWorked}
+                                onFocus={() =>
+                                  setLabourEntryFormData((p) => ({
+                                    ...p,
+                                    labourRows: p.labourRows.map((r, i) => (i === idx ? { ...r, unitsWorked: '' } : r)),
+                                  }))
+                                }
+                                onBlur={(e) => {
+                                  const v = e.target.value.replace(/[^\d.]/g, '').replace(/\.(?=.*\.)/g, '').trim();
+                                  setLabourEntryFormData((p) => ({
+                                    ...p,
+                                    labourRows: p.labourRows.map((r, i) =>
+                                      i === idx ? { ...r, unitsWorked: v === '' || v === '.' ? 0 : Math.max(0, parseFloat(v) || 0) } : r
+                                    ),
+                                  }));
+                                }}
+                                onChange={(e) => {
+                                  const raw = e.target.value;
+                                  const v = raw.replace(/[^\d.]/g, '').replace(/\.(?=.*\.)/g, '');
+                                  setLabourEntryFormData((p) => ({
+                                    ...p,
+                                    labourRows: p.labourRows.map((r, i) => (i === idx ? { ...r, unitsWorked: v === '' ? '' : v === '.' ? '.' : v } : r)),
+                                  }));
+                                }}
+                                className={`w-full px-3 py-2 rounded-lg border ${borderClass} ${textPrimary} text-sm ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                              />
+                            </div>
+                            <div>
+                              <label className={`block text-xs font-bold ${textPrimary} mb-1`}>
+                                OT (per person, {otUnitLabel})
+                              </label>
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                value={row.otHoursPerPerson}
+                                onFocus={() =>
+                                  setLabourEntryFormData((p) => ({
+                                    ...p,
+                                    labourRows: p.labourRows.map((r, i) => (i === idx ? { ...r, otHoursPerPerson: '' } : r)),
+                                  }))
+                                }
+                                onBlur={(e) => {
+                                  const v = e.target.value.replace(/[^\d.]/g, '').replace(/\.(?=.*\.)/g, '').trim();
+                                  setLabourEntryFormData((p) => ({
+                                    ...p,
+                                    labourRows: p.labourRows.map((r, i) =>
+                                      i === idx
+                                        ? { ...r, otHoursPerPerson: v === '' || v === '.' ? 0 : Math.max(0, parseFloat(v) || 0) }
+                                        : r
+                                    ),
+                                  }));
+                                }}
+                                onChange={(e) => {
+                                  const raw = e.target.value;
+                                  const v = raw.replace(/[^\d.]/g, '').replace(/\.(?=.*\.)/g, '');
+                                  setLabourEntryFormData((p) => ({
+                                    ...p,
+                                    labourRows: p.labourRows.map((r, i) => (i === idx ? { ...r, otHoursPerPerson: v === '' ? '' : v === '.' ? '.' : v } : r)),
+                                  }));
+                                }}
+                                className={`w-full px-3 py-2 rounded-lg border ${borderClass} ${textPrimary} text-sm ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
               <div className="flex gap-2 pt-2">

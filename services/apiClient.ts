@@ -123,6 +123,7 @@ apiClient.interceptors.response.use(
           const suppress404 = [
             '/profile-list', '/sub-project-list', '/project-subproject', '/project-wise-subproject-search', '/fetch-project-subproject',
             '/get-work-overview', '/get-work-process', '/get-work-process-activities', '/get-inventory-stocks', '/get-inward-stocks',
+            '/tasks/get-user-list',
           ].some(p => url.includes(p));
           if (!suppress404) {
             console.error('Not Found: The requested resource does not exist', url);

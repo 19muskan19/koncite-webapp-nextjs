@@ -163,9 +163,10 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
               >
                 <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 border border-[#C2D642]/30 bg-[#C2D642]/20 flex items-center justify-center">
                   <img
-                    src={getProfileImageUrl((user as any)?.profile_image ?? (user as any)?.profile_images ?? (user as any)?.avatar, user?.name || 'User')}
+                    src={getProfileImageUrl((user as any)?.profile_image ?? (user as any)?.profile_images ?? (user as any)?.avatar ?? (user as any)?.profile_picture, user?.name || 'User')}
                     alt={user?.name || 'User'}
                     className="w-full h-full object-cover"
+                    referrerPolicy="no-referrer"
                     onError={(e) => {
                       const el = e.target as HTMLImageElement;
                       el.onerror = null;

@@ -123,6 +123,10 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
           }))
           .filter((u) => u.unit)
           .filter((u, i, arr) => arr.findIndex((x) => x.id === u.id) === i)
+          .filter((u, _i, arr) => {
+            const key = u.unit.replace(/\s+/g, ' ').trim().toLowerCase();
+            return arr.findIndex((x) => x.unit.replace(/\s+/g, ' ').trim().toLowerCase() === key) === _i;
+          })
           .sort((a, b) => a.unit.localeCompare(b.unit, undefined, { sensitivity: 'base' }));
         setUnits(transformedUnits);
       } catch (error: any) {

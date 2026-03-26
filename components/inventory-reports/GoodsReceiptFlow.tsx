@@ -120,6 +120,7 @@ export default function GoodsReceiptFlow({
   const [entryTypeId, setEntryTypeId] = useState<string | number>('');
   const [supplierProjectStoreId, setSupplierProjectStoreId] = useState<string | number>('');
   const [supplierOptions, setSupplierOptions] = useState<any[]>([]);
+  const [supplierSearchQuery, setSupplierSearchQuery] = useState('');
   const [isLoadingSupplierOptions, setIsLoadingSupplierOptions] = useState(false);
   const [deliveryRefNo, setDeliveryRefNo] = useState('');
   const [deliveryRefDate, setDeliveryRefDate] = useState(() => getTodayDateString());
@@ -719,6 +720,24 @@ export default function GoodsReceiptFlow({
     return item?.name ?? item?.registration_name ?? item?.store_name ?? item?.project_name ?? item?.id ?? '';
   };
 
+  const filteredSupplierOptions = useMemo(() => {
+    const q = supplierSearchQuery.trim().toLowerCase();
+    let list = q
+      ? supplierOptions.filter((o: any) =>
+          String(getSupplierOptionDisplay(o))
+            .toLowerCase()
+            .includes(q)
+        )
+      : supplierOptions;
+    if (supplierProjectStoreId) {
+      const sel = supplierOptions.find((o: any) => String(o.id) === String(supplierProjectStoreId));
+      if (sel && !list.some((o: any) => String(o.id) === String(sel.id))) {
+        list = [sel, ...list];
+      }
+    }
+    return list;
+  }, [supplierOptions, supplierSearchQuery, supplierProjectStoreId, entryTypeId, entryTypeList]);
+
   const isSupplierEntryType = () => getSupplierLabel() === 'Supplier';
 
   const refreshSupplierOptions = async () => {
@@ -910,7 +929,11 @@ export default function GoodsReceiptFlow({
                 <select
                   value={entryTypeId}
                   onFocus={handleEntryTypeFocus}
-                  onChange={(e) => { setEntryTypeId(e.target.value); setSupplierProjectStoreId(''); }}
+                  onChange={(e) => {
+                    setEntryTypeId(e.target.value);
+                    setSupplierProjectStoreId('');
+                    setSupplierSearchQuery('');
+                  }}
                   disabled={isLoadingEntryTypes}
                   className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}
                 >
@@ -924,10 +947,29 @@ export default function GoodsReceiptFlow({
               {entryTypeId && (
                 <div className="sm:col-span-2">
                   <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>{getSupplierLabel()} *</label>
+                  <div className="relative mb-2">
+                    <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none ${textSecondary}`} />
+                    <input
+                      type="search"
+                      value={supplierSearchQuery}
+                      onChange={(e) => setSupplierSearchQuery(e.target.value)}
+                      placeholder={`Search ${getSupplierLabel().toLowerCase()}…`}
+                      disabled={isLoadingSupplierOptions}
+                      className={`w-full pl-10 pr-3 py-2 rounded-lg border text-sm ${
+                        isDark ? 'bg-slate-800 border-slate-600 text-slate-100 placeholder:text-slate-500' : 'bg-white border-slate-200 text-slate-900'
+                      } focus:ring-2 focus:ring-[#6B8E23]/30 outline-none disabled:opacity-50`}
+                      autoComplete="off"
+                      aria-label={`Search ${getSupplierLabel()}`}
+                    />
+                  </div>
                   <div className="flex gap-2">
                     <select value={supplierProjectStoreId} onChange={(e) => setSupplierProjectStoreId(e.target.value)} disabled={isLoadingSupplierOptions} className={`flex-1 px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}>
                       <option value="">Select...</option>
-                      {supplierOptions.map((o: any) => <option key={o.id} value={o.id}>{getSupplierOptionDisplay(o)}</option>)}
+                      {filteredSupplierOptions.map((o: any) => (
+                        <option key={o.id} value={o.id}>
+                          {getSupplierOptionDisplay(o)}
+                        </option>
+                      ))}
                     </select>
                     {isSupplierEntryType() && (
                       <button type="button" onClick={() => setShowCreateVendorModal(true)} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold border ${isDark ? 'border-slate-600 hover:bg-slate-800/50' : 'border-slate-300 hover:bg-slate-50'} ${textPrimary}`} title="Add new supplier">
@@ -1104,7 +1146,16 @@ export default function GoodsReceiptFlow({
                 return (
                   <div key={indexKey} className={`border rounded-lg overflow-hidden ${isDark ? 'border-slate-600' : 'border-slate-200'}`}>
                     <button type="button" onClick={() => toggleDetailExpand(indexKey)} className={`w-full flex items-center justify-between p-4 text-left ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}`}>
-                      <div className="flex-1 min-w-0"><p className={`font-bold ${textPrimary}`}>{d.materialName}</p><p className={`text-sm ${textSecondary}`}>{d.materialCode} • {d.materialUnit || '-'} • {d.materialSpec || '-'}</p></div>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-sm sm:text-base ${textPrimary}`}>
+                          <span className="font-bold">{d.materialName}</span>
+                          <span className={`font-normal ${textSecondary}`}>
+                            {' '}
+                            · {d.materialSpec || '-'} · {d.materialUnit || '-'}
+                          </span>
+                        </p>
+                        <p className={`text-xs sm:text-sm mt-0.5 ${textSecondary}`}>{d.materialCode}</p>
+                      </div>
                       <button type="button" onClick={(e) => { e.stopPropagation(); removeDetail(index); }} className="p-2 text-red-500 hover:bg-red-500/10 rounded-lg"><Trash2 className="w-4 h-4" /></button>
                       {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
                     </button>

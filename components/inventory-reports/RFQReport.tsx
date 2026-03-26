@@ -312,12 +312,15 @@ const RFQReport: React.FC<RFQReportProps> = ({ theme }) => {
       <div className={`rounded-xl border ${cardClass} p-4`}>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
           <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Project</label>
+            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+              Project <span className="text-red-500">*</span>
+            </label>
             <div className="relative">
               <Building2 className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} z-10`} />
               <select
                 value={selectedProject}
                 onChange={(e) => setSelectedProject(e.target.value)}
+                aria-required
                 className={`w-full pl-10 pr-10 py-2 rounded-lg text-sm border appearance-none cursor-pointer ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
               >
                 <option value="">---select project---</option>

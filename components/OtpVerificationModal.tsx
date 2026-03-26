@@ -45,7 +45,7 @@ const OtpVerificationModal: React.FC<OtpVerificationModalProps> = ({
   const inputBg = isDark ? 'bg-slate-800' : 'bg-white';
 
   const handleOtpChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value.replace(/\D/g, '').slice(0, 6); // Only numbers, max 6 digits
+    const value = e.target.value.replace(/\D/g, '').slice(0, 4); // Only numbers, max 4 digits
     setOtp(value);
     setError('');
   };
@@ -54,8 +54,8 @@ const OtpVerificationModal: React.FC<OtpVerificationModalProps> = ({
     e.preventDefault();
     setError('');
 
-    if (otp.length < 4) {
-      setError('Please enter a valid OTP');
+    if (otp.length !== 4) {
+      setError('Please enter the 4-digit code');
       return;
     }
 
@@ -187,13 +187,13 @@ const OtpVerificationModal: React.FC<OtpVerificationModalProps> = ({
               value={otp}
               onChange={handleOtpChange}
               className={`w-full px-4 py-3 border ${borderClass} rounded-lg ${inputBg} ${textPrimary} text-center text-2xl font-bold tracking-widest focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
-              placeholder="000000"
-              maxLength={6}
+              placeholder="0000"
+              maxLength={4}
               required
               autoFocus
               autoComplete="off"
             />
-            <p className={`text-xs mt-1 ${textSecondary}`}>Enter the 6-digit code sent to your email</p>
+            <p className={`text-xs mt-1 ${textSecondary}`}>Enter the 4-digit code sent to your email</p>
           </div>
 
           <div className="flex items-center justify-between text-sm">

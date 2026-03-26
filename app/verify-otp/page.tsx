@@ -56,7 +56,7 @@ export default function VerifyOtpPage() {
   const bgClass = isDark ? 'bg-[#0a0a0a]' : 'bg-slate-50';
 
   const handleOtpChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value.replace(/\D/g, '').slice(0, 6);
+    const value = e.target.value.replace(/\D/g, '').slice(0, 4);
     setOtp(value);
     setError('');
   };
@@ -69,8 +69,8 @@ export default function VerifyOtpPage() {
       setError('Email is required');
       return;
     }
-    if (otp.length < 4) {
-      setError('Please enter a valid OTP (at least 4 digits)');
+    if (otp.length !== 4) {
+      setError('Please enter the 4-digit code');
       return;
     }
 
@@ -186,12 +186,12 @@ export default function VerifyOtpPage() {
               value={otp}
               onChange={handleOtpChange}
               className={`w-full px-4 py-3 border ${borderClass} rounded-lg ${inputBg} ${textPrimary} text-center text-2xl font-bold tracking-widest focus:ring-2 focus:ring-[#C2D642] focus:border-transparent outline-none`}
-              placeholder="000000"
-              maxLength={6}
+              placeholder="0000"
+              maxLength={4}
               required
               autoComplete="off"
             />
-            <p className={`text-xs mt-1 ${textSecondary}`}>Enter the 6-digit code sent to your email</p>
+            <p className={`text-xs mt-1 ${textSecondary}`}>Enter the 4-digit code sent to your email</p>
           </div>
 
           <div className="flex items-center justify-between text-sm">

@@ -26,7 +26,13 @@ import {
   ChevronDown
 } from 'lucide-react';
 import CreateProjectModal from './Modals/CreateProjectModal';
-import { getLogoUrl } from '@/utils/imageUtils';
+import {
+  getLogoUrl,
+  extractProjectLogoFromApi,
+  extractCompanyLogoFromApi,
+  getInitialsAvatarUrl,
+} from '@/utils/imageUtils';
+import { parseClientPhonePartsFromApi } from '@/utils/clientPhoneUtils';
 
 type SortFilterType = 'none' | 'recent_created' | 'oldest_created' | 'recent_updated' | 'oldest_updated';
 
@@ -121,7 +127,12 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
         // Also check nested companies object (API response includes companies: { id: 109, registration_name: "vj", ... })
         const companiesId = p.companies_id || p.companies?.id || p.company_id || '';
         const companyName = p.companies?.registration_name || p.companies?.name || p.company || p.company_name || '';
-        const companyLogo = p.companies?.logo || p.company_logo || '';
+        const rawCompanyLogo =
+          extractCompanyLogoFromApi(p.companies as Record<string, unknown>) ||
+          (typeof p.company_logo === 'string' ? p.company_logo : '');
+        const companyLogo = rawCompanyLogo
+          ? getLogoUrl(rawCompanyLogo, companyName, '6366f1')
+          : getInitialsAvatarUrl(companyName, '6366f1');
         
         // Preserve original numeric ID for API calls (backend expects numeric id)
         // API returns: { id: 107, uuid: "ecfa3c96-..." }
@@ -139,7 +150,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
           code: p.code || '',
           company: companyName, // Use company name from nested companies object or fallback
           companyId: companyIdForStorage, // Store company ID as string for lookup
-          companyLogo: companyLogo || `https://ui-avatars.com/api/?name=${encodeURIComponent(companyName)}&background=6366f1&color=fff&size=64`,
+          companyLogo,
           startDate: p.planned_start_date || p.start_date || p.startDate || '',
           endDate: p.planned_end_date || p.end_date || p.endDate || '',
           status: (() => {
@@ -152,7 +163,11 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
           progress: p.progress || 0,
           budget: p.budget,
           location: p.address || p.location || '',
-          logo: getLogoUrl(p.logo, p.project_name || p.name || '', '6366f1'),
+          logo: getLogoUrl(
+            extractProjectLogoFromApi(p as Record<string, unknown>),
+            p.project_name || p.name || '',
+            '6366f1'
+          ),
           teamSize: p.team_size || p.teamSize,
           createdAt: p.created_at || p.createdAt,
           updatedAt: p.updated_at || p.updatedAt,
@@ -248,7 +263,12 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
         // Also check nested companies object (API response includes companies: { id: 109, registration_name: "vj", ... })
         const companiesId = p.companies_id || p.companies?.id || p.company_id || '';
         const companyName = p.companies?.registration_name || p.companies?.name || p.company || p.company_name || '';
-        const companyLogo = p.companies?.logo || p.company_logo || '';
+        const rawCompanyLogo =
+          extractCompanyLogoFromApi(p.companies as Record<string, unknown>) ||
+          (typeof p.company_logo === 'string' ? p.company_logo : '');
+        const companyLogo = rawCompanyLogo
+          ? getLogoUrl(rawCompanyLogo, companyName, '6366f1')
+          : getInitialsAvatarUrl(companyName, '6366f1');
         
         // Preserve original numeric ID for API calls
         const numericId = p.id; // Numeric ID from database
@@ -262,7 +282,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
           code: p.code || '',
           company: companyName, // Use company name from nested companies object or fallback
           companyId: companiesId ? String(companiesId) : '', // Store company ID as string for lookup
-          companyLogo: companyLogo || `https://ui-avatars.com/api/?name=${encodeURIComponent(companyName)}&background=6366f1&color=fff&size=64`,
+          companyLogo,
           startDate: p.planned_start_date || p.start_date || p.startDate || '',
           endDate: p.planned_end_date || p.end_date || p.endDate || '',
           status: (() => {
@@ -275,7 +295,11 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
           progress: p.progress || 0,
           budget: p.budget,
           location: p.address || p.location || '',
-          logo: getLogoUrl(p.logo, p.project_name || p.name || '', '6366f1'),
+          logo: getLogoUrl(
+            extractProjectLogoFromApi(p as Record<string, unknown>),
+            p.project_name || p.name || '',
+            '6366f1'
+          ),
           teamSize: p.team_size || p.teamSize,
           createdAt: p.created_at || p.createdAt,
           updatedAt: p.updated_at || p.updatedAt,
@@ -374,10 +398,14 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
       setEditingProjectId(project.id); // Keep UUID for display
       
       // Extract companies_id from projectData (API returns it)
-      const companiesId = projectData.companies_id || 
-                         projectData.company_id || 
-                         project.companyId || 
-                         '';
+      const companiesId =
+        projectData.companies_id ||
+        projectData.company_id ||
+        (typeof projectData.companies === 'object' && projectData.companies && 'id' in projectData.companies
+          ? String((projectData.companies as { id?: string | number }).id ?? '')
+          : '') ||
+        project.companyId ||
+        '';
       
       console.log('🏢 Company ID extracted from project data:', {
         companies_id: projectData.companies_id,
@@ -386,21 +414,41 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
         finalCompaniesId: companiesId
       });
       
+      // Flatten nested client from API (Laravel often returns client: { ... })
+      const clientObj =
+        projectData.client && typeof projectData.client === 'object' && !Array.isArray(projectData.client)
+          ? projectData.client
+          : null;
+
+      const clientPhoneParts = parseClientPhonePartsFromApi(
+        projectData.client_country_code ||
+          clientObj?.client_country_code ||
+          clientObj?.country_code ||
+          projectData.country_code ||
+          undefined,
+        clientObj?.client_phone || projectData.client_phone,
+        clientObj?.client_mobile || projectData.client_mobile
+      );
+
       // Store ALL project data from API response to preserve all fields for editing
       setEditingProjectData({
         ...projectData, // Include all fields from API response
         uuid: project.uuid || project.id,
-        numericId: project.numericId ?? projectData.id, // Store numeric ID for update
+        numericId:
+          project.numericId ??
+          projectData.id ??
+          projectData.numeric_id ??
+          (typeof projectData.id === 'number' ? projectData.id : undefined), // Store numeric ID for update
         companies_id: companiesId, // Ensure companies_id is included
         companyId: companiesId, // Also set companyId for compatibility
-        // Map API field names to form-friendly names
+        // Map API field names to form-friendly names (always last so they win over nulls from spread)
         name: projectData.project_name || projectData.name || project.name || '',
         location: projectData.address || projectData.location || project.location || '',
         startDate: projectData.planned_start_date || projectData.start_date || project.startDate || '',
         endDate: projectData.planned_end_date || projectData.end_date || project.endDate || '',
         isContractor: projectData.own_project_or_contractor === 'yes' || projectData.is_contractor || project.isContractor || false,
-        logo: projectData.logo || project.logo || '',
-        // Preserve all other fields from API response
+        // Only API logo — do not use project.logo from grid (that is getLogoUrl + ui-avatars fallback)
+        logo: extractProjectLogoFromApi(projectData as Record<string, unknown>) || '',
         code: projectData.code || project.code || '',
         status: (() => {
           const s = (projectData.status || project.status || 'Pending').toString();
@@ -410,7 +458,53 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
           return s || 'Pending';
         })(),
         progress: projectData.progress || project.progress || 0,
-        projectManager: projectData.project_manager || project.projectManager || ''
+        projectManager: projectData.project_manager || project.projectManager || '',
+        // Flatten client_* from nested client when root fields are missing
+        client_name: projectData.client_name || clientObj?.client_name || clientObj?.name || '',
+        client_address:
+          projectData.client_address ||
+          clientObj?.client_address ||
+          clientObj?.address ||
+          clientObj?.client_company_address ||
+          '',
+        client_point_of_contact_name:
+          projectData.client_point_of_contact_name ||
+          projectData.client_contact_name ||
+          clientObj?.client_point_of_contact_name ||
+          clientObj?.client_contact_name ||
+          clientObj?.point_of_contact_name ||
+          clientObj?.contact_name ||
+          clientObj?.client_name ||
+          '',
+        client_company_name: projectData.client_company_name || clientObj?.client_company_name || '',
+        client_company_address: projectData.client_company_address || clientObj?.client_company_address || '',
+        client_designation: projectData.client_designation || clientObj?.client_designation || '',
+        client_email: projectData.client_email || clientObj?.client_email || '',
+        client_mobile:
+          projectData.client_mobile ||
+          clientObj?.client_mobile ||
+          clientPhoneParts.mobile10 ||
+          '',
+        client_phone: projectData.client_phone || clientObj?.client_phone || '',
+        client_country_code:
+          projectData.client_country_code ||
+          clientObj?.client_country_code ||
+          (typeof clientObj?.country_code === 'string' && clientObj.country_code.trim()
+            ? String(clientObj.country_code).replace(/\D/g, '')
+            : '') ||
+          (typeof projectData.country_code === 'string' && String(projectData.country_code).trim()
+            ? String(projectData.country_code).replace(/\D/g, '')
+            : '') ||
+          clientPhoneParts.dialCode ||
+          '',
+        client_country_code_iso:
+          projectData.client_country_code_iso ||
+          clientObj?.client_country_code_iso ||
+          clientObj?.country_code_iso ||
+          projectData.country_code_iso ||
+          '',
+        country_code: projectData.country_code ?? clientObj?.country_code ?? '',
+        company_country_code: projectData.company_country_code ?? clientObj?.company_country_code ?? '',
       });
       
       console.log('✅ Stored editing project data with all fields:', {
@@ -573,6 +667,45 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
     return [...projects];
   }, [projects]);
 
+  /** Stable reference for edit modal — avoids re-populating form on every parent re-render */
+  const editingProjectForModal = useMemo(() => {
+    if (!editingProjectData) return null;
+    return {
+      ...editingProjectData,
+      id: editingProjectId || editingProjectData.uuid || '',
+      name: editingProjectData.project_name || editingProjectData.name || '',
+      code: editingProjectData.code || '',
+      company:
+        editingProjectData.companies?.registration_name ||
+        editingProjectData.company ||
+        editingProjectData.company_name ||
+        '',
+      companyLogo: editingProjectData.companies?.logo || editingProjectData.company_logo || '',
+      startDate:
+        editingProjectData.planned_start_date ||
+        editingProjectData.start_date ||
+        editingProjectData.startDate ||
+        '',
+      endDate:
+        editingProjectData.planned_end_date ||
+        editingProjectData.end_date ||
+        editingProjectData.endDate ||
+        '',
+      status: editingProjectData.status || 'Pending',
+      progress: editingProjectData.progress || 0,
+      location: editingProjectData.address || editingProjectData.location || '',
+      logo: editingProjectData.logo || '',
+      isContractor:
+        editingProjectData.own_project_or_contractor === 'yes' ||
+        editingProjectData.is_contractor ||
+        false,
+      projectManager: editingProjectData.project_manager || '',
+      companies_id: editingProjectData.companies_id,
+      company_id: editingProjectData.company_id,
+      companyId: editingProjectData.companyId,
+    };
+  }, [editingProjectData, editingProjectId]);
+
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -731,6 +864,8 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
           </button>
           <button 
             onClick={() => {
+              setEditingProjectId(null);
+              setEditingProjectData(null);
               setShowCreateModal(true);
             }}
             className={`flex items-center gap-1 sm:gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642] text-white' : 'bg-[#C2D642] hover:bg-[#C2D642] text-white'} shadow-md`}
@@ -893,9 +1028,10 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                       alt={project.name}
                       className="w-full h-full object-cover"
                       loading="lazy"
+                      referrerPolicy="no-referrer"
                       onError={(e) => {
                         const target = e.target as HTMLImageElement;
-                        target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(project.name)}&background=6366f1&color=fff&size=128`;
+                        target.src = getInitialsAvatarUrl(project.name, '6366f1');
                       }}
                     />
                   </div>
@@ -962,33 +1098,54 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
           setEditingProjectId(null);
           setEditingProjectData(null);
         }}
-        onSuccess={async () => {
+        onSuccess={async (createdProject?: any) => {
           setShowCreateModal(false);
           setEditingProjectId(null);
           setEditingProjectData(null);
-          // Reload projects from API
+          // Optimistically add new project with logo from create response
+          if (createdProject && createdProject.id) {
+            const p = createdProject;
+            const companyName = allCompanies.find((c: any) => String(c.numericId || c.id) === String(p.companies_id))?.registration_name
+              || allCompanies.find((c: any) => String(c.id) === String(p.companies_id))?.name || '';
+            const matchedCo = allCompanies.find(
+              (c: any) => String(c.numericId || c.id) === String(p.companies_id)
+            ) || allCompanies.find((c: any) => String(c.id) === String(p.companies_id));
+            const rawCompanyLogo = matchedCo
+              ? extractCompanyLogoFromApi(matchedCo as Record<string, unknown>)
+              : '';
+            const companyLogo = rawCompanyLogo
+              ? getLogoUrl(rawCompanyLogo, companyName, '6366f1')
+              : getInitialsAvatarUrl(companyName, '6366f1');
+            const newProject: Project = {
+              id: p.uuid || String(p.id),
+              numericId: p.id,
+              uuid: p.uuid,
+              name: p.project_name || p.name || '',
+              code: p.code || '',
+              company: companyName,
+              companyId: p.companies_id ? String(p.companies_id) : '',
+              companyLogo,
+              startDate: p.planned_start_date || p.start_date || '',
+              endDate: p.planned_end_date || p.end_date || '',
+              status: 'Pending',
+              progress: 0,
+              location: p.address || p.location || '',
+              logo: getLogoUrl(
+                extractProjectLogoFromApi(p as Record<string, unknown>) || String(p.logo_url || ''),
+                p.project_name || p.name || '',
+                '6366f1'
+              ),
+              isContractor: p.own_project_or_contractor === 'yes',
+              projectManager: p.project_manager || '',
+              azure_folder_path: p.azure_folder_path,
+            };
+            setProjects((prev) => [newProject, ...prev]);
+          }
+          // Reload projects from API to sync
           await fetchProjects();
         }}
         projectUpdateId={editingProjectData?.numericId ?? editingProjectData?.uuid ?? null}
-        editingProject={editingProjectData ? {
-          id: editingProjectId || '',
-          name: editingProjectData.project_name || editingProjectData.name || '',
-          code: editingProjectData.code || '',
-          company: editingProjectData.company || editingProjectData.company_name || '',
-          companyLogo: editingProjectData.company_logo || '',
-          startDate: editingProjectData.planned_start_date || editingProjectData.start_date || '',
-          endDate: editingProjectData.planned_end_date || editingProjectData.end_date || '',
-          status: editingProjectData.status || 'Pending',
-          progress: editingProjectData.progress || 0,
-          location: editingProjectData.address || editingProjectData.location || '',
-          logo: editingProjectData.logo || '',
-          isContractor: editingProjectData.own_project_or_contractor === 'yes' || editingProjectData.is_contractor || false,
-          projectManager: editingProjectData.project_manager || '',
-          companies_id: editingProjectData.companies_id,
-          company_id: editingProjectData.company_id,
-          companyId: editingProjectData.companyId,
-          ...editingProjectData, // Spread to pass all API fields (client_*, etc.)
-        } : null}
+        editingProject={editingProjectForModal}
         userProjects={projects}
         onProjectCreated={handleProjectCreated}
       />
@@ -1149,8 +1306,13 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                 console.log('✅ Using project.company fallback:', companyName);
               }
               
+              const rawMatchedLogo = matchedCompany
+                ? extractCompanyLogoFromApi(matchedCompany as Record<string, unknown>)
+                : '';
               const companyLogo = matchedCompany
-                ? (matchedCompany.logo || matchedCompany.logo_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(companyName)}&background=6366f1&color=fff&size=64`)
+                ? (rawMatchedLogo
+                    ? getLogoUrl(rawMatchedLogo, companyName, '6366f1')
+                    : getInitialsAvatarUrl(companyName, '6366f1'))
                 : viewingProject.companyLogo;
               
               console.log('🔍 Project company lookup result:', {
@@ -1182,9 +1344,10 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                         src={getLogoUrl(viewingProject.logo, viewingProject.name, '6366f1')}
                         alt={viewingProject.name}
                         className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
                         onError={(e) => {
                           const target = e.target as HTMLImageElement;
-                          target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(viewingProject.name)}&background=6366f1&color=fff&size=128`;
+                          target.src = getInitialsAvatarUrl(viewingProject.name, '6366f1');
                         }}
                       />
                     </div>
@@ -1239,13 +1402,14 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                         Tag Company
                       </label>
                       <div className="flex items-center gap-2">
-                        <img 
-                          src={companyLogo} 
+                        <img
+                          src={companyLogo}
                           alt={companyName}
                           className="w-6 h-6 rounded-full"
+                          referrerPolicy="no-referrer"
                           onError={(e) => {
                             const target = e.target as HTMLImageElement;
-                            target.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(companyName)}&background=6366f1&color=fff&size=64`;
+                            target.src = getInitialsAvatarUrl(companyName, '6366f1');
                           }}
                         />
                         <p className={`text-sm font-bold ${textPrimary}`}>{companyName}</p>

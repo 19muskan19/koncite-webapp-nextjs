@@ -989,7 +989,7 @@ export const masterDataAPI = {
   searchCompanies: async (searchQuery: string): Promise<any[]> => {
     try {
       console.log('🔍 Calling POST /companies-search with query:', searchQuery);
-      const response = await apiClient.post('/companies-search', { search: searchQuery });
+      const response = await apiClient.post('/companies-search', { search_keyword: searchQuery });
       console.log('✅ /companies-search response:', response.data);
       
       // Handle response structure: { status: true, data: [...] } or direct array
@@ -1011,55 +1011,31 @@ export const masterDataAPI = {
     }
   },
   // Route: GET /companies-edit/{uuid} -> edit()
-  getCompany: async (uuid: string): Promise<any> => {
+  // Note: Laravel edit() uses where('id', $uuid) - pass numeric id for the route param
+  getCompany: async (idOrUuid: string): Promise<any> => {
     try {
-      const uuidParam = String(uuid).trim();
-      console.log('📖 Calling GET /companies-edit/' + uuidParam);
-      console.log('Company UUID details:', {
-        original: uuid,
-        trimmed: uuidParam,
-        length: uuidParam.length,
-        type: typeof uuidParam
-      });
+      const param = String(idOrUuid).trim();
+      console.log('📖 Calling GET /companies-edit/' + param);
       
-      const response = await apiClient.get(`/companies-edit/${encodeURIComponent(uuidParam)}`);
+      const response = await apiClient.get(`/companies-edit/${encodeURIComponent(param)}`);
       console.log('✅ /companies-edit response:', response.data);
-      console.log('Response status:', response.status);
       
-      // Handle response structure: { status: true, data: {...} } or direct object
-      let result = null;
+      // Handle response: { status, response_code, message, data: CompaniesResources }
+      let result = response.data?.data ?? response.data ?? null;
       
-      if (response.data) {
-        // Check if response has nested data structure
-        if (response.data.data !== undefined) {
-          result = response.data.data;
-        } else if (response.data.status && response.data.data !== undefined) {
-          result = response.data.data;
-        } else {
-          result = response.data;
-        }
-      }
-      
-      // If result is still null or empty, return empty object to avoid null errors
-      if (!result || (typeof result === 'object' && Object.keys(result).length === 0 && result.constructor === Object)) {
+      if (!result || (typeof result === 'object' && Object.keys(result).length === 0)) {
         console.warn('⚠️ Company data is null or empty in API response');
         result = {};
       }
       
       console.log('✅ Extracted company data:', result);
-      console.log('Result type:', typeof result);
-      console.log('Result keys:', Object.keys(result));
       return result;
     } catch (error: any) {
       console.error('❌ /companies-edit error:', error);
       console.error('Error details:', {
         status: error.response?.status,
-        statusText: error.response?.statusText,
         data: error.response?.data,
-        message: error.response?.data?.message,
-        url: error.config?.url,
-        method: error.config?.method,
-        uuid: uuid
+        param: idOrUuid
       });
       
       const errorMessage = error.response?.data?.message || 
@@ -2036,7 +2012,7 @@ export const masterDataAPI = {
       } as ApiError;
     }
   },
-  createUnitsBulk: async (items: Array<{ unit: string; unit_coversion?: string; unit_coversion_factor?: string }>): Promise<any> => {
+  createUnitsBulk: async (items: Array<{ unit: string; unit_coversion?: string | null; unit_coversion_factor?: string | null }>): Promise<any> => {
     try {
       const payload = { f: items };
       console.log('📦 Creating units (bulk) - POST /unit-add');
@@ -2049,6 +2025,34 @@ export const masterDataAPI = {
       console.error('❌ Error response:', error.response?.data);
       throw {
         message: error.response?.data?.message || 'Failed to create units',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+  /**
+   * Bulk edit units — POST /unit-bulk-edit with body { f: [...] }.
+   * Each row: id XOR uuid, plus unit, unit_coversion, unit_coversion_factor (Laravel UnitController::unitBulkEdit).
+   */
+  bulkEditUnits: async (
+    items: Array<{
+      id?: number;
+      uuid?: string;
+      unit: string;
+      unit_coversion?: string | null;
+      unit_coversion_factor?: string | null;
+    }>
+  ): Promise<any> => {
+    try {
+      const payload = { f: items };
+      console.log('📦 Bulk editing units - POST /unit-bulk-edit');
+      const response = await apiClient.post('/unit-bulk-edit', payload);
+      console.log('✅ Unit bulk edit API response:', response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Unit bulk edit error:', error);
+      console.error('❌ Error response:', error.response?.data);
+      throw {
+        message: error.response?.data?.message || 'Failed to update units',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
@@ -2091,9 +2095,7 @@ export const masterDataAPI = {
   },
   getUnit: async (uuid: string): Promise<any> => {
     try {
-      // Route: GET /unit-edit/{uuid}
-      // Backend uses where('id', $uuid) - but route parameter is named 'uuid'
-      // Try UUID first, then fallback to numeric ID if UUID format doesn't match
+      // Route: GET /unit-edit/{param} — Laravel UnitController::edit uses where('id', $param); pass numeric PK.
       const idParam = String(uuid).trim();
       console.log('📖 Fetching unit details - GET /unit-edit/' + idParam);
       console.log('📖 ID details:', {
@@ -2102,7 +2104,10 @@ export const masterDataAPI = {
         isNumeric: !isNaN(Number(idParam)),
         isUUID: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idParam)
       });
-      const response = await apiClient.get(`/unit-edit/${encodeURIComponent(idParam)}`);
+      const response = await apiClient.get(`/unit-edit/${encodeURIComponent(idParam)}`, {
+        // Also send id as query param so DevTools shows a request “payload”; path param is canonical for Laravel.
+        params: { id: idParam },
+      });
       console.log('✅ Unit edit API response:', response.data);
       const unitData = response.data.data || response.data || {};
       console.log('✅ Extracted unit data:', unitData);
@@ -2147,12 +2152,13 @@ export const masterDataAPI = {
       console.log('📝 is_active value being sent:', data.is_active, 'Type:', typeof data.is_active);
       console.log('📝 Status change:', data.is_active === 1 ? 'ACTIVE' : 'INACTIVE/DISABLED');
       
-      // Ensure is_active is explicitly included and is a number (1 or 0)
-      const updateData = { 
-        ...data, 
+      const updateData: Record<string, any> = {
+        ...data,
         updateId: uuid,
-        is_active: data.is_active !== undefined ? Number(data.is_active) : (data.is_active === 0 ? 0 : 1)
       };
+      if (data.is_active !== undefined) {
+        updateData.is_active = Number(data.is_active);
+      }
       
       console.log('📝 Final payload being sent:', JSON.stringify(updateData, null, 2));
       console.log('📝 Verifying is_active in payload:', updateData.is_active, 'Type:', typeof updateData.is_active);
@@ -4168,15 +4174,32 @@ export const materialRequestAPI = {
    * GET: no params. POST: { projectId, subprojectId?, request_no? } — backend filters by projects_id, sub_projects_id, request_no
    * Response: { status, message, data: MaterialRequest[] }
    */
-  list: async (filters?: { projectId?: number | string; subprojectId?: number | string; request_no?: string; status?: number | string }): Promise<any[]> => {
+  list: async (filters?: {
+    projectId?: number | string;
+    subprojectId?: number | string;
+    request_no?: string;
+    status?: number | string;
+    /** Optional — backend may filter MR list by date range */
+    date_from?: string;
+    date_to?: string;
+  }): Promise<any[]> => {
     try {
       let response;
-      if (filters?.projectId != null || filters?.subprojectId != null || filters?.request_no != null || filters?.status != null) {
+      if (
+        filters?.projectId != null ||
+        filters?.subprojectId != null ||
+        filters?.request_no != null ||
+        filters?.status != null ||
+        (filters?.date_from != null && String(filters.date_from).trim()) ||
+        (filters?.date_to != null && String(filters.date_to).trim())
+      ) {
         const body: Record<string, number | string> = {};
         if (filters.projectId != null) body.projectId = filters.projectId;
         if (filters.subprojectId != null) body.subprojectId = filters.subprojectId;
         if (filters.request_no != null && String(filters.request_no).trim()) body.request_no = String(filters.request_no).trim();
         if (filters.status != null) body.status = filters.status;
+        if (filters.date_from != null && String(filters.date_from).trim()) body.date_from = String(filters.date_from).trim();
+        if (filters.date_to != null && String(filters.date_to).trim()) body.date_to = String(filters.date_to).trim();
         response = await apiClient.post('/inventory/materials-request-list', body);
       } else {
         response = await apiClient.get('/inventory/materials-request-list');
@@ -4410,7 +4433,7 @@ export const rfqAPI = {
       try {
         return await materialRequestAPI.list(_filters);
       } catch {
-        return [];
+      return [];
       }
     }
   },
@@ -5599,168 +5622,345 @@ export const dashboardAPI = {
 };
 
 /**
- * Task API - Team task management
- * For now uses localStorage. Set NEXT_PUBLIC_TASK_USE_API=true to use remote API instead.
+ * Tasks API (routes/api.php, prefix /api — client uses /tasks via api-proxy baseURL):
+ * - GET /tasks — list (query: project_id, role, viewer, status, priority, search)
+ * - GET /tasks/get-user-list — optional; UI uses GET /teams-list for staff pickers
+ * - POST /tasks — create
+ * - GET /tasks/{uuid} — TaskResource (show); PUT|PATCH /tasks/{uuid} — assignee-only description + status
+ * - DELETE /tasks/{uuid} — soft delete
  */
-const TASK_STORAGE_KEY = 'koncite-tasks';
 
-function getStoredTasks(): any[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem(TASK_STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
+export type TaskApiRole =
+  | 'assigned_to'
+  | 'assigned_by'
+  | 'assigned_to_me'
+  | 'assigned_by_me';
+
+/** Pick assignee label: API may send plain strings (vendors/custom), display_name, or nested user. */
+function taskAssignLabel(
+  raw: unknown,
+  displayName: unknown,
+  userName: unknown,
+): string {
+  const r = typeof raw === 'string' ? raw.trim() : '';
+  if (r) return r;
+  const d = typeof displayName === 'string' ? displayName.trim() : '';
+  if (d) return d;
+  const u = typeof userName === 'string' ? userName.trim() : '';
+  return u;
+}
+
+/** Normalize TaskResource / API row to UI Task (id = uuid for update/delete). */
+function normalizeTaskRow(item: any): Record<string, any> {
+  if (!item || typeof item !== 'object') return {};
+  const tagList =
+    item.tags ??
+    item.task_tags?.map((x: any) => (typeof x === 'string' ? x : x.tag ?? x.name)).filter(Boolean) ??
+    [];
+  const to = taskAssignLabel(
+    item.assigned_to,
+    item.assigned_to_display_name,
+    item.assigned_to_user?.name,
+  );
+  const by = taskAssignLabel(
+    item.assigned_by,
+    item.assigned_by_display_name,
+    item.assigned_by_user?.name,
+  );
+  let due = item.due_date ?? '';
+  if (due && typeof due === 'string' && due.includes('T')) due = due.slice(0, 10);
+
+  return {
+    // TaskResource: id is the task uuid.
+    id: String(item.id ?? item.uuid ?? item.task_id ?? item.task_uuid ?? ''),
+    title: item.title ?? '',
+    description: item.description ?? '',
+    assigned_to: to,
+    assigned_by: by,
+    assigned_to_user_id:
+      item.assigned_to_user_id ??
+      item.assigned_to_company_user_id ??
+      item.assigned_to_user?.id ??
+      undefined,
+    assigned_by_user_id:
+      item.assigned_by_user_id ??
+      item.assigned_by_company_user_id ??
+      item.assigned_by_user?.id ??
+      undefined,
+    due_date: due,
+    priority: item.priority ?? 'medium',
+    status: item.status ?? 'todo',
+    tags: Array.isArray(tagList) ? tagList : [],
+    project_id: item.project_id ?? undefined,
+  };
+}
+
+/** Unwrap Laravel / custom envelopes: { data: Task[] }, { data: { data: [] } }, { data: { tasks: [] } }, etc. */
+function parseTasksResponse(responseData: any): any[] {
+  const fromObject = (o: Record<string, unknown> | null | undefined): any[] => {
+    if (!o || typeof o !== 'object') return [];
+    if (Array.isArray(o)) return o as any[];
+    if (Array.isArray(o.data)) return o.data as any[];
+    const nested = o.data;
+    if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+      const inner = nested as Record<string, unknown>;
+      if (Array.isArray(inner.data)) return inner.data as any[];
+      for (const k of ['tasks', 'items', 'results', 'records', 'list', 'rows'] as const) {
+        if (Array.isArray(inner[k])) return inner[k] as any[];
+      }
+    }
+    for (const k of ['tasks', 'items', 'results', 'records', 'list', 'rows'] as const) {
+      if (Array.isArray(o[k])) return o[k] as any[];
+    }
     return [];
-  }
+  };
+
+  if (responseData == null) return [];
+  if (Array.isArray(responseData)) return responseData;
+  if (typeof responseData !== 'object') return [];
+  const root = responseData as Record<string, unknown>;
+  const a = fromObject(root);
+  if (a.length) return a;
+  return [];
 }
 
-function setStoredTasks(tasks: any[]): void {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(TASK_STORAGE_KEY, JSON.stringify(tasks));
-  } catch (e) {
-    console.error('Failed to save tasks to localStorage', e);
+function taskAiHeuristics(tasks: any[], query: string, viewer?: string | null): string {
+  const today = new Date().toISOString().split('T')[0];
+  const viewerLower = (viewer || '').toLowerCase();
+  const filtered = viewerLower
+    ? tasks.filter(
+        (t: any) =>
+          (t.assigned_to || '').toLowerCase() === viewerLower ||
+          (t.assigned_by || '').toLowerCase() === viewerLower
+      )
+    : tasks;
+
+  const overdue = filtered.filter((t: any) => t.due_date && t.due_date < today && t.status !== 'done');
+  const dueToday = filtered.filter((t: any) => t.due_date === today);
+  const highPriority = filtered.filter((t: any) => t.priority === 'high' || t.priority === 'urgent');
+  const byPerson = filtered.reduce((acc: Record<string, number>, t: any) => {
+    const name = t.assigned_to || 'Unassigned';
+    acc[name] = (acc[name] || 0) + 1;
+    return acc;
+  }, {});
+  const mostTasks = Object.entries(byPerson).sort((a, b) => b[1] - a[1])[0];
+
+  const q = (query || '').toLowerCase();
+  if (q.includes('due today') || q.includes('today')) {
+    return dueToday.length
+      ? `**Tasks due today (${dueToday.length}):**\n${dueToday.map((t: any) => `• ${t.title} (${t.assigned_to})`).join('\n')}`
+      : 'No tasks due today.';
   }
+  if (q.includes('overdue')) {
+    return overdue.length
+      ? `**Overdue tasks (${overdue.length}):**\n${overdue.map((t: any) => `• ${t.title} - Due ${t.due_date} (${t.assigned_to})`).join('\n')}`
+      : 'No overdue tasks.';
+  }
+  if (q.includes('high priority') || q.includes('priority')) {
+    return highPriority.length
+      ? `**High/urgent priority (${highPriority.length}):**\n${highPriority.map((t: any) => `• ${t.title} (${t.assigned_to})`).join('\n')}`
+      : 'No high priority tasks.';
+  }
+  if (q.includes('most tasks') || q.includes('who has')) {
+    return mostTasks ? `**${mostTasks[0]}** has the most tasks: ${mostTasks[1]}.` : 'No tasks assigned yet.';
+  }
+  if (q.includes('summarize') || q.includes('summary') || q.includes('all tasks')) {
+    return `**Summary:** ${filtered.length} total tasks. ${filtered.filter((t: any) => t.status === 'done').length} done, ${filtered.filter((t: any) => t.status === 'in_progress').length} in progress, ${filtered.filter((t: any) => t.status === 'todo').length} to do. ${overdue.length} overdue.`;
+  }
+  if (q.includes('this week')) {
+    const weekEnd = new Date();
+    weekEnd.setDate(weekEnd.getDate() + 7);
+    const weekEndStr = weekEnd.toISOString().split('T')[0];
+    const dueWeek = filtered.filter((t: any) => t.due_date && t.due_date >= today && t.due_date <= weekEndStr);
+    return dueWeek.length
+      ? `**Tasks due this week (${dueWeek.length}):**\n${dueWeek.map((t: any) => `• ${t.title} - ${t.due_date} (${t.assigned_to})`).join('\n')}`
+      : 'No tasks due this week.';
+  }
+  return `You have ${filtered.length} tasks. Ask about "tasks due today", "overdue tasks", "high priority tasks", "who has the most tasks", or "summarize all tasks" for more details.`;
 }
 
-function generateTaskId(): string {
-  return typeof crypto !== 'undefined' && crypto.randomUUID
-    ? crypto.randomUUID()
-    : `task-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+export interface TaskFormDataUser {
+  id: number;
+  name: string;
+  email?: string;
+}
+
+async function getWithFirstPath<T>(paths: string[]): Promise<T | null> {
+  for (const path of paths) {
+    try {
+      const response = await apiClient.get(path);
+      return response.data as T;
+    } catch (e: any) {
+      if (e?.response?.status === 404) continue;
+      throw e;
+    }
+  }
+  return null;
 }
 
 export const taskAPI = {
-  getTasks: async (params?: { viewer?: string; role?: 'assigned_to' | 'assigned_by' }): Promise<any[]> => {
-    let tasks = getStoredTasks();
-    const viewer = params?.viewer?.trim().toLowerCase();
-    const role = params?.role;
-    if (viewer && role) {
-      tasks = tasks.filter((t: any) => {
-        const to = (t.assigned_to || '').toLowerCase();
-        const by = (t.assigned_by || '').toLowerCase();
-        if (role === 'assigned_to') return to === viewer;
-        if (role === 'assigned_by') return by === viewer;
-        return to === viewer || by === viewer;
-      });
-    } else if (viewer) {
-      tasks = tasks.filter((t: any) => {
-        const to = (t.assigned_to || '').toLowerCase();
-        const by = (t.assigned_by || '').toLowerCase();
-        return to === viewer || by === viewer;
-      });
+  getFormData: async (): Promise<{
+    current_user: TaskFormDataUser;
+    company_users: TaskFormDataUser[];
+  }> => {
+    const custom = process.env.NEXT_PUBLIC_TASK_FORM_DATA_PATH?.trim();
+    /** GET /api/tasks/get-user-list — override path via NEXT_PUBLIC_TASK_FORM_DATA_PATH if needed. */
+    const paths = [custom, '/tasks/get-user-list'].filter(Boolean) as string[];
+    try {
+      const raw = await getWithFirstPath<{ data?: any } | any>(paths);
+      const envelope = raw?.data ?? raw ?? {};
+      const inner = envelope?.data ?? envelope;
+      return {
+        current_user: inner?.current_user ?? { id: 0, name: '', email: '' },
+        company_users: Array.isArray(inner?.company_users) ? inner.company_users : [],
+      };
+    } catch {
+      return { current_user: { id: 0, name: '', email: '' }, company_users: [] };
     }
-    return tasks;
   },
-  getPeople: async (): Promise<{ names: string[] }> => {
-    const tasks = getStoredTasks();
-    const seen = new Set<string>();
-    tasks.forEach((t: any) => {
-      if (t.assigned_to) seen.add(t.assigned_to);
-      if (t.assigned_by) seen.add(t.assigned_by);
-    });
-    return { names: [...seen].sort() };
+
+  getTasks: async (params?: {
+    viewer?: string;
+    role?: TaskApiRole;
+    status?: string;
+    priority?: string;
+    search?: string;
+    project_id?: number | string;
+  }): Promise<any[]> => {
+    const qp: Record<string, string> = {};
+    if (params?.viewer?.trim()) qp.viewer = params.viewer.trim();
+    if (params?.role) qp.role = params.role;
+    if (params?.status && params.status !== 'all') qp.status = params.status;
+    if (params?.priority && params.priority !== 'all') qp.priority = params.priority;
+    if (params?.search?.trim()) qp.search = params.search.trim();
+    if (params?.project_id != null && params.project_id !== '') qp.project_id = String(params.project_id);
+
+    try {
+      const response = await apiClient.get('/tasks', { params: qp });
+      const raw = parseTasksResponse(response.data);
+      return raw.map(normalizeTaskRow);
+    } catch (e: any) {
+      const st = e?.response?.status;
+      if (st === 422) return [];
+      throw {
+        message: e?.response?.data?.message || e?.message || 'Failed to load tasks',
+        errors: e?.response?.data?.errors || {},
+      } as ApiError;
+    }
   },
+
   createTask: async (payload: {
     title: string;
     description?: string;
-    assigned_to: string;
-    assigned_by: string;
+    assigned_to?: string;
+    assigned_by?: string;
+    assigned_to_user_id?: number;
+    assigned_by_user_id?: number;
     due_date?: string;
     priority?: string;
     status?: string;
     tags?: string[];
+    project_id?: number | string;
   }): Promise<any> => {
-    const tasks = getStoredTasks();
-    const task = {
-      id: generateTaskId(),
+    const body: Record<string, unknown> = {
       title: payload.title,
-      description: payload.description || '',
-      assigned_to: payload.assigned_to,
-      assigned_by: payload.assigned_by,
-      due_date: payload.due_date || '',
-      priority: payload.priority || 'medium',
-      status: payload.status || 'todo',
-      tags: payload.tags || [],
+      description: payload.description ?? '',
+      due_date: payload.due_date || null,
+      priority: payload.priority ?? 'medium',
+      status: payload.status ?? 'todo',
+      tags: payload.tags ?? [],
     };
-    tasks.push(task);
-    setStoredTasks(tasks);
-    return task;
-  },
-  updateTask: async (id: string, payload: Partial<{
-    title: string;
-    description: string;
-    assigned_to: string;
-    assigned_by: string;
-    due_date: string;
-    priority: string;
-    status: string;
-    tags: string[];
-  }>): Promise<any> => {
-    const tasks = getStoredTasks();
-    const idx = tasks.findIndex((t: any) => t.id === id);
-    if (idx === -1) throw new Error('Task not found');
-    tasks[idx] = { ...tasks[idx], ...payload };
-    setStoredTasks(tasks);
-    return tasks[idx];
-  },
-  deleteTask: async (id: string): Promise<void> => {
-    const tasks = getStoredTasks().filter((t: any) => t.id !== id);
-    setStoredTasks(tasks);
-  },
-  aiQuery: async (query: string, viewer?: string | null): Promise<{ response: string }> => {
-    const tasks = getStoredTasks();
-    const today = new Date().toISOString().split('T')[0];
-    const viewerLower = (viewer || '').toLowerCase();
-    const filtered = viewerLower
-      ? tasks.filter((t: any) =>
-          (t.assigned_to || '').toLowerCase() === viewerLower ||
-          (t.assigned_by || '').toLowerCase() === viewerLower
-        )
-      : tasks;
+    if (payload.project_id != null && payload.project_id !== '') body.project_id = Number(payload.project_id);
 
-    const overdue = filtered.filter((t: any) => t.due_date && t.due_date < today && t.status !== 'done');
-    const dueToday = filtered.filter((t: any) => t.due_date === today);
-    const highPriority = filtered.filter((t: any) => t.priority === 'high' || t.priority === 'urgent');
-    const byPerson = filtered.reduce((acc: Record<string, number>, t: any) => {
-      const name = t.assigned_to || 'Unassigned';
-      acc[name] = (acc[name] || 0) + 1;
-      return acc;
-    }, {});
-    const mostTasks = Object.entries(byPerson).sort((a, b) => b[1] - a[1])[0];
-
-    const q = (query || '').toLowerCase();
-    let response = '';
-    if (q.includes('due today') || q.includes('today')) {
-      response = dueToday.length
-        ? `**Tasks due today (${dueToday.length}):**\n${dueToday.map((t: any) => `• ${t.title} (${t.assigned_to})`).join('\n')}`
-        : 'No tasks due today.';
-    } else if (q.includes('overdue')) {
-      response = overdue.length
-        ? `**Overdue tasks (${overdue.length}):**\n${overdue.map((t: any) => `• ${t.title} - Due ${t.due_date} (${t.assigned_to})`).join('\n')}`
-        : 'No overdue tasks.';
-    } else if (q.includes('high priority') || q.includes('priority')) {
-      response = highPriority.length
-        ? `**High/urgent priority (${highPriority.length}):**\n${highPriority.map((t: any) => `• ${t.title} (${t.assigned_to})`).join('\n')}`
-        : 'No high priority tasks.';
-    } else if (q.includes('most tasks') || q.includes('who has')) {
-      response = mostTasks
-        ? `**${mostTasks[0]}** has the most tasks: ${mostTasks[1]}.`
-        : 'No tasks assigned yet.';
-    } else if (q.includes('summarize') || q.includes('summary') || q.includes('all tasks')) {
-      response = `**Summary:** ${filtered.length} total tasks. ${filtered.filter((t: any) => t.status === 'done').length} done, ${filtered.filter((t: any) => t.status === 'in_progress').length} in progress, ${filtered.filter((t: any) => t.status === 'todo').length} to do. ${overdue.length} overdue.`;
-    } else if (q.includes('this week')) {
-      const weekEnd = new Date();
-      weekEnd.setDate(weekEnd.getDate() + 7);
-      const weekEndStr = weekEnd.toISOString().split('T')[0];
-      const dueWeek = filtered.filter((t: any) => t.due_date && t.due_date >= today && t.due_date <= weekEndStr);
-      response = dueWeek.length
-        ? `**Tasks due this week (${dueWeek.length}):**\n${dueWeek.map((t: any) => `• ${t.title} - ${t.due_date} (${t.assigned_to})`).join('\n')}`
-        : 'No tasks due this week.';
-    } else {
-      response = `You have ${filtered.length} tasks. Ask about "tasks due today", "overdue tasks", "high priority tasks", "who has the most tasks", or "summarize all tasks" for more details.`;
+    if (payload.assigned_to_user_id != null) {
+      body.assigned_to_user_id = Number(payload.assigned_to_user_id);
+    } else if (payload.assigned_to?.trim()) {
+      body.assigned_to = payload.assigned_to.trim();
     }
-    return { response };
+
+    if (payload.assigned_by_user_id != null) {
+      body.assigned_by_user_id = Number(payload.assigned_by_user_id);
+    } else if (payload.assigned_by?.trim()) {
+      body.assigned_by = payload.assigned_by.trim();
+    }
+
+    const response = await apiClient.post('/tasks', body);
+    const created = response.data?.data ?? response.data;
+    return normalizeTaskRow(created);
+  },
+
+  /**
+   * PATCH or PUT /tasks/{uuid} — Laravel: tenant + assignee only.
+   * Body: at least one of `description`, `status` (`todo` | `in_progress` | `done`).
+   * 403 "Only assigned user can edit this task", 422 if neither field sent, 404 if missing.
+   */
+  updateTask: async (
+    uuid: string,
+    payload: Partial<{
+      description: string | null;
+      status: string;
+    }>
+  ): Promise<any> => {
+    const body: Record<string, unknown> = {};
+    if (payload.description !== undefined) body.description = payload.description;
+    if (payload.status !== undefined) body.status = payload.status;
+    if (Object.keys(body).length === 0) {
+      throw {
+        message: 'At least one field is required: description or status',
+        errors: {},
+      } as ApiError;
+    }
+    try {
+      const response = await apiClient.patch(`/tasks/${encodeURIComponent(uuid)}`, body);
+      const updated = response.data?.data ?? response.data;
+      return normalizeTaskRow(updated);
+    } catch (e: any) {
+      const msg =
+        e?.response?.data?.message ||
+        (typeof e?.response?.data === 'string' ? e.response.data : null) ||
+        e?.message ||
+        'Failed to update task';
+      throw {
+        message: msg,
+        errors: e?.response?.data?.errors || {},
+        status: e?.response?.status,
+      } as ApiError;
+    }
+  },
+
+  deleteTask: async (uuid: string): Promise<void> => {
+    try {
+      await apiClient.delete(`/tasks/${encodeURIComponent(uuid)}`);
+    } catch (e: any) {
+      throw {
+        message: e?.response?.data?.message || e?.message || 'Failed to delete task',
+        errors: e?.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /** GET /tasks/{uuid} — single TaskResource (404 / wrong company). */
+  getTask: async (uuid: string): Promise<any> => {
+    try {
+      const response = await apiClient.get(`/tasks/${encodeURIComponent(uuid)}`);
+      const row = response.data?.data ?? response.data;
+      return normalizeTaskRow(row);
+    } catch (e: any) {
+      throw {
+        message: e?.response?.data?.message || e?.message || 'Failed to load task',
+        errors: e?.response?.data?.errors || {},
+        status: e?.response?.status,
+      } as ApiError;
+    }
+  },
+
+  aiQuery: async (query: string, viewer?: string | null): Promise<{ response: string }> => {
+    try {
+      const raw = await taskAPI.getTasks({ viewer: viewer || undefined });
+      return { response: taskAiHeuristics(raw, query, viewer) };
+    } catch {
+      return { response: 'Could not load tasks for insights.' };
+    }
   },
 };
 

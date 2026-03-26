@@ -13,8 +13,6 @@ import {
   Send,
   User,
   Check,
-  Edit,
-  Trash2,
   ChevronLeft,
   ChevronRight,
   Loader2,
@@ -22,8 +20,12 @@ import {
 import { ThemeType } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
 import { useMainSidebar } from '@/contexts/MainSidebarContext';
-import { taskAPI } from '@/services/api';
+import { useUser } from '@/contexts/UserContext';
+import { taskAPI, teamsAPI, type TaskFormDataUser } from '@/services/api';
 import TaskModal, { TaskFormData } from './TaskModal';
+import TaskStatusUpdateModal from './TaskStatusUpdateModal';
+import { TaskCommentsBlock } from './TaskCommentsBlock';
+import { appendStatusUpdateComment, splitDescriptionAndStatusComments } from './statusUpdateDescription';
 
 export interface Task {
   id: string;
@@ -31,6 +33,8 @@ export interface Task {
   description?: string;
   assigned_to?: string;
   assigned_by?: string;
+  assigned_to_user_id?: number;
+  assigned_by_user_id?: number;
   due_date?: string;
   priority: 'low' | 'medium' | 'high' | 'urgent';
   status: 'todo' | 'in_progress' | 'done';
@@ -61,9 +65,9 @@ const getNameColor = (() => {
 })();
 
 const STATUS_LABELS: Record<string, string> = {
-  todo: 'To Do',
+  todo: 'Open',
   in_progress: 'In Progress',
-  done: 'Done',
+  done: 'Completed',
 };
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -74,12 +78,74 @@ function fmtDate(d: string) {
   return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+/** teams-list row → task assignee picker (company_users.id) */
+function mapTeamRowToFormUser(row: any): TaskFormDataUser | null {
+  const raw = row?.id ?? row?.company_user_id ?? row?.user_id;
+  const id = typeof raw === 'number' && Number.isFinite(raw) ? raw : parseInt(String(raw), 10);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  const name = String(row?.name || '').trim();
+  if (!name) return null;
+  return { id, name, email: row?.email };
+}
+
+/**
+ * Whether the logged-in user is the task assignee (same rules as Laravel assignee check).
+ * Prefer company_users id from profile (`company_user_id`); then match `assigned_to_company_user_id`
+ * from API; if ids missing or profile id is not the pivot id, fall back to assignee display name.
+ */
+function taskIsAssignedToMe(t: Task, companyUserId: number | undefined, myNameNorm: string): boolean {
+  if (companyUserId != null && t.assigned_to_user_id != null) {
+    if (Number(t.assigned_to_user_id) === Number(companyUserId)) return true;
+  }
+  return myNameNorm.length > 0 && (t.assigned_to || '').trim().toLowerCase() === myNameNorm;
+}
+
+function taskIsAssignedByMe(t: Task, companyUserId: number | undefined, myNameNorm: string): boolean {
+  if (companyUserId != null && t.assigned_by_user_id != null) {
+    if (Number(t.assigned_by_user_id) === Number(companyUserId)) return true;
+  }
+  return myNameNorm.length > 0 && (t.assigned_by || '').trim().toLowerCase() === myNameNorm;
+}
+
+/** company-api user id: prefer explicit company_user_id from profile, then nested company user, then id. */
+function companyUserIdFromProfile(user: { id?: number; company_user_id?: number; company_user?: { id?: number }; [k: string]: unknown } | null): number | undefined {
+  if (!user) return undefined;
+  const raw: unknown = user.company_user_id ?? user.company_user?.id ?? user.id;
+  if (raw == null || raw === '') return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+function mergeTaskIntoList(prev: Task[], row: Task): Task[] {
+  const i = prev.findIndex((x) => x.id === row.id);
+  if (i === -1) return [row, ...prev];
+  const next = [...prev];
+  next[i] = { ...next[i], ...row };
+  return next;
+}
+
+function taskToFormDataPartial(t: Task): Partial<TaskFormData> {
+  return {
+    title: t.title,
+    description: t.description ?? '',
+    assigned_to: t.assigned_to || '',
+    assigned_by: t.assigned_by || '',
+    assigned_to_user_id: t.assigned_to_user_id != null ? String(t.assigned_to_user_id) : '',
+    assigned_by_user_id: t.assigned_by_user_id != null ? String(t.assigned_by_user_id) : '',
+    due_date: t.due_date || '',
+    priority: t.priority,
+    status: t.status,
+    tags: (t.tags || []).join(', '),
+  };
+}
+
 interface TaskManagementProps {
   theme: ThemeType;
 }
 
 const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
   const toast = useToast();
+  const { user } = useUser();
   const mainSidebar = useMainSidebar();
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -87,9 +153,6 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
 
   const [allTasks, setAllTasks] = useState<Task[]>([]);
-  const [knownNames, setKnownNames] = useState<string[]>([]);
-  const [viewerName, setViewerName] = useState('');
-  const [viewerInput, setViewerInput] = useState('');
   const [currentView, setCurrentView] = useState<ViewType>('all');
   const [currentLayout, setCurrentLayout] = useState<LayoutType>('list');
   const [searchQ, setSearchQ] = useState('');
@@ -106,6 +169,12 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
   const [aiInput, setAiInput] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [companyUsers, setCompanyUsers] = useState<TaskFormDataUser[]>([]);
+  /** Task row from GET /tasks/{uuid} — status modal opens only after load succeeds. */
+  const [statusModalTaskRow, setStatusModalTaskRow] = useState<Task | null>(null);
+  /** Task row from GET /tasks/{uuid} for edit modal — form hydrates from this only. */
+  const [editModalTask, setEditModalTask] = useState<Task | null>(null);
+  const [editModalLoading, setEditModalLoading] = useState(false);
 
   useEffect(() => {
     const checkScreen = () => {
@@ -114,37 +183,54 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
     checkScreen();
   }, []);
 
-  const loadTasks = useCallback(async () => {
+  const loadTasks = useCallback(async (): Promise<Task[]> => {
     setLoading(true);
     try {
-      const role = currentView === 'assigned-to' ? 'assigned_to' : currentView === 'assigned-by' ? 'assigned_by' : undefined;
-      const tasks = await taskAPI.getTasks({ viewer: viewerName || undefined, role });
-      setAllTasks(Array.isArray(tasks) ? tasks : []);
-      const taskNames: string[] = [];
-      (Array.isArray(tasks) ? tasks : []).forEach((t: Task) => {
-        if (t.assigned_to) taskNames.push(t.assigned_to);
-        if (t.assigned_by) taskNames.push(t.assigned_by);
-      });
-      setKnownNames((prev) => [...new Set([...prev, ...taskNames])].sort());
-    } catch (e) {
-      toast.showError('Failed to load tasks');
+      const role =
+        currentView === 'assigned-to'
+          ? 'assigned_to_me'
+          : currentView === 'assigned-by'
+            ? 'assigned_by_me'
+            : undefined;
+      const tasks = await taskAPI.getTasks({ role });
+      const list: Task[] = Array.isArray(tasks) ? tasks : [];
+      setAllTasks(list);
+      return list;
+    } catch (e: any) {
+      toast.showError(e?.message || 'Failed to load tasks');
       setAllTasks([]);
+      return [];
     } finally {
       setLoading(false);
     }
-  }, [currentView, viewerName, toast]);
+  }, [currentView, toast]);
 
   useEffect(() => {
     loadTasks();
   }, [loadTasks]);
 
   useEffect(() => {
-    taskAPI.getPeople().then((r) => setKnownNames((prev) => [...new Set([...prev, ...(r.names || [])])].sort()));
-  }, []);
-
-  const applyViewer = () => {
-    setViewerName(viewerInput.trim());
-  };
+    teamsAPI
+      .getTeamsList()
+      .then((data) => {
+        const list = Array.isArray(data) ? data : [];
+        const users: TaskFormDataUser[] = [];
+        const seen = new Set<number>();
+        for (const row of list) {
+          const u = mapTeamRowToFormUser(row);
+          if (u && !seen.has(u.id)) {
+            seen.add(u.id);
+            users.push(u);
+          }
+        }
+        users.sort((a, b) => a.name.localeCompare(b.name));
+        setCompanyUsers(users);
+      })
+      .catch((e: any) => {
+        toast.showError(e?.message || 'Failed to load staff');
+        setCompanyUsers([]);
+      });
+  }, [toast]);
 
   const filteredTasks = useMemo(() => {
     return allTasks.filter((t) => {
@@ -171,64 +257,154 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
   }, [currentLayout, currentView]);
 
   const badgeAll = allTasks.length;
-  const badgeToMe = viewerName ? allTasks.filter((t) => (t.assigned_to || '').toLowerCase() === viewerName.toLowerCase()).length : '—';
-  const badgeByMe = viewerName ? allTasks.filter((t) => (t.assigned_by || '').toLowerCase() === viewerName.toLowerCase()).length : '—';
+  /** Company-user id for company-api (tasks use company_users ids); name fallback when API omits id on list rows. */
+  const myCompanyUserId = useMemo(() => companyUserIdFromProfile(user), [user]);
+  const myNameNorm = (user?.name || '').trim().toLowerCase();
+  const canCountMeBadges = myCompanyUserId != null || myNameNorm.length > 0;
+  const badgeToMe = canCountMeBadges
+    ? allTasks.filter((t) => taskIsAssignedToMe(t, myCompanyUserId, myNameNorm)).length
+    : '—';
+  const badgeByMe = canCountMeBadges
+    ? allTasks.filter((t) => taskIsAssignedByMe(t, myCompanyUserId, myNameNorm)).length
+    : '—';
 
   const openCreateModal = () => {
     setEditingId(null);
+    setEditModalTask(null);
+    setEditModalLoading(false);
     setModalOpen(true);
     mainSidebar?.setSidebarOpen(false);
   };
 
-  const openEditModal = (id: string) => {
-    const t = allTasks.find((x) => x.id === id);
-    if (!t) return;
+  /** GET /tasks/{uuid} then open modal — matches TaskController::show. */
+  const openEditModal = async (id: string) => {
     setEditingId(id);
+    setEditModalTask(null);
+    setEditModalLoading(true);
     setModalOpen(true);
     mainSidebar?.setSidebarOpen(false);
+    try {
+      const row = (await taskAPI.getTask(id)) as Task;
+      if (!row?.id) throw new Error('Invalid task response');
+      setEditModalTask(row);
+      setAllTasks((prev) => mergeTaskIntoList(prev, row));
+    } catch (e: any) {
+      toast.showError(e?.message || 'Could not load task');
+      setModalOpen(false);
+      setEditingId(null);
+    } finally {
+      setEditModalLoading(false);
+    }
+  };
+
+  const openStatusUpdateModal = async (id: string) => {
+    try {
+      const row = (await taskAPI.getTask(id)) as Task;
+      if (!row?.id) throw new Error('Invalid task response');
+      setAllTasks((prev) => mergeTaskIntoList(prev, row));
+      setStatusModalTaskRow(row);
+    } catch (e: any) {
+      toast.showError(e?.message || 'Could not load task');
+    }
   };
 
   const handleModalSubmit = async (data: TaskFormData) => {
-    const payload = {
+    const payload: {
+      title: string;
+      description?: string;
+      assigned_to?: string;
+      assigned_by?: string;
+      assigned_to_user_id?: number;
+      assigned_by_user_id?: number;
+      due_date?: string;
+      priority?: string;
+      status?: string;
+      tags?: string[];
+    } = {
       title: data.title.trim(),
       description: data.description,
-      assigned_to: data.assigned_to.trim(),
-      assigned_by: data.assigned_by.trim(),
       due_date: data.due_date || undefined,
       priority: data.priority,
       status: data.status,
       tags: data.tags.split(',').map((s) => s.trim()).filter(Boolean),
     };
+    const toId = data.assigned_to_user_id ? Number(data.assigned_to_user_id) : NaN;
+    const byId = data.assigned_by_user_id ? Number(data.assigned_by_user_id) : NaN;
+    if (!Number.isNaN(toId) && toId > 0) payload.assigned_to_user_id = toId;
+    else if (data.assigned_to.trim()) payload.assigned_to = data.assigned_to.trim();
+    if (!Number.isNaN(byId) && byId > 0) payload.assigned_by_user_id = byId;
+    else if (data.assigned_by.trim()) payload.assigned_by = data.assigned_by.trim();
     try {
+      let createdRow: Task | null = null;
       if (editingId) {
-        await taskAPI.updateTask(editingId, payload);
+        const editingTask = editModalTask && editModalTask.id === editingId ? editModalTask : undefined;
+        if (!editingTask || !taskIsAssignedToMe(editingTask, myCompanyUserId, myNameNorm)) {
+          toast.showWarning('Only the assignee can save changes to this task.');
+          return;
+        }
+        const updated = (await taskAPI.updateTask(editingId, {
+          description: data.description ?? '',
+          status: data.status,
+        })) as Task;
+        setAllTasks((prev) => mergeTaskIntoList(prev, updated));
         toast.showSuccess('Task updated');
       } else {
-        await taskAPI.createTask(payload);
+        const row = await taskAPI.createTask(payload);
+        createdRow = row as Task;
         toast.showSuccess('Task created');
       }
       setModalOpen(false);
-      loadTasks();
+      const refreshed = await loadTasks();
+      // List API shape/filters sometimes omit the new row immediately; ensure it appears.
+      if (!editingId && createdRow?.id && !refreshed.some((t) => t.id === createdRow!.id)) {
+        setAllTasks((prev) => [createdRow as Task, ...prev.filter((t) => t.id !== createdRow!.id)]);
+      }
     } catch (e: any) {
       toast.showError(e?.message || 'Failed to save task');
     }
   };
 
+  const modalCanSaveChanges = useMemo(() => {
+    if (!editingId) return true;
+    if (!editModalTask || editModalTask.id !== editingId) return false;
+    return taskIsAssignedToMe(editModalTask, myCompanyUserId, myNameNorm);
+  }, [editingId, editModalTask, myCompanyUserId, myNameNorm]);
+
+  /** Edit form fields come only from GET /tasks/{uuid} (not the list cache). */
   const modalInitialData = useMemo((): Partial<TaskFormData> | undefined => {
     if (!editingId) return undefined;
-    const t = allTasks.find((x) => x.id === editingId);
-    if (!t) return undefined;
-    return {
-      title: t.title,
-      description: t.description || '',
-      assigned_to: t.assigned_to || '',
-      assigned_by: t.assigned_by || '',
-      due_date: t.due_date || '',
-      priority: t.priority,
-      status: t.status,
-      tags: (t.tags || []).join(', '),
-    };
-  }, [editingId, allTasks]);
+    if (editModalTask && editModalTask.id === editingId) {
+      return taskToFormDataPartial(editModalTask);
+    }
+    return undefined;
+  }, [editingId, editModalTask]);
+
+  const handleStatusUpdateSave = async (taskId: string, apiStatus: string, remark?: string) => {
+    const t =
+      statusModalTaskRow && statusModalTaskRow.id === taskId
+        ? statusModalTaskRow
+        : allTasks.find((x) => x.id === taskId);
+    if (!t || !taskIsAssignedToMe(t, myCompanyUserId, myNameNorm)) {
+      toast.showWarning('Only the assignee can update status.');
+      throw new Error('Assignee only');
+    }
+    try {
+      const mergedDesc = appendStatusUpdateComment(t.description, remark);
+      const payload: { status: string; description?: string } = { status: apiStatus };
+      if (mergedDesc !== undefined) payload.description = mergedDesc;
+      const updated = (await taskAPI.updateTask(taskId, payload)) as Task;
+      setAllTasks((prev) => mergeTaskIntoList(prev, { ...t, ...updated, status: (updated.status ?? apiStatus) as Task['status'] }));
+      setStatusModalTaskRow((prev) =>
+        prev?.id === taskId
+          ? { ...prev, ...updated, status: (updated.status ?? apiStatus) as Task['status'] }
+          : prev,
+      );
+      toast.showSuccess('Status updated');
+    } catch (e: any) {
+      toast.showError(e?.message || 'Failed to update status');
+      throw e;
+    }
+  };
 
   const deleteTask = async (id: string) => {
     if (!window.confirm('Delete this task?')) return;
@@ -239,6 +415,53 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
     } catch (e: any) {
       toast.showError(e?.message || 'Failed to delete task');
     }
+  };
+
+  /** Edit: open details for everyone. Update (status): assignee only. */
+  const renderTaskActions = (t: Task, compact: boolean) => {
+    const assignee = taskIsAssignedToMe(t, myCompanyUserId, myNameNorm);
+    const sz = compact ? 'text-[10px] px-1.5 py-0.5' : 'text-xs px-2.5 py-1.5';
+    const base =
+      'rounded-lg font-medium transition-colors disabled:opacity-45 disabled:cursor-not-allowed disabled:hover:bg-transparent';
+    const neutral = isDark
+      ? `${base} ${sz} border border-slate-600 text-slate-200 hover:bg-slate-700`
+      : `${base} ${sz} border border-slate-200 text-slate-700 hover:bg-slate-100`;
+    const accent = isDark
+      ? `${base} ${sz} border border-violet-500/50 text-violet-300 hover:bg-violet-500/10`
+      : `${base} ${sz} border border-violet-300 text-violet-700 hover:bg-violet-50`;
+    const danger = isDark
+      ? `${base} ${sz} border border-rose-500/40 text-rose-400 hover:bg-rose-500/15`
+      : `${base} ${sz} border border-rose-300 text-rose-600 hover:bg-rose-50`;
+
+    return (
+      <div
+        role="group"
+        aria-label="Task actions"
+        className={`flex flex-wrap items-center gap-1.5 shrink-0 ${compact ? 'mt-1' : 'pt-1 sm:pt-0'}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <button
+          type="button"
+          title="View task details (assignee can save changes)"
+          onClick={() => openEditModal(t.id)}
+          className={neutral}
+        >
+          Edit
+        </button>
+        <button
+          type="button"
+          disabled={!assignee}
+          title={assignee ? 'Change task status' : 'Only the assignee can update status'}
+          onClick={() => openStatusUpdateModal(t.id)}
+          className={accent}
+        >
+          Update
+        </button>
+        <button type="button" title="Delete this task" onClick={() => deleteTask(t.id)} className={danger}>
+          Delete
+        </button>
+      </div>
+    );
   };
 
   const toggleDone = async (id: string, currentStatus: string) => {
@@ -280,7 +503,7 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
     setAiLoading(true);
     setAiMessages((prev) => [...prev, { role: 'bot', content: '' }]);
     try {
-      const res = await taskAPI.aiQuery(query, viewerName || undefined);
+      const res = await taskAPI.aiQuery(query, user?.name || undefined);
       const fmt = (res.response || '').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
       setAiMessages((prev) => {
         const next = [...prev];
@@ -358,45 +581,73 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
           </div>
         ) : (
           filteredTasks.map((t) => {
+            const assignee = taskIsAssignedToMe(t, myCompanyUserId, myNameNorm);
             const ov = t.due_date && t.due_date < todayStr && t.status !== 'done';
             const priorityBorder = { urgent: 'border-l-rose-500', high: 'border-l-amber-500', medium: 'border-l-indigo-500', low: 'border-l-emerald-500' }[t.priority] || '';
             return (
               <div
                 key={t.id}
-                onClick={() => openEditModal(t.id)}
-                className={`group flex items-start gap-4 p-4 rounded-xl border ${cardClass} cursor-pointer hover:border-[#C2D642]/40 transition-all border-l-4 ${priorityBorder}`}
+                className={`flex flex-col gap-3 p-4 rounded-xl border ${cardClass} hover:border-[#C2D642]/40 transition-all border-l-4 ${priorityBorder}`}
               >
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleDone(t.id, t.status);
-                  }}
-                  className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${
-                    t.status === 'done' ? 'bg-emerald-500 border-emerald-500 text-white' : isDark ? 'border-slate-500 hover:border-emerald-500' : 'border-slate-300 hover:border-emerald-500'
-                  }`}
-                >
-                  {t.status === 'done' && <Check className="w-3 h-3" />}
-                </button>
-                <div className="flex-1 min-w-0">
-                  <div className={`text-sm font-medium mb-1 ${t.status === 'done' ? 'line-through ' + textSecondary : textPrimary}`}>{t.title}</div>
-                  {t.description && <div className={`text-xs truncate mb-2 ${textSecondary}`}>{t.description}</div>}
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${isDark ? 'bg-slate-700 text-slate-300' : 'bg-slate-100 text-slate-600'}`}>{STATUS_LABELS[t.status] || t.status}</span>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${
-                      t.priority === 'urgent' ? 'bg-rose-500/20 text-rose-400' : t.priority === 'high' ? 'bg-amber-500/20 text-amber-400' : t.priority === 'medium' ? 'bg-indigo-500/20 text-indigo-400' : 'bg-emerald-500/20 text-emerald-400'
-                    }`}>{t.priority}</span>
-                    {t.assigned_to && <NamePill name={t.assigned_to} label="→" />}
-                    {t.assigned_by && <NamePill name={t.assigned_by} label="by" />}
-                    {t.due_date && (
-                      <span className={`text-[10px] ${ov ? 'text-rose-500 font-medium' : textSecondary}`}>
-                        {ov ? '⚠ ' : ''}{fmtDate(t.due_date)}
-                      </span>
-                    )}
+                <div className="flex items-start gap-3 sm:gap-4">
+                  {assignee ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleDone(t.id, t.status);
+                      }}
+                      className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 ${
+                        t.status === 'done' ? 'bg-emerald-500 border-emerald-500 text-white' : isDark ? 'border-slate-500 hover:border-emerald-500' : 'border-slate-300 hover:border-emerald-500'
+                      }`}
+                    >
+                      {t.status === 'done' && <Check className="w-3 h-3" />}
+                    </button>
+                  ) : (
+                    <div
+                      className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 mt-0.5 pointer-events-none ${
+                        t.status === 'done' ? 'bg-emerald-500/40 border-emerald-500/50 text-white' : isDark ? 'border-slate-600' : 'border-slate-300'
+                      }`}
+                      aria-hidden
+                    >
+                      {t.status === 'done' && <Check className="w-3 h-3" />}
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0 flex flex-col sm:flex-row sm:items-start sm:gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className={`text-sm font-medium mb-1 ${t.status === 'done' ? 'line-through ' + textSecondary : textPrimary}`}>{t.title}</div>
+                      {(() => {
+                        const { body, comments } = splitDescriptionAndStatusComments(t.description);
+                        const hasDesc = !!body || comments.length > 0;
+                        if (!hasDesc) return null;
+                        return (
+                          <div className="mb-2 space-y-2">
+                            {body ? <div className={`text-xs line-clamp-3 whitespace-pre-wrap ${textSecondary}`}>{body}</div> : null}
+                            <TaskCommentsBlock description={t.description} theme={theme} variant="list" maxVisible={3} />
+                          </div>
+                        );
+                      })()}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${isDark ? 'bg-slate-700 text-slate-300' : 'bg-slate-100 text-slate-600'}`}>{STATUS_LABELS[t.status] || t.status}</span>
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${
+                          t.priority === 'urgent' ? 'bg-rose-500/20 text-rose-400' : t.priority === 'high' ? 'bg-amber-500/20 text-amber-400' : t.priority === 'medium' ? 'bg-indigo-500/20 text-indigo-400' : 'bg-emerald-500/20 text-emerald-400'
+                        }`}>{t.priority}</span>
+                        {t.assigned_to && <NamePill name={t.assigned_to} label="→" />}
+                        {t.assigned_by && <NamePill name={t.assigned_by} label="by" />}
+                        {t.due_date && (
+                          <span className={`text-[10px] ${ov ? 'text-rose-500 font-medium' : textSecondary}`}>
+                            {ov ? '⚠ ' : ''}{fmtDate(t.due_date)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="hidden sm:flex shrink-0 sm:self-start sm:pt-0">{renderTaskActions(t, false)}</div>
                   </div>
                 </div>
-                <div className="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={(e) => { e.stopPropagation(); openEditModal(t.id); }} className={`p-1.5 rounded-lg ${isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}><Edit className="w-4 h-4" /></button>
-                  <button onClick={(e) => { e.stopPropagation(); deleteTask(t.id); }} className="p-1.5 rounded-lg text-rose-500 hover:bg-rose-500/20"><Trash2 className="w-4 h-4" /></button>
+                <div
+                  className={`sm:hidden pt-2.5 border-t border-dashed ${isDark ? 'border-slate-600/50' : 'border-slate-200'}`}
+                >
+                  {renderTaskActions(t, false)}
                 </div>
               </div>
             );
@@ -408,9 +659,9 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
 
   const renderKanban = () => {
     const cols = [
-      { key: 'todo' as const, label: 'To Do', color: 'text-slate-400' },
-      { key: 'in_progress' as const, label: 'In Progress', color: 'text-indigo-400' },
-      { key: 'done' as const, label: 'Done', color: 'text-emerald-400' },
+      { key: 'todo' as const, label: 'Open', color: 'text-slate-400' },
+      { key: 'in_progress' as const, label: 'In Progress', color: 'text-violet-400' },
+      { key: 'done' as const, label: 'Completed', color: 'text-emerald-400' },
     ];
     return (
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -431,10 +682,15 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
                     return (
                       <div
                         key={t.id}
-                        onClick={() => openEditModal(t.id)}
-                        className={`p-3 rounded-lg border ${isDark ? 'bg-slate-800/50 border-slate-600 hover:border-indigo-500/50' : 'bg-slate-50 border-slate-200 hover:border-indigo-500/50'} cursor-pointer transition-colors`}
+                        className={`p-3 rounded-lg border ${isDark ? 'bg-slate-800/50 border-slate-600' : 'bg-slate-50 border-slate-200'} transition-colors`}
                       >
                         <div className={`text-sm font-medium mb-2 ${textPrimary}`}>{t.title}</div>
+                        {(() => {
+                          const { body } = splitDescriptionAndStatusComments(t.description);
+                          if (!body) return null;
+                          return <div className={`text-[11px] mb-1 line-clamp-2 ${textSecondary}`}>{body}</div>;
+                        })()}
+                        <TaskCommentsBlock description={t.description} theme={theme} variant="compact" maxVisible={2} className="mb-2" />
                         <div className="flex items-center gap-2 mb-1">
                           <span className={`px-1.5 py-0.5 rounded text-[10px] ${
                             t.priority === 'urgent' ? 'bg-rose-500/20 text-rose-400' : t.priority === 'high' ? 'bg-amber-500/20 text-amber-400' : 'bg-indigo-500/20 text-indigo-400'
@@ -444,6 +700,7 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
                           → {t.assigned_to || '—'}<br />by {t.assigned_by || '—'}
                         </div>
                         {t.due_date && <div className={`text-[10px] mt-1 ${ov ? 'text-rose-500' : textSecondary}`}>Due {fmtDate(t.due_date)}</div>}
+                        {renderTaskActions(t, true)}
                       </div>
                     );
                   })
@@ -485,12 +742,18 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
             {tasks.slice(0, 2).map((t) => (
               <div
                 key={t.id}
-                onClick={() => openEditModal(t.id)}
-                className={`text-[10px] px-1.5 py-0.5 rounded mb-0.5 truncate cursor-pointer ${
-                  t.priority === 'urgent' ? 'bg-rose-500/25 text-rose-400' : t.priority === 'high' ? 'bg-amber-500/20 text-amber-400' : 'bg-indigo-500/20 text-indigo-400'
+                className={`mb-1 last:mb-0 rounded px-1 py-0.5 ${
+                  t.priority === 'urgent' ? 'bg-rose-500/25' : t.priority === 'high' ? 'bg-amber-500/20' : 'bg-indigo-500/20'
                 }`}
               >
-                {t.title}
+                <div
+                  className={`text-[10px] truncate font-medium ${
+                    t.priority === 'urgent' ? 'text-rose-400' : t.priority === 'high' ? 'text-amber-400' : 'text-indigo-400'
+                  }`}
+                >
+                  {t.title}
+                </div>
+                {renderTaskActions(t, true)}
               </div>
             ))}
             {tasks.length > 2 && <div className="text-[10px] text-slate-500">+{tasks.length - 2} more</div>}
@@ -569,7 +832,6 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
         if (['all', 'assigned-to', 'assigned-by'].includes(id)) {
           setCurrentView(id as ViewType);
           setCurrentLayout('list');
-          loadTasks();
         } else {
           setCurrentLayout(id as LayoutType);
         }
@@ -638,25 +900,6 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
                   {navItem('calendar', 'Calendar', <Calendar className="w-4 h-4" />)}
                   {navItem('ai', 'AI Assistant', <Sparkles className="w-4 h-4" />)}
                 </div>
-                <div className="mt-auto pt-2 flex-shrink-0 p-2 rounded-lg border border-inherit">
-                  <label className={`block text-[10px] font-bold uppercase tracking-wider mb-1.5 ${textSecondary}`}>Viewing as</label>
-                  <div className={`flex rounded-lg border overflow-hidden ${isDark ? 'border-slate-600' : 'border-slate-200'}`}>
-                    <input
-                      type="text"
-                      list="task-viewer-names"
-                      value={viewerInput}
-                      onChange={(e) => setViewerInput(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && applyViewer()}
-                      placeholder="Type your name…"
-                      className={`flex-1 min-w-0 py-1.5 pl-2 pr-1 text-xs outline-none border-0 focus:ring-0 ${isDark ? 'bg-slate-800/50 text-slate-100' : 'bg-slate-50 text-slate-900'}`}
-                    />
-                    <button onClick={applyViewer} className="px-3 py-1.5 bg-[#C2D642] text-white text-xs font-semibold shrink-0">Go</button>
-                  </div>
-                  <p className={`text-[10px] mt-1 ${textSecondary}`}>{viewerName ? `Showing tasks for "${viewerName}"` : 'Leave blank to see all tasks'}</p>
-                </div>
-                <datalist id="task-viewer-names">
-                  {knownNames.map((n) => <option key={n} value={n} />)}
-                </datalist>
               </>
             )}
           </div>
@@ -702,12 +945,36 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
       <TaskModal
         theme={theme}
         isOpen={modalOpen}
-        onClose={() => setModalOpen(false)}
+        onClose={() => {
+          setModalOpen(false);
+          setEditingId(null);
+          setEditModalTask(null);
+          setEditModalLoading(false);
+        }}
         onSubmit={handleModalSubmit}
         isEditing={!!editingId}
         editingId={editingId}
         initialData={modalInitialData}
-        knownNames={knownNames}
+        companyUsers={companyUsers}
+        canSaveChanges={modalCanSaveChanges}
+        isLoadingDetail={!!editingId && (editModalLoading || !editModalTask)}
+      />
+
+      <TaskStatusUpdateModal
+        theme={theme}
+        isOpen={!!statusModalTaskRow}
+        task={
+          statusModalTaskRow
+            ? {
+                id: statusModalTaskRow.id,
+                title: statusModalTaskRow.title,
+                status: statusModalTaskRow.status,
+                description: statusModalTaskRow.description,
+              }
+            : null
+        }
+        onClose={() => setStatusModalTaskRow(null)}
+        onSave={handleStatusUpdateSave}
       />
     </div>
   );
