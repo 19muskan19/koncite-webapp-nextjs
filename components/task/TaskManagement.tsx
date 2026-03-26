@@ -110,7 +110,7 @@ function taskIsAssignedByMe(t: Task, companyUserId: number | undefined, myNameNo
 /** company-api user id: prefer explicit company_user_id from profile, then nested company user, then id. */
 function companyUserIdFromProfile(user: { id?: number; company_user_id?: number; company_user?: { id?: number }; [k: string]: unknown } | null): number | undefined {
   if (!user) return undefined;
-  const raw = user.company_user_id ?? user.company_user?.id ?? user.id;
+  const raw: unknown = user.company_user_id ?? user.company_user?.id ?? user.id;
   if (raw == null || raw === '') return undefined;
   const n = Number(raw);
   return Number.isFinite(n) ? n : undefined;
