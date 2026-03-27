@@ -133,9 +133,10 @@ const RFQReport: React.FC<RFQReportProps> = ({ theme }) => {
       });
 
       const rows: ReportRow[] = [];
-      let slNo = 0;
       const arr = Array.isArray(raw) ? raw : [];
+      let slNo = 0;
       for (const item of arr) {
+        if (item == null) continue;
         const mat = item?.materials ?? item?.material ?? item;
         const code = mat?.code ?? item?.code ?? '-';
         const name = mat?.name ?? item?.material_name ?? item?.materials_names ?? item?.materials_name ?? '-';
@@ -449,9 +450,11 @@ const RFQReport: React.FC<RFQReportProps> = ({ theme }) => {
                 {!isLoading && paginated.length === 0 && (
                   <tr>
                     <td colSpan={8} className={`px-4 py-12 text-center ${textSecondary}`}>
-                      {tableData.length === 0
+                      {!(selectedProject || rfqNo.trim() || preparedBy)
                         ? 'Select a project, enter RFQ No, or select Prepared by to load data. Use subproject and date filters to narrow results.'
-                        : 'No data matches the current filters. Try adjusting subproject or date range.'}
+                        : tableData.length === 0
+                          ? 'No RFQ line items returned for this report. Try different filters or dates.'
+                          : 'No data matches the current filters. Try adjusting subproject or date range.'}
                     </td>
                   </tr>
                 )}

@@ -62,6 +62,14 @@ const formatNum = (n: any) => {
   return isNaN(v) ? '-' : v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
+/** Only treat as comparable date when YYYY-MM-DD — avoids '-' / invalid strings breaking range filters */
+function rowDateForFilter(prDate: string | undefined): string | null {
+  if (prDate == null || prDate === '' || prDate === '-') return null;
+  const d = String(prDate).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+  return d;
+}
+
 /** Drop opening-stock rows that clearly belong to another project or (when filtered) another subproject. */
 function openingStockRowMatchesScope(
   s: Record<string, unknown>,
@@ -126,12 +134,15 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
       const projId = proj?.id ?? selectedProject;
 
       let rows: ReportRow[] = [];
+      /** When true, /inventory-report returned successfully — empty `material` must show empty table (no list+edit fill-in). */
+      let prReportApiCompleted = false;
       try {
         const raw = await materialRequestAPI.getReport({
           projectId: projId || undefined,
           indentNo: indentNo.trim() || undefined,
           ...(selectedSubProject ? { subProjectId: selectedSubProject } : {}),
         });
+        prReportApiCompleted = true;
         const arr = Array.isArray(raw) ? raw : [];
         let srNo = 0;
         for (const item of arr) {
@@ -140,7 +151,7 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
           const dateStr = typeof reqDate === 'string' && reqDate.length >= 10 ? reqDate.slice(0, 10) : (reqDate || '-');
           const spId = item?.sub_projects_id?.id ?? item?.sub_projects_id ?? item?.subproject_id;
           rows.push({
-            id: `${item?.sl_no ?? srNo}-${srNo}`,
+            id: `api-${srNo}-${item?.sl_no ?? 'na'}-${item?.code ?? ''}-${item?.name ?? ''}`.replace(/\s+/g, '_'),
             srNo,
             code: item?.code ?? '-',
             materials: item?.name ?? item?.materials ?? '-',
@@ -156,10 +167,11 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
           });
         }
       } catch {
-        /* API may not exist - fall back to list+edit */
+        /* Report API error — allow list+edit fallback when project is selected */
+        prReportApiCompleted = false;
       }
 
-      if (rows.length === 0 && hasProject) {
+      if (rows.length === 0 && hasProject && !prReportApiCompleted) {
       let prList = await materialRequestAPI.list({
         projectId: projId,
       });
@@ -265,13 +277,13 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
 
     let out = tableData.filter((r) => {
       if (selectedSubProject && r.prSubProjectId != null && String(r.prSubProjectId) !== String(selectedSubProject)) return false;
-      if (fromStr && r.prDate) {
-        const d = r.prDate.slice(0, 10);
-        if (d < fromStr) return false;
+      if (fromStr) {
+        const d = rowDateForFilter(r.prDate);
+        if (d != null && d < fromStr) return false;
       }
-      if (toStr && r.prDate) {
-        const d = r.prDate.slice(0, 10);
-        if (d > toStr) return false;
+      if (toStr) {
+        const d = rowDateForFilter(r.prDate);
+        if (d != null && d > toStr) return false;
       }
       if (searchQuery.trim() !== '') {
         const match = [r.code, r.materials, r.specification, r.unit, r.requiredForActivities, r.remarks].some((v) =>
@@ -298,7 +310,7 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
     return filteredAndSorted.slice(start, start + entriesPerPage);
   }, [filteredAndSorted, currentPage, entriesPerPage]);
 
-  useEffect(() => setCurrentPage(1), [searchQuery, sortConfig, selectedSubProject, fromDate, toDate]);
+  useEffect(() => setCurrentPage(1), [searchQuery, sortConfig, selectedSubProject, fromDate, toDate, tableData.length]);
 
   const handleExport = (format: string) => {
     const headers = ['Sr.No', 'Code', 'Materials', 'Specification', 'Unit', 'Required qty', 'Required date', 'Required for Activities', 'Remarks', 'Current Stock'];

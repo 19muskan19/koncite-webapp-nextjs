@@ -548,6 +548,65 @@ export const authAPI = {
   },
 };
 
+/** In-app notifications (company-api) — matches NotifactionController */
+export interface CompanyNotification {
+  id: number | string;
+  title?: string | null;
+  body?: string | null;
+  message?: string | null;
+  /** 0 = unread, 1 = read (viewed single), 2 = bulk / archived (API may send number or string) */
+  status?: number | string | null;
+  created_at?: string | null;
+  [key: string]: unknown;
+}
+
+export const notificationAPI = {
+  /**
+   * GET /fetch-notifaction — list notifications for current user + company
+   */
+  fetchList: async (): Promise<CompanyNotification[]> => {
+    try {
+      const response = await apiClient.get('/fetch-notifaction');
+      const raw = response.data?.data ?? response.data;
+      if (Array.isArray(raw)) return raw as CompanyNotification[];
+      return [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to load notifications',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * POST /view-notifaction-update — mark one notification (body: { id })
+   */
+  markViewed: async (id: number | string): Promise<void> => {
+    try {
+      await apiClient.post('/view-notifaction-update', { id });
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to update notification',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * POST /view-all-notifaction — marks unread (status 0) as status 2
+   */
+  markAllViewed: async (): Promise<void> => {
+    try {
+      await apiClient.post('/view-all-notifaction', {});
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to update notifications',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
 // User Profile API
 export const userAPI = {
   /**
@@ -4357,9 +4416,24 @@ export const materialRequestAPI = {
       const indentNo = (filters?.indentNo ?? filters?.indent_no ?? '').trim();
       if (indentNo) payload.indentNo = indentNo;
       const response = await apiClient.post('/inventory/inventory-report', payload);
-      const data = response.data?.data ?? response.data;
-      const material = data?.material ?? data?.materials ?? data;
-      return Array.isArray(material) ? material : [];
+      const root = response.data?.data ?? response.data;
+      const inner =
+        root && typeof root === 'object' && 'data' in root && (root as { data?: unknown }).data != null
+          ? (root as { data: unknown }).data
+          : root;
+      const material =
+        (inner && typeof inner === 'object'
+          ? (inner as { material?: unknown; materials?: unknown }).material ??
+            (inner as { material?: unknown; materials?: unknown }).materials
+          : undefined) ??
+        (root && typeof root === 'object'
+          ? (root as { material?: unknown; materials?: unknown }).material ??
+            (root as { material?: unknown; materials?: unknown }).materials
+          : undefined);
+      if (Array.isArray(material)) return material;
+      if (Array.isArray(root)) return root;
+      if (Array.isArray(inner)) return inner as unknown[];
+      return [];
     } catch (error: any) {
       if (error?.response?.status === 404 || error?.response?.status === 422) return [];
       throw {
@@ -4832,11 +4906,26 @@ export const rfqAPI = {
       const rfqno = (filters?.rfqno ?? filters?.rfq_no ?? '').trim();
       if (rfqno) payload.rfqno = rfqno;
       const response = await apiClient.post('/inventory/inventory-report', payload);
-      const data = response.data?.data ?? response.data;
-      const material = data?.material ?? data?.materials ?? data;
-      return Array.isArray(material) ? material : [];
+      const root = response.data?.data ?? response.data;
+      const inner =
+        root && typeof root === 'object' && 'data' in root && (root as { data?: unknown }).data != null
+          ? (root as { data: unknown }).data
+          : root;
+      const material =
+        (inner && typeof inner === 'object'
+          ? (inner as { material?: unknown; materials?: unknown }).material ??
+            (inner as { material?: unknown; materials?: unknown }).materials
+          : undefined) ??
+        (root && typeof root === 'object'
+          ? (root as { material?: unknown; materials?: unknown }).material ??
+            (root as { material?: unknown; materials?: unknown }).materials
+          : undefined);
+      if (Array.isArray(material)) return material;
+      if (Array.isArray(root)) return root;
+      if (Array.isArray(inner)) return inner as unknown[];
+      return [];
     } catch (error: any) {
-      if (error?.response?.status === 404) return [];
+      if (error?.response?.status === 404 || error?.response?.status === 422) return [];
       throw { message: error.response?.data?.message || 'Failed to load RFQ report', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
