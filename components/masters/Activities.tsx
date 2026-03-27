@@ -36,6 +36,47 @@ interface ActivityItem {
   createdAt?: string;
 }
 
+type UnitListEntry = { id: number; unit: string };
+
+/** API returns `unit_id` as nested object `{ id, unit }` or empty `{}`; resolve display name. */
+function resolveActivityUnitName(activity: any, unitsList: UnitListEntry[]): string {
+  const raw = activity?.unit_id;
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const direct = (raw.unit || raw.name || '').toString().trim();
+    if (direct) return direct;
+  }
+  const fromApi =
+    activity?.units?.unit ||
+    activity?.units?.name ||
+    activity?.unit?.unit ||
+    activity?.unit?.name ||
+    (typeof activity?.unit === 'string' ? activity.unit : '');
+  if (fromApi) return String(fromApi).trim();
+  const uid =
+    typeof raw === 'number' || typeof raw === 'string'
+      ? raw
+      : raw?.id ?? activity?.unit?.id ?? activity?.units?.id;
+  if (uid != null && uid !== '') {
+    const u = unitsList.find((x) => x.id === Number(uid) || String(x.id) === String(uid));
+    return (u?.unit || '').trim();
+  }
+  return '';
+}
+
+function resolveActivityUnitId(activity: any): number | undefined {
+  const raw = activity?.unit_id;
+  if (raw && typeof raw === 'object' && !Array.isArray(raw) && raw.id != null) {
+    return Number(raw.id);
+  }
+  if (typeof raw === 'number' && !Number.isNaN(raw)) return raw;
+  if (typeof raw === 'string' && raw.trim() !== '') {
+    const n = Number(raw);
+    return Number.isNaN(n) ? undefined : n;
+  }
+  const n = activity?.unit?.id ?? activity?.units?.id;
+  return n != null ? Number(n) : undefined;
+}
+
 interface ActivitiesProps {
   theme: ThemeType;
 }
@@ -205,17 +246,6 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
       const fetchedActivities = Array.isArray(result) ? result : ((result as { data?: any[] })?.data ?? []);
       setActivitiesEmptyMessage(fetchedActivities.length === 0 && (result as any)?.message ? (result as any).message : null);
 
-      const getUnitName = (activity: any) => {
-        const fromApi = activity.units?.unit || activity.units?.name || activity.unit?.unit || activity.unit?.name || (typeof activity.unit === 'string' ? activity.unit : '');
-        if (fromApi) return fromApi;
-        const uid = activity.unit_id || activity.unit?.id || activity.units?.id;
-        if (uid != null) {
-          const u = unitsList.find((x: { id: number }) => x.id === Number(uid) || String(x.id) === String(uid));
-          return u?.unit || '';
-        }
-        return '';
-      };
-
       // Transform API response to match ActivityItem interface
       const transformedActivities = fetchedActivities.map((activity: any) => ({
         id: activity.uuid || String(activity.id),
@@ -228,8 +258,8 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
         subproject: activity.subproject?.name || activity.subproject_name || '',
         subproject_id: activity.subproject_id || activity.subproject?.id,
         type: activity.type || '',
-        unit: getUnitName(activity),
-        unit_id: activity.unit_id || activity.unit?.id || activity.units?.id,
+        unit: resolveActivityUnitName(activity, unitsList),
+        unit_id: resolveActivityUnitId(activity),
         qty: activity.qty || activity.quantity || 0,
         quantity: activity.quantity || activity.qty || 0,
         rate: activity.rate || 0,
@@ -282,17 +312,6 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
       const unitsList = units.length > 0 ? units : unitsForSearch || [];
       if (unitsList.length > 0 && units.length === 0) setUnits(unitsList);
 
-      const getUnitName = (activity: any) => {
-        const fromApi = activity.units?.unit || activity.units?.name || activity.unit?.unit || activity.unit?.name || (typeof activity.unit === 'string' ? activity.unit : '');
-        if (fromApi) return fromApi;
-        const uid = activity.unit_id || activity.unit?.id || activity.units?.id;
-        if (uid != null) {
-          const u = unitsList.find((x: { id: number }) => x.id === Number(uid) || String(x.id) === String(uid));
-          return u?.unit || '';
-        }
-        return '';
-      };
-
       // Transform API response
       const transformedActivities = searchResults.map((activity: any) => ({
         id: activity.uuid || String(activity.id),
@@ -305,8 +324,8 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
         subproject: activity.subproject?.name || activity.subproject_name || '',
         subproject_id: activity.subproject_id || activity.subproject?.id,
         type: activity.type || '',
-        unit: getUnitName(activity),
-        unit_id: activity.unit_id || activity.unit?.id || activity.units?.id,
+        unit: resolveActivityUnitName(activity, unitsList),
+        unit_id: resolveActivityUnitId(activity),
         qty: activity.qty || activity.quantity || 0,
         quantity: activity.quantity || activity.qty || 0,
         rate: activity.rate || 0,

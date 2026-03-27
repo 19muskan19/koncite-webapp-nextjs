@@ -25,12 +25,14 @@ import { taskAPI, teamsAPI, type TaskFormDataUser } from '@/services/api';
 import TaskModal, { TaskFormData } from './TaskModal';
 import TaskStatusUpdateModal from './TaskStatusUpdateModal';
 import { TaskCommentsBlock } from './TaskCommentsBlock';
-import { appendStatusUpdateComment, splitDescriptionAndStatusComments } from './statusUpdateDescription';
+import { splitDescriptionAndStatusComments } from './statusUpdateDescription';
 
 export interface Task {
   id: string;
   title: string;
   description?: string;
+  /** Latest status / completion note from API (`remark` on PATCH response or GET task). */
+  remark?: string;
   assigned_to?: string;
   assigned_by?: string;
   assigned_to_user_id?: number;
@@ -301,8 +303,12 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
     try {
       const row = (await taskAPI.getTask(id)) as Task;
       if (!row?.id) throw new Error('Invalid task response');
-      setAllTasks((prev) => mergeTaskIntoList(prev, row));
-      setStatusModalTaskRow(row);
+      const fromList = allTasks.find((x) => x.id === id);
+      const rApi = row.remark?.trim() ?? '';
+      const rList = fromList?.remark?.trim() ?? '';
+      const mergedRow: Task = { ...row, ...(rApi || rList ? { remark: rApi || rList } : {}) };
+      setAllTasks((prev) => mergeTaskIntoList(prev, mergedRow));
+      setStatusModalTaskRow(mergedRow);
     } catch (e: any) {
       toast.showError(e?.message || 'Could not load task');
     }
@@ -389,16 +395,23 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
       throw new Error('Assignee only');
     }
     try {
-      const mergedDesc = appendStatusUpdateComment(t.description, remark);
-      const payload: { status: string; description?: string } = { status: apiStatus };
-      if (mergedDesc !== undefined) payload.description = mergedDesc;
+      const trimmedRemark = remark?.trim() ?? '';
+      const payload: { status: string; remark?: string } = { status: apiStatus };
+      if (trimmedRemark) payload.remark = trimmedRemark;
       const updated = (await taskAPI.updateTask(taskId, payload)) as Task;
-      setAllTasks((prev) => mergeTaskIntoList(prev, { ...t, ...updated, status: (updated.status ?? apiStatus) as Task['status'] }));
-      setStatusModalTaskRow((prev) =>
-        prev?.id === taskId
-          ? { ...prev, ...updated, status: (updated.status ?? apiStatus) as Task['status'] }
-          : prev,
-      );
+      const remarkForUi =
+        (updated.remark && String(updated.remark).trim()) ||
+        trimmedRemark ||
+        (t.remark && String(t.remark).trim()) ||
+        '';
+      const withRemark: Task = {
+        ...t,
+        ...updated,
+        status: (updated.status ?? apiStatus) as Task['status'],
+        remark: remarkForUi || undefined,
+      };
+      setAllTasks((prev) => mergeTaskIntoList(prev, withRemark));
+      setStatusModalTaskRow((prev) => (prev?.id === taskId ? { ...prev, ...withRemark } : prev));
       toast.showSuccess('Status updated');
     } catch (e: any) {
       toast.showError(e?.message || 'Failed to update status');
@@ -615,7 +628,7 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
                   )}
                   <div className="flex-1 min-w-0 flex flex-col sm:flex-row sm:items-start sm:gap-3">
                     <div className="flex-1 min-w-0">
-                      <div className={`text-sm font-medium mb-1 ${t.status === 'done' ? 'line-through ' + textSecondary : textPrimary}`}>{t.title}</div>
+                      <div className={`text-lg font-semibold mb-1 leading-snug ${textPrimary}`}>{t.title}</div>
                       {(() => {
                         const { body, comments } = splitDescriptionAndStatusComments(t.description);
                         const hasDesc = !!body || comments.length > 0;
@@ -632,7 +645,7 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
                         <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${
                           t.priority === 'urgent' ? 'bg-rose-500/20 text-rose-400' : t.priority === 'high' ? 'bg-amber-500/20 text-amber-400' : t.priority === 'medium' ? 'bg-indigo-500/20 text-indigo-400' : 'bg-emerald-500/20 text-emerald-400'
                         }`}>{t.priority}</span>
-                        {t.assigned_to && <NamePill name={t.assigned_to} label="→" />}
+                        {t.assigned_to && <NamePill name={t.assigned_to} label="to" />}
                         {t.assigned_by && <NamePill name={t.assigned_by} label="by" />}
                         {t.due_date && (
                           <span className={`text-[10px] ${ov ? 'text-rose-500 font-medium' : textSecondary}`}>
@@ -649,6 +662,12 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
                 >
                   {renderTaskActions(t, false)}
                 </div>
+                {t.remark?.trim() ? (
+                  <div className={`rounded-lg border px-2.5 py-2 text-xs ${isDark ? 'border-violet-500/35 bg-violet-500/10 text-slate-200' : 'border-violet-200 bg-violet-50/80 text-slate-800'}`}>
+                    <div className={`font-bold uppercase tracking-wide text-[10px] mb-1 ${isDark ? 'text-violet-300' : 'text-violet-700'}`}>Remark</div>
+                    <p className={`whitespace-pre-wrap ${textSecondary}`}>{t.remark.trim()}</p>
+                  </div>
+                ) : null}
               </div>
             );
           })
@@ -684,7 +703,7 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
                         key={t.id}
                         className={`p-3 rounded-lg border ${isDark ? 'bg-slate-800/50 border-slate-600' : 'bg-slate-50 border-slate-200'} transition-colors`}
                       >
-                        <div className={`text-sm font-medium mb-2 ${textPrimary}`}>{t.title}</div>
+                        <div className={`text-lg font-semibold mb-2 leading-snug ${textPrimary}`}>{t.title}</div>
                         {(() => {
                           const { body } = splitDescriptionAndStatusComments(t.description);
                           if (!body) return null;
@@ -697,10 +716,16 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
                           }`}>{t.priority}</span>
                         </div>
                         <div className={`text-[10px] ${textSecondary} leading-relaxed`}>
-                          → {t.assigned_to || '—'}<br />by {t.assigned_by || '—'}
+                          to: {t.assigned_to || '—'}<br />by: {t.assigned_by || '—'}
                         </div>
                         {t.due_date && <div className={`text-[10px] mt-1 ${ov ? 'text-rose-500' : textSecondary}`}>Due {fmtDate(t.due_date)}</div>}
                         {renderTaskActions(t, true)}
+                        {t.remark?.trim() ? (
+                          <div className={`mt-2 rounded-md border px-2 py-1.5 text-[11px] ${isDark ? 'border-violet-500/35 bg-violet-500/10 text-slate-200' : 'border-violet-200 bg-violet-50/80 text-slate-800'}`}>
+                            <span className={`font-bold uppercase text-[9px] ${isDark ? 'text-violet-300' : 'text-violet-700'}`}>Remark · </span>
+                            <span className={textSecondary}>{t.remark.trim()}</span>
+                          </div>
+                        ) : null}
                       </div>
                     );
                   })
@@ -747,7 +772,7 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
                 }`}
               >
                 <div
-                  className={`text-[10px] truncate font-medium ${
+                  className={`text-xs truncate font-semibold ${
                     t.priority === 'urgent' ? 'text-rose-400' : t.priority === 'high' ? 'text-amber-400' : 'text-indigo-400'
                   }`}
                 >
@@ -970,6 +995,7 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
                 title: statusModalTaskRow.title,
                 status: statusModalTaskRow.status,
                 description: statusModalTaskRow.description,
+                remark: statusModalTaskRow.remark,
               }
             : null
         }

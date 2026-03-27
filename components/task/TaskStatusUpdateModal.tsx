@@ -12,8 +12,10 @@ export interface TaskStatusModalTask {
   id: string;
   title: string;
   status: string;
-  /** Current description from GET /tasks/{uuid} — remark is appended on save when provided. */
+  /** Current description from GET /tasks/{uuid}. */
   description?: string;
+  /** Last status / completion remark (PATCH `remark` or GET task) — shown in the comment field when reopening. */
+  remark?: string;
 }
 
 const WORKFLOW_TO_API: Record<WorkflowStatusKey, string> = {
@@ -44,7 +46,7 @@ interface TaskStatusUpdateModalProps {
   isOpen: boolean;
   task: TaskStatusModalTask | null;
   onClose: () => void;
-  /** Optional remark is merged into task description on the server (PATCH description + status). */
+  /** Optional remark sent as PATCH body field `remark` along with `status`. */
   onSave: (taskId: string, apiStatus: string, remark?: string) => Promise<void>;
 }
 
@@ -67,12 +69,8 @@ const TaskStatusUpdateModal: React.FC<TaskStatusUpdateModalProps> = ({
   React.useEffect(() => {
     if (!isOpen || !task) return;
     setSelected(apiStatusToWorkflow(task.status));
-  }, [isOpen, task?.id, task?.status]);
-
-  React.useEffect(() => {
-    if (!isOpen) return;
-    setRemark('');
-  }, [isOpen, task?.id]);
+    setRemark((task.remark && String(task.remark).trim()) || '');
+  }, [isOpen, task?.id, task?.status, task?.remark]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -112,7 +110,7 @@ const TaskStatusUpdateModal: React.FC<TaskStatusUpdateModalProps> = ({
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className={`font-bold text-lg mb-1 ${textPrimary}`}>Update status</h2>
-        <p className={`text-xs mb-4 ${textMuted}`}>{task.title}</p>
+        <p className={`text-sm font-medium mb-4 ${textPrimary}`}>{task.title}</p>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">

@@ -8,15 +8,11 @@ export interface SignupRequest {
   name: string;
   email: string;
   password: string;
-  password_confirmation: string; // Required by Laravel for password validation
+  password_confirmation: string;
   company_name: string;
-  company_address: string;
-  company_phone: string;
-  company_country_code: string;
-  country: number | string; // Country ID (integer) - required by Laravel
-  country_code: string;
+  country: number | string;
   phone: string;
-  profile_images?: File; // Optional file upload
+  profileImage?: File;
 }
 
 export interface SignupResponse {
@@ -41,6 +37,8 @@ export interface LoginRequest {
 
 export interface LoginResponse {
   status?: boolean;
+  /** e.g. 300 when email not verified (envelope still HTTP 200 from some gateways) */
+  response_code?: number;
   message?: string;
   requires_otp_verification?: boolean;
   email?: string;
@@ -48,6 +46,10 @@ export interface LoginResponse {
     token?: string;
     requires_otp_verification?: boolean;
     email?: string;
+    /** false when user must complete email OTP (sign-up verification) */
+    otp_verify?: boolean;
+    uuid?: string;
+    phone?: string;
     user?: {
       id: number;
       name: string;
@@ -95,9 +97,38 @@ export interface ForgotPasswordUpdateRequest {
   newPassword: string;
 }
 
+/** Laravel BaseController::responseJson — may include nested `data` on auth failures (e.g. email not verified) */
 export interface ApiError {
   message: string;
   errors?: Record<string, string[]>;
+  status?: number;
+  response_code?: number;
+  data?: {
+    otp_verify?: boolean;
+    uuid?: string;
+    email?: string;
+    phone?: string;
+    [key: string]: unknown;
+  };
+}
+
+/**
+ * Merge nested `data` with root-level fields — backends put `otp_verify` / `email` on `data` or on the envelope.
+ */
+export function mergeLoginFailurePayload(
+  envelope: Record<string, unknown> | null | undefined
+): ApiError['data'] | undefined {
+  if (!envelope || typeof envelope !== 'object') return undefined;
+  const rawInner = envelope['data'];
+  const nested: Record<string, unknown> =
+    rawInner != null && typeof rawInner === 'object' && !Array.isArray(rawInner)
+      ? { ...(rawInner as Record<string, unknown>) }
+      : {};
+  if (envelope['otp_verify'] !== undefined) nested['otp_verify'] = envelope['otp_verify'];
+  const rootEmail = envelope['email'];
+  if (typeof rootEmail === 'string' && rootEmail.trim()) nested['email'] = rootEmail.trim();
+  if (Object.keys(nested).length === 0) return undefined;
+  return nested as ApiError['data'];
 }
 
 // Auth API - Matching Laravel routes
@@ -192,14 +223,45 @@ export const authAPI = {
    */
   login: async (email: string, password: string, fcm_token?: string): Promise<LoginResponse> => {
     try {
-      const response = await apiClient.post('/sign-in', { 
-        email, 
-        password,
-        ...(fcm_token && { fcm_token })
-      });
-      
+      const response = await apiClient.post(
+        '/sign-in',
+        {
+          email,
+          password,
+          ...(fcm_token && { fcm_token }),
+        },
+        {
+          // Backend returns HTTP 300 with JSON for "email not verified"; axios treats 3xx as failure by default.
+          validateStatus: (status) => (status >= 200 && status < 300) || status === 300,
+        }
+      );
+
       const data = response.data;
-      
+
+      const isLogicalFailure = (s: unknown) =>
+        s === false || s === 0 || s === 'false' || s === '0';
+
+      // Laravel envelope: logical failure (e.g. email not verified) — often HTTP 200 or 300 with status: false
+      if (data && isLogicalFailure(data.status)) {
+        const nestedMsg =
+          data.data && typeof data.data === 'object' && data.data !== null && typeof (data.data as { message?: string }).message === 'string'
+            ? (data.data as { message: string }).message
+            : '';
+        const topMsg = data.message;
+        const msg =
+          (typeof topMsg === 'string' && topMsg.trim()) ||
+          (Array.isArray(topMsg) && topMsg[0] != null && String(topMsg[0]).trim()) ||
+          nestedMsg ||
+          'Login failed';
+        throw {
+          message: msg,
+          errors: data.errors || {},
+          status: response.status,
+          response_code: typeof data.response_code === 'number' ? data.response_code : undefined,
+          data: mergeLoginFailurePayload(data as unknown as Record<string, unknown>),
+        } as ApiError;
+      }
+
       // Store auth token in cookies - use user data from login response
       if (data.status && data.data?.token) {
         // Store token in cookies (30 days expiration)
@@ -256,6 +318,16 @@ export const authAPI = {
       
       return data;
     } catch (error: any) {
+      // Re-throw structured error from status === false branch (not an Axios error)
+      if (
+        error &&
+        typeof error.message === 'string' &&
+        error.response === undefined &&
+        error.errors !== undefined
+      ) {
+        throw error;
+      }
+
       // Log the full error for debugging
       console.error('Login API Error:', {
         status: error.response?.status,
@@ -265,12 +337,20 @@ export const authAPI = {
 
       // Extract error message from Laravel response
       const errorData = error.response?.data || {};
-      const message = errorData.message || error.message || 'Login failed';
-      
+      const rawApiMsg = errorData.message;
+      const message =
+        (typeof rawApiMsg === 'string' && rawApiMsg.trim()) ||
+        (Array.isArray(rawApiMsg) && rawApiMsg[0] != null && String(rawApiMsg[0]).trim()) ||
+        (typeof error.message === 'string' && error.message.trim()) ||
+        'Login failed';
+
       throw {
         message,
         errors: errorData.errors || {},
         status: error.response?.status,
+        response_code:
+          typeof errorData.response_code === 'number' ? errorData.response_code : undefined,
+        data: mergeLoginFailurePayload(errorData as Record<string, unknown>),
       } as ApiError;
     }
   },
@@ -463,6 +543,65 @@ export const authAPI = {
       }
       throw {
         message: error.response?.data?.message || 'Logout failed',
+      } as ApiError;
+    }
+  },
+};
+
+/** In-app notifications (company-api) — matches NotifactionController */
+export interface CompanyNotification {
+  id: number | string;
+  title?: string | null;
+  body?: string | null;
+  message?: string | null;
+  /** 0 = unread, 1 = read (viewed single), 2 = bulk / archived (API may send number or string) */
+  status?: number | string | null;
+  created_at?: string | null;
+  [key: string]: unknown;
+}
+
+export const notificationAPI = {
+  /**
+   * GET /fetch-notifaction — list notifications for current user + company
+   */
+  fetchList: async (): Promise<CompanyNotification[]> => {
+    try {
+      const response = await apiClient.get('/fetch-notifaction');
+      const raw = response.data?.data ?? response.data;
+      if (Array.isArray(raw)) return raw as CompanyNotification[];
+      return [];
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to load notifications',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * POST /view-notifaction-update — mark one notification (body: { id })
+   */
+  markViewed: async (id: number | string): Promise<void> => {
+    try {
+      await apiClient.post('/view-notifaction-update', { id });
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to update notification',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * POST /view-all-notifaction — marks unread (status 0) as status 2
+   */
+  markAllViewed: async (): Promise<void> => {
+    try {
+      await apiClient.post('/view-all-notifaction', {});
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to update notifications',
+        errors: error.response?.data?.errors || {},
       } as ApiError;
     }
   },
@@ -3221,10 +3360,17 @@ export const workforceAPI = {
   },
 
   /**
-   * Store contractor rate (vendor + category + daily_rate)
+   * Store contractor rate (vendor + category + daily_rate; optional labour_id from Labour master)
    * POST /labour-rates-store
    */
-  storeRate: async (data: { vendor_id: number; category: string; daily_rate: number; overtime_rate?: number }): Promise<any> => {
+  storeRate: async (data: {
+    vendor_id: number;
+    category: string;
+    daily_rate: number;
+    overtime_rate?: number;
+    labour_id?: number;
+    effective_from?: string;
+  }): Promise<any> => {
     try {
       const response = await apiClient.post('/labour-rates-store', data);
       return response.data;
@@ -4270,9 +4416,24 @@ export const materialRequestAPI = {
       const indentNo = (filters?.indentNo ?? filters?.indent_no ?? '').trim();
       if (indentNo) payload.indentNo = indentNo;
       const response = await apiClient.post('/inventory/inventory-report', payload);
-      const data = response.data?.data ?? response.data;
-      const material = data?.material ?? data?.materials ?? data;
-      return Array.isArray(material) ? material : [];
+      const root = response.data?.data ?? response.data;
+      const inner =
+        root && typeof root === 'object' && 'data' in root && (root as { data?: unknown }).data != null
+          ? (root as { data: unknown }).data
+          : root;
+      const material =
+        (inner && typeof inner === 'object'
+          ? (inner as { material?: unknown; materials?: unknown }).material ??
+            (inner as { material?: unknown; materials?: unknown }).materials
+          : undefined) ??
+        (root && typeof root === 'object'
+          ? (root as { material?: unknown; materials?: unknown }).material ??
+            (root as { material?: unknown; materials?: unknown }).materials
+          : undefined);
+      if (Array.isArray(material)) return material;
+      if (Array.isArray(root)) return root;
+      if (Array.isArray(inner)) return inner as unknown[];
+      return [];
     } catch (error: any) {
       if (error?.response?.status === 404 || error?.response?.status === 422) return [];
       throw {
@@ -4745,11 +4906,26 @@ export const rfqAPI = {
       const rfqno = (filters?.rfqno ?? filters?.rfq_no ?? '').trim();
       if (rfqno) payload.rfqno = rfqno;
       const response = await apiClient.post('/inventory/inventory-report', payload);
-      const data = response.data?.data ?? response.data;
-      const material = data?.material ?? data?.materials ?? data;
-      return Array.isArray(material) ? material : [];
+      const root = response.data?.data ?? response.data;
+      const inner =
+        root && typeof root === 'object' && 'data' in root && (root as { data?: unknown }).data != null
+          ? (root as { data: unknown }).data
+          : root;
+      const material =
+        (inner && typeof inner === 'object'
+          ? (inner as { material?: unknown; materials?: unknown }).material ??
+            (inner as { material?: unknown; materials?: unknown }).materials
+          : undefined) ??
+        (root && typeof root === 'object'
+          ? (root as { material?: unknown; materials?: unknown }).material ??
+            (root as { material?: unknown; materials?: unknown }).materials
+          : undefined);
+      if (Array.isArray(material)) return material;
+      if (Array.isArray(root)) return root;
+      if (Array.isArray(inner)) return inner as unknown[];
+      return [];
     } catch (error: any) {
-      if (error?.response?.status === 404) return [];
+      if (error?.response?.status === 404 || error?.response?.status === 422) return [];
       throw { message: error.response?.data?.message || 'Failed to load RFQ report', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
@@ -5670,7 +5846,10 @@ function normalizeTaskRow(item: any): Record<string, any> {
   let due = item.due_date ?? '';
   if (due && typeof due === 'string' && due.includes('T')) due = due.slice(0, 10);
 
-  return {
+  const rawRemark = item.remark ?? item.completion_remark ?? item.status_remark ?? item.remarks;
+  const remarkStr = typeof rawRemark === 'string' ? rawRemark.trim() : '';
+
+  const row: Record<string, any> = {
     // TaskResource: id is the task uuid.
     id: String(item.id ?? item.uuid ?? item.task_id ?? item.task_uuid ?? ''),
     title: item.title ?? '',
@@ -5693,6 +5872,8 @@ function normalizeTaskRow(item: any): Record<string, any> {
     tags: Array.isArray(tagList) ? tagList : [],
     project_id: item.project_id ?? undefined,
   };
+  if (remarkStr) row.remark = remarkStr;
+  return row;
 }
 
 /** Unwrap Laravel / custom envelopes: { data: Task[] }, { data: { data: [] } }, { data: { tasks: [] } }, etc. */
@@ -5891,7 +6072,8 @@ export const taskAPI = {
 
   /**
    * PATCH or PUT /tasks/{uuid} — Laravel: tenant + assignee only.
-   * Body: at least one of `description`, `status` (`todo` | `in_progress` | `done`).
+   * Body: at least one of `description`, `status` (`todo` | `in_progress` | `done`), `remark`.
+   * Status updates often send `{ status, remark }` (remark optional).
    * 403 "Only assigned user can edit this task", 422 if neither field sent, 404 if missing.
    */
   updateTask: async (
@@ -5899,14 +6081,16 @@ export const taskAPI = {
     payload: Partial<{
       description: string | null;
       status: string;
+      remark: string;
     }>
   ): Promise<any> => {
     const body: Record<string, unknown> = {};
     if (payload.description !== undefined) body.description = payload.description;
     if (payload.status !== undefined) body.status = payload.status;
+    if (payload.remark !== undefined) body.remark = payload.remark;
     if (Object.keys(body).length === 0) {
       throw {
-        message: 'At least one field is required: description or status',
+        message: 'At least one field is required: description, status, or remark',
         errors: {},
       } as ApiError;
     }
