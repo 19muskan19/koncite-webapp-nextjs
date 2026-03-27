@@ -216,7 +216,10 @@ export default function ChatMarkdownViewer({
   const displayContent = !isUser ? enhanceAssistantResponse(content) : content;
   const isConfirmationContext = /please confirm|confirm which|confirm which ones|reply with one of|choose one of|pick one of|for example:/i.test(displayContent);
   const isFreeFormConfirmationContext = /reply yes or tell me|tell me the title|tell me the .* you prefer|confirm one last thing|do you want the .* as/i.test(displayContent);
-  const isProjectSelectionContext = /available.*projects|Which project|project would you like|Here are the available/i.test(displayContent);
+  /** Assistant is listing projects to pick (DPR, Inventory, etc.) — relax click rules so every name is tappable */
+  const isProjectSelectionContext =
+    /available.*projects?|Which project|project would you like|Here are the (following )?available|select (a |your )?project|choose (a |your )?project|project(s)? (below|listed|available|you can|I found)|pick a project|following projects|projects?:\s*$/im.test(displayContent) ||
+    /inventory.*project|workspace.*project|material.*project|for which project|project (name|to use)/i.test(displayContent);
   const isSubprojectSelectionContext = /subprojects|Which subproject|subproject.*wing|wing.*section|section are you working/i.test(displayContent);
   const isDprAddContentContext = /what would you like to add|You can add|add to today's DPR|add to today|just tell me what you want to add first/i.test(displayContent);
   const isActivitiesListContext = /all the activities available|activities available.*for.*Project|grouped by heading/i.test(displayContent);
@@ -385,7 +388,7 @@ export default function ChatMarkdownViewer({
         const isDprChoiceOption = isDprProgressOption || isDprOptionalDetailsOption || isDprReviewSubmitOption || isDprYesNoOption;
         const isExplanatoryOrInstruction =
           !isDprChoiceOption &&
-          ((text.length < 18 && !isIdTaggedListItem) ||
+          ((text.length < 18 && !isIdTaggedListItem && !isProjectSelectionContext && !isSubprojectSelectionContext) ||
           text.endsWith('?') ||
           text.startsWith('(') ||
           /^\w+\)?\s*$/.test(text) ||
@@ -402,10 +405,42 @@ export default function ChatMarkdownViewer({
         const isYesNoOrFreeFormPrompt = /^Yes\s*$/i.test(text) || /^No\s*$/i.test(text) || /^Reply Yes or tell me|^tell me the .* you prefer/i.test(text);
         const isDprAddOption = isDprAddContentContext && /^(Activities|Materials used|Labour deployment|Machinery|Safety incidents|Hindrances)/i.test(text) && !/^Just tell me/i.test(text);
         const isShortDprOption = (isDprProgressOption || isDprOptionalDetailsOption || isDprYesNoOption) && text.length >= 2;
-        const minLen = isConfirmationContext ? 6 : 10;
+        const minLen =
+          isConfirmationContext ? 6 : isProjectSelectionContext || isSubprojectSelectionContext ? 1 : 10;
         const meetsMinLength = text.length >= minLen || isShortDprOption;
         const skipYesNoFilter = (isDprOptionalDetailsOption && /^no\s*$/i.test(text.trim())) || isDprYesNoOption;
-        const looksLikeOption = !isFreeFormConfirmationContext && meetsMinLength && !isExplanatoryOrInstruction && (!isYesNoOrFreeFormPrompt || skipYesNoFilter) && (isConfirmationContext || hasOptionLikePhrase || hasConfirmationFormat || isProjectListItem || isSubprojectListItem || isDprAddOption || isActivityListItem || isDprProgressOption || isDprOptionalDetailsOption || isDprReviewSubmitOption || isDprYesNoOption);
+        const isNoiseProjectLine =
+          /^request for:?\s*$/i.test(text) || /^projects?:\s*$/i.test(text) || /^here are\b/i.test(text);
+        const isProjectPickRow =
+          isProjectSelectionContext &&
+          !isNoiseProjectLine &&
+          meetsMinLength &&
+          !/[?]$/.test(text) &&
+          !isExplanatoryOrInstruction;
+        const isSubprojectPickRow =
+          isSubprojectSelectionContext &&
+          !isNoiseProjectLine &&
+          meetsMinLength &&
+          !/[?]$/.test(text) &&
+          !isExplanatoryOrInstruction;
+        const looksLikeOption =
+          !isFreeFormConfirmationContext &&
+          meetsMinLength &&
+          !isExplanatoryOrInstruction &&
+          (!isYesNoOrFreeFormPrompt || skipYesNoFilter) &&
+          (isConfirmationContext ||
+            hasOptionLikePhrase ||
+            hasConfirmationFormat ||
+            isProjectListItem ||
+            isSubprojectListItem ||
+            isDprAddOption ||
+            isActivityListItem ||
+            isDprProgressOption ||
+            isDprOptionalDetailsOption ||
+            isDprReviewSubmitOption ||
+            isDprYesNoOption ||
+            isProjectPickRow ||
+            isSubprojectPickRow);
         const hasNested = hasNestedList(children);
         if (looksLikeOption && !hasNested) {
           return (

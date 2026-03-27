@@ -331,6 +331,11 @@ const Subscription: React.FC<SubscriptionProps> = ({ theme }) => {
     setAddonQty(fresh.qty);
   }, [region]);
 
+  const basePlanMonthly = useMemo(() => {
+    const plan = data.plans.find((p) => p.id === addonBaseTier);
+    return plan?.monthlyPrice ?? 0;
+  }, [data.plans, addonBaseTier]);
+
   const addonTotal = useMemo(() => {
     let sum = 0;
     for (const key of ADDON_KEYS) {
@@ -341,6 +346,8 @@ const Subscription: React.FC<SubscriptionProps> = ({ theme }) => {
     }
     return sum;
   }, [addonEnabled, addonQty, addonBaseTier, data.addOns]);
+
+  const selectedPaymentMonthly = basePlanMonthly + addonTotal;
 
   const setAddonChecked = (key: AddonKey, checked: boolean) => {
     setAddonEnabled((prev) => ({ ...prev, [key]: checked }));
@@ -662,18 +669,30 @@ const Subscription: React.FC<SubscriptionProps> = ({ theme }) => {
             <div>
               <p className={`text-xs font-bold uppercase tracking-wider ${textSecondary}`}>Selected pay amount</p>
               <p className={`text-2xl sm:text-3xl font-black tabular-nums mt-1 ${textPrimary}`}>
-                {addonTotal > 0 ? formatPrice(addonTotal, region) : '—'}
+                {selectedPaymentMonthly > 0 ? formatPrice(selectedPaymentMonthly, region) : '—'}
+                <span className={`text-sm font-bold ${textSecondary} ml-1`}>/month</span>
               </p>
               <p className={`text-[11px] mt-1 ${textSecondary}`}>
-                Estimated add-on before taxes. Final billing may vary.
+                Base plan ({formatPrice(basePlanMonthly, region)}/mo) + selected add-ons ({formatPrice(addonTotal, region)}
+                /mo). Yearly billing is 12× this total. Estimates before taxes; final billing may vary.
               </p>
             </div>
             <button
               type="button"
-              disabled={addonTotal <= 0}
-              onClick={() => console.log('Pay add-ons', { addonTotal, region, addonBaseTier, addonEnabled, addonQty })}
+              disabled={selectedPaymentMonthly <= 0}
+              onClick={() =>
+                console.log('Proceed to pay', {
+                  basePlanMonthly,
+                  addonTotal,
+                  selectedPaymentMonthly,
+                  region,
+                  addonBaseTier,
+                  addonEnabled,
+                  addonQty,
+                })
+              }
               className={`px-6 py-3 rounded-xl text-sm font-bold transition-all shrink-0 ${
-                addonTotal > 0
+                selectedPaymentMonthly > 0
                   ? 'bg-[#C2D642] hover:bg-[#b8cc3a] text-white shadow-md'
                   : 'bg-slate-600/40 text-slate-500 cursor-not-allowed'
               }`}

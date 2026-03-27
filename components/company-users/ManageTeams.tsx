@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { sortCountryCodes, findCountryByDialCode } from '@/utils/countryCodeUtils';
-import { getProfileImageUrl } from '@/utils/imageUtils';
+import { getProfileImageUrl, getInitialsAvatarUrl } from '@/utils/imageUtils';
 
 interface CountryCode {
   code: string;
@@ -46,6 +46,8 @@ interface UserData {
   email: string;
   contactNumber: string;
   roleType: string;
+  /** Matches select option value; prefer this over role name when opening edit */
+  company_role_id?: string;
   address?: string;
   country_code?: string;
   reporting_person_id?: number | string;
@@ -71,6 +73,130 @@ const ROLE_ID_TO_NAME: Record<string, string> = {
   '5': 'Supervisor',
 };
 
+type StaffFormFields = {
+  name: string;
+  email: string;
+  country_code: string;
+  country_code_iso: string;
+  phone: string;
+  address: string;
+  company_user_role: string;
+  designation: string;
+  reporting_person: string;
+  password: string;
+  confirmPassword: string;
+  profile_images: File | null;
+  country: string;
+  state: string;
+  city: string;
+};
+
+const emptyStaffForm = (): StaffFormFields => ({
+  name: '',
+  email: '',
+  country_code: '',
+  country_code_iso: '',
+  phone: '',
+  address: '',
+  company_user_role: '',
+  designation: '',
+  reporting_person: '',
+  password: '',
+  confirmPassword: '',
+  profile_images: null,
+  country: '',
+  state: '',
+  city: '',
+});
+
+/** Map GET teams-edit / TeamsResources payload into modal form (ids for country/state/city for update) */
+function buildFormFromStaffApi(apiUser: any, countryCodes: CountryCode[]): StaffFormFields {
+  const roleId = String(apiUser.company_role_id ?? apiUser.company_role?.id ?? apiUser.company_user_role ?? '');
+  const designationTrim = (apiUser.designation && String(apiUser.designation).trim()) || '';
+  const roleName =
+    designationTrim ||
+    (apiUser.company_role?.name ??
+      apiUser.role_type ??
+      ROLE_ID_TO_NAME[roleId] ??
+      '');
+  const rp = apiUser.reporting_person ?? apiUser.reportingPerson;
+  const rpIdExplicit = apiUser.reporting_person_id ?? apiUser.reportingPersonId;
+  let reportingSelect = '';
+  if (typeof rp === 'object' && rp != null && 'id' in rp && (rp as { id?: unknown }).id != null) {
+    reportingSelect = String((rp as { id: unknown }).id);
+  } else if (rp != null && String(rp).trim() !== '') {
+    const s = String(rp).trim();
+    reportingSelect = /^\d+$/.test(s) ? s : rpIdExplicit != null ? String(rpIdExplicit) : '';
+  } else if (rpIdExplicit != null) {
+    reportingSelect = String(rpIdExplicit);
+  }
+  const phoneRaw = apiUser.phone || apiUser.contact_number || '';
+  const phoneDigits = String(phoneRaw).replace(/\D/g, '').slice(0, 10);
+  const dial = String(apiUser.country_code ?? apiUser.countryCode ?? '')
+    .replace(/^\+/, '')
+    .trim();
+
+  const countryObj = apiUser.countries ?? apiUser.country;
+  const stateObj = apiUser.states ?? apiUser.state;
+  const cityObj = apiUser.cities ?? apiUser.city;
+  const pickId = (v: unknown): string => {
+    if (v == null) return '';
+    if (typeof v === 'object' && v !== null && 'id' in v && (v as { id: unknown }).id != null) {
+      return String((v as { id: unknown }).id);
+    }
+    return String(v);
+  };
+  const countryId = pickId(countryObj);
+  const stateId = pickId(stateObj);
+  const cityId = pickId(cityObj);
+
+  let country_code_iso = '';
+  if (dial && countryCodes.length > 0) {
+    const hit = findCountryByDialCode(countryCodes, dial, undefined);
+    country_code_iso = hit?.code ?? '';
+  }
+
+  return {
+    name: apiUser.name || '',
+    email: apiUser.email || '',
+    country_code: dial,
+    country_code_iso,
+    phone: phoneDigits,
+    address: apiUser.address || '',
+    company_user_role: roleId,
+    designation: roleName,
+    reporting_person: reportingSelect,
+    password: '',
+    confirmPassword: '',
+    profile_images: null,
+    country: countryId,
+    state: stateId,
+    city: cityId,
+  };
+}
+
+/** When API sends reporting_person as a display name (e.g. "Stacy"), map to a user id from the current team list */
+function resolveReportingPersonIdByTeamList(
+  excludeUserId: string,
+  currentId: string,
+  nameHint: string | undefined,
+  teamUsers: UserData[]
+): string {
+  const idTrim = String(currentId || '').trim();
+  if (idTrim && /^\d+$/.test(idTrim)) return idTrim;
+  const hint = nameHint?.trim();
+  if (!hint || teamUsers.length === 0) return idTrim;
+  const lower = hint.toLowerCase();
+  const exact = teamUsers.find((u) => u.id !== excludeUserId && u.name.trim().toLowerCase() === lower);
+  if (exact) return exact.id;
+  const contains = teamUsers.find(
+    (u) =>
+      u.id !== excludeUserId &&
+      (u.name.trim().toLowerCase().includes(lower) || lower.includes(u.name.trim().toLowerCase()))
+  );
+  return contains ? contains.id : '';
+}
+
 function mapApiStaffToUserData(apiUser: any): UserData {
   const id = String(apiUser.id ?? apiUser.uuid ?? '');
   const uuid = apiUser.uuid ? String(apiUser.uuid) : undefined;
@@ -78,17 +204,57 @@ function mapApiStaffToUserData(apiUser: any): UserData {
     apiUser.profile_image ?? apiUser.profile_images ?? apiUser.avatar ?? apiUser.profile_picture,
     apiUser.name || ''
   );
-  const rp = apiUser.reporting_person ?? apiUser.reportingPerson;
-  const rpId = typeof rp === 'object' && rp ? (rp.id ?? null) : (rp || null);
-  const rpIsObject = typeof rp === 'object' && rp;
+  const rpRaw = apiUser.reporting_person ?? apiUser.reportingPerson;
+  const rpIdExplicit =
+    apiUser.reporting_person_id ?? apiUser.reporting_person_user_id ?? apiUser.reportingPersonId ?? null;
+
+  let reporting_person_id: number | string | undefined;
+  let reportingPerson: { name: string; role: string };
+
+  if (rpRaw != null && typeof rpRaw === 'object' && !Array.isArray(rpRaw)) {
+    const o = rpRaw as { id?: unknown; name?: string; role?: string; designation?: string };
+    const oid = o.id != null ? String(o.id) : rpIdExplicit != null ? String(rpIdExplicit) : undefined;
+    reporting_person_id = oid;
+    reportingPerson = {
+      name: o.name || '—',
+      role: o.role ?? o.designation ?? '—',
+    };
+  } else if (rpRaw != null && String(rpRaw).trim() !== '') {
+    const str = String(rpRaw).trim();
+    const isNumericId = /^\d+$/.test(str);
+    if (isNumericId) {
+      reporting_person_id = str;
+      const labelName =
+        apiUser.reporting_person_name ?? apiUser.reportingPersonName ?? apiUser.reporting_person_label ?? '';
+      reportingPerson = { name: labelName, role: '' };
+    } else {
+      reporting_person_id = rpIdExplicit != null ? String(rpIdExplicit) : undefined;
+      reportingPerson = {
+        name: str,
+        role:
+          apiUser.reporting_person_role ??
+          apiUser.reportingPersonRole ??
+          '',
+      };
+    }
+  } else {
+    reporting_person_id = rpIdExplicit != null ? String(rpIdExplicit) : undefined;
+    const fallbackName =
+      apiUser.reporting_person_name ?? apiUser.reportingPersonName ?? apiUser.reporting_person_label ?? '';
+    reportingPerson = {
+      name: fallbackName || '—',
+      role: '',
+    };
+  }
+
   const roleId = String(apiUser.company_role_id ?? apiUser.company_role?.id ?? '');
-  const designation = apiUser.designation || ROLE_ID_TO_NAME[roleId] || '';
+  const designationVal = (apiUser.designation && String(apiUser.designation).trim()) || '';
   const roleType =
-    apiUser.company_role?.name ??
-    designation ??
-    apiUser.role_type ??
-    ROLE_ID_TO_NAME[roleId] ??
-    'N/A';
+    designationVal ||
+    (apiUser.company_role?.name ??
+      apiUser.role_type ??
+      ROLE_ID_TO_NAME[roleId] ??
+      'N/A');
   return {
     id,
     uuid,
@@ -97,11 +263,10 @@ function mapApiStaffToUserData(apiUser: any): UserData {
     email: apiUser.email || '',
     contactNumber: apiUser.phone || apiUser.contact_number || '',
     roleType,
+    company_role_id: roleId || undefined,
     address: apiUser.address,
-    reporting_person_id: rpIsObject ? (rp.id ?? null) : (rp ?? null),
-    reportingPerson: rpIsObject
-      ? { name: rp.name || '—', role: rp.role ?? rp.designation ?? '—' }
-      : { name: rpId ? '' : '—', role: rpId ? '' : '—' },
+    reporting_person_id,
+    reportingPerson,
     status: apiUser.is_active !== false,
     country_code: apiUser.country_code || apiUser.countryCode || '',
   };
@@ -119,27 +284,20 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [availableRoles, setAvailableRoles] = useState<Array<{ id: string; name: string }>>([]);
-  const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    country_code: '' as string,
-    country_code_iso: '' as string,
-    phone: '',
-    address: '',
-    company_user_role: '' as string,
-    designation: '' as string,
-    reporting_person: '' as string,
-    password: '',
-    confirmPassword: '',
-    profile_images: null as File | null
-  });
+  const [formData, setFormData] = useState<StaffFormFields>(() => emptyStaffForm());
+  const [isLoadingEditForm, setIsLoadingEditForm] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [countryCodes, setCountryCodes] = useState<CountryCode[]>([]);
   const [isLoadingCountryCodes, setIsLoadingCountryCodes] = useState(false);
   const [isCountryDropdownOpen, setIsCountryDropdownOpen] = useState(false);
   const [countrySearchQuery, setCountrySearchQuery] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  /** Bump when closing modal so late teams-edit responses do not overwrite form */
+  const editLoadGenerationRef = useRef(0);
   const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
+  /** Raw profile path/URL from API while editing (shown until user picks a new file) */
+  const [existingProfilePhotoRaw, setExistingProfilePhotoRaw] = useState<string | null>(null);
+  const [reportingPersonMatchNote, setReportingPersonMatchNote] = useState<string | null>(null);
   const toast = useToast();
 
   useEffect(() => {
@@ -195,7 +353,7 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
         ...u,
         reportingPerson: {
           name: u.reportingPerson.name || '—',
-          role: u.reportingPerson.role || '—',
+          role: u.reportingPerson.role ?? '',
         },
       };
     });
@@ -344,6 +502,32 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
     }
   }, [showUserModal]);
 
+  /** When country list loads after edit form is filled, resolve flag dropdown ISO from dial code once */
+  useEffect(() => {
+    if (!showUserModal || !editingUserId || countryCodes.length === 0) return;
+    setFormData((prev) => {
+      if (!prev.country_code || prev.country_code_iso) return prev;
+      const hit = findCountryByDialCode(countryCodes, prev.country_code, undefined);
+      if (!hit) return prev;
+      return { ...prev, country_code_iso: hit.code };
+    });
+  }, [showUserModal, editingUserId, countryCodes]);
+
+  const roleSelectOptions = useMemo(() => {
+    const base = [...availableRoles];
+    if (
+      editingUserId &&
+      formData.company_user_role &&
+      !base.some((r) => r.id === formData.company_user_role)
+    ) {
+      base.push({
+        id: formData.company_user_role,
+        name: formData.designation?.trim() || `Role (${formData.company_user_role})`,
+      });
+    }
+    return base;
+  }, [availableRoles, editingUserId, formData.company_user_role, formData.designation]);
+
   // Save users to localStorage only when using local data (not API)
   useEffect(() => {
     if (useApiData) return;
@@ -435,63 +619,42 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
     const { name, value } = e.target;
     if (name === 'phone') {
       const digitsOnly = value.replace(/\D/g, '').slice(0, 10);
-      setFormData({ ...formData, phone: digitsOnly });
+      setFormData((prev) => ({ ...prev, phone: digitsOnly }));
       return;
     }
-    setFormData({
-      ...formData,
-      [name]: value
-    });
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) setFormData({ ...formData, profile_images: file });
+    if (file) setFormData((prev) => ({ ...prev, profile_images: file }));
   };
 
   const handleClearImage = () => {
-    setFormData({ ...formData, profile_images: null });
+    setFormData((prev) => ({ ...prev, profile_images: null }));
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleCloseModal = () => {
+    editLoadGenerationRef.current += 1;
     setShowUserModal(false);
     setEditingUserId(null);
     setIsSubmitting(false);
+    setIsLoadingEditForm(false);
     setIsCountryDropdownOpen(false);
     setCountrySearchQuery('');
-    setFormData({
-      name: '',
-      email: '',
-      country_code: '',
-      country_code_iso: '',
-      phone: '',
-      address: '',
-      company_user_role: '',
-      designation: '',
-      reporting_person: '',
-      password: '',
-      confirmPassword: '',
-      profile_images: null
-    });
+    setExistingProfilePhotoRaw(null);
+    setReportingPersonMatchNote(null);
+    setFormData(emptyStaffForm());
   };
 
   const handleOpenAddModal = () => {
+    editLoadGenerationRef.current += 1;
     setEditingUserId(null);
-    setFormData({
-      name: '',
-      email: '',
-      country_code: '',
-      country_code_iso: '',
-      phone: '',
-      address: '',
-      company_user_role: '',
-      designation: '',
-      reporting_person: '',
-      password: '',
-      confirmPassword: '',
-      profile_images: null
-    });
+    setIsLoadingEditForm(false);
+    setExistingProfilePhotoRaw(null);
+    setReportingPersonMatchNote(null);
+    setFormData(emptyStaffForm());
     setShowUserModal(true);
   };
 
@@ -535,6 +698,9 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
       fd.append('password', formData.password);
       if (reportingPersonId) fd.append('reporting_person', reportingPersonId);
       if (formData.profile_images) fd.append('profile_images', formData.profile_images);
+      if (formData.country) fd.append('country', formData.country);
+      if (formData.state) fd.append('state', formData.state);
+      if (formData.city) fd.append('city', formData.city);
 
       await teamsAPI.createOrUpdateStaff(fd);
       toast.showSuccess('User created successfully');
@@ -547,27 +713,106 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
     }
   };
 
-  const handleEditUser = (userId: string) => {
-    const user = allUsers.find(u => u.id === userId);
-    if (user) {
-      const roleMatch = availableRoles.find(r => r.name === user.roleType);
-      const phoneDigits = String(user.contactNumber || '').replace(/\D/g, '').slice(0, 10);
-      setEditingUserId(userId);
+  const handleEditUser = async (userId: string) => {
+    if (defaultUsers.find((u) => u.id === userId)) {
+      toast.showWarning('Cannot edit default user');
+      return;
+    }
+    const loadGen = ++editLoadGenerationRef.current;
+    setEditingUserId(userId);
+    setShowUserModal(true);
+    setIsLoadingEditForm(true);
+    setIsCountryDropdownOpen(false);
+    setCountrySearchQuery('');
+    try {
+      const apiUser = await teamsAPI.getStaff(userId);
+      if (loadGen !== editLoadGenerationRef.current) return;
+      if (!apiUser || typeof apiUser !== 'object') {
+        throw new Error('Invalid response');
+      }
+      const base = buildFormFromStaffApi(apiUser, countryCodes);
+      const rpRaw = apiUser.reporting_person ?? apiUser.reportingPerson;
+      const nameHint =
+        typeof rpRaw === 'string' && rpRaw.trim() ? String(rpRaw).trim() : undefined;
+      const resolvedRp = resolveReportingPersonIdByTeamList(
+        userId,
+        base.reporting_person,
+        nameHint,
+        allUsers.filter((u) => u.id !== userId)
+      );
+      setReportingPersonMatchNote(
+        nameHint && !resolvedRp
+          ? `Could not match “${nameHint}” to a user in this list. Select a reporting person below.`
+          : null
+      );
+      const rawPhoto =
+        typeof apiUser.profile_images === 'string' && apiUser.profile_images.trim()
+          ? apiUser.profile_images.trim()
+          : typeof apiUser.profile_image === 'string' && apiUser.profile_image.trim()
+            ? apiUser.profile_image.trim()
+            : null;
+      setExistingProfilePhotoRaw(rawPhoto);
       setFormData({
-        name: user.name,
-        email: user.email,
-        country_code: user.country_code || '',
-        country_code_iso: '', // API only has dial code; findCountryByDialCode will prefer US/CA for +1
-        phone: phoneDigits,
-        address: user.address ?? '',
-        company_user_role: roleMatch?.id ?? '',
-        designation: user.roleType || '',
-        reporting_person: user.reporting_person_id ? String(user.reporting_person_id) : '',
-        password: '',
-        confirmPassword: '',
-        profile_images: null
+        ...base,
+        reporting_person: resolvedRp || base.reporting_person,
       });
-      setShowUserModal(true);
+    } catch {
+      if (loadGen !== editLoadGenerationRef.current) return;
+      const user = allUsers.find((u) => u.id === userId);
+      if (user) {
+        const roleMatch = availableRoles.find((r) => r.name === user.roleType);
+        const phoneDigits = String(user.contactNumber || '').replace(/\D/g, '').slice(0, 10);
+        const dial = String(user.country_code || '').replace(/^\+/, '').trim();
+        let iso = '';
+        if (dial && countryCodes.length > 0) {
+          iso = findCountryByDialCode(countryCodes, dial, undefined)?.code ?? '';
+        }
+        const nameHintRp =
+          user.reportingPerson?.name && user.reportingPerson.name !== '—'
+            ? user.reportingPerson.name.trim()
+            : undefined;
+        const resolvedRp = resolveReportingPersonIdByTeamList(
+          userId,
+          user.reporting_person_id ? String(user.reporting_person_id) : '',
+          nameHintRp,
+          allUsers.filter((u) => u.id !== userId)
+        );
+        setReportingPersonMatchNote(
+          nameHintRp && !resolvedRp
+            ? `Could not match “${nameHintRp}” to a user in this list. Select a reporting person below.`
+            : null
+        );
+        const photoRaw =
+          user.profilePhoto && !user.profilePhoto.includes('ui-avatars.com')
+            ? user.profilePhoto
+            : null;
+        setExistingProfilePhotoRaw(photoRaw);
+        setFormData({
+          name: user.name,
+          email: user.email,
+          country_code: dial,
+          country_code_iso: iso,
+          phone: phoneDigits,
+          address: user.address ?? '',
+          company_user_role: user.company_role_id ?? roleMatch?.id ?? '',
+          designation: user.roleType || '',
+          reporting_person: resolvedRp || (user.reporting_person_id ? String(user.reporting_person_id) : ''),
+          password: '',
+          confirmPassword: '',
+          profile_images: null,
+          country: '',
+          state: '',
+          city: '',
+        });
+        toast.showWarning('Loaded from list; some fields may be incomplete until the server is reachable.');
+      } else {
+        toast.showError('Could not load user for editing');
+        handleCloseModal();
+      }
+    } finally {
+      if (loadGen === editLoadGenerationRef.current) {
+        setIsLoadingEditForm(false);
+      }
     }
   };
 
@@ -612,6 +857,9 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
       if (reportingPersonId) fd.append('reporting_person', reportingPersonId);
       if (formData.password) fd.append('password', formData.password);
       if (formData.profile_images) fd.append('profile_images', formData.profile_images);
+      if (formData.country) fd.append('country', formData.country);
+      if (formData.state) fd.append('state', formData.state);
+      if (formData.city) fd.append('city', formData.city);
 
       await teamsAPI.createOrUpdateStaff(fd);
       toast.showSuccess('User updated successfully');
@@ -860,7 +1108,16 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
                       <div className="flex items-center gap-2">
                         <User className={`w-4 h-4 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
-                        <span>{user.reportingPerson.name} {user.reportingPerson.role}</span>
+                        <span>
+                          {[
+                            user.reportingPerson.name,
+                            user.reportingPerson.role && String(user.reportingPerson.role).trim() !== '—'
+                              ? user.reportingPerson.role
+                              : null,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ') || '—'}
+                        </span>
                       </div>
                     </td>
                     <td className="px-6 py-4">
@@ -986,9 +1243,18 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
               <h2 className={`text-xl font-black ${textPrimary}`}>
                 {editingUserId ? 'Edit User' : 'Add New User'}
               </h2>
-              <p className={`text-sm mt-1 ${textSecondary}`}>All fields are required</p>
+              <p className={`text-sm mt-1 ${textSecondary}`}>
+                {editingUserId ? 'Update fields as needed. Email and other values stay as you type until you save.' : 'All fields are required'}
+              </p>
             </div>
             <div className="p-6 space-y-4">
+              {isLoadingEditForm ? (
+                <div className="flex flex-col items-center justify-center py-16 gap-3">
+                  <Loader2 className="w-8 h-8 animate-spin text-[#6B8E23]" />
+                  <p className={`text-sm font-medium ${textSecondary}`}>Loading user details…</p>
+                </div>
+              ) : (
+              <>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Name <span className="text-red-500">*</span></label>
@@ -1000,7 +1266,7 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
                   <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Email <span className="text-red-500">*</span></label>
                   <input type="email" name="email" value={formData.email} onChange={handleInputChange}
                     className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                    placeholder="Enter Email" disabled={!!editingUserId} />
+                    placeholder="Enter Email" />
                 </div>
                 <div>
                   <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Country Code <span className="text-red-500">*</span></label>
@@ -1129,7 +1395,7 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
                   <select name="company_user_role" value={formData.company_user_role} onChange={handleInputChange}
                     className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}>
                     <option value="">Select Role</option>
-                    {availableRoles.map((r, idx) => (
+                    {roleSelectOptions.map((r, idx) => (
                       <option key={`${r.id}-${r.name}-${idx}`} value={r.id}>{r.name}</option>
                     ))}
                   </select>
@@ -1143,6 +1409,11 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
                       <option key={u.id} value={u.id}>{u.name} ({u.roleType})</option>
                     ))}
                   </select>
+                  {reportingPersonMatchNote && (
+                    <p className={`text-xs mt-1.5 font-medium text-amber-600 ${isDark ? 'text-amber-400' : ''}`}>
+                      {reportingPersonMatchNote}
+                    </p>
+                  )}
                 </div>
                 {!editingUserId && (
                   <>
@@ -1165,17 +1436,24 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
                 )}
                 {editingUserId && (
                   <>
+                    <div className="md:col-span-2">
+                      <p className={`text-xs sm:text-sm ${textSecondary} rounded-lg border px-3 py-2 ${isDark ? 'border-slate-600 bg-slate-800/40' : 'border-slate-200 bg-slate-50'}`}>
+                        Current password is stored securely and is never shown. Leave both fields empty to keep it unchanged, or enter a new password to update.
+                      </p>
+                    </div>
                     <div>
                       <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>New Password (optional)</label>
                       <input type="password" name="password" value={formData.password} onChange={handleInputChange}
+                        autoComplete="new-password"
                         className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                        placeholder="Leave blank to keep current" />
+                        placeholder="Leave blank to keep current password" />
                     </div>
                     <div>
                       <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Confirm New Password</label>
                       <input type="password" name="confirmPassword" value={formData.confirmPassword} onChange={handleInputChange}
+                        autoComplete="new-password"
                         className={`w-full px-4 py-2 rounded-lg text-sm border ${formData.confirmPassword && formData.password !== formData.confirmPassword ? 'border-red-500' : ''} ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                        placeholder="Required if changing password" />
+                        placeholder="Repeat new password if changing" />
                       {formData.confirmPassword && formData.password !== formData.confirmPassword && (
                         <p className="text-red-500 text-xs mt-1">Passwords do not match</p>
                       )}
@@ -1185,7 +1463,7 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
               </div>
               <div>
                 <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Address <span className="text-red-500">*</span></label>
-                <textarea name="address" value={formData.address} onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                <textarea name="address" value={formData.address} onChange={(e) => setFormData((prev) => ({ ...prev, address: e.target.value }))}
                   rows={2}
                   className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
                   placeholder="Enter Address" />
@@ -1199,12 +1477,13 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
                         src={imagePreviewUrl}
                         alt="Preview"
                         className="w-16 h-16 rounded-full object-cover border-2 border-slate-300"
+                        referrerPolicy="no-referrer"
                       />
                       <button
                         type="button"
                         onClick={handleClearImage}
                         className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center shadow-md"
-                        title="Remove image"
+                        title="Remove new image selection"
                       >
                         <X className="w-3.5 h-3.5" />
                       </button>
@@ -1212,22 +1491,45 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
                     <span className={`text-sm ${textSecondary}`}>{formData.profile_images.name}</span>
                   </div>
                 ) : (
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/jpeg,image/jpg,image/png"
-                    onChange={handleFileChange}
-                    className={`w-full text-sm ${isDark ? 'text-slate-100' : 'text-slate-900'}`}
-                  />
+                  <div className="space-y-3">
+                    {editingUserId && existingProfilePhotoRaw ? (
+                      <div className="flex items-center gap-3">
+                        <img
+                          src={getProfileImageUrl(existingProfilePhotoRaw, formData.name)}
+                          alt=""
+                          className="w-16 h-16 rounded-full object-cover border-2 border-slate-300"
+                          referrerPolicy="no-referrer"
+                          onError={(e) => {
+                            e.currentTarget.src = getInitialsAvatarUrl(formData.name || 'User', '6B8E23');
+                          }}
+                        />
+                        <div>
+                          <p className={`text-sm font-bold ${textPrimary}`}>Current profile photo</p>
+                          <p className={`text-xs ${textSecondary}`}>Choose a file below to replace it.</p>
+                        </div>
+                      </div>
+                    ) : editingUserId ? (
+                      <p className={`text-xs ${textSecondary}`}>No photo on file — upload one below if you want.</p>
+                    ) : null}
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/jpeg,image/jpg,image/png"
+                      onChange={handleFileChange}
+                      className={`w-full text-sm ${isDark ? 'text-slate-100' : 'text-slate-900'}`}
+                    />
+                  </div>
                 )}
               </div>
+              </>
+              )}
             </div>
             <div className="p-6 border-t border-inherit flex items-center justify-end gap-3">
-              <button onClick={handleCloseModal} disabled={isSubmitting}
+              <button onClick={handleCloseModal} disabled={isSubmitting || isLoadingEditForm}
                 className={`px-4 py-2 rounded-lg text-sm font-bold ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100' : 'bg-slate-200 hover:bg-slate-300 text-slate-900'}`}>
                 Cancel
               </button>
-              <button onClick={editingUserId ? handleUpdateUser : handleCreateUser} disabled={isSubmitting}
+              <button onClick={editingUserId ? handleUpdateUser : handleCreateUser} disabled={isSubmitting || isLoadingEditForm}
                 className={`px-4 py-2 rounded-lg text-sm font-bold bg-[#6B8E23] hover:bg-[#5a7a1e] text-white shadow-md disabled:opacity-50`}>
                 {isSubmitting ? 'Saving...' : (editingUserId ? 'Update' : 'Create')}
               </button>

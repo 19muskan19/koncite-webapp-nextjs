@@ -1,11 +1,6 @@
 import type { Metadata } from 'next'
-import dynamic from 'next/dynamic'
+import RootProviders from '@/components/RootProviders'
 import './globals.css'
-
-const RootProviders = dynamic(() => import('@/components/RootProviders'), {
-  ssr: true,
-  loading: () => null,
-})
 
 export const metadata: Metadata = {
   title: 'KONCITE - Construction Platform',

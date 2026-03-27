@@ -351,28 +351,19 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
     }
 
     try {
-      // Prepare FormData for Laravel API
+      // POST /api/sign-up: multipart text fields + optional profileImage (camelCase per API)
       const formDataToSend = new FormData();
-      
-      // Required user fields
+
       formDataToSend.append('name', formData.name.trim());
       formDataToSend.append('email', formData.email.trim().toLowerCase());
       formDataToSend.append('password', formData.password);
       formDataToSend.append('password_confirmation', formData.confirmPassword);
-      formDataToSend.append('phone', formData.phone.trim());
-      formDataToSend.append('country', formData.country); // Backend country ID (required)
-      formDataToSend.append('country_code', formData.countryCode);
-      
-      // Required company fields
       formDataToSend.append('company_name', formData.companyName.trim());
-      
-      // Signup user gets Super Admin role by default (id: 1 = Super Admin per UserRolesPermissions)
-      formDataToSend.append('company_user_role', '1');
-      formDataToSend.append('designation', 'Super Admin');
-      
-      // Optional fields
+      formDataToSend.append('country', String(formData.country));
+      formDataToSend.append('phone', formData.phone.trim());
+
       if (formData.profileImage) {
-        formDataToSend.append('profile_images', formData.profileImage);
+        formDataToSend.append('profileImage', formData.profileImage);
       }
 
       // Log the data being sent (for debugging)

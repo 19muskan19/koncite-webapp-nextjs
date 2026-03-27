@@ -62,6 +62,45 @@ const getYesterday = () => {
   return d.toISOString().slice(0, 10);
 };
 
+/** Dashboard fetchDpr row — safety entries (API: safetie). */
+function dprSafetyList(dpr: any): any[] {
+  const raw = dpr?.safetie ?? dpr?.safety ?? dpr?.safeties ?? [];
+  return Array.isArray(raw) ? raw : [];
+}
+
+/** Dashboard fetchDpr row — hindrance entries (API: historie). */
+function dprHindranceList(dpr: any): any[] {
+  const raw = dpr?.historie ?? dpr?.hindrance ?? dpr?.hindrances ?? dpr?.hinderance ?? [];
+  return Array.isArray(raw) ? raw : [];
+}
+
+function dprSafetySummaryLine(r: any): string {
+  const title = r?.safety_problem_details ?? r?.details ?? r?.title ?? r?.name ?? '';
+  const remarks = r?.remarkes ?? r?.remarks ?? '';
+  const members = Array.isArray(r?.concern_team_members)
+    ? r.concern_team_members.join(', ')
+    : (r?.concern_team_members ?? r?.team_members ?? '');
+  return [title, members, remarks].filter((x) => x != null && String(x).trim() !== '').join(' · ') || '—';
+}
+
+function dprHindranceSummaryLine(r: any): string {
+  const title = r?.hinderances_details ?? r?.details ?? r?.title ?? r?.name ?? '';
+  const remarks = r?.remarkes ?? r?.remarks ?? '';
+  const members = Array.isArray(r?.concern_team_members)
+    ? r.concern_team_members.join(', ')
+    : (r?.concern_team_members ?? r?.team_members ?? '');
+  return [title, members, remarks].filter((x) => x != null && String(x).trim() !== '').join(' · ') || '—';
+}
+
+function dprUserName(dpr: any): string {
+  const u = dpr?.users ?? dpr?.user;
+  const name = typeof u === 'object' && u != null ? u.name ?? u.user_name : null;
+  if (name && String(name).trim()) return String(name).trim();
+  if (dpr?.created_by && String(dpr.created_by).trim()) return String(dpr.created_by).trim();
+  if (dpr?.user_name && String(dpr.user_name).trim()) return String(dpr.user_name).trim();
+  return '-';
+}
+
 const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
   const toast = useToast();
   const toastRef = useRef(toast);
@@ -780,22 +819,53 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
                     <h3 className={`text-xs font-black uppercase tracking-widest ${textSecondary} mb-4`}>6. DPR (Daily Progress Report)</h3>
                     {Array.isArray(dprList) && dprList.length > 0 ? (
                       <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
+                        <table className="w-full text-sm min-w-[640px]">
                           <thead>
                             <tr className={`border-b ${isDark ? 'border-slate-600' : 'border-slate-200'}`}>
-                              <th className="text-left py-2 font-bold">Date</th>
-                              <th className="text-left py-2 font-bold">User</th>
-                              <th className="text-left py-2 font-bold">Safety & Hinderances</th>
+                              <th className="text-left py-2 font-bold pr-2">Date</th>
+                              <th className="text-left py-2 font-bold pr-2">User</th>
+                              <th className="text-left py-2 font-bold pr-2">Safety</th>
+                              <th className="text-left py-2 font-bold">Hindrance</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {dprList.slice(0, 10).map((dpr: any, i: number) => (
-                              <tr key={i} className={`border-b ${isDark ? 'border-slate-700' : 'border-slate-100'}`}>
-                                <td className="py-2">{dpr.date ? String(dpr.date).slice(0, 10) : '-'}</td>
-                                <td className="py-2">{dpr.user?.name ?? dpr.created_by ?? '-'}</td>
-                                <td className="py-2">{dpr.safety_hinderances ?? dpr.remarks ?? '-'}</td>
-                              </tr>
-                            ))}
+                            {dprList.slice(0, 10).map((dpr: any, i: number) => {
+                              const rowKey = dpr?.uuid ?? dpr?.id ?? i;
+                              const safetyItems = dprSafetyList(dpr);
+                              const hindranceItems = dprHindranceList(dpr);
+                              return (
+                                <tr key={rowKey} className={`border-b ${isDark ? 'border-slate-700' : 'border-slate-100'}`}>
+                                  <td className="py-2 align-top pr-2 whitespace-nowrap">{dpr.date ? String(dpr.date).slice(0, 10) : '-'}</td>
+                                  <td className="py-2 align-top pr-2 font-medium">{dprUserName(dpr)}</td>
+                                  <td className="py-2 align-top pr-2 max-w-[220px]">
+                                    {safetyItems.length === 0 ? (
+                                      <span className={`italic ${textSecondary}`}>No data</span>
+                                    ) : (
+                                      <ul className={`list-disc pl-4 space-y-1 text-xs ${textSecondary}`}>
+                                        {safetyItems.map((r: any, j: number) => (
+                                          <li key={j} className="whitespace-normal break-words">
+                                            {dprSafetySummaryLine(r)}
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    )}
+                                  </td>
+                                  <td className="py-2 align-top max-w-[220px]">
+                                    {hindranceItems.length === 0 ? (
+                                      <span className={`italic ${textSecondary}`}>No data</span>
+                                    ) : (
+                                      <ul className={`list-disc pl-4 space-y-1 text-xs ${textSecondary}`}>
+                                        {hindranceItems.map((r: any, j: number) => (
+                                          <li key={j} className="whitespace-normal break-words">
+                                            {dprHindranceSummaryLine(r)}
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>

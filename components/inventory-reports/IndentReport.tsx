@@ -62,6 +62,30 @@ const formatNum = (n: any) => {
   return isNaN(v) ? '-' : v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
+/** Drop opening-stock rows that clearly belong to another project or (when filtered) another subproject. */
+function openingStockRowMatchesScope(
+  s: Record<string, unknown>,
+  projId: string | number,
+  subProjectFilter: string
+): boolean {
+  const rowProj =
+    (s?.project as { id?: string | number } | undefined)?.id ??
+    s?.projects_id ??
+    s?.project_id ??
+    (typeof s?.project === 'object' && s?.project != null && 'id' in (s.project as object)
+      ? (s.project as { id?: string | number }).id
+      : undefined);
+  if (rowProj != null && String(rowProj) !== String(projId)) return false;
+  if (!subProjectFilter) return true;
+  const rowSub =
+    (s?.sub_projects_id as { id?: string | number } | undefined)?.id ??
+    s?.sub_projects_id ??
+    s?.subproject_id ??
+    (s?.sub_projects as { id?: string | number } | undefined)?.id;
+  if (rowSub == null) return true;
+  return String(rowSub) === String(subProjectFilter);
+}
+
 const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
   const toast = useToast();
   const [selectedProject, setSelectedProject] = useState<string>('');
@@ -106,6 +130,7 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
         const raw = await materialRequestAPI.getReport({
           projectId: projId || undefined,
           indentNo: indentNo.trim() || undefined,
+          ...(selectedSubProject ? { subProjectId: selectedSubProject } : {}),
         });
         const arr = Array.isArray(raw) ? raw : [];
         let srNo = 0;
@@ -157,6 +182,7 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
         const stockList = await masterDataAPI.getMaterialsOpeningList(projId);
         const stockArr = Array.isArray(stockList) ? stockList : ((stockList as { data?: any[] })?.data ?? []);
         for (const s of stockArr) {
+          if (!openingStockRowMatchesScope(s, projId, selectedSubProject)) continue;
           const matId = s?.materials_id ?? s?.material_id ?? s?.materials?.id ?? s?.material?.id;
           const qty = Number(s?.qty ?? s?.opening_qty ?? 0);
           if (matId != null) stockMap[String(matId)] = (stockMap[String(matId)] ?? 0) + qty;
@@ -218,11 +244,11 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
     } finally {
       setIsLoading(false);
     }
-  }, [selectedProject, indentNo, projects, toast]);
+  }, [selectedProject, selectedSubProject, indentNo, projects, toast]);
 
   useEffect(() => {
     if (selectedProject || indentNo.trim()) loadReportData();
-  }, [selectedProject, indentNo, loadReportData]);
+  }, [selectedProject, selectedSubProject, indentNo, loadReportData]);
 
   const handleSort = (key: string) => {
     setSortConfig((prev) => (prev?.key === key && prev?.direction === 'asc' ? { key, direction: 'desc' } : { key, direction: 'asc' }));

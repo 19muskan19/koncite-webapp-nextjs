@@ -30,7 +30,10 @@ export interface ContractorEntry {
   projectName: string;
   contractorName: string;
   contractorId?: string;
+  /** Labour name from master (display) */
   category: string;
+  /** skilled | semiskilled | unskilled — for rate lookup when category is a master labour name */
+  rateCategory?: string;
   headCount: number;
   unitsWorked: number;
   otHoursPerPerson: number;
@@ -257,8 +260,11 @@ export function getRateForDate(
       otUnit: match.otUnit,
     };
   }
-  // Default
+  // Default (tiers from labour master + legacy trade labels)
   const defaults: Record<string, { base: number; ot: number }> = {
+    skilled: { base: 800, ot: 100 },
+    semiskilled: { base: 700, ot: 90 },
+    unskilled: { base: 500, ot: 75 },
     Mason: { base: 800, ot: 100 },
     Carpenter: { base: 800, ot: 100 },
     Fitter: { base: 800, ot: 100 },
@@ -278,12 +284,14 @@ function calculateEntryAmount(entry: {
   projectName: string;
   contractorName: string;
   category: string;
+  rateCategory?: string;
   date: string;
 }): number {
+  const rateLookup = entry.rateCategory || entry.category;
   const rate = getRateForDate(
     entry.projectName,
     entry.contractorName,
-    entry.category,
+    rateLookup,
     entry.date
   );
   const base = entry.headCount * entry.unitsWorked * rate.baseRate;

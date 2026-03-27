@@ -53,6 +53,7 @@ import {
 import CameraCapture from './CameraCapture';
 import WorkforceDashboardTab from './WorkforceDashboardTab';
 import CreateVendorModal from '@/components/masters/Modals/CreateVendorModal';
+import CreateLabourModal from '@/components/masters/Modals/CreateLabourModal';
 import { masterDataAPI, teamsAPI, workforceAPI } from '@/services/api';
 import { useToast } from '@/contexts/ToastContext';
 import { useUser } from '@/contexts/UserContext';
@@ -66,6 +67,58 @@ interface Labour {
   code?: string;
   category?: string;
   unit?: { unit: string };
+}
+
+/** Labour row from Masters (for contractor rate picker) */
+interface RateLabourPick {
+  id: string;
+  numericId: number | string;
+  uuid?: string;
+  name: string;
+  code: string;
+  category: 'skilled' | 'semiskilled' | 'unskilled';
+}
+
+function normalizeLabourCategory(raw: unknown): 'skilled' | 'semiskilled' | 'unskilled' {
+  const cat = String(raw || '')
+    .toLowerCase()
+    .replace(/[\s_-]+/g, '');
+  if (cat === 'semiskilled') return 'semiskilled';
+  if (cat === 'unskilled') return 'unskilled';
+  return 'skilled';
+}
+
+function transformRatesLabourList(fetched: unknown): RateLabourPick[] {
+  const rows = Array.isArray(fetched) ? fetched : [];
+  const out: RateLabourPick[] = [];
+  for (const labour of rows as any[]) {
+    const numericId = labour.id;
+    const uuid = labour.uuid;
+    const category = normalizeLabourCategory(labour.category);
+    const code = String(labour.code || labour.labour_code || '');
+    const isActiveValue = labour.is_active;
+    const isActive =
+      isActiveValue === 1 ||
+      isActiveValue === '1' ||
+      isActiveValue === true ||
+      isActiveValue === 'true' ||
+      isActiveValue === undefined ||
+      isActiveValue === null;
+    if (!isActive) continue;
+    const key = numericId != null && numericId !== '' ? numericId : uuid;
+    if (key == null || key === '') continue;
+    const name = String(labour.name || '').trim();
+    if (!name) continue;
+    out.push({
+      id: uuid || String(numericId ?? ''),
+      numericId: key,
+      uuid,
+      name,
+      code,
+      category,
+    });
+  }
+  return out;
 }
 
 interface StaffUser {
@@ -85,13 +138,25 @@ interface Vendor {
 }
 
 interface LabourEntryRow {
-  category: string;
+  /** Labour master id (numeric or uuid string) */
+  labourId: string;
+  /** Display / log label from labour master */
+  labourName: string;
+  /** skilled | semiskilled | unskilled — used for rate resolution */
+  rateCategory: 'skilled' | 'semiskilled' | 'unskilled';
   headCount: number | '';
   unitsWorked: number | string;
   otHoursPerPerson: number | string;
 }
 
-const defaultLabourRow = (): LabourEntryRow => ({ category: 'Mason', headCount: 1, unitsWorked: 1, otHoursPerPerson: 0 });
+const defaultLabourRow = (): LabourEntryRow => ({
+  labourId: '',
+  labourName: '',
+  rateCategory: 'skilled',
+  headCount: 1,
+  unitsWorked: 1,
+  otHoursPerPerson: 0,
+});
 
 // Punch: All punch data stored in localStorage (as of now - backend may not persist)
 // punchedInEmployees: who punched in today (for Punch OUT list)
@@ -280,16 +345,25 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   });
   const [ratesFormData, setRatesFormData] = useState({
     vendor_id: '',
-    category: 'skilled',
+    labour_id: '',
+    category: 'skilled' as 'skilled' | 'semiskilled' | 'unskilled',
     daily_rate: '',
     daily_rate_unit: 'Day' as 'Hour' | 'Day',
     overtime_rate: '',
     overtime_unit: 'Hour' as 'Hour' | 'Day',
     effective_from: new Date().toISOString().slice(0, 10),
   });
+  const [ratesLabourMasterList, setRatesLabourMasterList] = useState<RateLabourPick[]>([]);
+  const [ratesLaboursLoading, setRatesLaboursLoading] = useState(false);
+  const [ratesLabourSearch, setRatesLabourSearch] = useState('');
+  const [ratesLabourDropdownOpen, setRatesLabourDropdownOpen] = useState(false);
+  const [showRatesCreateLabourModal, setShowRatesCreateLabourModal] = useState(false);
+  const ratesLabourDropdownRef = useRef<HTMLDivElement>(null);
   const [rateHistory, setRateHistory] = useState<Array<{ category: string; contractor: string; effectiveFrom: string; dailyRate: string; overtimeRate: string }>>([]);
   const [isSubmittingRate, setIsSubmittingRate] = useState(false);
   const [showAddVendorModal, setShowAddVendorModal] = useState(false);
+  const [labourEntryMasterList, setLabourEntryMasterList] = useState<RateLabourPick[]>([]);
+  const [labourEntryLaboursLoading, setLabourEntryLaboursLoading] = useState(false);
   const [labourEntryProjectDropdownOpen, setLabourEntryProjectDropdownOpen] = useState(false);
   const [labourEntryContractorDropdownOpen, setLabourEntryContractorDropdownOpen] = useState(false);
   const [labourEntryProjectSearch, setLabourEntryProjectSearch] = useState('');
@@ -467,9 +541,14 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
       .catch(() => setProjects([]));
   }, [isAuthenticated, showAddProfileModal]);
 
-  // Load contractor data: projects and contractors from master API (for Dashboard, Logs, Pay tabs)
+  // Load contractor data: projects and contractors from Masters API (scoped to logged-in user via Bearer token)
   useEffect(() => {
     if (activeTab !== 'dashboard' && activeTab !== 'contractor' && activeTab !== 'pay') return;
+    if (!isAuthenticated) {
+      setContractorProjects([]);
+      setVendors([]);
+      return;
+    }
     setContractorDataLoading(true);
     Promise.all([
       masterDataAPI.getProjects(),
@@ -487,7 +566,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
         setVendors([]);
       })
       .finally(() => setContractorDataLoading(false));
-  }, [activeTab, dataVersion]);
+  }, [activeTab, dataVersion, isAuthenticated]);
 
   // Refresh projects and contractors from master API
   const refreshContractorProjectsAndVendors = useCallback(() => {
@@ -525,10 +604,55 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
       if (staffFilterDropdownRef.current && !staffFilterDropdownRef.current.contains(e.target as Node)) {
         setStaffFilterDropdownOpen(false);
       }
+      if (ratesLabourDropdownRef.current && !ratesLabourDropdownRef.current.contains(e.target as Node)) {
+        setRatesLabourDropdownOpen(false);
+      }
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  // Load labour master list when Set Contractor Rate modal opens (Masters > Labours)
+  useEffect(() => {
+    if (!showRatesModal || !isAuthenticated) return;
+    let cancel = false;
+    setRatesLaboursLoading(true);
+    masterDataAPI
+      .getLabours({ per_page: 9999 })
+      .then((raw) => {
+        if (!cancel) setRatesLabourMasterList(transformRatesLabourList(raw));
+      })
+      .catch(() => {
+        if (!cancel) setRatesLabourMasterList([]);
+      })
+      .finally(() => {
+        if (!cancel) setRatesLaboursLoading(false);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [showRatesModal, isAuthenticated]);
+
+  // Labour master list for Add Labor Count modal (Masters > Labours)
+  useEffect(() => {
+    if (!showAddLabourEntryModal || !isAuthenticated) return;
+    let cancel = false;
+    setLabourEntryLaboursLoading(true);
+    masterDataAPI
+      .getLabours({ per_page: 9999 })
+      .then((raw) => {
+        if (!cancel) setLabourEntryMasterList(transformRatesLabourList(raw));
+      })
+      .catch(() => {
+        if (!cancel) setLabourEntryMasterList([]);
+      })
+      .finally(() => {
+        if (!cancel) setLabourEntryLaboursLoading(false);
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [showAddLabourEntryModal, isAuthenticated]);
 
   // Camera for Punch
   useEffect(() => {
@@ -811,10 +935,10 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
       return;
     }
     const validRows = labourRows.filter(
-      (r) => r.category && r.headCount !== '' && r.headCount >= 1
+      (r) => r.labourId && r.labourName.trim() && r.headCount !== '' && r.headCount >= 1
     );
     if (validRows.length === 0) {
-      toast.showWarning('Add at least one labour type with valid head count or units');
+      toast.showWarning('Add at least one labour from Masters with valid head count');
       return;
     }
     try {
@@ -825,7 +949,8 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
         saveContractorEntry({
           projectName,
           contractorName,
-          category: row.category,
+          category: row.labourName.trim(),
+          rateCategory: row.rateCategory,
           headCount: h,
           unitsWorked: u,
           otHoursPerPerson: o,
@@ -854,23 +979,32 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
       toast.showWarning('Please select a contractor');
       return;
     }
+    if (!ratesFormData.labour_id) {
+      toast.showWarning('Please select a labour from the list');
+      return;
+    }
     if (isNaN(dailyRate) || dailyRate < 0) {
       toast.showWarning('Valid daily rate is required');
       return;
     }
+    const selectedLabour = ratesLabourMasterList.find((l) => String(l.numericId) === String(ratesFormData.labour_id));
+    const labourHistLabel = selectedLabour ? selectedLabour.name : ratesFormData.category;
     setIsSubmittingRate(true);
     try {
+      const labourNumeric = Number(ratesFormData.labour_id);
       await workforceAPI.storeRate({
         vendor_id: Number(vendorId),
         category: ratesFormData.category,
+        ...(Number.isFinite(labourNumeric) && labourNumeric > 0 ? { labour_id: labourNumeric } : {}),
         daily_rate: dailyRate,
         overtime_rate: ratesFormData.overtime_rate ? parseFloat(ratesFormData.overtime_rate) : undefined,
+        effective_from: ratesFormData.effective_from,
       });
       toast.showSuccess('Rate saved successfully');
       setRateHistory((prev) => [
         ...prev,
         {
-          category: ratesFormData.category,
+          category: labourHistLabel,
           contractor: contractor?.name || '',
           effectiveFrom: ratesFormData.effective_from,
           dailyRate: ratesFormData.daily_rate,
@@ -878,8 +1012,11 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
         },
       ]);
       setShowRatesModal(false);
+      setRatesLabourDropdownOpen(false);
+      setRatesLabourSearch('');
       setRatesFormData({
         vendor_id: '',
+        labour_id: '',
         category: 'skilled',
         daily_rate: '',
         daily_rate_unit: 'Day',
@@ -1488,16 +1625,19 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   <select
                     value={payProject}
                     onChange={(e) => setPayProject(e.target.value)}
-                    className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                    disabled={contractorDataLoading}
+                    className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'} disabled:opacity-60`}
                   >
                     <option value="">All</option>
-                    {[...new Set([
-                      ...getContractorEntries().map((e) => e.projectName),
-                      ...getWorkers().map((w) => w.projectName),
-                      ...contractorProjects.map((p) => p.name),
-                    ])].filter(Boolean).sort().map((p) => (
-                      <option key={p} value={p}>{p}</option>
-                    ))}
+                    {contractorProjects
+                      .filter((p) => p.name)
+                      .slice()
+                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .map((p) => (
+                        <option key={String(p.id)} value={p.name}>
+                          {p.name}
+                        </option>
+                      ))}
                   </select>
                 </div>
                 <div>
@@ -1505,15 +1645,19 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   <select
                     value={payContractor}
                     onChange={(e) => setPayContractor(e.target.value)}
-                    className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                    disabled={contractorDataLoading}
+                    className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'} disabled:opacity-60`}
                   >
                     <option value="">All</option>
-                    {[...new Set([
-                      ...getContractorEntries().map((e) => e.contractorName),
-                      ...vendors.map((v) => v.name || ''),
-                    ])].filter(Boolean).sort().map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
+                    {vendors
+                      .filter((v) => v.name)
+                      .slice()
+                      .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+                      .map((v) => (
+                        <option key={String(v.id)} value={v.name}>
+                          {v.name}
+                        </option>
+                      ))}
                   </select>
                 </div>
                 <div>
@@ -1557,7 +1701,6 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   const matchPeriod = periodCutoff === 0 || new Date(e.date).getTime() >= periodCutoff;
                   return matchProject && matchContractor && matchPeriod;
                 });
-                const totalBilled = entries.reduce((s, e) => s + e.amount, 0);
                 const paidEntries = entries.filter((e) => e.paid);
                 const totalPaid = paidEntries.reduce((s, e) => s + e.amount, 0);
                 const unpaid = entries.filter((e) => !e.paid);
@@ -1567,11 +1710,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   .reduce((s, e) => s + e.amount, 0);
                 return (
                   <>
-                    <div className={`grid grid-cols-3 gap-3 p-4 rounded-xl ${isDark ? 'bg-slate-800/50' : 'bg-slate-100'}`}>
-                      <div>
-                        <p className={`text-xs font-bold uppercase ${textSecondary}`}>Total Billed</p>
-                        <p className={`text-lg font-black ${textPrimary}`}>₹{totalBilled.toLocaleString('en-IN')}</p>
-                      </div>
+                    <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 rounded-xl ${isDark ? 'bg-slate-800/50' : 'bg-slate-100'}`}>
                       <div>
                         <p className={`text-xs font-bold uppercase ${textSecondary}`}>Total Paid</p>
                         <p className={`text-lg font-black ${textPrimary}`}>₹{totalPaid.toLocaleString('en-IN')}</p>
@@ -1625,7 +1764,12 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                               <tr><td colSpan={6} className={`py-6 text-center text-sm ${textSecondary}`}>No unpaid logs</td></tr>
                             ) : (
                               unpaid.map((e) => {
-                                const rateInfo = getRateForDate(e.projectName, e.contractorName, e.category, e.date);
+                                const rateInfo = getRateForDate(
+                                  e.projectName,
+                                  e.contractorName,
+                                  e.rateCategory || e.category,
+                                  e.date
+                                );
                                 const unitLabel = rateInfo.unit === 'Hr' ? 'hrs' : 'days';
                                 const otUnitLabel = rateInfo.otUnit === 'Hr' ? 'hrs' : 'days';
                                 const labourDetails = `${e.category} · ${e.headCount} pax · ${e.unitsWorked} ${unitLabel} · ${e.otHoursPerPerson} ${otUnitLabel} OT`;
@@ -2112,7 +2256,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                     const contractorName = contractor?.name ?? '';
                     const rateInfo =
                       projectName && contractorName
-                        ? getRateForDate(projectName, contractorName, row.category, labourEntryFormData.date)
+                        ? getRateForDate(projectName, contractorName, row.rateCategory, labourEntryFormData.date)
                         : null;
                     const unitLabel = rateInfo?.unit === 'Hr' ? 'hrs' : 'days';
                     const otUnitLabel = rateInfo?.otUnit === 'Hr' ? 'hrs' : 'days';
@@ -2140,24 +2284,37 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                         </div>
                         <div className="space-y-3">
                           <div>
-                            <label className={`block text-xs font-bold ${textPrimary} mb-1`}>Category</label>
+                            <label className={`block text-xs font-bold ${textPrimary} mb-1`}>Labour (Masters)</label>
                             <select
-                              value={row.category}
-                              onChange={(e) =>
+                              value={row.labourId}
+                              onChange={(e) => {
+                                const id = e.target.value;
+                                const lab = labourEntryMasterList.find((l) => String(l.numericId) === id);
                                 setLabourEntryFormData((p) => ({
                                   ...p,
-                                  labourRows: p.labourRows.map((r, i) => (i === idx ? { ...r, category: e.target.value } : r)),
-                                }))
-                              }
-                              className={`w-full px-3 py-2 rounded-lg border ${borderClass} ${textPrimary} text-sm ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                                  labourRows: p.labourRows.map((r, i) =>
+                                    i === idx
+                                      ? {
+                                          ...r,
+                                          labourId: id,
+                                          labourName: lab?.name ?? '',
+                                          rateCategory: lab?.category ?? 'skilled',
+                                        }
+                                      : r
+                                  ),
+                                }));
+                              }}
+                              disabled={labourEntryLaboursLoading}
+                              className={`w-full px-3 py-2 rounded-lg border ${borderClass} ${textPrimary} text-sm ${isDark ? 'bg-slate-800' : 'bg-white'} disabled:opacity-60`}
                             >
-                              <option value="Mason">Mason</option>
-                              <option value="Carpenter">Carpenter</option>
-                              <option value="Fitter">Fitter</option>
-                              <option value="Helper">Helper</option>
-                              <option value="Electrician">Electrician</option>
-                              <option value="Plumber">Plumber</option>
-                              <option value="Other">Other</option>
+                              <option value="">
+                                {labourEntryLaboursLoading ? 'Loading labours…' : '— Select labour —'}
+                              </option>
+                              {labourEntryMasterList.map((l) => (
+                                <option key={String(l.numericId)} value={String(l.numericId)}>
+                                  {l.name}
+                                </option>
+                              ))}
                             </select>
                           </div>
                           <div className="grid grid-cols-3 gap-3">
@@ -2377,7 +2534,14 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
           <div className={`w-full max-w-md rounded-2xl overflow-hidden ${cardClass} border ${borderClass}`}>
             <div className="p-4 border-b border-inherit flex items-center justify-between">
               <span className={`font-bold ${textPrimary}`}>Set Contractor Rate</span>
-              <button onClick={() => setShowRatesModal(false)} className="p-1 hover:opacity-70">
+              <button
+                onClick={() => {
+                  setShowRatesModal(false);
+                  setRatesLabourDropdownOpen(false);
+                  setRatesLabourSearch('');
+                }}
+                className="p-1 hover:opacity-70"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -2397,17 +2561,92 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   ))}
                 </select>
               </div>
-              <div>
-                <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Role/Category *</label>
-                <select
-                  value={ratesFormData.category}
-                  onChange={(e) => setRatesFormData((p) => ({ ...p, category: e.target.value }))}
-                  className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+              <div ref={ratesLabourDropdownRef} className="relative">
+                <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Category</label>
+                <div
+                  onClick={() => setRatesLabourDropdownOpen((o) => !o)}
+                  className={`flex items-center gap-2 w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'} cursor-pointer min-h-[42px]`}
                 >
-                  <option value="skilled">Skilled</option>
-                  <option value="semiskilled">Semi-skilled</option>
-                  <option value="unskilled">Unskilled</option>
-                </select>
+                  <span className="flex-1 text-left truncate">
+                    {ratesLaboursLoading
+                      ? 'Loading labours…'
+                      : ratesFormData.labour_id
+                        ? (() => {
+                            const sel = ratesLabourMasterList.find(
+                              (l) => String(l.numericId) === String(ratesFormData.labour_id)
+                            );
+                            return sel ? sel.name : '— Select labour —';
+                          })()
+                        : '— Select labour —'}
+                  </span>
+                  <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform ${ratesLabourDropdownOpen ? 'rotate-180' : ''}`} />
+                </div>
+                {ratesLabourDropdownOpen && (
+                  <div
+                    className={`absolute left-0 right-0 top-full mt-1 rounded-lg border ${borderClass} ${isDark ? 'bg-dropdown-panel' : 'bg-white'} shadow-lg z-[60] overflow-hidden max-h-72 flex flex-col`}
+                  >
+                    <div className="flex items-center gap-1 p-2 border-b border-inherit">
+                      <Search className="w-4 h-4 flex-shrink-0 text-slate-400" />
+                      <input
+                        type="text"
+                        placeholder="Search name…"
+                        value={ratesLabourSearch}
+                        onChange={(e) => setRatesLabourSearch(e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        className={`flex-1 min-w-0 py-1.5 px-2 rounded border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-900' : 'bg-slate-50'} text-sm`}
+                      />
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setRatesLabourDropdownOpen(false);
+                          setShowRatesCreateLabourModal(true);
+                        }}
+                        className="p-2 rounded-lg hover:bg-[#6B8E23]/20 text-[#6B8E23] transition-colors shrink-0"
+                        title="Add labour (same as Masters)"
+                      >
+                        <Plus className="w-5 h-5" />
+                      </button>
+                    </div>
+                    <div className="overflow-y-auto flex-1">
+                      {ratesLabourMasterList
+                        .filter((l) => {
+                          const q = ratesLabourSearch.trim().toLowerCase();
+                          if (!q) return true;
+                          return (l.name || '').toLowerCase().includes(q);
+                        })
+                        .map((l) => (
+                          <div
+                            key={String(l.numericId)}
+                            onClick={() => {
+                              setRatesFormData((p) => ({
+                                ...p,
+                                labour_id: String(l.numericId),
+                                category: l.category,
+                              }));
+                              setRatesLabourDropdownOpen(false);
+                              setRatesLabourSearch('');
+                            }}
+                            className={`px-4 py-2 cursor-pointer hover:bg-[#6B8E23]/10 ${
+                              String(l.numericId) === String(ratesFormData.labour_id) ? 'bg-[#6B8E23]/20' : ''
+                            } ${textPrimary}`}
+                          >
+                            {l.name}
+                          </div>
+                        ))}
+                      {!ratesLaboursLoading &&
+                        ratesLabourMasterList.filter((l) => {
+                          const q = ratesLabourSearch.trim().toLowerCase();
+                          if (!q) return true;
+                          return (l.name || '').toLowerCase().includes(q);
+                        }).length === 0 && (
+                          <div className={`px-4 py-3 text-sm ${textSecondary}`}>
+                            No labours match. Use + to add in Masters.
+                          </div>
+                        )}
+                    </div>
+                  </div>
+                )}
               </div>
               <div>
                 <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Daily Rate *</label>
@@ -2472,7 +2711,11 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   Save Rate
                 </button>
                 <button
-                  onClick={() => setShowRatesModal(false)}
+                  onClick={() => {
+                    setShowRatesModal(false);
+                    setRatesLabourDropdownOpen(false);
+                    setRatesLabourSearch('');
+                  }}
                   className="px-4 py-2.5 rounded-lg font-bold border border-inherit"
                 >
                   Cancel
@@ -2482,6 +2725,45 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
           </div>
         </div>
       )}
+
+      <CreateLabourModal
+        theme={theme}
+        isOpen={showRatesCreateLabourModal}
+        onClose={() => setShowRatesCreateLabourModal(false)}
+        labours={ratesLabourMasterList.map((l) => ({
+          id: l.id,
+          numericId: l.numericId,
+          uuid: l.uuid,
+          name: l.name,
+          code: l.code || undefined,
+          category: l.category,
+        }))}
+        onSuccess={(created) => {
+          setShowRatesCreateLabourModal(false);
+          const raw = created && typeof created === 'object' ? (created as any) : null;
+          const row = raw?.id != null || raw?.uuid != null ? raw : raw?.data;
+          if (row && (row.id != null || row.uuid != null)) {
+            const next = transformRatesLabourList([row]);
+            if (next.length) {
+              const item = next[0];
+              setRatesLabourMasterList((prev) => {
+                const key = String(item.numericId);
+                const without = prev.filter((p) => String(p.numericId) !== key);
+                return [...without, item].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+              });
+              setRatesFormData((p) => ({
+                ...p,
+                labour_id: String(item.numericId),
+                category: item.category,
+              }));
+              return;
+            }
+          }
+          masterDataAPI.getLabours({ per_page: 9999 }).then((list) => {
+            setRatesLabourMasterList(transformRatesLabourList(list));
+          });
+        }}
+      />
     </div>
   );
 };

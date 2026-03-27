@@ -701,7 +701,6 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
                     content={message.content}
                     isDark={isDark}
                     role={message.role}
-                    onOptionClick={message.role === 'assistant' ? (text) => handleSendMessage(text) : undefined}
                     className={`text-xs sm:text-xs md:text-sm font-normal break-words leading-relaxed ${message.role === 'user' ? `font-chat-user ${textPrimary}` : `font-chat-ai ${textPrimary}`}`}
                   />
                 </div>
