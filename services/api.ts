@@ -3363,6 +3363,7 @@ export const workforceAPI = {
    * Store contractor rate (vendor + category + daily_rate; optional labour_id from Labour master)
    * POST /labour-rates-store
    */
+  /** @deprecated Prefer contractorLaborRatesAPI.create */
   storeRate: async (data: {
     vendor_id: number;
     category: string;
@@ -3377,6 +3378,310 @@ export const workforceAPI = {
     } catch (error: any) {
       throw {
         message: error.response?.data?.message || 'Failed to store rate',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
+/** Contractor labour rates – form-options, CRUD (Laravel /contractor-labor-rates). */
+export const contractorLaborRatesAPI = {
+  formOptions: async (): Promise<any> => {
+    try {
+      const response = await apiClient.get('/contractor-labor-rates/form-options');
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to load rate form options',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  list: async (params?: {
+    project_id?: number | string;
+    vendors_id?: number | string;
+    labours_id?: number | string;
+    is_active?: 0 | 1;
+  }): Promise<any> => {
+    try {
+      const response = await apiClient.get('/contractor-labor-rates', { params: params ?? {} });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to load contractor labour rates',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  get: async (uuid: string): Promise<any> => {
+    try {
+      const response = await apiClient.get(`/contractor-labor-rates/${encodeURIComponent(uuid)}`);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to load rate',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  create: async (body: {
+    vendors_id: number;
+    labours_id: number;
+    project_id: number;
+    daily_rate_amount: number;
+    daily_rate_unit: 'day' | 'hour';
+    effective_from: string;
+    overtime_rate_amount?: number;
+    overtime_rate_unit?: 'day' | 'hour';
+    hours_per_day?: number;
+    currency_code?: string;
+    notes?: string;
+  }): Promise<any> => {
+    try {
+      const response = await apiClient.post('/contractor-labor-rates', body);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to save contractor rate',
+        errors: error.response?.data?.errors || {},
+        status: error.response?.status,
+        responseData: error.response?.data,
+      } as ApiError;
+    }
+  },
+};
+
+/** Daily labour entries – resolve-rate, list, detail, submit. */
+export const labourEntriesAPI = {
+  resolveRate: async (params: {
+    project_id: number | string;
+    vendors_id: number | string;
+    labours_id: number | string;
+    work_date: string;
+  }): Promise<any> => {
+    try {
+      const response = await apiClient.get('/labour-entries/resolve-rate', { params });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Could not resolve rate for this line',
+        errors: error.response?.data?.errors || {},
+        status: error.response?.status,
+        responseData: error.response?.data,
+      } as ApiError;
+    }
+  },
+
+  list: async (params?: {
+    work_date_from?: string;
+    work_date_to?: string;
+    project_id?: number | string;
+    vendors_id?: number | string;
+  }): Promise<any> => {
+    try {
+      const response = await apiClient.get('/labour-entries', { params: params ?? {} });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to load labour entries',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  get: async (uuid: string): Promise<any> => {
+    try {
+      const response = await apiClient.get(`/labour-entries/${encodeURIComponent(uuid)}`);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to load labour entry',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  create: async (body: {
+    work_date: string;
+    project_id: number;
+    vendors_id: number;
+    labour_categories: Array<{
+      labours_id: number;
+      day_labour_count: number;
+      overtime_hours?: number;
+      daily_rate: number;
+      day_unit: 'day' | 'hour';
+      ot_rate: number;
+      ot_unit: 'day' | 'hour';
+      contractor_labor_rate_id?: number | null;
+    }>;
+    currency_code?: string;
+    status?: string;
+    notes?: string;
+  }): Promise<any> => {
+    try {
+      const response = await apiClient.post('/labour-entries', body);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to submit labour entry',
+        errors: error.response?.data?.errors || {},
+        status: error.response?.status,
+        responseData: error.response?.data,
+      } as ApiError;
+    }
+  },
+};
+
+/** Azure Face attendance – proxied to Laravel (base URL already includes /api). */
+export const faceAttendanceAPI = {
+  setup: async (body?: { company_id?: number }): Promise<any> => {
+    try {
+      const response = await apiClient.post('/face/setup', body ?? {});
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Face setup failed',
+        errors: error.response?.data?.errors || {},
+        status: error.response?.status,
+      } as ApiError;
+    }
+  },
+
+  enroll: async (formData: FormData): Promise<any> => {
+    try {
+      const response = await apiClient.post('/face/enroll', formData, { timeout: 120000 });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Face enrollment failed',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /** Replace enrollment (super-admin / manager on backend). Same multipart shape as enroll. */
+  reEnroll: async (formData: FormData): Promise<any> => {
+    try {
+      const response = await apiClient.post('/face/re-enroll', formData, { timeout: 120000 });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Face re-enrollment failed',
+        errors: error.response?.data?.errors || {},
+        status: error.response?.status,
+      } as ApiError;
+    }
+  },
+
+  check: async (params: {
+    company_id: number | string;
+    subject_type: 'company_user' | 'workforce_profile';
+    subject_id: number | string;
+  }): Promise<any> => {
+    try {
+      const response = await apiClient.get('/face/check', { params });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Face check failed',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  attendees: async (params?: { company_id?: number | string }): Promise<any> => {
+    try {
+      const response = await apiClient.get('/face/attendees', { params: params ?? {} });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to load attendees',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * Multipart: company_id, photo, latitude, longitude, optional geo_accuracy, device_info,
+   * optional client_punch_at (ISO-8601 UTC), client_timezone (IANA), client_utc_offset_minutes.
+   * Backend should persist punch time from server now() and/or these client fields for correct wall clock.
+   */
+  punchIn: async (formData: FormData): Promise<any> => {
+    try {
+      const response = await apiClient.post('/face/punch-in', formData, { timeout: 90000 });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Punch in failed',
+        errors: error.response?.data?.errors || {},
+        status: error.response?.status,
+      } as ApiError;
+    }
+  },
+
+  /** Same body as punchIn. */
+  punchOut: async (formData: FormData): Promise<any> => {
+    try {
+      const response = await apiClient.post('/face/punch-out', formData, { timeout: 90000 });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Punch out failed',
+        errors: error.response?.data?.errors || {},
+        status: error.response?.status,
+      } as ApiError;
+    }
+  },
+
+  statusToday: async (params?: {
+    company_id?: number | string;
+    subject_type?: string;
+    subject_id?: number | string;
+  }): Promise<any> => {
+    try {
+      const response = await apiClient.get('/face/status-today', { params: params ?? {} });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to load today status',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
+export const attendanceReportAPI = {
+  report: async (params: {
+    company_id: number | string;
+    date_from: string;
+    date_to: string;
+    project_id?: number | string;
+  }): Promise<any> => {
+    try {
+      const response = await apiClient.get('/attendance/report', { params });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to load attendance report',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
+export const workforceProfilesAPI = {
+  /** Lightweight field worker profile (not full login). Multipart: company_id, name, project_id, worker_type (staff|own_labour), designation, email?, mobile?, profile_photo? */
+  create: async (formData: FormData): Promise<any> => {
+    try {
+      const response = await apiClient.post('/workforce-profiles', formData, { timeout: 60000 });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to create workforce profile',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
