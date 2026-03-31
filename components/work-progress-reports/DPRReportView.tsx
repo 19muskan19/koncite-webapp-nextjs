@@ -247,19 +247,43 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
     return Array.isArray(d) ? d : [];
   })();
 
+  /** Match DPR.tsx resolveImageUrl – inventory-report often returns relative paths (storage/..., /storage/...) */
   const getImageUrl = (url: string | null | undefined): string | null => {
     if (!url || typeof url !== 'string') return null;
     const t = url.trim();
+    if (!t) return null;
     if (t.startsWith('http://') || t.startsWith('https://') || t.startsWith('data:')) return t;
-    if (t.startsWith('/')) return `${API_BASE_URL.replace(/\/$/, '')}${t}`;
-    return t;
+    const base = API_BASE_URL.replace(/\/$/, '');
+    const path = t.startsWith('/') ? t : `/${t}`;
+    return `${base}${path}`;
   };
 
+  /** Match DPR.tsx parseImagesFromItem + activity fields – report API keys differ from edit payloads */
   const parseImages = (item: any): string[] => {
-    const imgs = item?.images ?? item?.img;
-    if (Array.isArray(imgs)) return imgs.filter(Boolean);
-    const img = item?.img ?? item?.image ?? item?.activities_history_img;
-    if (img) return [img];
+    if (item == null || typeof item !== 'object') return [];
+    const toStr = (v: unknown): string | null => {
+      if (v == null) return null;
+      if (typeof v === 'string') return v.trim() || null;
+      return null;
+    };
+    const fromArr = (raw: unknown): string[] => {
+      if (!Array.isArray(raw)) return [];
+      return raw
+        .map((v) => (typeof v === 'string' ? v : (v as { url?: string; path?: string })?.url ?? (v as { path?: string })?.path))
+        .filter((v): v is string => typeof v === 'string' && !!v.trim());
+    };
+    const imgs = item.images ?? item.image_urls ?? item.image_paths ?? item.imgs ?? item.img;
+    if (Array.isArray(imgs)) {
+      const fromArray = fromArr(imgs);
+      if (fromArray.length > 0) return fromArray;
+    }
+    const single =
+      toStr(item.image) ??
+      toStr(item.image_url) ??
+      toStr(item.image_path) ??
+      toStr(item.img) ??
+      toStr(item.activities_history_img);
+    if (single) return [single];
     return [];
   };
 

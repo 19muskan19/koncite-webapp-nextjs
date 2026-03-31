@@ -77,22 +77,39 @@ apiClient.interceptors.response.use(
           // But check if token exists first - if not, don't logout (might be expected)
           if (typeof window !== 'undefined') {
             const token = getAuthToken();
-            const url = error.config?.url || '';
+            const reqPath = String(error.config?.url || '');
+            const reqBase = String(error.config?.baseURL || '');
+            const urlForMatch = `${reqBase} ${reqPath}`;
             const responseData = (error.response?.data as ErrorResponseData) || {};
             const message = responseData?.message || '';
             
             // Don't logout for document endpoints if they return 401 - might be endpoint not found or permission issue
             // Let the component handle the error instead
-            const isDocumentEndpoint = url.includes('/documents');
+            const isDocumentEndpoint = urlForMatch.includes('/documents');
+
+            /**
+             * Some APIs incorrectly return HTTP 401 for "face not verified" / enrollment validation errors.
+             * Treating those as session expiry logs users out after a failed punch — only real auth failures should clear the token.
+             */
+            const isFaceVerificationEndpoint =
+              urlForMatch.includes('face/punch-in') ||
+              urlForMatch.includes('face/punch-out') ||
+              urlForMatch.includes('face/enroll') ||
+              urlForMatch.includes('face/re-enroll');
             
-            if (isDocumentEndpoint) {
-              console.warn('⚠️ 401 on document API:', message || 'Check: (1) Auth token valid? (2) Laravel routes use auth:sanctum for API? (3) API URL correct?');
+            if (isDocumentEndpoint || isFaceVerificationEndpoint) {
+              if (isFaceVerificationEndpoint && process.env.NODE_ENV === 'development') {
+                console.warn('⚠️ 401 on face API (not clearing session):', message || reqPath);
+              }
+              if (isDocumentEndpoint) {
+                console.warn('⚠️ 401 on document API:', message || 'Check: (1) Auth token valid? (2) Laravel routes use auth:sanctum for API? (3) API URL correct?');
+              }
               // Don't logout - let the component handle the error
             } else if (token) {
               // Only logout if token exists (meaning user was authenticated but token expired/invalid)
               // If no token, this might be expected for unauthenticated requests
               console.warn('⚠️ 401 Unauthorized - token exists but request failed. Logging out...', {
-                url,
+                url: reqPath,
                 message,
               });
               const { removeCookie } = require('../utils/cookies');
@@ -104,7 +121,7 @@ apiClient.interceptors.response.use(
               window.location.href = '/';
             } else {
               console.warn('⚠️ 401 Unauthorized - no token found. This might be expected.', {
-                url,
+                url: reqPath,
                 message,
               });
             }

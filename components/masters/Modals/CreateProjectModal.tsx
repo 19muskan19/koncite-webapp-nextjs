@@ -4,7 +4,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ThemeType } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
 import { useSidebar } from '@/contexts/SidebarContext';
-import { X, Upload, Loader2, ChevronDown, Search } from 'lucide-react';
+import { X, Upload, Loader2, ChevronDown, Search, MapPin, Navigation } from 'lucide-react';
+import ProjectGeoMapPicker from './ProjectGeoMapPicker';
 import { sortCountryCodes, findCountryByDialCode } from '@/utils/countryCodeUtils';
 import { parseClientPhonePartsFromApi } from '@/utils/clientPhoneUtils';
 import DatePickerInput from '@/components/ui/DatePickerInput';
@@ -98,7 +99,14 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     // Optional fields
     project_completed: 'no' as 'yes' | 'no',
     project_completed_date: '',
+    // Geo (Laravel projectAdd — matches punch / geo-fence)
+    latitude: '',
+    longitude: '',
+    geo_radius: '100',
+    geo_address: '',
+    geo_fence_enabled: true,
   });
+  const [showGeoMapPicker, setShowGeoMapPicker] = useState(false);
 
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -140,6 +148,11 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         company_country_code: '',
         project_completed: 'no',
         project_completed_date: '',
+        latitude: '',
+        longitude: '',
+        geo_radius: '100',
+        geo_address: '',
+        geo_fence_enabled: true,
       });
     }
   }, [isOpen, projectUpdateId, editingProject]);
@@ -371,6 +384,17 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         company_country_code: ep.company_country_code || cli?.company_country_code || '',
         project_completed: ep.project_completed === 'yes' || ep.project_completed === true ? 'yes' : 'no',
         project_completed_date: normDate(ep.project_completed_date || ''),
+        latitude: ep.latitude != null && ep.latitude !== '' ? String(ep.latitude) : '',
+        longitude: ep.longitude != null && ep.longitude !== '' ? String(ep.longitude) : '',
+        geo_radius:
+          ep.geo_radius != null && ep.geo_radius !== '' ? String(ep.geo_radius) : '100',
+        geo_address: typeof ep.geo_address === 'string' ? ep.geo_address : '',
+        geo_fence_enabled:
+          ep.geo_fence_enabled === false ||
+          ep.geo_fence_enabled === 0 ||
+          ep.geo_fence_enabled === '0'
+            ? false
+            : true,
       }));
 
       console.log('✅ Form populated for edit:', { project_name: projectName, companies_id: companyId });
@@ -439,6 +463,11 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       company_country_code: '',
       project_completed: 'no',
       project_completed_date: '',
+      latitude: '',
+      longitude: '',
+      geo_radius: '100',
+      geo_address: '',
+      geo_fence_enabled: true,
     });
   }, [isOpen, editingProject, projectUpdateId]);
 
@@ -516,6 +545,9 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       const digitsOnly = value.replace(/\D/g, '').slice(0, 10);
       updates[name] = digitsOnly;
     }
+    if (name === 'geo_radius') {
+      updates[name] = value.replace(/\D/g, '').slice(0, 5);
+    }
     setFormData({ ...formData, ...updates });
   };
 
@@ -569,6 +601,27 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     });
   };
 
+  const handleUseCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      toast.showWarning('Geolocation is not supported in this browser.');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setFormData((p) => ({
+          ...p,
+          latitude: pos.coords.latitude.toFixed(6),
+          longitude: pos.coords.longitude.toFixed(6),
+        }));
+        toast.showSuccess('Latitude and longitude filled from your device');
+      },
+      () => {
+        toast.showWarning('Could not read location. Allow browser permission or enter coordinates / use map.');
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
+    );
+  };
+
   const handleCreateProject = async () => {
     // 1. Validate required fields (Project name, Address, Plan start/end date, Tag company)
     const missingFields: string[] = [];
@@ -613,6 +666,34 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       return;
     }
 
+    const latStr = String(formData.latitude ?? '').trim();
+    const lngStr = String(formData.longitude ?? '').trim();
+    const latNum = parseFloat(latStr);
+    const lngNum = parseFloat(lngStr);
+    const hasLat = latStr !== '' && Number.isFinite(latNum);
+    const hasLng = lngStr !== '' && Number.isFinite(lngNum);
+    if (formData.geo_fence_enabled) {
+      if (!hasLat || !hasLng) {
+        toast.showWarning('Geo-fence is enabled: enter latitude and longitude, use Choose on map, or Use current location.');
+        return;
+      }
+    }
+    if ((hasLat && !hasLng) || (!hasLat && hasLng)) {
+      toast.showWarning('Set both latitude and longitude, or clear both.');
+      return;
+    }
+    if (hasLat && hasLng) {
+      if (latNum < -90 || latNum > 90 || lngNum < -180 || lngNum > 180) {
+        toast.showWarning('Latitude must be −90…90 and longitude −180…180.');
+        return;
+      }
+    }
+    const radiusInt = parseInt(String(formData.geo_radius || '100').replace(/\D/g, ''), 10) || 100;
+    if (radiusInt < 1 || radiusInt > 10000) {
+      toast.showWarning('Geo radius must be between 1 and 10000 (meters).');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       // Prepare FormData matching Laravel backend requirements
@@ -644,6 +725,16 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
       if (formData.project_incharge) {
         projectFormData.append('tag_project_incharge', formData.project_incharge);
       }
+
+      if (hasLat && hasLng) {
+        projectFormData.append('latitude', String(latNum));
+        projectFormData.append('longitude', String(lngNum));
+      }
+      projectFormData.append('geo_radius', String(radiusInt));
+      if (formData.geo_address.trim()) {
+        projectFormData.append('geo_address', formData.geo_address.trim());
+      }
+      projectFormData.append('geo_fence_enabled', formData.geo_fence_enabled ? '1' : '0');
       
       // Client data (only when own_project_or_contractor = 'yes'): Client Name, Address, Point of Contact. Backend may require company fields - use client name/address as fallback.
       if (formData.own_project_or_contractor === 'yes') {
@@ -724,6 +815,11 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
           company_country_code: '',
           project_completed: 'no',
           project_completed_date: '',
+          latitude: '',
+          longitude: '',
+          geo_radius: '100',
+          geo_address: '',
+          geo_fence_enabled: true,
         });
         
         // Close the modal
@@ -801,6 +897,147 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
               } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
             />
           </div>
+
+          {/* Site geolocation — backend: latitude, longitude, geo_radius, geo_address, geo_fence_enabled */}
+          <div
+            className={`rounded-xl border p-4 space-y-4 ${
+              isDark ? 'border-slate-700 bg-slate-800/30' : 'border-slate-200 bg-slate-50'
+            }`}
+          >
+            <div className="flex items-start gap-2">
+              <MapPin className="w-5 h-5 mt-0.5 text-[#6B8E23] shrink-0" />
+              <div>
+                <span className={`block text-sm font-bold ${textPrimary}`}>Site geolocation</span>
+                <p className={`text-xs mt-0.5 ${textSecondary}`}>
+                  For punch geo-fence. Default radius is <span className="font-semibold">100 m</span> (editable). With geo-fence
+                  on, latitude and longitude are required.
+                </p>
+              </div>
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={formData.geo_fence_enabled}
+                onChange={(e) => setFormData((p) => ({ ...p, geo_fence_enabled: e.target.checked }))}
+                className={`w-4 h-4 rounded border-slate-500 text-[#6B8E23] focus:ring-[#C2D642] ${isDark ? 'bg-slate-800' : ''}`}
+              />
+              <span className={`text-sm font-bold ${textPrimary}`}>Enable geo-fence for this project site</span>
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className={`block text-xs font-bold mb-1 ${textSecondary}`}>Latitude</label>
+                <input
+                  type="text"
+                  name="latitude"
+                  inputMode="decimal"
+                  value={formData.latitude}
+                  onChange={handleInputChange}
+                  placeholder="e.g. 28.6139"
+                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                    isDark
+                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]'
+                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                />
+              </div>
+              <div>
+                <label className={`block text-xs font-bold mb-1 ${textSecondary}`}>Longitude</label>
+                <input
+                  type="text"
+                  name="longitude"
+                  inputMode="decimal"
+                  value={formData.longitude}
+                  onChange={handleInputChange}
+                  placeholder="e.g. 77.2090"
+                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                    isDark
+                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]'
+                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className={`block text-xs font-bold mb-1 ${textSecondary}`}>Geo radius (meters)</label>
+                <input
+                  type="text"
+                  name="geo_radius"
+                  inputMode="numeric"
+                  value={formData.geo_radius}
+                  onChange={handleInputChange}
+                  placeholder="100"
+                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                    isDark
+                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]'
+                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                />
+              </div>
+              <div>
+                <label className={`block text-xs font-bold mb-1 ${textSecondary}`}>Map label (optional)</label>
+                <input
+                  type="text"
+                  name="geo_address"
+                  value={formData.geo_address}
+                  onChange={handleInputChange}
+                  placeholder="Short label for this pin"
+                  className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all ${
+                    isDark
+                      ? 'bg-slate-800/50 border-slate-700 text-slate-100 focus:border-[#C2D642]'
+                      : 'bg-white border-slate-200 text-slate-900 focus:border-[#C2D642]'
+                  } border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setShowGeoMapPicker(true)}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg font-bold text-sm bg-[#6B8E23] hover:bg-[#5a7a1e] text-white"
+              >
+                <MapPin className="w-4 h-4" />
+                Choose on map
+              </button>
+              <button
+                type="button"
+                onClick={handleUseCurrentLocation}
+                className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-lg font-bold text-sm border ${
+                  isDark
+                    ? 'border-slate-600 text-slate-200 hover:bg-slate-800'
+                    : 'border-slate-300 text-slate-800 hover:bg-slate-100'
+                }`}
+              >
+                <Navigation className="w-4 h-4" />
+                Use current location
+              </button>
+            </div>
+          </div>
+
+          <ProjectGeoMapPicker
+            isOpen={showGeoMapPicker}
+            onClose={() => setShowGeoMapPicker(false)}
+            initialLat={
+              formData.latitude.trim() !== '' && Number.isFinite(parseFloat(formData.latitude))
+                ? parseFloat(formData.latitude)
+                : null
+            }
+            initialLng={
+              formData.longitude.trim() !== '' && Number.isFinite(parseFloat(formData.longitude))
+                ? parseFloat(formData.longitude)
+                : null
+            }
+            radiusM={Math.max(1, parseInt(String(formData.geo_radius || '100'), 10) || 100)}
+            isDark={isDark}
+            onApply={(lat, lng) => {
+              setFormData((p) => ({
+                ...p,
+                latitude: lat.toFixed(6),
+                longitude: lng.toFixed(6),
+              }));
+              toast.showSuccess('Location set from map');
+            }}
+          />
 
           {/* Planned Start Date */}
           <div>
