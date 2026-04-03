@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { ThemeType } from '../../types';
 import {
   ShieldCheck,
@@ -19,7 +19,7 @@ import {
 import TeamMemberPermissionsModal, {
   type TeamPermissionApiContext,
 } from '@/components/company-users/TeamMemberPermissionsModal';
-import { rolePermissionsAPI } from '@/services/api';
+import { rolePermissionsAPI, roleManagementAPI } from '@/services/api';
 import { useToast } from '@/contexts/ToastContext';
 import { unwrapPermissionMatrixPayload } from '@/utils/unwrapPermissionMatrixPayload';
 
@@ -42,6 +42,7 @@ const UserRolesPermissions: React.FC<UserRolesPermissionsProps> = ({ theme }) =>
   const [rolePermissionApi, setRolePermissionApi] = useState<TeamPermissionApiContext | null>(null);
   const [permissionsLoadingRoleId, setPermissionsLoadingRoleId] = useState<string | null>(null);
   const [roles, setRoles] = useState<Role[]>([]);
+  const [rolesLoading, setRolesLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
   const [entriesPerPage, setEntriesPerPage] = useState<number>(10);
@@ -49,6 +50,8 @@ const UserRolesPermissions: React.FC<UserRolesPermissionsProps> = ({ theme }) =>
   const [formData, setFormData] = useState({
     name: '',
   });
+  const [savingRole, setSavingRole] = useState(false);
+  const [deletingRole, setDeletingRole] = useState(false);
 
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -56,46 +59,43 @@ const UserRolesPermissions: React.FC<UserRolesPermissionsProps> = ({ theme }) =>
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
   const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
 
-  const defaultRoles = useMemo(
-    () => [
-      { id: '1', name: 'Super Admin', isSystemRole: true },
-      { id: '2', name: 'Project Manager', isSystemRole: false },
-      { id: '3', name: 'Site Engineer', isSystemRole: false },
-      { id: '4', name: 'Store Keepers', isSystemRole: false },
-      { id: '5', name: 'Supervisor', isSystemRole: false },
-    ],
-    []
-  );
-
-  useEffect(() => {
-    const savedRoles = localStorage.getItem('userRoles');
-    if (savedRoles) {
-      try {
-        const parsed = JSON.parse(savedRoles);
-        setRoles(parsed);
-      } catch {
-        setRoles([]);
+  const loadRolesFromApi = useCallback(async () => {
+    setRolesLoading(true);
+    try {
+      const list = await roleManagementAPI.listRoles();
+      const seenIds = new Set<string>();
+      const mapped: Role[] = [];
+      for (const r of list ?? []) {
+        const idStr = String(r.id);
+        if (!idStr || seenIds.has(idStr)) continue;
+        seenIds.add(idStr);
+        const cid = r.company_id;
+        const isGlobal = cid === 0 || cid === '0' || Number(cid) === 0;
+        mapped.push({
+          id: idStr,
+          name: r.name || '—',
+          isSystemRole: isGlobal,
+        });
       }
-    } else {
+      setRoles(mapped);
+      window.dispatchEvent(new Event('rolesUpdated'));
+    } catch (err: unknown) {
+      const msg =
+        typeof err === 'object' && err && 'message' in err
+          ? String((err as { message: string }).message)
+          : 'Failed to load roles';
+      toast.showError(msg);
       setRoles([]);
+    } finally {
+      setRolesLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    if (roles.length > 0) {
-      try {
-        localStorage.setItem('userRoles', JSON.stringify(roles));
-        window.dispatchEvent(new Event('rolesUpdated'));
-      } catch (error) {
-        console.error('Error saving to localStorage:', error);
-      }
-    } else {
-      localStorage.removeItem('userRoles');
-      window.dispatchEvent(new Event('rolesUpdated'));
-    }
-  }, [roles]);
+    void loadRolesFromApi();
+  }, [loadRolesFromApi]);
 
-  const allRoles = useMemo(() => [...defaultRoles, ...roles], [defaultRoles, roles]);
+  const allRoles = useMemo(() => roles, [roles]);
 
   const filteredAndSortedRoles = useMemo(() => {
     let filtered = allRoles.filter((role) => role.name.toLowerCase().includes(searchQuery.toLowerCase()));
@@ -151,58 +151,96 @@ const UserRolesPermissions: React.FC<UserRolesPermissionsProps> = ({ theme }) =>
     setFormData({ name: '' });
   };
 
-  const handleCreateRole = () => {
+  const handleCreateRole = async () => {
     if (!formData.name.trim()) {
-      alert('Please enter a role name');
+      toast.showWarning('Please enter a role name');
       return;
     }
     if (allRoles.some((r) => r.name.toLowerCase() === formData.name.toLowerCase())) {
-      alert('A role with this name already exists');
+      toast.showWarning('A role with this name already exists');
       return;
     }
-    const newRole: Role = {
-      id: Date.now().toString(),
-      name: formData.name.trim(),
-    };
-    setRoles((prev) => [...prev, newRole]);
-    handleCloseModal();
+    setSavingRole(true);
+    try {
+      await roleManagementAPI.addRole({ role: formData.name.trim() });
+      toast.showSuccess('Role created');
+      handleCloseModal();
+      await loadRolesFromApi();
+    } catch (err: unknown) {
+      const msg =
+        typeof err === 'object' && err && 'message' in err ? String((err as { message: string }).message) : 'Failed to create role';
+      toast.showError(msg);
+    } finally {
+      setSavingRole(false);
+    }
   };
 
-  const handleEditRole = (roleId: string) => {
+  const handleEditRole = async (roleId: string) => {
     const role = allRoles.find((r) => r.id === roleId);
-    if (role) {
-      setEditingRoleId(roleId);
-      setFormData({ name: role.name });
-      setShowRoleModal(true);
+    if (!role) return;
+    setEditingRoleId(roleId);
+    setFormData({ name: role.name });
+    setShowRoleModal(true);
+    try {
+      const raw = await roleManagementAPI.getEditRole(roleId);
+      const inner =
+        raw && typeof raw === 'object' && 'data' in raw && raw.data != null && typeof raw.data === 'object'
+          ? (raw as { data: Record<string, unknown> }).data
+          : (raw as Record<string, unknown>);
+      const name = inner?.name != null ? String(inner.name) : role.name;
+      setFormData({ name });
+    } catch {
+      /* keep name from list */
     }
   };
 
-  const handleUpdateRole = () => {
+  const handleUpdateRole = async () => {
     if (!formData.name.trim()) {
-      alert('Please enter a role name');
+      toast.showWarning('Please enter a role name');
       return;
     }
-    if (editingRoleId && defaultRoles.find((r) => r.id === editingRoleId)) {
-      alert('Cannot edit system role');
+    if (editingRoleId && allRoles.find((r) => r.id === editingRoleId)?.isSystemRole) {
+      toast.showWarning('Cannot edit system role');
       return;
     }
     if (allRoles.some((r) => r.id !== editingRoleId && r.name.toLowerCase() === formData.name.toLowerCase())) {
-      alert('A role with this name already exists');
+      toast.showWarning('A role with this name already exists');
       return;
     }
-    setRoles((prev) =>
-      prev.map((role) => (role.id === editingRoleId ? { ...role, name: formData.name.trim() } : role))
-    );
-    handleCloseModal();
+    if (!editingRoleId) return;
+    setSavingRole(true);
+    try {
+      await roleManagementAPI.addRole({ role: formData.name.trim(), uuid: editingRoleId });
+      toast.showSuccess('Role updated');
+      handleCloseModal();
+      await loadRolesFromApi();
+    } catch (err: unknown) {
+      const msg =
+        typeof err === 'object' && err && 'message' in err ? String((err as { message: string }).message) : 'Failed to update role';
+      toast.showError(msg);
+    } finally {
+      setSavingRole(false);
+    }
   };
 
-  const handleDeleteRole = (roleId: string) => {
-    if (defaultRoles.find((r) => r.id === roleId)) {
-      alert('Cannot delete system role');
+  const handleDeleteRole = async (roleId: string) => {
+    if (allRoles.find((r) => r.id === roleId)?.isSystemRole) {
+      toast.showWarning('Cannot delete system role');
       return;
     }
-    setRoles((prev) => prev.filter((role) => role.id !== roleId));
-    setDeleteConfirmId(null);
+    setDeletingRole(true);
+    try {
+      await roleManagementAPI.deleteRole(roleId);
+      toast.showSuccess('Role deleted');
+      setDeleteConfirmId(null);
+      await loadRolesFromApi();
+    } catch (err: unknown) {
+      const msg =
+        typeof err === 'object' && err && 'message' in err ? String((err as { message: string }).message) : 'Failed to delete role';
+      toast.showError(msg);
+    } finally {
+      setDeletingRole(false);
+    }
   };
 
   const handleClosePermissionsModal = () => {
@@ -214,6 +252,13 @@ const UserRolesPermissions: React.FC<UserRolesPermissionsProps> = ({ theme }) =>
     const rid = Number.parseInt(role.id, 10);
     if (!Number.isFinite(rid) || rid < 1) {
       toast.showError('Cannot load permissions: role id must be a valid server role.');
+      return;
+    }
+    // "Add New Role" used Date.now() as id (≈1e12+) — not a Laravel company_roles primary key.
+    if (rid >= 1_000_000_000_000) {
+      toast.showError(
+        'This role id looks invalid. Reload roles from the server (GET /api/role-management), then try again.'
+      );
       return;
     }
     setPermissionsLoadingRoleId(role.id);
@@ -330,7 +375,12 @@ const UserRolesPermissions: React.FC<UserRolesPermissionsProps> = ({ theme }) =>
           </div>
         </div>
 
-        {paginatedRoles.length > 0 ? (
+        {rolesLoading ? (
+          <div className={`flex flex-col items-center justify-center py-16 gap-3 ${textSecondary}`}>
+            <Loader2 className="w-10 h-10 animate-spin text-[#6B8E23]" />
+            <span className="text-sm font-bold">Loading roles…</span>
+          </div>
+        ) : paginatedRoles.length > 0 ? (
           <>
             <div className="overflow-x-auto">
               <table className="w-full">
@@ -370,7 +420,7 @@ const UserRolesPermissions: React.FC<UserRolesPermissionsProps> = ({ theme }) =>
                           {!role.isSystemRole && (
                             <button
                               type="button"
-                              onClick={() => handleEditRole(role.id)}
+                              onClick={() => void handleEditRole(role.id)}
                               className={`p-2 rounded-lg transition-colors ${isDark ? 'hover:bg-slate-700 text-blue-400' : 'hover:bg-slate-100 text-blue-600'}`}
                               title="Edit"
                             >
@@ -492,7 +542,7 @@ const UserRolesPermissions: React.FC<UserRolesPermissionsProps> = ({ theme }) =>
                   value={formData.name}
                   onChange={handleInputChange}
                   onKeyPress={(e) => {
-                    if (e.key === 'Enter') handleCreateRole();
+                    if (e.key === 'Enter') void handleCreateRole();
                   }}
                   className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
                   placeholder="Enter role name"
@@ -503,15 +553,18 @@ const UserRolesPermissions: React.FC<UserRolesPermissionsProps> = ({ theme }) =>
                 <button
                   type="button"
                   onClick={handleCloseModal}
-                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100' : 'bg-slate-200 hover:bg-slate-300 text-slate-900'}`}
+                  disabled={savingRole}
+                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100' : 'bg-slate-200 hover:bg-slate-300 text-slate-900'} disabled:opacity-50`}
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
-                  onClick={handleCreateRole}
-                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md`}
+                  onClick={() => void handleCreateRole()}
+                  disabled={savingRole}
+                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-all inline-flex items-center gap-2 ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md disabled:opacity-50`}
                 >
+                  {savingRole ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                   Add New
                 </button>
               </div>
@@ -533,7 +586,7 @@ const UserRolesPermissions: React.FC<UserRolesPermissionsProps> = ({ theme }) =>
                   value={formData.name}
                   onChange={handleInputChange}
                   onKeyPress={(e) => {
-                    if (e.key === 'Enter') handleUpdateRole();
+                    if (e.key === 'Enter') void handleUpdateRole();
                   }}
                   className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
                   placeholder="Enter role name"
@@ -544,15 +597,18 @@ const UserRolesPermissions: React.FC<UserRolesPermissionsProps> = ({ theme }) =>
                 <button
                   type="button"
                   onClick={handleCloseModal}
-                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100' : 'bg-slate-200 hover:bg-slate-300 text-slate-900'}`}
+                  disabled={savingRole}
+                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100' : 'bg-slate-200 hover:bg-slate-300 text-slate-900'} disabled:opacity-50`}
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
-                  onClick={handleUpdateRole}
-                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md`}
+                  onClick={() => void handleUpdateRole()}
+                  disabled={savingRole}
+                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-all inline-flex items-center gap-2 ${isDark ? 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white' : 'bg-[#6B8E23] hover:bg-[#5a7a1e] text-white'} shadow-md disabled:opacity-50`}
                 >
+                  {savingRole ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                   Update
                 </button>
               </div>
@@ -573,15 +629,18 @@ const UserRolesPermissions: React.FC<UserRolesPermissionsProps> = ({ theme }) =>
                 <button
                   type="button"
                   onClick={() => setDeleteConfirmId(null)}
-                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100' : 'bg-slate-200 hover:bg-slate-300 text-slate-900'}`}
+                  disabled={deletingRole}
+                  className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100' : 'bg-slate-200 hover:bg-slate-300 text-slate-900'} disabled:opacity-50`}
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleDeleteRole(deleteConfirmId)}
-                  className="px-4 py-2 rounded-lg text-sm font-bold transition-all bg-red-600 hover:bg-red-700 text-white"
+                  onClick={() => void handleDeleteRole(deleteConfirmId)}
+                  disabled={deletingRole}
+                  className="px-4 py-2 rounded-lg text-sm font-bold transition-all bg-red-600 hover:bg-red-700 text-white disabled:opacity-50 inline-flex items-center gap-2"
                 >
+                  {deletingRole ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
                   Delete
                 </button>
               </div>

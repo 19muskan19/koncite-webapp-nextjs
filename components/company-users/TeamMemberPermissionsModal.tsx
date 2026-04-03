@@ -37,7 +37,7 @@ type Props = {
   onClose: () => void;
   /** When set (Teams flow), matrix uses server menus and Save calls POST add-user-permission. */
   teamPermissionApi?: TeamPermissionApiContext | null;
-  /** When `company-role`, Save calls POST /add-permission instead of add-user-permission. */
+  /** When `company-role`, Save calls POST /api/role-management/add-permission (see rolePermissionsAPI). */
   permissionSaveTarget?: 'company-user' | 'company-role';
 };
 

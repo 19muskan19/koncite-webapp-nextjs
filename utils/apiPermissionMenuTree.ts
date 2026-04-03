@@ -18,7 +18,7 @@ function normalizeMenuNode(node: unknown): ApiPermissionMenuNode | null {
   const rawId = o.id ?? o.permission_id ?? o.company_permission_id ?? o.companyPermissionId;
   const id = Number(rawId);
   if (!Number.isFinite(id)) return null;
-  const nameRaw = o.name ?? o.label ?? o.title;
+  const nameRaw = o.name ?? o.label ?? o.title ?? o.permission_name ?? o.menu_name ?? o.slug;
   const name =
     (typeof nameRaw === 'string' && nameRaw.trim()) ||
     (nameRaw != null ? String(nameRaw).trim() : '') ||

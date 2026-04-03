@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { ThemeType } from '../../types';
-import { teamsAPI } from '../../services/api';
+import { teamsAPI, roleManagementAPI } from '../../services/api';
 import { useToast } from '@/contexts/ToastContext';
 import { useUser } from '@/contexts/UserContext';
 import { 
@@ -418,10 +418,10 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
     return () => { cancelled = true; };
   }, []);
 
-  // Load roles from GET /role-list (company-scoped)
+  // Load roles: GET /api/role-management (same as Role management UI); fallback GET /role-list
   const fetchRoleList = useCallback(() => {
-    teamsAPI
-      .getRoleList()
+    roleManagementAPI
+      .listRoles()
       .then((list) => {
         const mapped = (Array.isArray(list) ? list : []).map((r) => ({
           id: String(r.id),
@@ -430,7 +430,16 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
         setAvailableRoles(mapped);
       })
       .catch(() => {
-        setAvailableRoles([]);
+        teamsAPI
+          .getRoleList()
+          .then((list) => {
+            const mapped = (Array.isArray(list) ? list : []).map((r) => ({
+              id: String(r.id),
+              name: r.name || 'Role',
+            }));
+            setAvailableRoles(mapped);
+          })
+          .catch(() => setAvailableRoles([]));
       });
   }, []);
 

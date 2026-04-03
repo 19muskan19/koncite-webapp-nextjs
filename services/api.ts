@@ -3539,7 +3539,11 @@ export const labourEntriesAPI = {
     labour_categories: Array<{
       labours_id: number;
       day_labour_count: number;
+      /** Unit for day_labour_count (work quantity); distinct from rate day_unit */
+      day_labour_count_unit?: 'day' | 'hour';
       overtime_hours?: number;
+      /** Unit for overtime_hours quantity; distinct from rate ot_unit */
+      overtime_quantity_unit?: 'day' | 'hour';
       daily_rate: number;
       day_unit: 'day' | 'hour';
       ot_rate: number;
@@ -4716,8 +4720,8 @@ export const teamsAPI = {
   },
 
   /**
-   * GET /role-list — roles for the logged-in company (Bearer token).
-   * Response: { status, data: [{ id, name, slug?, company_id? }] }
+   * GET /role-list — legacy list (some screens still use it).
+   * Prefer `roleManagementAPI.listRoles()` → GET /role-management for Role management UI parity with web.
    */
   getRoleList: async (): Promise<Array<{ id: string | number; name: string; slug?: string; company_id?: string | number }>> => {
     try {
@@ -4888,16 +4892,148 @@ export const teamsAPI = {
   },
 };
 
-// Role permissions (Next.js) — same payload shape as user permissions; role id = company_role id
-// GET /add-permission/{id} -> companyUserPermission(), POST /add-permission -> addPermission()
-export const rolePermissionsAPI = {
-  getRolePermission: async (roleId: number): Promise<any> => {
+/**
+ * Laravel `/api/role-management/*` (RouteServiceProvider + `role-management` group, company Bearer token, etc.)
+ *
+ * | Method | Path | Purpose |
+ * | GET | `/` | List roles (index) |
+ * | GET | `/add/{id}` | Form payload for add/edit role |
+ * | GET | `/add-permission/{id}` | Menus + current permissions for role |
+ * | POST | `/add-permission` | Save permissions `{ updateId, permission }` |
+ * | POST | `/add-role` | Create/update role `{ role, uuid? }` |
+ * | GET | `/edit/{uuid}` | Role details for edit |
+ * | DELETE | `/delete/{id}` | Delete role |
+ *
+ * **v1:** `NEXT_PUBLIC_ROLE_MANAGEMENT_API_BASE=v1/role-management`
+ *
+ * Do **not** `POST .../add-permission` with only `updateId` on open — it can clear assignments.
+ */
+const ROLE_MANAGEMENT_API_BASE = (
+  typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_ROLE_MANAGEMENT_API_BASE : undefined
+)?.trim()
+  .replace(/^\/+|\/+$/g, '') || 'role-management';
+
+function roleManagementRoot(): string {
+  return `/${ROLE_MANAGEMENT_API_BASE}`;
+}
+
+function roleManagementPath(segment: string): string {
+  const s = segment.replace(/^\/+/, '');
+  return `/${ROLE_MANAGEMENT_API_BASE}/${s}`;
+}
+
+function assertRoleManagementOk(data: any): void {
+  if (data && typeof data === 'object' && 'status' in data && (data as { status?: boolean }).status === false) {
+    throw new Error((data as { message?: string }).message || 'Request failed');
+  }
+}
+
+/** JSON CRUD for company roles + permissions (mirrors web `/company/roleManagment`). */
+export const roleManagementAPI = {
+  /** GET /role-management — list roles for company (+ global roles). */
+  listRoles: async (): Promise<
+    Array<{ id: string | number; name: string; slug?: string; company_id?: string | number }>
+  > => {
     try {
-      const response = await apiClient.get(`/add-permission/${encodeURIComponent(String(roleId))}`);
+      const response = await apiClient.get(roleManagementRoot());
+      let raw: unknown = response.data?.data ?? response.data;
+      if (
+        raw &&
+        typeof raw === 'object' &&
+        !Array.isArray(raw) &&
+        'data' in raw &&
+        Array.isArray((raw as { data: unknown }).data)
+      ) {
+        raw = (raw as { data: unknown[] }).data;
+      }
+      if (!Array.isArray(raw)) return [];
+      return (raw as Record<string, unknown>[]).map((r) => ({
+        id: r.id as string | number,
+        name: String(r.name ?? ''),
+        slug: r.slug != null ? String(r.slug) : undefined,
+        company_id: r.company_id as string | number | undefined,
+      }));
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to fetch roles',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /** GET /role-management/add/{id} — `id` empty or `0` for new-role form. */
+  getAddForm: async (id: string | number): Promise<any> => {
+    try {
+      const response = await apiClient.get(roleManagementPath(`add/${encodeURIComponent(String(id))}`));
       return response.data?.data ?? response.data;
     } catch (error: any) {
       throw {
-        message: error.response?.data?.message || 'Failed to fetch role permissions',
+        message: error.response?.data?.message || 'Failed to load role form',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /** GET /role-management/edit/{uuid} */
+  getEditRole: async (uuid: string | number): Promise<any> => {
+    try {
+      const response = await apiClient.get(roleManagementPath(`edit/${encodeURIComponent(String(uuid))}`));
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch role',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * POST /role-management/add-role — create `{ role }` or update `{ role, uuid }` (uuid = role id per Laravel).
+   */
+  addRole: async (payload: { role: string; uuid?: string | number }): Promise<any> => {
+    try {
+      const body: Record<string, unknown> = { role: payload.role };
+      if (payload.uuid != null && String(payload.uuid).trim() !== '') {
+        body.uuid = payload.uuid;
+      }
+      const response = await apiClient.post(roleManagementPath('add-role'), body);
+      assertRoleManagementOk(response.data);
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to save role',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /** DELETE /role-management/delete/{id} */
+  deleteRole: async (id: string | number): Promise<void> => {
+    try {
+      const response = await apiClient.delete(roleManagementPath(`delete/${encodeURIComponent(String(id))}`));
+      assertRoleManagementOk(response.data);
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to delete role',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
+export const rolePermissionsAPI = {
+  /** Load matrix: **GET only** — Laravel route `add-permission/{id}` allows GET/HEAD, not POST. */
+  getRolePermission: async (roleId: number): Promise<any> => {
+    const id = encodeURIComponent(String(roleId));
+    const pathWithId = roleManagementPath(`add-permission/${id}`);
+    const unwrap = (response: { data?: any }) => response.data?.data ?? response.data;
+
+    try {
+      const response = await apiClient.get(pathWithId);
+      return unwrap(response);
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to fetch role permissions',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
@@ -4905,8 +5041,9 @@ export const rolePermissionsAPI = {
 
   addRolePermission: async (body: { updateId: number; permission: Record<string, string[]> }): Promise<any> => {
     try {
-      const response = await apiClient.post('/add-permission', body);
-      if (response.data?.status === false || response.data?.success === false) {
+      const response = await apiClient.post(roleManagementPath('add-permission'), body);
+      assertRoleManagementOk(response.data);
+      if (response.data?.success === false) {
         throw new Error(response.data?.message || 'Save failed');
       }
       return response.data;

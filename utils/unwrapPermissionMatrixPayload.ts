@@ -43,7 +43,9 @@ export function unwrapPermissionMatrixPayload(data: unknown): {
   for (let depth = 0; depth < 8; depth++) {
     if (!cur || typeof cur !== 'object' || Array.isArray(cur)) return null;
     const d = cur as Record<string, unknown>;
-    const hasMenus = d.menus_tree != null || d.menusTree != null;
+    /** Laravel `companyUserpermission` returns `menus` (Company_permission[]); team UIs may use `menus_tree`. */
+    const hasMenus =
+      d.menus_tree != null || d.menusTree != null || Array.isArray(d.menus);
     const hasPermPayload =
       d.permissions_by_menu != null ||
       d.permissionsByMenu != null ||
@@ -53,7 +55,7 @@ export function unwrapPermissionMatrixPayload(data: unknown): {
       d.normalizedPermissions != null;
 
     if (hasMenus || hasPermPayload) {
-      const menusTree = d.menus_tree ?? d.menusTree ?? [];
+      const menusTree = d.menus_tree ?? d.menusTree ?? (Array.isArray(d.menus) ? d.menus : []);
       const permissionsByMenu = mergePermissionMaps(
         d.permissions_by_menu,
         d.permissionsByMenu,
