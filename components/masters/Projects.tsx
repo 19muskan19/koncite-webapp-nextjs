@@ -901,6 +901,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             disabled={isSearching}
+            autoComplete="off"
             className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
           />
           {isSearching && (

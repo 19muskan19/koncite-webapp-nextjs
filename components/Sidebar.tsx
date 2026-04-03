@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { 
@@ -26,13 +26,16 @@ import {
 } from 'lucide-react';
 import { ViewType, ThemeType } from '@/types';
 import { useUser } from '@/contexts/UserContext';
-import { getLogoUrl } from '@/utils/imageUtils';
+import { getCompanyLogoImageSrc } from '@/utils/imageUtils';
 import { authAPI } from '@/services/api';
+import { buildAllowedMenuSlugSet } from '@/utils/sidebarAccess';
 
 interface NavItemChild {
   label: string;
   id: ViewType | string;
   path?: string;
+  /** Must match Laravel `company_permissions.slug` / `menus_flat[].slug` when RBAC applies */
+  menuSlug?: string;
   children?: NavItemChild[];
 }
 
@@ -41,9 +44,37 @@ interface NavItem {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   path?: string;
+  menuSlug?: string;
   children?: NavItemChild[];
   /** When set, item is active if pathname starts with this (e.g. '/ai-agents' for /ai-agents/dpr, /ai-agents/inventory) */
   activeWhenPrefix?: string;
+}
+
+function filterNavItemsByAllowedSlugs(items: NavItem[], allowed: Set<string> | null): NavItem[] {
+  if (!allowed) return items;
+  const can = (slug?: string) => !!(slug && allowed.has(slug));
+
+  function filterChild(child: NavItemChild): NavItemChild | null {
+    if (String(child.id) === 'LOGOUT') return child;
+    if (child.children?.length) {
+      const next = child.children.map(filterChild).filter((c): c is NavItemChild => c != null);
+      return next.length ? { ...child, children: next } : null;
+    }
+    if (!can(child.menuSlug)) return null;
+    return child;
+  }
+
+  return items
+    .map((item) => {
+      if (item.children?.length) {
+        const children = item.children.map(filterChild).filter((c): c is NavItemChild => c != null);
+        if (!children.length) return null;
+        return { ...item, children };
+      }
+      if (!can(item.menuSlug)) return null;
+      return item;
+    })
+    .filter((x): x is NavItem => x != null);
 }
 
 interface SidebarProps {
@@ -61,9 +92,356 @@ const getCompanyInitials = (name: string): string => {
   return name.slice(0, 2).toUpperCase();
 };
 
+/** `menuSlug` values align with `GET /my-accessible-menus` → `menus_flat[].slug` (see `constants/sidebarPermissionTree.ts`). */
+const BASE_SIDEBAR_NAV_ITEMS: NavItem[] = [
+  {
+    id: ViewType.DASHBOARD,
+    label: 'Dashboard',
+    icon: LayoutDashboard,
+    path: '/dashboard',
+    menuSlug: 'dashboard',
+  },
+  {
+    id: 'OPERATIONS',
+    label: 'Operations',
+    icon: ClipboardList,
+    menuSlug: 'operations',
+    children: [
+      {
+        label: 'Daily work progress',
+        id: ViewType.DPR,
+        path: '/work-progress-reports',
+        menuSlug: 'daily-work-progress',
+      },
+      {
+        label: 'Workforce management',
+        id: ViewType.WORKFORCE_MANAGEMENT,
+        path: '/operations/workforce-management',
+        menuSlug: 'workforce-management',
+      },
+      { label: 'Task', id: ViewType.TASK, path: '/operations/task', menuSlug: 'operations-task' },
+    ],
+  },
+  {
+    id: ViewType.DOCUMENT_MANAGEMENT,
+    label: 'Document',
+    icon: FileText,
+    path: '/document-management/office',
+    activeWhenPrefix: '/document-management',
+    menuSlug: 'document',
+  },
+  {
+    id: 'SHIFT_INVENTORY',
+    label: 'Inventory',
+    icon: Warehouse,
+    menuSlug: 'inventory',
+    children: [
+      {
+        label: 'Purchase Requests (PR)',
+        id: ViewType.INVENTORY_PR,
+        path: '/inventory-reports/pr',
+        menuSlug: 'inventory-pr',
+      },
+      {
+        label: 'PR Approvals',
+        id: ViewType.PR_APPROVAL_MANAGE,
+        path: '/pr-management/pr-approval-manage',
+        menuSlug: 'inventory-pr-approvals',
+      },
+      {
+        label: 'RFQ',
+        id: ViewType.INVENTORY_RFQ,
+        path: '/inventory-reports/rfq',
+        menuSlug: 'inventory-rfq',
+      },
+      { label: 'Purchase Order (PO)', id: 'PO', path: '/inventory-reports/po', menuSlug: 'inventory-po' },
+      {
+        label: 'PO Approvals',
+        id: 'PO_APPROVALS',
+        path: '/inventory-reports/po-approvals',
+        menuSlug: 'inventory-po-approvals',
+      },
+      {
+        label: 'Goods Receipt (GRN/MRN)',
+        id: ViewType.INVENTORY_GRN_MRN_SLIP,
+        path: '/inventory-reports/grn-mrn-slip',
+        menuSlug: 'inventory-grn-mrn',
+      },
+      {
+        label: 'Goods Issue',
+        id: ViewType.INVENTORY_ISSUE_SLIP,
+        path: '/inventory-reports/issue-slip',
+        menuSlug: 'inventory-goods-issue',
+      },
+      {
+        label: 'Goods Returns',
+        id: ViewType.INVENTORY_ISSUE_RETURN,
+        path: '/inventory-reports/issue-return',
+        menuSlug: 'inventory-goods-returns',
+      },
+    ],
+  },
+  {
+    id: ViewType.AI_FINANCE,
+    label: 'AI Finance',
+    icon: Banknote,
+    path: '/ai-finance',
+    activeWhenPrefix: '/ai-finance',
+    menuSlug: 'ai-finance',
+  },
+  {
+    id: ViewType.AI_AGENTS,
+    label: 'AI Hub',
+    icon: Bot,
+    path: '/ai-agents/dpr',
+    activeWhenPrefix: '/ai-agents',
+    menuSlug: 'ai-hub',
+  },
+  {
+    id: 'REPORTS',
+    label: 'Reports',
+    icon: BarChart3,
+    menuSlug: 'reports',
+    children: [
+      {
+        label: 'Work Progress Reports',
+        id: ViewType.WORK_PROGRESS_REPORTS,
+        menuSlug: 'reports-work-progress',
+        children: [
+          {
+            label: 'Work Progress Details',
+            id: ViewType.WORK_PROGRESS_DETAILS,
+            path: '/work-progress-reports/work-progress-details',
+            menuSlug: 'reports-work-progress-details',
+          },
+          {
+            label: 'DPR',
+            id: ViewType.DPR,
+            path: '/work-progress-reports/dpr-report',
+            menuSlug: 'reports-dpr',
+          },
+          {
+            label: 'Resources Usage from DPR',
+            id: ViewType.RESOURCES_USAGE_FROM_DPR,
+            path: '/work-progress-reports/resources-usage-from-dpr',
+            menuSlug: 'reports-resources-dpr',
+          },
+          {
+            label: 'Material Used vs Store Issue',
+            id: ViewType.MATERIAL_USED_VS_STORE_ISSUE,
+            path: '/work-progress-reports/material-used-vs-store-issue',
+            menuSlug: 'reports-material-used',
+          },
+        ],
+      },
+      {
+        label: 'Inventory Reports',
+        id: ViewType.INVENTORY_REPORTS,
+        menuSlug: 'reports-inventory',
+        children: [
+          {
+            label: 'PR',
+            id: 'INVENTORY_PR_REPORT',
+            path: '/inventory-reports/pr-report',
+            menuSlug: 'reports-inv-pr',
+          },
+          {
+            label: 'RFQ',
+            id: 'INVENTORY_RFQ_REPORT',
+            path: '/inventory-reports/rfq-report',
+            menuSlug: 'reports-inv-rfq',
+          },
+          {
+            label: 'GRN(MRN) Slip',
+            id: 'INVENTORY_GRN_SLIP_REPORT',
+            path: '/inventory-reports/grn-slip-report',
+            menuSlug: 'reports-inv-grn-slip',
+          },
+          {
+            label: 'GRN(MRN) Details',
+            id: 'INVENTORY_GRN_DETAILS_REPORT',
+            path: '/inventory-reports/grn-details-report',
+            menuSlug: 'reports-inv-grn-details',
+          },
+          {
+            label: 'Issue Slip',
+            id: 'INVENTORY_ISSUE_SLIP_REPORT',
+            path: '/inventory-reports/issue-slip-report',
+            menuSlug: 'reports-inv-issue-slip',
+          },
+          {
+            label: 'Issue(Outward) Details',
+            id: 'INVENTORY_ISSUE_OUTWARD_DETAILS_REPORT',
+            path: '/inventory-reports/issue-outward-details-report',
+            menuSlug: 'reports-inv-issue-outward',
+          },
+          {
+            label: 'Issue Return',
+            id: 'INVENTORY_ISSUE_RETURN_REPORT',
+            path: '/inventory-reports/issue-return-report',
+            menuSlug: 'reports-inv-issue-return',
+          },
+          {
+            label: 'Global Stock Details',
+            id: ViewType.INVENTORY_GLOBAL_STOCK_DETAILS,
+            path: '/inventory-reports/global-stock-details',
+            menuSlug: 'reports-inv-global-stock',
+          },
+          {
+            label: 'Project Stock Statement',
+            id: ViewType.INVENTORY_PROJECT_STOCK_STATEMENT,
+            path: '/inventory-reports/project-stock-statement',
+            menuSlug: 'reports-inv-project-stock',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'ADMIN',
+    label: 'Admin',
+    icon: ShieldCheck,
+    menuSlug: 'admin',
+    children: [
+      {
+        label: 'Masters',
+        id: ViewType.MASTERS,
+        menuSlug: 'admin-masters',
+        children: [
+          {
+            label: 'Companies',
+            id: ViewType.COMPANIES,
+            path: '/masters/companies',
+            menuSlug: 'admin-masters-companies',
+          },
+          {
+            label: 'Projects',
+            id: ViewType.PROJECTS,
+            path: '/masters/projects',
+            menuSlug: 'admin-masters-projects',
+          },
+          {
+            label: 'Subprojects',
+            id: ViewType.SUBPROJECT,
+            path: '/masters/subproject',
+            menuSlug: 'admin-masters-subprojects',
+          },
+          { label: 'Units', id: ViewType.UNITS, path: '/masters/units', menuSlug: 'admin-masters-units' },
+          {
+            label: 'Warehouses',
+            id: ViewType.WAREHOUSES,
+            path: '/masters/warehouses',
+            menuSlug: 'admin-masters-warehouses',
+          },
+          {
+            label: 'Labours',
+            id: ViewType.LABOURS,
+            path: '/masters/labours',
+            menuSlug: 'admin-masters-labours',
+          },
+          {
+            label: 'Assets Equipments',
+            id: ViewType.ASSETS_EQUIPMENTS,
+            path: '/masters/assets-equipments',
+            menuSlug: 'admin-masters-assets',
+          },
+          {
+            label: 'Vendors',
+            id: ViewType.VENDORS,
+            path: '/masters/vendors',
+            menuSlug: 'admin-masters-vendors',
+          },
+          {
+            label: 'Activities',
+            id: ViewType.ACTIVITIES,
+            path: '/masters/activities',
+            menuSlug: 'admin-masters-activities',
+          },
+          {
+            label: 'Materials',
+            id: ViewType.MATERIALS,
+            path: '/masters/materials',
+            menuSlug: 'admin-masters-materials',
+          },
+        ],
+      },
+      {
+        label: 'User Management',
+        id: ViewType.COMPANY_USERS,
+        menuSlug: 'admin-user-management',
+        children: [
+          {
+            label: 'Teams',
+            id: ViewType.MANAGE_TEAMS,
+            path: '/company-users/manage-teams',
+            menuSlug: 'admin-user-teams',
+          },
+          {
+            label: 'Roles & Permissions',
+            id: ViewType.USER_ROLES_PERMISSIONS,
+            path: '/company-users/user-roles-permissions',
+            menuSlug: 'admin-user-roles',
+          },
+          {
+            label: 'Project Permissions',
+            id: ViewType.PROJECT_PERMISSIONS,
+            path: '/project-permissions',
+            menuSlug: 'admin-user-project-perms',
+          },
+        ],
+      },
+      {
+        label: 'Workflow Settings',
+        id: 'WORKFLOW_SETTINGS',
+        menuSlug: 'admin-workflow',
+        children: [
+          {
+            label: 'PR Approval Manage',
+            id: ViewType.PR_APPROVAL_MANAGE,
+            path: '/pr-management/pr-approval-manage',
+            menuSlug: 'admin-workflow-pr-approval',
+          },
+          {
+            label: 'PR',
+            id: ViewType.PR,
+            path: '/pr-management/pr',
+            menuSlug: 'admin-workflow-pr',
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'SETTINGS',
+    label: 'Settings',
+    icon: Settings,
+    menuSlug: 'settings-root',
+    children: [
+      { label: 'Profile', id: 'PROFILE', path: '/profile', menuSlug: 'settings-profile' },
+      {
+        label: 'Subscriptions and Billing',
+        id: ViewType.SUBSCRIPTION,
+        path: '/subscription',
+        menuSlug: 'settings-subscription',
+      },
+      { label: 'Logout', id: 'LOGOUT', path: '#' },
+    ],
+  },
+];
+
 const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen, sidebarPinned = false, setSidebarPinned }) => {
   const pathname = usePathname();
-  const { user, company } = useUser();
+  const { user, company, accessibleMenus } = useUser();
+  /** Company logo only (no user profile photo). Falls back to initials when there is no logo URL. */
+  const companyLogoSrc = useMemo(
+    () => getCompanyLogoImageSrc(company?.logo ?? user?.company_logo ?? null),
+    [company?.logo, user?.company_logo]
+  );
+  const allowedSlugSet = useMemo(() => buildAllowedMenuSlugSet(accessibleMenus), [accessibleMenus]);
+  const navItems = useMemo(
+    () => filterNavItemsByAllowedSlugs(BASE_SIDEBAR_NAV_ITEMS, allowedSlugSet),
+    [allowedSlugSet]
+  );
   const router = useRouter();
   const [openDropdowns, setOpenDropdowns] = useState<Set<string>>(new Set());
   const isDark = theme === 'dark';
@@ -88,143 +466,6 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen, s
       router.push('/');
     }
   };
-
-  const navItems: NavItem[] = [
-    { 
-      id: ViewType.DASHBOARD, 
-      label: 'Dashboard', 
-      icon: LayoutDashboard,
-      path: '/dashboard'
-    },
-    { 
-      id: 'OPERATIONS', 
-      label: 'Operations', 
-      icon: ClipboardList,
-      children: [
-        { label: 'Daily work progress', id: ViewType.DPR, path: '/work-progress-reports' },
-        { label: 'Workforce management', id: ViewType.WORKFORCE_MANAGEMENT, path: '/operations/workforce-management' },
-        { label: 'Task', id: ViewType.TASK, path: '/operations/task' }
-      ] 
-    },
-    { 
-      id: ViewType.DOCUMENT_MANAGEMENT, 
-      label: 'Document', 
-      icon: FileText, 
-      path: '/document-management/office',
-      activeWhenPrefix: '/document-management'
-    },
-    { 
-      id: 'SHIFT_INVENTORY', 
-      label: 'Inventory', 
-      icon: Warehouse,
-      children: [
-        { label: 'Purchase Requests (PR)', id: ViewType.INVENTORY_PR, path: '/inventory-reports/pr' },
-        { label: 'PR Approvals', id: ViewType.PR_APPROVAL_MANAGE, path: '/pr-management/pr-approval-manage' },
-        { label: 'RFQ', id: ViewType.INVENTORY_RFQ, path: '/inventory-reports/rfq' },
-        { label: 'Purchase Order (PO)', id: 'PO', path: '/inventory-reports/po' },
-        { label: 'PO Approvals', id: 'PO_APPROVALS', path: '/inventory-reports/po-approvals' },
-        { label: 'Goods Receipt (GRN/MRN)', id: ViewType.INVENTORY_GRN_MRN_SLIP, path: '/inventory-reports/grn-mrn-slip' },
-        { label: 'Goods Issue', id: ViewType.INVENTORY_ISSUE_SLIP, path: '/inventory-reports/issue-slip' },
-        { label: 'Goods Returns', id: ViewType.INVENTORY_ISSUE_RETURN, path: '/inventory-reports/issue-return' }
-      ] 
-    },
-    { 
-      id: ViewType.AI_FINANCE, 
-      label: 'AI Finance', 
-      icon: Banknote, 
-      path: '/ai-finance',
-      activeWhenPrefix: '/ai-finance'
-    },
-    { 
-      id: ViewType.AI_AGENTS, 
-      label: 'AI Hub', 
-      icon: Bot, 
-      path: '/ai-agents/dpr',
-      activeWhenPrefix: '/ai-agents'
-    },
-    { 
-      id: 'REPORTS', 
-      label: 'Reports', 
-      icon: BarChart3,
-      children: [
-        { 
-          label: 'Work Progress Reports', 
-          id: ViewType.WORK_PROGRESS_REPORTS, 
-          children: [
-            { label: 'Work Progress Details', id: ViewType.WORK_PROGRESS_DETAILS, path: '/work-progress-reports/work-progress-details' },
-            { label: 'DPR', id: ViewType.DPR, path: '/work-progress-reports/dpr-report' },
-            { label: 'Resources Usage from DPR', id: ViewType.RESOURCES_USAGE_FROM_DPR, path: '/work-progress-reports/resources-usage-from-dpr' },
-            { label: 'Material Used vs Store Issue', id: ViewType.MATERIAL_USED_VS_STORE_ISSUE, path: '/work-progress-reports/material-used-vs-store-issue' }
-          ]
-        },
-        { 
-          label: 'Inventory Reports', 
-          id: ViewType.INVENTORY_REPORTS, 
-          children: [
-            { label: 'PR', id: 'INVENTORY_PR_REPORT', path: '/inventory-reports/pr-report' },
-            { label: 'RFQ', id: 'INVENTORY_RFQ_REPORT', path: '/inventory-reports/rfq-report' },
-            { label: 'GRN(MRN) Slip', id: 'INVENTORY_GRN_SLIP_REPORT', path: '/inventory-reports/grn-slip-report' },
-            { label: 'GRN(MRN) Details', id: 'INVENTORY_GRN_DETAILS_REPORT', path: '/inventory-reports/grn-details-report' },
-            { label: 'Issue Slip', id: 'INVENTORY_ISSUE_SLIP_REPORT', path: '/inventory-reports/issue-slip-report' },
-            { label: 'Issue(Outward) Details', id: 'INVENTORY_ISSUE_OUTWARD_DETAILS_REPORT', path: '/inventory-reports/issue-outward-details-report' },
-            { label: 'Issue Return', id: 'INVENTORY_ISSUE_RETURN_REPORT', path: '/inventory-reports/issue-return-report' },
-            { label: 'Global Stock Details', id: ViewType.INVENTORY_GLOBAL_STOCK_DETAILS, path: '/inventory-reports/global-stock-details' },
-            { label: 'Project Stock Statement', id: ViewType.INVENTORY_PROJECT_STOCK_STATEMENT, path: '/inventory-reports/project-stock-statement' }
-          ]
-        }
-      ] 
-    },
-    { 
-      id: 'ADMIN', 
-      label: 'Admin', 
-      icon: ShieldCheck,
-      children: [
-        { 
-          label: 'Masters', 
-          id: ViewType.MASTERS, 
-          children: [
-            { label: 'Companies', id: ViewType.COMPANIES, path: '/masters/companies' },
-            { label: 'Projects', id: ViewType.PROJECTS, path: '/masters/projects' },
-            { label: 'Subprojects', id: ViewType.SUBPROJECT, path: '/masters/subproject' },
-            { label: 'Units', id: ViewType.UNITS, path: '/masters/units' },
-            { label: 'Warehouses', id: ViewType.WAREHOUSES, path: '/masters/warehouses' },
-            { label: 'Labours', id: ViewType.LABOURS, path: '/masters/labours' },
-            { label: 'Assets Equipments', id: ViewType.ASSETS_EQUIPMENTS, path: '/masters/assets-equipments' },
-            { label: 'Vendors', id: ViewType.VENDORS, path: '/masters/vendors' },
-            { label: 'Activities', id: ViewType.ACTIVITIES, path: '/masters/activities' },
-            { label: 'Materials', id: ViewType.MATERIALS, path: '/masters/materials' }
-          ]
-        },
-        { 
-          label: 'User Management', 
-          id: ViewType.COMPANY_USERS, 
-          children: [
-            { label: 'Teams', id: ViewType.MANAGE_TEAMS, path: '/company-users/manage-teams' },
-            { label: 'Roles & Permissions', id: ViewType.USER_ROLES_PERMISSIONS, path: '/company-users/user-roles-permissions' },
-            { label: 'Project Permissions', id: ViewType.PROJECT_PERMISSIONS, path: '/project-permissions' }
-          ]
-        },
-        { 
-          label: 'Workflow Settings', 
-          id: 'WORKFLOW_SETTINGS', 
-          children: [
-            { label: 'PR Approval Manage', id: ViewType.PR_APPROVAL_MANAGE, path: '/pr-management/pr-approval-manage' },
-            { label: 'PR', id: ViewType.PR, path: '/pr-management/pr' }
-          ]
-        }
-      ] 
-    },
-    { 
-      id: 'SETTINGS', 
-      label: 'Settings', 
-      icon: Settings, 
-      children: [
-        { label: 'Profile', id: 'PROFILE', path: '/profile' },
-        { label: 'Subscriptions and Billing', id: ViewType.SUBSCRIPTION, path: '/subscription' },
-        { label: 'Logout', id: 'LOGOUT', path: '#' }
-      ] 
-    },
-  ];
 
   const isActive = (path?: string, activeWhenPrefix?: string) =>
     (path && pathname === path) || (activeWhenPrefix && pathname?.startsWith(activeWhenPrefix));
@@ -381,10 +622,10 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen, s
             {sidebarOpen && (
               <>
                 <div className="relative w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 bg-[#C2D642]/20 border-2 border-[#C2D642]/30 overflow-hidden">
-                  {(company?.logo || user?.company_logo) ? (
+                  {companyLogoSrc ? (
                     <img 
-                      src={getLogoUrl(company?.logo || user?.company_logo, company?.name || user?.company_name || 'Company', 'C2D642')} 
-                      alt="Company" 
+                      src={companyLogoSrc} 
+                      alt="" 
                       className="w-full h-full object-cover"
                       onError={(e) => {
                         const el = e.target as HTMLImageElement;
@@ -394,7 +635,7 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen, s
                       }}
                     />
                   ) : null}
-                  <span className={`company-initials text-sm font-black text-[#C2D642] ${(company?.logo || user?.company_logo) ? 'hidden absolute inset-0 flex items-center justify-center' : 'flex items-center justify-center'}`}>
+                  <span className={`company-initials text-sm font-black text-[#C2D642] ${companyLogoSrc ? 'hidden absolute inset-0 flex items-center justify-center' : 'flex items-center justify-center'}`}>
                     {getCompanyInitials(company?.name || user?.company_name || '')}
                   </span>
                 </div>

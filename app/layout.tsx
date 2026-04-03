@@ -1,6 +1,19 @@
 import type { Metadata } from 'next'
-import RootProviders from '@/components/RootProviders'
+import dynamic from 'next/dynamic'
 import './globals.css'
+
+/** Dynamic import keeps `app/layout` small; providers pull in `UserContext` → large `api.ts`. */
+const RootProviders = dynamic(() => import('@/components/RootProviders'), {
+  ssr: true,
+  loading: () => (
+    <div
+      className="min-h-screen flex items-center justify-center bg-white text-slate-500 text-sm"
+      aria-live="polite"
+    >
+      Loading…
+    </div>
+  ),
+})
 
 export const metadata: Metadata = {
   title: 'KONCITE - Construction Platform',

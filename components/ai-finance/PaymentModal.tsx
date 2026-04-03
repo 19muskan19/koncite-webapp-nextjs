@@ -5,6 +5,7 @@ import { X } from 'lucide-react';
 import { financeAPI, formatCurrency, type Transaction, type Payment } from '@/services/financeApi';
 import { useToast } from '@/contexts/ToastContext';
 import { cn } from '@/utils/cn';
+import { PAYMENT_MODES } from '@/constants/aiFinance';
 
 interface PaymentModalProps {
   transaction: Transaction;
@@ -13,23 +14,24 @@ interface PaymentModalProps {
   isDark: boolean;
 }
 
-const PAYMENT_MODES = ['Cash', 'Bank Transfer', 'Cheque', 'UPI', 'Credit Card'];
-
 export default function PaymentModal({ transaction, onClose, onSaved, isDark }: PaymentModalProps) {
   const toast = useToast();
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [sessionLog, setSessionLog] = useState<Payment[]>([]);
   const [amount, setAmount] = useState('');
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
-  const [mode, setMode] = useState('Cash');
+  const [mode, setMode] = useState<string>(PAYMENT_MODES[0]);
   const [reference, setReference] = useState('');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     financeAPI.getPayments(transaction.id).then(setPayments);
+    setSessionLog([]);
   }, [transaction.id]);
 
-  const totalPaid = payments.reduce((s, p) => s + p.amount, 0);
-  const balance = transaction.total - totalPaid;
+  const serverPaid = transaction.paid ?? transaction.received ?? transaction.total - transaction.balance;
+  const totalPaid = serverPaid;
+  const balance = transaction.balance;
 
   const handleRecord = async () => {
     const amt = parseFloat(amount);
@@ -46,6 +48,10 @@ export default function PaymentModal({ transaction, onClose, onSaved, isDark }: 
         mode,
         reference: reference || undefined,
       });
+      setSessionLog((prev) => [
+        ...prev,
+        { id: `local-${Date.now()}`, amount: amt, date, mode, reference: reference || undefined },
+      ]);
       toast.showSuccess('Payment recorded');
       onSaved();
     } catch (e: any) {
@@ -72,10 +78,10 @@ export default function PaymentModal({ transaction, onClose, onSaved, isDark }: 
           <div>
             <h3 className={cn('text-xs font-black uppercase tracking-widest mb-3', isDark ? 'text-slate-400' : 'text-slate-600')}>Payment History</h3>
             <div className="space-y-2 max-h-48 overflow-y-auto">
-              {payments.length === 0 ? (
-                <p className="text-sm text-slate-500">No payments recorded yet</p>
+              {payments.length === 0 && sessionLog.length === 0 ? (
+                <p className="text-sm text-slate-500">No per-payment lines from API; totals below reflect the saved transaction.</p>
               ) : (
-                payments.map((p) => (
+                [...payments, ...sessionLog].map((p) => (
                   <div key={p.id} className={cn('flex justify-between items-center py-2 border-b text-sm', isDark ? 'border-[#404040]' : 'border-slate-200')}>
                     <span className="font-mono">{formatCurrency(p.amount)}</span>
                     <span className="text-slate-500">{p.date}</span>

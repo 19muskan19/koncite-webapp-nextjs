@@ -424,6 +424,114 @@ function punchLogSubjectKey(e: FacePunchLogEntry): string {
   return n ? `name:${n}` : `row:${e.punch_at}:${e.location ?? ''}`;
 }
 
+/** Normalize for deduping API rows ("Punch IN") vs session rows ("punch_in"). */
+function punchTypeBucket(punchType: string): 'in' | 'out' | 'other' {
+  const s = String(punchType).toLowerCase();
+  if (s.includes('out')) return 'out';
+  if (s.includes('in')) return 'in';
+  return 'other';
+}
+
+/** Dedupe server + session rows (same person, type, and second). */
+function punchEventDedupeKey(e: FacePunchLogEntry): string {
+  const t = Number.isFinite(Date.parse(e.punch_at)) ? Math.floor(Date.parse(e.punch_at) / 1000) : 0;
+  const sub = e.subjectId != null && e.subjectId > 0 ? `id:${e.subjectId}` : `n:${e.employee_name.trim().toLowerCase()}`;
+  return `${sub}|${punchTypeBucket(e.punch_type)}|${t}`;
+}
+
+/**
+ * Map GET /face/status-today payload: separate data.punch_in and data.punch_out arrays
+ * (username, user_type, subject_id, punch_time, punch_location { latitude, longitude, geo_accuracy }).
+ */
+function parseStatusTodayPunchRows(payload: unknown): {
+  punchIn: FacePunchLogEntry[];
+  punchOut: FacePunchLogEntry[];
+  date: string | null;
+} {
+  if (payload == null) return { punchIn: [], punchOut: [], date: null };
+  const top = payload as Record<string, unknown>;
+  const data = (top?.data as Record<string, unknown> | undefined) ?? top;
+  const dateRaw = data?.date;
+  const date = typeof dateRaw === 'string' ? dateRaw.slice(0, 10) : null;
+
+  const mapOne = (row: Record<string, unknown>, kind: 'punch_in' | 'punch_out'): FacePunchLogEntry | null => {
+    const punchTime = row.punch_time ?? row.punch_at;
+    if (punchTime == null || String(punchTime).trim() === '') return null;
+    const loc = row.punch_location;
+    let location: string | undefined;
+    if (loc && typeof loc === 'object' && !Array.isArray(loc)) {
+      const l = loc as Record<string, unknown>;
+      const lat = l.latitude;
+      const lng = l.longitude;
+      const acc = l.geo_accuracy ?? l.accuracy;
+      if (lat != null && lng != null) {
+        location = `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`;
+        if (acc != null && acc !== '') location += ` (±${acc}m)`;
+      }
+    }
+    const ut = String(row.user_type ?? 'company_user').toLowerCase();
+    const subjectType: 'company_user' | 'workforce_profile' =
+      ut === 'workforce_profile' ? 'workforce_profile' : 'company_user';
+    const sid = Number(row.subject_id ?? row.subjectId ?? 0);
+    return {
+      employee_name: String(row.username ?? row.name ?? '—').trim() || '—',
+      punch_type: kind === 'punch_in' ? 'Punch IN' : 'Punch OUT',
+      punch_at: String(punchTime),
+      location,
+      subjectType,
+      subjectId: Number.isFinite(sid) && sid > 0 ? sid : undefined,
+    };
+  };
+
+  const punchIn: FacePunchLogEntry[] = [];
+  const punchOut: FacePunchLogEntry[] = [];
+  const ins = data?.punch_in;
+  const outs = data?.punch_out;
+  if (Array.isArray(ins)) {
+    for (const r of ins) {
+      if (r && typeof r === 'object') {
+        const e = mapOne(r as Record<string, unknown>, 'punch_in');
+        if (e) punchIn.push(e);
+      }
+    }
+  }
+  if (Array.isArray(outs)) {
+    for (const r of outs) {
+      if (r && typeof r === 'object') {
+        const e = mapOne(r as Record<string, unknown>, 'punch_out');
+        if (e) punchOut.push(e);
+      }
+    }
+  }
+  const sortDesc = (a: FacePunchLogEntry, b: FacePunchLogEntry) =>
+    new Date(b.punch_at).getTime() - new Date(a.punch_at).getTime();
+  punchIn.sort(sortDesc);
+  punchOut.sort(sortDesc);
+  return { punchIn, punchOut, date };
+}
+
+/** Merge status-today rows for one bucket with this-session facePunchLog lines of the same type. */
+function mergePunchRowsForBucket(
+  serverRows: FacePunchLogEntry[],
+  sessionRows: FacePunchLogEntry[],
+  bucket: 'in' | 'out'
+): FacePunchLogEntry[] {
+  const sessionFiltered = sessionRows.filter((r) => punchTypeBucket(r.punch_type) === bucket);
+  const byKey = new Map<string, FacePunchLogEntry>();
+  for (const r of serverRows) {
+    byKey.set(punchEventDedupeKey(r), r);
+  }
+  for (const r of sessionFiltered) {
+    const k = punchEventDedupeKey(r);
+    const existing = byKey.get(k);
+    if (!existing) byKey.set(k, r);
+    else if (!existing.photoThumb && r.photoThumb) byKey.set(k, r);
+  }
+  return Array.from(byKey.values()).sort(
+    (a, b) => new Date(b.punch_at).getTime() - new Date(a.punch_at).getTime()
+  );
+}
+
 /** One row per person in this session; latest successful punch wins. */
 function replacePunchLogEntryForSubject(prev: FacePunchLogEntry[], entry: FacePunchLogEntry): FacePunchLogEntry[] {
   const k = punchLogSubjectKey(entry);
@@ -772,8 +880,13 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   const [faceSetupOk, setFaceSetupOk] = useState<boolean | null>(null);
   const [faceSetupError, setFaceSetupError] = useState<string | null>(null);
   const [punchType, setPunchType] = useState<'punch_in' | 'punch_out'>('punch_in');
-  /** Today's face punch log (this session). */
+  /** Today's face punch log (this session — e.g. photo preview from device). */
   const [facePunchLog, setFacePunchLog] = useState<FacePunchLogEntry[]>([]);
+  /** Punch IN / Punch OUT rows from GET /face/status-today (separate arrays). */
+  const [statusTodayPunchInRows, setStatusTodayPunchInRows] = useState<FacePunchLogEntry[]>([]);
+  const [statusTodayPunchOutRows, setStatusTodayPunchOutRows] = useState<FacePunchLogEntry[]>([]);
+  const [statusTodayDate, setStatusTodayDate] = useState<string | null>(null);
+  const [statusTodayLoading, setStatusTodayLoading] = useState(false);
   const [showCameraModal, setShowCameraModal] = useState(false);
   /** Punch mode when the camera modal was opened (for copy + API while modal is open). */
   const [punchModalKind, setPunchModalKind] = useState<'punch_in' | 'punch_out'>('punch_in');
@@ -1016,14 +1129,26 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
     setStaffPage(1);
   }, [staffSearchQuery, staffFilter]);
 
-  const refreshFaceStatusToday = useCallback(async () => {
+  const refreshFaceStatusToday = useCallback(async (opts?: { quiet?: boolean }) => {
     if (!isAuthenticated) return;
+    const quiet = opts?.quiet === true;
+    if (!quiet) setStatusTodayLoading(true);
     try {
       const params: Record<string, string | number> = {};
       if (companyId != null) params.company_id = companyId;
-      await faceAttendanceAPI.statusToday(params);
+      const raw = await faceAttendanceAPI.statusToday(params);
+      const { punchIn, punchOut, date } = parseStatusTodayPunchRows(raw);
+      setStatusTodayPunchInRows(punchIn);
+      setStatusTodayPunchOutRows(punchOut);
+      setStatusTodayDate(date);
     } catch {
-      /* best-effort refresh after punch */
+      if (!quiet) {
+        setStatusTodayPunchInRows([]);
+        setStatusTodayPunchOutRows([]);
+        setStatusTodayDate(null);
+      }
+    } finally {
+      if (!quiet) setStatusTodayLoading(false);
     }
   }, [isAuthenticated, companyId]);
 
@@ -1057,10 +1182,19 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
 
   useEffect(() => {
     if (activeTab !== 'punch' || !isAuthenticated) return;
-    refreshFaceStatusToday();
-    const t = setInterval(refreshFaceStatusToday, 120000);
+    void refreshFaceStatusToday({ quiet: false });
+    const t = setInterval(() => void refreshFaceStatusToday({ quiet: true }), 120000);
     return () => clearInterval(t);
   }, [activeTab, isAuthenticated, refreshFaceStatusToday]);
+
+  const recentPunchInDisplayRows = useMemo(
+    () => mergePunchRowsForBucket(statusTodayPunchInRows, facePunchLog, 'in'),
+    [statusTodayPunchInRows, facePunchLog]
+  );
+  const recentPunchOutDisplayRows = useMemo(
+    () => mergePunchRowsForBucket(statusTodayPunchOutRows, facePunchLog, 'out'),
+    [statusTodayPunchOutRows, facePunchLog]
+  );
 
   /** GET /face/check — logged-in user vs PersonGroup (eligibility hint before punch). */
   useEffect(() => {
@@ -1562,7 +1696,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
           setPunchType('punch_out');
         }
 
-        await refreshFaceStatusToday();
+        await refreshFaceStatusToday({ quiet: true });
       } catch (e: any) {
         if (kind === 'punch_in' && isAlreadyPunchedIn422(e) && geoLocation) {
           setShowCameraModal(false);
@@ -1601,7 +1735,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
           );
           toast.showInfo(e?.message || 'You are already punched in. Use Punch OUT.');
           try {
-            await refreshFaceStatusToday();
+            await refreshFaceStatusToday({ quiet: true });
           } catch {
             /* ignore refresh failure */
           }
@@ -2442,50 +2576,141 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
               </div>
 
               <div>
-                <h3 className={`text-sm font-bold ${textPrimary} mb-3`}>Recent face punches (this session)</h3>
-                <div className="overflow-x-auto rounded-lg border border-inherit">
-                  <table className="w-full min-w-[500px]">
-                    <thead>
-                      <tr className={`border-b ${borderClass} ${isDark ? 'bg-slate-800/50' : 'bg-slate-100'}`}>
-                        <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Person</th>
-                        <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Type</th>
-                        <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Photo</th>
-                        <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>When</th>
-                        <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Location</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {facePunchLog.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className={`py-8 text-center text-sm ${textSecondary}`}>
-                            No punches in this session yet
-                          </td>
-                        </tr>
-                      ) : (
-                        [...facePunchLog].reverse().map((r, idx) => (
-                          <tr key={r.uuid || idx} className={`border-b border-inherit hover:bg-black/5 dark:hover:bg-white/5`}>
-                            <td className={`py-3 px-4 text-sm font-medium ${textPrimary}`}>{r.employee_name}</td>
-                            <td className={`py-3 px-4 text-sm ${textPrimary}`}>{r.punch_type}</td>
-                            <td className="py-3 px-4">
-                              {r.photoThumb ? (
-                                <img src={r.photoThumb} alt="" className="w-12 h-12 rounded-lg object-cover" />
-                              ) : (
-                                <span className={`text-xs ${textSecondary}`}>—</span>
-                              )}
-                            </td>
-                            <td className={`py-3 px-4 text-sm ${textPrimary}`}>
-                              {typeof r.punch_at === 'string' && r.punch_at.includes('T')
-                                ? new Date(r.punch_at).toLocaleString()
-                                : String(r.punch_at)}
-                            </td>
-                            <td className={`py-3 px-4 text-xs ${textPrimary} max-w-[180px] truncate`} title={r.location}>
-                              {r.location}
-                            </td>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                  <h3 className={`text-sm font-bold ${textPrimary}`}>
+                    Recent punches
+                    {statusTodayDate ? (
+                      <span className={`font-normal ${textSecondary}`}> · {statusTodayDate}</span>
+                    ) : null}
+                  </h3>
+                  {statusTodayLoading && (
+                    <span className={`inline-flex items-center gap-1.5 text-xs ${textSecondary}`}>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      Loading…
+                    </span>
+                  )}
+                </div>
+                <p className={`text-xs ${textSecondary} mb-4`}>
+                  From <strong className="font-semibold text-inherit">status-today</strong>
+                  {punchType === 'punch_in' ? (
+                    <>
+                      : <code className="text-[10px] opacity-80">data.punch_in</code>. Session punch-ins on this device are
+                      merged below.
+                    </>
+                  ) : (
+                    <>
+                      : <code className="text-[10px] opacity-80">data.punch_out</code>. Session punch-outs on this device are
+                      merged below.
+                    </>
+                  )}
+                </p>
+
+                <div className="space-y-6">
+                  {punchType === 'punch_in' && (
+                  <div>
+                    <h4 className={`text-xs font-black uppercase tracking-wide ${textPrimary} mb-2`}>Punch IN</h4>
+                    <div className="overflow-x-auto rounded-lg border border-inherit">
+                      <table className="w-full min-w-[360px]">
+                        <thead>
+                          <tr className={`border-b ${borderClass} ${isDark ? 'bg-slate-800/50' : 'bg-slate-100'}`}>
+                            <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Person</th>
+                            <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>When</th>
+                            <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Location</th>
                           </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+                        </thead>
+                        <tbody>
+                          {recentPunchInDisplayRows.length === 0 ? (
+                            <tr>
+                              <td colSpan={3} className={`py-6 text-center text-sm ${textSecondary}`}>
+                                {statusTodayLoading ? (
+                                  <span className="inline-flex items-center justify-center gap-2">
+                                    <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+                                  </span>
+                                ) : (
+                                  'No punch-in records for this date yet.'
+                                )}
+                              </td>
+                            </tr>
+                          ) : (
+                            recentPunchInDisplayRows.map((r, idx) => (
+                              <tr
+                                key={`in-${punchEventDedupeKey(r)}-${idx}`}
+                                className={`border-b border-inherit hover:bg-black/5 dark:hover:bg-white/5`}
+                              >
+                                <td className={`py-3 px-4 text-sm font-medium ${textPrimary}`}>{r.employee_name}</td>
+                                <td className={`py-3 px-4 text-sm ${textPrimary}`}>
+                                  {(() => {
+                                    const d = new Date(r.punch_at);
+                                    return Number.isFinite(d.getTime()) ? d.toLocaleString() : String(r.punch_at);
+                                  })()}
+                                </td>
+                                <td
+                                  className={`py-3 px-4 text-xs ${textPrimary} max-w-[220px] truncate`}
+                                  title={r.location}
+                                >
+                                  {r.location ?? '—'}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  )}
+
+                  {punchType === 'punch_out' && (
+                  <div>
+                    <h4 className={`text-xs font-black uppercase tracking-wide ${textPrimary} mb-2`}>Punch OUT</h4>
+                    <div className="overflow-x-auto rounded-lg border border-inherit">
+                      <table className="w-full min-w-[360px]">
+                        <thead>
+                          <tr className={`border-b ${borderClass} ${isDark ? 'bg-slate-800/50' : 'bg-slate-100'}`}>
+                            <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Person</th>
+                            <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>When</th>
+                            <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Location</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {recentPunchOutDisplayRows.length === 0 ? (
+                            <tr>
+                              <td colSpan={3} className={`py-6 text-center text-sm ${textSecondary}`}>
+                                {statusTodayLoading ? (
+                                  <span className="inline-flex items-center justify-center gap-2">
+                                    <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+                                  </span>
+                                ) : (
+                                  'No punch-out records for this date yet.'
+                                )}
+                              </td>
+                            </tr>
+                          ) : (
+                            recentPunchOutDisplayRows.map((r, idx) => (
+                              <tr
+                                key={`out-${punchEventDedupeKey(r)}-${idx}`}
+                                className={`border-b border-inherit hover:bg-black/5 dark:hover:bg-white/5`}
+                              >
+                                <td className={`py-3 px-4 text-sm font-medium ${textPrimary}`}>{r.employee_name}</td>
+                                <td className={`py-3 px-4 text-sm ${textPrimary}`}>
+                                  {(() => {
+                                    const d = new Date(r.punch_at);
+                                    return Number.isFinite(d.getTime()) ? d.toLocaleString() : String(r.punch_at);
+                                  })()}
+                                </td>
+                                <td
+                                  className={`py-3 px-4 text-xs ${textPrimary} max-w-[220px] truncate`}
+                                  title={r.location}
+                                >
+                                  {r.location ?? '—'}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  )}
                 </div>
               </div>
             </div>

@@ -22,7 +22,6 @@ export default function AIFinance({ theme }: AIFinanceProps) {
 
   const isDark = theme === 'dark';
 
-  const cardClass = isDark ? 'card-dark' : 'card-light';
   return (
     <div className={cn('flex h-full min-h-0', isDark ? 'bg-[#0a0a0a]' : 'bg-[#f8fafc]')}>
       <AIFinanceSidebar activeTab={activeTab} onTabChange={setActiveTab} collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} isDark={isDark} />
@@ -33,11 +32,6 @@ export default function AIFinance({ theme }: AIFinanceProps) {
             {activeTab === 'dashboard' && <DashboardTab isDark={isDark} />}
             {activeTab === 'transactions' && <TransactionsTab isDark={isDark} searchQuery={searchQuery} onSearchReset={() => setSearchQuery('')} />}
             {activeTab === 'reports' && <ReportsTab isDark={isDark} />}
-            {(activeTab === 'parties' || activeTab === 'projects') && (
-              <div className={cn('rounded-xl border p-12 text-center', cardClass)}>
-                <p className={cn('font-bold', isDark ? 'text-slate-400' : 'text-slate-600')}>Coming soon</p>
-              </div>
-            )}
           </div>
         </div>
       </div>

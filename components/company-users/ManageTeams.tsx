@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { ThemeType } from '../../types';
 import { teamsAPI } from '../../services/api';
 import { useToast } from '@/contexts/ToastContext';
@@ -27,6 +27,10 @@ import {
 import * as XLSX from 'xlsx';
 import { sortCountryCodes, findCountryByDialCode } from '@/utils/countryCodeUtils';
 import { getProfileImageUrl, getInitialsAvatarUrl } from '@/utils/imageUtils';
+import TeamMemberPermissionsModal, {
+  type TeamPermissionApiContext,
+} from '@/components/company-users/TeamMemberPermissionsModal';
+import { unwrapPermissionMatrixPayload } from '@/utils/unwrapPermissionMatrixPayload';
 
 interface CountryCode {
   code: string;
@@ -46,6 +50,7 @@ interface UserData {
   email: string;
   contactNumber: string;
   roleType: string;
+  designation?: string;
   /** Matches select option value; prefer this over role name when opening edit */
   company_role_id?: string;
   address?: string;
@@ -111,14 +116,10 @@ const emptyStaffForm = (): StaffFormFields => ({
 
 /** Map GET teams-edit / TeamsResources payload into modal form (ids for country/state/city for update) */
 function buildFormFromStaffApi(apiUser: any, countryCodes: CountryCode[]): StaffFormFields {
-  const roleId = String(apiUser.company_role_id ?? apiUser.company_role?.id ?? apiUser.company_user_role ?? '');
+  const roleId = String(
+    apiUser.company_role_id ?? apiUser.company_role?.id ?? apiUser.role_id ?? apiUser.company_user_role ?? ''
+  );
   const designationTrim = (apiUser.designation && String(apiUser.designation).trim()) || '';
-  const roleName =
-    designationTrim ||
-    (apiUser.company_role?.name ??
-      apiUser.role_type ??
-      ROLE_ID_TO_NAME[roleId] ??
-      '');
   const rp = apiUser.reporting_person ?? apiUser.reportingPerson;
   const rpIdExplicit = apiUser.reporting_person_id ?? apiUser.reportingPersonId;
   let reportingSelect = '';
@@ -164,7 +165,7 @@ function buildFormFromStaffApi(apiUser: any, countryCodes: CountryCode[]): Staff
     phone: phoneDigits,
     address: apiUser.address || '',
     company_user_role: roleId,
-    designation: roleName,
+    designation: designationTrim,
     reporting_person: reportingSelect,
     password: '',
     confirmPassword: '',
@@ -247,14 +248,10 @@ function mapApiStaffToUserData(apiUser: any): UserData {
     };
   }
 
-  const roleId = String(apiUser.company_role_id ?? apiUser.company_role?.id ?? '');
+  const roleId = String(apiUser.company_role_id ?? apiUser.company_role?.id ?? apiUser.role_id ?? '');
   const designationVal = (apiUser.designation && String(apiUser.designation).trim()) || '';
   const roleType =
-    designationVal ||
-    (apiUser.company_role?.name ??
-      apiUser.role_type ??
-      ROLE_ID_TO_NAME[roleId] ??
-      'N/A');
+    (apiUser.company_role?.name ?? apiUser.role_type ?? ROLE_ID_TO_NAME[roleId] ?? '').trim() || 'N/A';
   return {
     id,
     uuid,
@@ -263,6 +260,7 @@ function mapApiStaffToUserData(apiUser: any): UserData {
     email: apiUser.email || '',
     contactNumber: apiUser.phone || apiUser.contact_number || '',
     roleType,
+    designation: designationVal || undefined,
     company_role_id: roleId || undefined,
     address: apiUser.address,
     reporting_person_id,
@@ -276,6 +274,9 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
   const [showUserModal, setShowUserModal] = useState<boolean>(false);
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [permissionsUser, setPermissionsUser] = useState<UserData | null>(null);
+  const [teamPermissionApi, setTeamPermissionApi] = useState<TeamPermissionApiContext | null>(null);
+  const [permissionsLoadingUserId, setPermissionsLoadingUserId] = useState<string | null>(null);
   const [users, setUsers] = useState<UserData[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState<boolean>(true);
   const [useApiData, setUseApiData] = useState<boolean>(false);
@@ -326,6 +327,7 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
       email: 'testsouma@koncit.com',
       contactNumber: '2365480111',
       roleType: 'Project Manager',
+      designation: '',
       address: '',
       reporting_person_id: undefined,
       reportingPerson: {
@@ -416,48 +418,39 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
     return () => { cancelled = true; };
   }, []);
 
-  // Load roles (id + name) from UserRolesPermissions localStorage
-  useEffect(() => {
-    const loadRoles = () => {
-      const defaultRoles: Array<{ id: string; name: string }> = [
-        { id: '1', name: 'Super Admin' },
-        { id: '2', name: 'Project Manager' },
-        { id: '3', name: 'Site Engineer' },
-        { id: '4', name: 'Store Keepers' },
-        { id: '5', name: 'Supervisor' },
-      ];
-      const savedRoles = localStorage.getItem('userRoles');
-      let userRoles: Array<{ id: string; name: string }> = [];
-      if (savedRoles) {
-        try {
-          const parsed = JSON.parse(savedRoles);
-          userRoles = parsed.map((r: { id?: string; name: string }) => ({ id: String(r.id ?? r.name), name: r.name }));
-        } catch (e) {
-          userRoles = [];
-        }
-      }
-      const seen = new Set<string>();
-      const combined: Array<{ id: string; name: string }> = [];
-      [...defaultRoles, ...userRoles].forEach((r) => {
-        if (!seen.has(r.name)) {
-          seen.add(r.name);
-          combined.push(r);
-        }
+  // Load roles from GET /role-list (company-scoped)
+  const fetchRoleList = useCallback(() => {
+    teamsAPI
+      .getRoleList()
+      .then((list) => {
+        const mapped = (Array.isArray(list) ? list : []).map((r) => ({
+          id: String(r.id),
+          name: r.name || 'Role',
+        }));
+        setAvailableRoles(mapped);
+      })
+      .catch(() => {
+        setAvailableRoles([]);
       });
-      setAvailableRoles(combined);
-    };
-    loadRoles();
-    const handleStorageChange = (e: StorageEvent) => { if (e.key === 'userRoles') loadRoles(); };
-    const handleRolesUpdate = () => loadRoles();
-    window.addEventListener('storage', handleStorageChange);
-    window.addEventListener('rolesUpdated', handleRolesUpdate);
-    const interval = setInterval(loadRoles, 500);
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('rolesUpdated', handleRolesUpdate);
-      clearInterval(interval);
-    };
   }, []);
+
+  useEffect(() => {
+    fetchRoleList();
+    const handleRolesUpdate = () => fetchRoleList();
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'userRoles') fetchRoleList();
+    };
+    window.addEventListener('rolesUpdated', handleRolesUpdate);
+    window.addEventListener('storage', handleStorageChange);
+    return () => {
+      window.removeEventListener('rolesUpdated', handleRolesUpdate);
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, [fetchRoleList]);
+
+  useEffect(() => {
+    if (showUserModal) fetchRoleList();
+  }, [showUserModal, fetchRoleList]);
 
   const parseDialCode = (c: any): string => {
     const root = (c.idd?.root || '').replace(/\+/g, '');
@@ -522,11 +515,11 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
     ) {
       base.push({
         id: formData.company_user_role,
-        name: formData.designation?.trim() || `Role (${formData.company_user_role})`,
+        name: `Role (${formData.company_user_role})`,
       });
     }
     return base;
-  }, [availableRoles, editingUserId, formData.company_user_role, formData.designation]);
+  }, [availableRoles, editingUserId, formData.company_user_role]);
 
   // Save users to localStorage only when using local data (not API)
   useEffect(() => {
@@ -556,6 +549,7 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
       (user.email || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
       (user.contactNumber || '').includes(searchQuery) ||
       (user.roleType || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (user.designation || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
       (user.reportingPerson?.name || '').toLowerCase().includes(searchQuery.toLowerCase())
     );
 
@@ -670,6 +664,7 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
     }
     if (!formData.address?.trim()) missing.push('Address');
     if (!formData.company_user_role) missing.push('Role');
+    if (!formData.designation?.trim()) missing.push('Designation');
     if (!formData.password?.trim()) missing.push('Password');
     if (missing.length > 0) {
       toast.showWarning(`Required: ${missing.join(', ')}`);
@@ -685,11 +680,11 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
     }
     setIsSubmitting(true);
     try {
-      const roleName = availableRoles.find((r) => r.id === formData.company_user_role)?.name || 'Staff';
       const reportingPersonId = formData.reporting_person || (currentUser?.id ? String(currentUser.id) : '') || (users[0]?.id || '');
       const fd = new FormData();
+      fd.append('role_id', formData.company_user_role);
       fd.append('company_user_role', formData.company_user_role);
-      fd.append('designation', roleName);
+      fd.append('designation', formData.designation.trim());
       fd.append('name', formData.name.trim());
       fd.append('email', formData.email.trim().toLowerCase());
       fd.append('country_code', formData.country_code);
@@ -795,7 +790,7 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
           phone: phoneDigits,
           address: user.address ?? '',
           company_user_role: user.company_role_id ?? roleMatch?.id ?? '',
-          designation: user.roleType || '',
+          designation: user.designation ?? '',
           reporting_person: resolvedRp || (user.reporting_person_id ? String(user.reporting_person_id) : ''),
           password: '',
           confirmPassword: '',
@@ -828,6 +823,7 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
     if (!formData.phone?.trim()) missing.push('Phone');
     if (!formData.address?.trim()) missing.push('Address');
     if (!formData.company_user_role) missing.push('Role');
+    if (!formData.designation?.trim()) missing.push('Designation');
     if (missing.length > 0) {
       toast.showWarning(`Required: ${missing.join(', ')}`);
       return;
@@ -836,26 +832,21 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
       toast.showWarning('Phone must be exactly 10 digits (numbers only)');
       return;
     }
-    if (formData.password && formData.password !== formData.confirmPassword) {
-      toast.showWarning('Passwords do not match');
-      return;
-    }
     if (!editingUserId) return;
     setIsSubmitting(true);
     try {
-      const roleName = availableRoles.find((r) => r.id === formData.company_user_role)?.name || 'Staff';
       const reportingPersonId = formData.reporting_person || (currentUser?.id ? String(currentUser.id) : '');
       const fd = new FormData();
       fd.append('updateId', editingUserId);
+      fd.append('role_id', formData.company_user_role);
       fd.append('company_user_role', formData.company_user_role);
-      fd.append('designation', roleName);
+      fd.append('designation', formData.designation.trim());
       fd.append('name', formData.name.trim());
       fd.append('email', formData.email.trim().toLowerCase());
       fd.append('country_code', formData.country_code);
       fd.append('phone', formData.phone.trim());
       fd.append('address', formData.address.trim());
       if (reportingPersonId) fd.append('reporting_person', reportingPersonId);
-      if (formData.password) fd.append('password', formData.password);
       if (formData.profile_images) fd.append('profile_images', formData.profile_images);
       if (formData.country) fd.append('country', formData.country);
       if (formData.state) fd.append('state', formData.state);
@@ -887,6 +878,40 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
     }
   };
 
+  const handleOpenTeamPermissions = async (user: UserData) => {
+    if (!user.status) return;
+    const uuid =
+      user.uuid != null && String(user.uuid).trim() !== '' ? String(user.uuid).trim() : user.id;
+    setPermissionsLoadingUserId(user.id);
+    try {
+      const data = await teamsAPI.getUserPermission(uuid);
+      const unwrapped = unwrapPermissionMatrixPayload(data);
+      if (!unwrapped || !Array.isArray(unwrapped.menusTree) || unwrapped.menusTree.length === 0) {
+        toast.showError('No permission menus returned from server');
+        return;
+      }
+      setTeamPermissionApi({
+        updateId: Number(user.id),
+        menusTree: unwrapped.menusTree,
+        permissionsByMenu: unwrapped.permissionsByMenu,
+      });
+      setPermissionsUser(user);
+    } catch (err: unknown) {
+      const msg =
+        typeof err === 'object' && err && 'message' in err
+          ? String((err as { message: string }).message)
+          : 'Failed to load user permissions';
+      toast.showError(msg);
+    } finally {
+      setPermissionsLoadingUserId(null);
+    }
+  };
+
+  const handleClosePermissionsModal = () => {
+    setPermissionsUser(null);
+    setTeamPermissionApi(null);
+  };
+
   const handleToggleStatus = (userId: string) => {
     if (defaultUsers.find(u => u.id === userId)) {
       // Update default user status in state (won't persist)
@@ -898,13 +923,14 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
   };
 
   const handleDownloadExcel = () => {
-    const headers = ['Sr No', 'Name', 'Email', 'Contact Number', 'Role Type', 'Reporting Person', 'Status'];
+    const headers = ['Sr No', 'Name', 'Email', 'Contact Number', 'Role Type', 'Designation', 'Reporting Person', 'Status'];
     const rows = filteredAndSortedUsers.map((user, idx) => [
       idx + 1,
       user.name,
       user.email,
       user.contactNumber,
       user.roleType,
+      user.designation ?? '—',
       `${user.reportingPerson?.name || ''} ${user.reportingPerson?.role || ''}`.trim() || '—',
       user.status ? 'Active' : 'Inactive'
     ]);
@@ -986,7 +1012,7 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
           <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
           <input 
             type="text" 
-            placeholder="Search by name, email, contact number, role type, or reporting person..."
+            placeholder="Search by name, email, contact number, role, designation, or reporting person..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
@@ -1055,6 +1081,15 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
                   </th>
                   <th 
                     className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary} cursor-pointer hover:opacity-80`}
+                    onClick={() => handleSort('designation')}
+                  >
+                    <div className="flex items-center gap-2">
+                      Designation
+                      {getSortIcon('designation')}
+                    </div>
+                  </th>
+                  <th 
+                    className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary} cursor-pointer hover:opacity-80`}
                     onClick={() => handleSort('reportingPerson')}
                   >
                     <div className="flex items-center gap-2">
@@ -1106,6 +1141,9 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
                       {user.roleType}
                     </td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
+                      {user.designation?.trim() ? user.designation : '—'}
+                    </td>
+                    <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
                       <div className="flex items-center gap-2">
                         <User className={`w-4 h-4 ${isDark ? 'text-blue-400' : 'text-blue-600'}`} />
                         <span>
@@ -1147,11 +1185,17 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
                           <Edit className="w-4 h-4" />
                         </button>
                         <button
-                          disabled={!user.status}
+                          type="button"
+                          onClick={() => user.status && void handleOpenTeamPermissions(user)}
+                          disabled={!user.status || permissionsLoadingUserId === user.id}
                           className={`p-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isDark ? 'hover:bg-slate-700 text-blue-400' : 'hover:bg-slate-100 text-blue-600'}`}
-                          title="Settings"
+                          title="Permissions"
                         >
-                          <Settings className="w-4 h-4" />
+                          {permissionsLoadingUserId === user.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Settings className="w-4 h-4" />
+                          )}
                         </button>
                         <button
                           onClick={() => user.status && setDeleteConfirmId(user.id)}
@@ -1401,6 +1445,17 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
                   </select>
                 </div>
                 <div>
+                  <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Designation <span className="text-red-500">*</span></label>
+                  <input
+                    type="text"
+                    name="designation"
+                    value={formData.designation}
+                    onChange={handleInputChange}
+                    className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                    placeholder="e.g. Senior Site Engineer"
+                  />
+                </div>
+                <div>
                   <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Reporting Person <span className="text-red-500">*</span></label>
                   <select name="reporting_person" value={formData.reporting_person} onChange={handleInputChange}
                     className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}>
@@ -1428,32 +1483,6 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
                       <input type="password" name="confirmPassword" value={formData.confirmPassword} onChange={handleInputChange}
                         className={`w-full px-4 py-2 rounded-lg text-sm border ${formData.confirmPassword && formData.password !== formData.confirmPassword ? 'border-red-500' : ''} ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
                         placeholder="Confirm Password" />
-                      {formData.confirmPassword && formData.password !== formData.confirmPassword && (
-                        <p className="text-red-500 text-xs mt-1">Passwords do not match</p>
-                      )}
-                    </div>
-                  </>
-                )}
-                {editingUserId && (
-                  <>
-                    <div className="md:col-span-2">
-                      <p className={`text-xs sm:text-sm ${textSecondary} rounded-lg border px-3 py-2 ${isDark ? 'border-slate-600 bg-slate-800/40' : 'border-slate-200 bg-slate-50'}`}>
-                        Current password is stored securely and is never shown. Leave both fields empty to keep it unchanged, or enter a new password to update.
-                      </p>
-                    </div>
-                    <div>
-                      <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>New Password (optional)</label>
-                      <input type="password" name="password" value={formData.password} onChange={handleInputChange}
-                        autoComplete="new-password"
-                        className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                        placeholder="Leave blank to keep current password" />
-                    </div>
-                    <div>
-                      <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Confirm New Password</label>
-                      <input type="password" name="confirmPassword" value={formData.confirmPassword} onChange={handleInputChange}
-                        autoComplete="new-password"
-                        className={`w-full px-4 py-2 rounded-lg text-sm border ${formData.confirmPassword && formData.password !== formData.confirmPassword ? 'border-red-500' : ''} ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-                        placeholder="Repeat new password if changing" />
                       {formData.confirmPassword && formData.password !== formData.confirmPassword && (
                         <p className="text-red-500 text-xs mt-1">Passwords do not match</p>
                       )}
@@ -1564,6 +1593,16 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
             </div>
           </div>
         </div>
+      )}
+
+      {permissionsUser && teamPermissionApi && (
+        <TeamMemberPermissionsModal
+          theme={theme}
+          entityId={permissionsUser.id}
+          entityLabel={permissionsUser.name}
+          teamPermissionApi={teamPermissionApi}
+          onClose={handleClosePermissionsModal}
+        />
       )}
     </div>
   );

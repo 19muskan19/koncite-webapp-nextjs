@@ -1,7 +1,8 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { RotateCcw, CheckCircle2, Clock, CreditCard } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { KONCITE_FINANCE_DATA_CHANGED } from '@/constants/aiFinance';
+import { RotateCcw, CheckCircle2, Clock, CreditCard, Ban } from 'lucide-react';
 import { financeAPI, formatCurrency, type Transaction, type Party, type Project } from '@/services/financeApi';
 import PaymentModal from './PaymentModal';
 import { cn } from '@/utils/cn';
@@ -24,19 +25,32 @@ export default function TransactionsTab({ isDark, searchQuery = '', onSearchRese
   const [paymentModalTx, setPaymentModalTx] = useState<Transaction | null>(null);
 
   const effectiveSearch = searchQuery?.trim() || undefined;
-  const load = () => {
-    financeAPI.getTransactions({ search: effectiveSearch, type: typeFilter, partyId: partyFilter || undefined, projectId: projectFilter || undefined, fromDate: fromDate || undefined, toDate: toDate || undefined }).then(setTransactions);
-  };
+  const load = useCallback(() => {
+    financeAPI
+      .getTransactions({
+        search: effectiveSearch,
+        type: typeFilter,
+        partyId: partyFilter || undefined,
+        projectId: projectFilter || undefined,
+        fromDate: fromDate || undefined,
+        toDate: toDate || undefined,
+      })
+      .then(setTransactions);
+  }, [effectiveSearch, typeFilter, partyFilter, projectFilter, fromDate, toDate]);
 
   useEffect(() => {
-    load();
     financeAPI.getParties().then(setParties);
     financeAPI.getProjects().then(setProjects);
   }, []);
 
   useEffect(() => {
     load();
-  }, [searchQuery, typeFilter, partyFilter, projectFilter, fromDate, toDate]);
+  }, [load]);
+
+  useEffect(() => {
+    window.addEventListener(KONCITE_FINANCE_DATA_CHANGED, load);
+    return () => window.removeEventListener(KONCITE_FINANCE_DATA_CHANGED, load);
+  }, [load]);
 
   const resetFilters = () => {
     setTypeFilter('all');
@@ -120,9 +134,17 @@ export default function TransactionsTab({ isDark, searchQuery = '', onSearchRese
                     <span className={cn('px-2 py-0.5 rounded text-xs font-semibold', t.type === 'income' ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' : 'bg-rose-500/20 text-rose-600 dark:text-rose-400')}>{t.type}</span>
                   </td>
                   <td className="p-3 text-right font-mono">{formatCurrency(t.total)}</td>
-                  <td className="p-3 text-right font-mono">{formatCurrency(t.total - t.balance)}</td>
+                  <td className="p-3 text-right font-mono">{formatCurrency(t.paid ?? t.received ?? t.total - t.balance)}</td>
                   <td className="p-3 text-right font-mono">{formatCurrency(t.balance)}</td>
-                  <td className="p-3 text-left">{t.status === 'completed' ? <CheckCircle2 className="w-4 h-4 text-emerald-500" /> : <Clock className="w-4 h-4 text-amber-500" />}</td>
+                  <td className="p-3 text-left">
+                    {t.status === 'completed' ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                    ) : t.status === 'cancelled' ? (
+                      <Ban className="w-4 h-4 text-slate-500" />
+                    ) : (
+                      <Clock className="w-4 h-4 text-amber-500" />
+                    )}
+                  </td>
                   <td className="p-3">
                     <button onClick={() => setPaymentModalTx(t)} className="flex items-center gap-1 px-2 py-1 rounded bg-[#C2D642]/20 text-[#C2D642] hover:bg-[#C2D642]/35 hover:ring-1 hover:ring-[#C2D642]/50 text-xs font-semibold transition-all">
                       <CreditCard className="w-3.5 h-3.5" /> Payments

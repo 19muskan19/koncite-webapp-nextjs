@@ -3,6 +3,7 @@
 import React from 'react';
 import { Search, Bot } from 'lucide-react';
 import { cn } from '@/utils/cn';
+import { AI_FINANCE_HEADER_SUBTITLE } from '@/constants/aiFinance';
 
 interface AIFinanceHeaderProps {
   activeTab: string;
@@ -21,7 +22,7 @@ export default function AIFinanceHeader({ activeTab, searchQuery, onSearchChange
     <header className={cn('flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-3 border-b border-inherit')}>
       <div>
         <h1 className={cn('text-lg sm:text-xl font-black tracking-tight', textPrimary)}>{title}</h1>
-        <p className={cn('text-[9px] sm:text-[10px] font-bold uppercase tracking-widest mt-0.5', textSecondary)}>Manage your construction finances with AI</p>
+        <p className={cn('text-[9px] sm:text-[10px] font-bold uppercase tracking-widest mt-0.5', textSecondary)}>{AI_FINANCE_HEADER_SUBTITLE}</p>
       </div>
       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
         <div className="relative flex-1 min-w-0 sm:min-w-[200px] max-w-md w-full sm:w-auto">

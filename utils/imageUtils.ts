@@ -2,22 +2,20 @@
  * Image URL utilities - reduce failed requests and improve performance
  */
 
-/** Invalid logo values that cause 301/404/aborted requests (e.g. staging.koncite.com/logo) */
-const INVALID_LOGO_PATTERNS = ['logo', '/logo', '/logo/', 'logo/'];
-
 /**
  * Returns true if the URL looks valid for loading an image.
  * Skips empty, relative paths like "/logo", or obviously invalid values.
  * Note: Never use '' in patterns — String.prototype.endsWith('') is always true.
+ * Avoid rejecting URLs that merely contain or end with the substring "logo" (e.g. …/brand/logo.png).
  */
 export function isValidLogoUrl(url: string | null | undefined): boolean {
   if (url == null || typeof url !== 'string') return false;
   const trimmed = url.trim();
   if (!trimmed) return false;
   const lower = trimmed.toLowerCase();
-  // Reject URLs that end with "/logo" only (no filename) - these 404
+  // Reject bare "/logo" path with no file — these 404
   if (lower.endsWith('/logo') || lower === 'https://staging.koncite.com/logo' || lower === 'http://staging.koncite.com/logo') return false;
-  if (INVALID_LOGO_PATTERNS.some((p) => lower === p || lower.endsWith(p))) return false;
+  if (lower === 'logo' || lower === '/logo' || lower === '/logo/' || lower === 'logo/') return false;
   // Must look like an image URL (http(s) or data URL or path to image file)
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:')) return true;
   // Relative path to storage/file
@@ -101,6 +99,57 @@ export function getLogoUrl(
   return toSameOriginLogoUrl(resolved);
 }
 
+/** Synthetic “initials as image” URLs — not an uploaded company logo. */
+function isSyntheticAvatarLogoUrl(url: string): boolean {
+  const lower = url.trim().toLowerCase();
+  return lower.includes('ui-avatars.com/') || lower.includes('dicebear.com/');
+}
+
+/**
+ * Extract logo URL string from companies-list / company API objects.
+ * (Declared before `getCompanyLogoImageSrc` so it can coerce API objects.)
+ */
+export function extractCompanyLogoFromApi(company: Record<string, unknown> | null | undefined): string {
+  if (!company || typeof company !== 'object') return '';
+  const asStr = (v: unknown): string | null => {
+    if (typeof v === 'string' && v.trim().length > 0) return v.trim();
+    return null;
+  };
+  for (const key of ['logo', 'logo_url', 'company_logo', 'image', 'profile_images'] as const) {
+    const s = asStr(company[key]);
+    if (s) return s;
+  }
+  const lo = company.logo;
+  if (lo && typeof lo === 'object' && lo !== null && 'url' in lo) {
+    const u = (lo as { url?: unknown }).url;
+    if (typeof u === 'string' && u.trim()) return u.trim();
+  }
+  return '';
+}
+
+/**
+ * URL for `<img src>` when the company has a real logo file/URL.
+ * Returns `null` when the UI should show text initials instead (no logo, invalid path, or placeholder avatar URL).
+ */
+export function getCompanyLogoImageSrc(logo: string | Record<string, unknown> | null | undefined): string | null {
+  const logoStr =
+    typeof logo === 'string'
+      ? logo.trim()
+      : logo && typeof logo === 'object'
+        ? extractCompanyLogoFromApi(logo)
+        : '';
+  if (!logoStr) return null;
+  if (isSyntheticAvatarLogoUrl(logoStr)) return null;
+
+  if (logoStr.startsWith('https://') || logoStr.startsWith('http://')) {
+    if (isValidLogoUrl(logoStr)) return logoStr;
+    return null;
+  }
+  const resolved = resolveLogoPath(logoStr);
+  if (!isValidLogoUrl(resolved)) return null;
+  return toSameOriginLogoUrl(resolved);
+}
+
 /**
  * Convert storage URL to same-origin path when possible.
  * Uses Next.js rewrite /storage/:path* so images load from same origin (avoids CORS).
@@ -137,32 +186,34 @@ export function getProfileImageUrl(value: string | null | undefined, fallbackNam
 }
 
 /**
+ * Uploaded profile photo URL for `<img src>`, or `null` if none (no ui-avatars fallback).
+ * Use in the sidebar after company logo: shows signup/profile image when company has no logo file.
+ */
+export function getProfilePhotoImageSrc(value: string | null | undefined): string | null {
+  if (value == null || typeof value !== 'string' || !value.trim()) return null;
+  const trimmed = value.trim();
+  if (isSyntheticAvatarLogoUrl(trimmed)) return null;
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:')) {
+    if (!isValidLogoUrl(trimmed)) return null;
+    return toSameOriginStorageUrl(trimmed);
+  }
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging.koncite.com/api';
+  const storageBase = String(apiBase).replace(/\/api\/?$/, '');
+  const path = trimmed.startsWith('storage/')
+    ? trimmed
+    : trimmed.includes('/')
+      ? `storage/${trimmed}`
+      : `storage/profile_image/${trimmed}`;
+  const fullUrl = path.startsWith('/') ? `${storageBase}${path}` : `${storageBase}/${path}`;
+  return toSameOriginStorageUrl(fullUrl);
+}
+
+/**
  * ui-avatars URL for initials when company has no logo (or logo failed to load).
  */
 export function getInitialsAvatarUrl(displayName: string, backgroundColor: string = '6366f1'): string {
   const name = (displayName || 'U').trim() || 'U';
   return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=${backgroundColor}&color=fff&size=128`;
-}
-
-/**
- * Extract logo URL string from companies-list / company API objects.
- */
-export function extractCompanyLogoFromApi(company: Record<string, unknown> | null | undefined): string {
-  if (!company || typeof company !== 'object') return '';
-  const asStr = (v: unknown): string | null => {
-    if (typeof v === 'string' && v.trim().length > 0) return v.trim();
-    return null;
-  };
-  for (const key of ['logo', 'logo_url', 'company_logo', 'image'] as const) {
-    const s = asStr(company[key]);
-    if (s) return s;
-  }
-  const lo = company.logo;
-  if (lo && typeof lo === 'object' && lo !== null && 'url' in lo) {
-    const u = (lo as { url?: unknown }).url;
-    if (typeof u === 'string' && u.trim()) return u.trim();
-  }
-  return '';
 }
 
 /**

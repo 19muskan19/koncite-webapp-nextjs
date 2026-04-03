@@ -36,11 +36,10 @@ const nextConfig = {
   webpack: (config, { dev }) => {
     if (dev) {
       config.cache = { type: 'memory' };
-      // Default chunk wait is short; slow Windows disk/AV can cause ChunkLoadError on app/layout.js
-      config.output = {
-        ...config.output,
-        chunkLoadTimeout: 300000,
-      };
+      // Slow Windows disk/AV can hit default chunk load timeout.
+      if (config.output) {
+        config.output.chunkLoadTimeout = 300000;
+      }
     }
     return config;
   },

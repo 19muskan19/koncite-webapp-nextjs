@@ -1,7 +1,104 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useRef, ReactNode } from 'react';
 import { userAPI, masterDataAPI } from '../services/api';
+import { extractCompanyLogoFromApi, getCompanyLogoImageSrc } from '../utils/imageUtils';
+
+function firstCompanyRecord(userData: Record<string, any>): Record<string, unknown> | null {
+  const raw = userData.company || userData.company_data || userData.companies;
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>;
+  if (Array.isArray(raw) && raw[0] && typeof raw[0] === 'object') return raw[0] as Record<string, unknown>;
+  return null;
+}
+
+function normLabel(s: unknown): string {
+  return String(s ?? '')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Tenant row: `company_id` is parent org; subsidiaries live in `company.companies[]` with their own `logo`.
+ * Prefer the subsidiary the user signed up with: match `registration_name` to parent `name` (or `company_name`),
+ * or match explicit `companies.id` when the profile nests the active subsidiary.
+ */
+function resolveSubsidiaryFromParent(
+  parent: Record<string, unknown>,
+  userData: Record<string, any>
+): Record<string, unknown> | null {
+  const raw = parent.companies;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+
+  const nestedCo = userData.companies;
+  const targetChildId =
+    (typeof userData.companies_id === 'number' || typeof userData.companies_id === 'string') && userData.companies_id !== ''
+      ? userData.companies_id
+      : nestedCo && typeof nestedCo === 'object' && !Array.isArray(nestedCo) && nestedCo !== null && 'id' in nestedCo
+        ? (nestedCo as { id?: unknown }).id
+        : null;
+
+  if (targetChildId != null) {
+    const hit = raw.find((row) => row && typeof row === 'object' && String((row as { id?: unknown }).id) === String(targetChildId));
+    if (hit && typeof hit === 'object') return hit as Record<string, unknown>;
+  }
+
+  const parentName = normLabel(parent.name);
+  const signupName = normLabel(userData.company_name);
+  const labels = [parentName, signupName].filter(Boolean);
+
+  for (const label of labels) {
+    const matches = raw.filter(
+      (row) =>
+        row &&
+        typeof row === 'object' &&
+        (normLabel((row as { registration_name?: unknown }).registration_name) === label ||
+          normLabel((row as { name?: unknown }).name) === label)
+    );
+    if (!matches.length) continue;
+    matches.sort((a, b) => {
+      const ta = String((a as { created_at?: string }).created_at || '');
+      const tb = String((b as { created_at?: string }).created_at || '');
+      if (ta && tb && ta !== tb) return ta.localeCompare(tb);
+      return Number((a as { id?: number }).id || 0) - Number((b as { id?: number }).id || 0);
+    });
+    return matches[0] as Record<string, unknown>;
+  }
+
+  return null;
+}
+
+/** Merge nested company + root-level `company_logo` from profile-list payload. */
+function companyInfoFromProfile(userData: Record<string, any>): CompanyInfo | null {
+  const profileCompany = firstCompanyRecord(userData);
+  const subsidiary =
+    profileCompany && typeof profileCompany === 'object' ? resolveSubsidiaryFromParent(profileCompany, userData) : null;
+
+  const nestedLogo = profileCompany ? extractCompanyLogoFromApi(profileCompany) : '';
+  const subsidiaryLogo = subsidiary ? extractCompanyLogoFromApi(subsidiary) : '';
+  const rootLogo =
+    typeof userData.company_logo === 'string' && userData.company_logo.trim()
+      ? userData.company_logo.trim()
+      : '';
+  const logoMerged = (subsidiaryLogo || nestedLogo || rootLogo || null) as string | null;
+
+  if (subsidiary && (subsidiary.registration_name || subsidiary.name)) {
+    return {
+      name: String(subsidiary.registration_name || subsidiary.name || ''),
+      logo: logoMerged,
+    };
+  }
+
+  if (profileCompany && (profileCompany.registration_name || profileCompany.name)) {
+    return {
+      name: String(profileCompany.registration_name || profileCompany.name || ''),
+      logo: logoMerged,
+    };
+  }
+  if (userData.company_name) {
+    return { name: String(userData.company_name), logo: rootLogo || null };
+  }
+  return null;
+}
 
 interface User {
   id: number;
@@ -19,12 +116,24 @@ export interface CompanyInfo {
   logo?: string | null;
 }
 
+/** Payload from GET /my-accessible-menus (Next.js sidebar + permissions_by_slug). */
+export type AccessibleMenusData = {
+  user?: { id: number; uuid?: string | null; company_id?: number };
+  role?: { id: number; name: string; slug: string } | null;
+  is_super_admin?: boolean;
+  menus?: unknown[];
+  menus_flat?: Array<{ id: number; name: string; slug: string; parent_id: number | null }>;
+  permissions_by_slug?: Record<string, string[]>;
+};
+
 interface UserContextType {
   user: User | null;
   company: CompanyInfo | null;
   isLoading: boolean;
   error: string | null;
   isAuthenticated: boolean;
+  accessibleMenus: AccessibleMenusData | null;
+  refreshAccessibleMenus: () => Promise<void>;
   refreshUser: () => Promise<void>;
   clearUser: () => void;
 }
@@ -34,9 +143,47 @@ const UserContext = createContext<UserContextType | undefined>(undefined);
 export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [company, setCompany] = useState<CompanyInfo | null>(null);
+  const [accessibleMenus, setAccessibleMenus] = useState<AccessibleMenusData | null>(() => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const raw = localStorage.getItem('koncite_accessible_menus');
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as AccessibleMenusData;
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch {
+      /* ignore */
+    }
+    return null;
+  });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  
+
+  const loadAccessibleMenus = async () => {
+    if (typeof window === 'undefined') return;
+    const { getCookie } = require('../utils/cookies');
+    const token = getCookie('auth_token') || localStorage.getItem('auth_token');
+    const authOk = getCookie('isAuthenticated') === 'true' || localStorage.getItem('isAuthenticated') === 'true';
+    if (!token || !authOk) {
+      setAccessibleMenus(null);
+      return;
+    }
+    try {
+      const data = await userAPI.getMyAccessibleMenus();
+      if (data && typeof data === 'object') {
+        setAccessibleMenus(data as AccessibleMenusData);
+        try {
+          localStorage.setItem('koncite_accessible_menus', JSON.stringify(data));
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch (e) {
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('UserContext: my-accessible-menus failed', e);
+      }
+    }
+  };
+
   // Derive isAuthenticated from user and token (reactive)
   // Check cookies first, then fallback to localStorage for backward compatibility
   const isAuthenticated = useMemo(() => {
@@ -62,6 +209,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (!token || !isAuthenticated) {
       setUser(null);
       setCompany(null);
+      setAccessibleMenus(null);
       setIsLoading(false);
       return;
     }
@@ -81,18 +229,12 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // Accept user data when we have id or email (name can be null and will show fallback in UI)
         if (userData && (userData.id || userData.email)) {
           setUser(userData);
-          // Company from profile: nested company or company_name (entered at signup)
-          const profileCompany = userData.company || userData.company_data || userData.companies;
-          if (profileCompany && (profileCompany.registration_name || profileCompany.name)) {
-            setCompany({
-              name: profileCompany.registration_name || profileCompany.name || '',
-              logo: profileCompany.logo || profileCompany.logo_url || null
-            });
-          } else if (userData.company_name) {
-            setCompany({ name: userData.company_name, logo: userData.company_logo || null });
-          }
+          const fromProfile = companyInfoFromProfile(userData);
+          if (fromProfile) setCompany(fromProfile);
+          await loadAccessibleMenus();
         } else {
           setUser(null);
+          setAccessibleMenus(null);
         }
       } catch (profileErr: any) {
         const status = profileErr.status ?? profileErr.response?.status;
@@ -101,12 +243,14 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         // 404: endpoint may not exist. 500: backend error - continue without blocking
         if (is404 || is500) {
           setUser(null);
+          setAccessibleMenus(null);
           return;
         }
         if (process.env.NODE_ENV === 'development') {
           console.warn('UserContext: Profile fetch failed', { status, message: profileErr.message });
         }
         setUser(null);
+        setAccessibleMenus(null);
         return;
       }
     } catch (err: any) {
@@ -119,7 +263,8 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       
       setUser(null);
       setCompany(null);
-      
+      setAccessibleMenus(null);
+
       // If 401, clear auth (cookies and localStorage)
       if (err.status === 401 || err.response?.status === 401) {
         const { removeCookie } = require('../utils/cookies');
@@ -137,9 +282,14 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     await fetchUserProfile();
   };
 
+  const refreshAccessibleMenus = async () => {
+    await loadAccessibleMenus();
+  };
+
   const clearUser = () => {
     setUser(null);
     setCompany(null);
+    setAccessibleMenus(null);
     setError(null);
     // Clear cookies and localStorage
     const { removeCookie } = require('../utils/cookies');
@@ -148,6 +298,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (typeof window !== 'undefined') {
       localStorage.removeItem('auth_token');
       localStorage.removeItem('isAuthenticated');
+      localStorage.removeItem('koncite_accessible_menus');
     }
   };
 
@@ -167,12 +318,11 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (userData && userData.name) {
         console.log('UserContext: Setting user with name:', userData.name);
         setUser(userData);
-        // Company name from login (entered at signup)
-        if (userData.company_name) {
-          setCompany({ name: userData.company_name, logo: userData.company_logo || null });
-        }
+        const fromLogin = companyInfoFromProfile(userData);
+        if (fromLogin) setCompany(fromLogin);
         setIsLoading(false);
         setError(null);
+        void loadAccessibleMenus();
       } else {
         console.warn('UserContext: No user data or name in event, trying alternative structures...');
         // Try to extract user from different possible structures
@@ -182,6 +332,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           setUser(altUser);
           setIsLoading(false);
           setError(null);
+          void loadAccessibleMenus();
         } else {
           console.error('UserContext: Could not extract user data from event. Event structure:', event.detail);
           // Try to fetch profile as last resort
@@ -213,38 +364,87 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
   }, []);
 
-  // Fetch company by company_id when user has it but company not yet loaded from profile
-  useEffect(() => {
-    if (!user || company) return;
-    if (!user.company_id && !user.company_name) return;
+  const companyLogoFetchDoneRef = useRef<number | null>(null);
+  const companyLogoFetchInFlightRef = useRef<number | null>(null);
 
-    const fetchCompany = async () => {
+  // When profile only had company name but logo lives on the companies master row, load it once per company_id.
+  useEffect(() => {
+    if (!user?.company_id) {
+      companyLogoFetchDoneRef.current = null;
+      companyLogoFetchInFlightRef.current = null;
+      return;
+    }
+
+    const id = Number(user.company_id);
+    const rawLogo = company?.logo ?? user.company_logo;
+    if (getCompanyLogoImageSrc(rawLogo as string | Record<string, unknown> | null)) {
+      companyLogoFetchDoneRef.current = null;
+      return;
+    }
+
+    if (companyLogoFetchDoneRef.current === id) return;
+    if (companyLogoFetchInFlightRef.current === id) return;
+
+    companyLogoFetchInFlightRef.current = id;
+    let cancelled = false;
+
+    (async () => {
       try {
         const companies = await masterDataAPI.getCompanies();
-        const matched = companies.find((c: any) =>
-          String(c.id) === String(user.company_id) ||
-          String(c.numericId || c.id) === String(user.company_id)
-        );
-        if (matched) {
-          setCompany({
-            name: matched.registration_name || matched.name || '',
-            logo: matched.logo || matched.logo_url || null
-          });
-        } else if (user.company_name) {
-          setCompany({ name: user.company_name, logo: user.company_logo || null });
-        }
-      } catch (e) {
-        if (user.company_name) {
-          setCompany({ name: user.company_name, logo: user.company_logo || null });
-        }
-      }
-    };
+        if (cancelled || Number(user.company_id) !== id) return;
 
-    fetchCompany();
-  }, [user?.id, user?.company_id, user?.company_name]);
+        const tenantId = String(user.company_id);
+        const brandingName = normLabel(company?.name || user.company_name);
+
+        const matched = companies.find((c: any) => {
+          if (String(c.id) === tenantId || String(c.numericId || c.id) === tenantId) return true;
+          if (!brandingName) return false;
+          if (String(c.company_id ?? c.companies_id) !== tenantId) return false;
+          return normLabel(c.registration_name || c.name) === brandingName;
+        });
+
+        const logoFromRow = matched ? extractCompanyLogoFromApi(matched as Record<string, unknown>) || null : null;
+        const rootLogo =
+          typeof user.company_logo === 'string' && user.company_logo.trim() ? user.company_logo.trim() : null;
+
+        if (matched || logoFromRow || rootLogo) {
+          const name =
+            (matched && (matched.registration_name || matched.name)) ||
+            user.company_name ||
+            company?.name ||
+            '';
+          setCompany((prev) => ({
+            name: String(name || prev?.name || ''),
+            logo: logoFromRow || rootLogo || prev?.logo || null,
+          }));
+        }
+      } catch {
+        /* ignore */
+      } finally {
+        if (companyLogoFetchInFlightRef.current === id) companyLogoFetchInFlightRef.current = null;
+        if (!cancelled && Number(user?.company_id) === id) companyLogoFetchDoneRef.current = id;
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, user?.company_id, user?.company_name, company?.logo, user?.company_logo, company?.name]);
 
   return (
-    <UserContext.Provider value={{ user, company, isLoading, error, isAuthenticated, refreshUser, clearUser }}>
+    <UserContext.Provider
+      value={{
+        user,
+        company,
+        isLoading,
+        error,
+        isAuthenticated,
+        accessibleMenus,
+        refreshAccessibleMenus,
+        refreshUser,
+        clearUser,
+      }}
+    >
       {children}
     </UserContext.Provider>
   );

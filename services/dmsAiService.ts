@@ -14,13 +14,18 @@
  * - sendMessage: POST /api/chat { message, agent, session_id, user_id, project_id, files, file_names }
  * - Requires context JWT with Koncite document scope; file-only requests supported (message optional)
  *
- * user_id from JWT (Bearer token). Paths may be /ai-agent/sessions, /ai-agent/chat (Laravel routes).
+ * Documents AI helpers (same Bearer): GET /documents/ai/context; POST /documents/ai/upload;
+ * POST /documents/ai/search — implemented below where the route group exists on the API.
+ *
+ * user_id from JWT (Bearer token). Chat/session paths use /ai-agent/* (Laravel forwards to Python).
  */
 
 import apiClient from './apiClient';
 
 export const AGENT_DPR_INVENTORY = 'dpr_inventory' as const;
 export const AGENT_DOC_MGMT = 'doc_mgmt' as const;
+/** Laravel / Python finance assistant (`ai-finance` accepted server-side; we send `ai_finance`). */
+export const AGENT_AI_FINANCE = 'ai_finance' as const;
 
 /**
  * Inventory agent: Not yet implemented.
@@ -47,6 +52,108 @@ export interface AiSession {
 }
 
 export interface CreateSessionResponse extends AiSession {}
+
+/** One row after normalizing GET /ai-agent/sessions/{id} history arrays. */
+export interface AiChatTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+/**
+ * Unwrap Laravel `{ status, data: { ... } }` and chained `data` objects (and JSON strings).
+ */
+export function normalizeAgentSessionDetail(raw: unknown): AiSession {
+  let cur: unknown = raw;
+  for (let depth = 0; depth < 10; depth++) {
+    if (cur == null) break;
+    if (typeof cur === 'string') {
+      const t = cur.trim();
+      if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) {
+        try {
+          cur = JSON.parse(cur) as unknown;
+          continue;
+        } catch {
+          break;
+        }
+      }
+      break;
+    }
+    if (typeof cur !== 'object' || Array.isArray(cur)) break;
+    const o = cur as Record<string, unknown>;
+    if ('data' in o && o.data != null && typeof o.data === 'object' && !Array.isArray(o.data)) {
+      cur = o.data;
+      continue;
+    }
+    break;
+  }
+  return (typeof cur === 'object' && cur !== null && !Array.isArray(cur) ? cur : {}) as AiSession;
+}
+
+function isLikelyChatEntry(x: unknown): boolean {
+  if (!x || typeof x !== 'object' || Array.isArray(x)) return false;
+  const o = x as Record<string, unknown>;
+  return ['content', 'message', 'text', 'body', 'role', 'sender'].some((k) => k in o);
+}
+
+function collectMessageArrays(obj: Record<string, unknown>, depth = 0): unknown[][] {
+  if (depth > 8) return [];
+  const out: unknown[][] = [];
+  for (const v of Object.values(obj)) {
+    if (Array.isArray(v) && v.length > 0 && isLikelyChatEntry(v[0])) {
+      out.push(v);
+    }
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      out.push(...collectMessageArrays(v as Record<string, unknown>, depth + 1));
+    }
+  }
+  return out;
+}
+
+function extractHistoryArray(session: Record<string, unknown>): unknown[] {
+  const directKeys = ['messages', 'chat_history', 'chatHistory', 'history', 'conversation', 'turns', 'dialog', 'chat'];
+  for (const k of directKeys) {
+    const v = session[k];
+    if (Array.isArray(v)) return v;
+  }
+  const nested = collectMessageArrays(session);
+  if (!nested.length) return [];
+  nested.sort((a, b) => b.length - a.length);
+  return nested[0] ?? [];
+}
+
+function mapTurnToChat(m: unknown): AiChatTurn | null {
+  if (!m || typeof m !== 'object' || Array.isArray(m)) return null;
+  const o = m as Record<string, unknown>;
+  const roleRaw = String(o.role ?? o.sender ?? o.type ?? '').toLowerCase();
+  const role: 'user' | 'assistant' = ['user', 'human', 'client'].includes(roleRaw) ? 'user' : 'assistant';
+  const candidates = [o.content, o.message, o.text, o.body];
+  let content = '';
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim()) {
+      content = c.trim();
+      break;
+    }
+  }
+  if (!content) return null;
+  return { role, content };
+}
+
+/**
+ * Read chat turns from a session detail object (after {@link normalizeAgentSessionDetail}).
+ */
+export function extractChatTurnsFromSession(session: AiSession | Record<string, unknown>): AiChatTurn[] {
+  const obj =
+    typeof session === 'object' && session !== null && !Array.isArray(session)
+      ? (session as Record<string, unknown>)
+      : {};
+  const rawArr = extractHistoryArray(obj);
+  const out: AiChatTurn[] = [];
+  for (let i = 0; i < rawArr.length; i++) {
+    const t = mapTurnToChat(rawArr[i]);
+    if (t) out.push(t);
+  }
+  return out;
+}
 
 export interface ChatResponse {
   reply?: string;
@@ -99,6 +206,24 @@ export async function getChatContext(projectId?: string | number): Promise<GetCh
 }
 
 /**
+ * POST /api/documents/ai/upload — ingest files for AI / RAG (payload matches Laravel validation).
+ */
+export async function uploadDocumentForAi(formData: FormData): Promise<unknown> {
+  const { data } = await apiClient.post<unknown>('/documents/ai/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return data;
+}
+
+/**
+ * POST /api/documents/ai/search — semantic or keyword search over allowed documents.
+ */
+export async function searchDocumentsAi(body: Record<string, unknown>): Promise<unknown> {
+  const { data } = await apiClient.post<unknown>('/documents/ai/search', body);
+  return data;
+}
+
+/**
  * Create a chat session. Laravel adds user_id from auth, forwards to Python.
  * POST /api/ai-agent/sessions
  * Payload: { agent, name } — matches Laravel controller validation
@@ -123,10 +248,12 @@ export async function createSession(
         ? { agent: 'dpr_inventory', name: name ?? getDefaultDprSessionName() }
         : agent === 'doc_mgmt'
           ? { agent: 'doc_mgmt', name: name ?? 'Document Chat' }
-          : {
-              agent,
-              name: name ?? `DMS Chat - ${new Date().toLocaleDateString()}`,
-            };
+          : agent === AGENT_AI_FINANCE || agent === 'ai-finance'
+            ? { agent: AGENT_AI_FINANCE, name: name ?? 'Finance chat' }
+            : {
+                agent,
+                name: name ?? `DMS Chat - ${new Date().toLocaleDateString()}`,
+              };
   const { data } = await apiClient.post<CreateSessionResponse>('/ai-agent/sessions', payload);
   return data;
 }
@@ -148,8 +275,8 @@ export async function listSessions(): Promise<AiSession[]> {
  * GET /api/ai-agent/sessions/{sessionId}
  */
 export async function getSession(sessionId: string): Promise<AiSession> {
-  const { data } = await apiClient.get<AiSession>(`/ai-agent/sessions/${encodeURIComponent(sessionId)}`);
-  return data;
+  const { data } = await apiClient.get<unknown>(`/ai-agent/sessions/${encodeURIComponent(sessionId)}`);
+  return normalizeAgentSessionDetail(data);
 }
 
 /**
@@ -222,12 +349,19 @@ export async function sendMessage(
               session_id: sessionId,
               project_id: options?.projectId != null ? String(options.projectId) : null,
             }
-          : {
-              session_id: sessionId,
-              message: message || '',
-              agent,
-              project_id: options?.projectId != null ? String(options.projectId) : null,
-            };
+          : agent === AGENT_AI_FINANCE || agent === 'ai-finance'
+            ? {
+                message: message || '',
+                agent: AGENT_AI_FINANCE,
+                session_id: sessionId,
+                project_id: options?.projectId != null ? String(options.projectId) : null,
+              }
+            : {
+                session_id: sessionId,
+                message: message || '',
+                agent,
+                project_id: options?.projectId != null ? String(options.projectId) : null,
+              };
 
   const { data } = await apiClient.post<ChatResponse>('/ai-agent/chat', payload, {
     timeout: 60000,
