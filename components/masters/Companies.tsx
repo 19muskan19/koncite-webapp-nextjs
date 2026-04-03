@@ -66,7 +66,7 @@ const toSafeString = (val: unknown): string => {
 
 const Companies: React.FC<CompaniesProps> = ({ theme }) => {
   const toast = useToast();
-  const { isAuthenticated, user } = useUser();
+  const { isAuthenticated, user, refreshUser } = useUser();
   const [showCompanyModal, setShowCompanyModal] = useState<boolean>(false);
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [editingCompanyId, setEditingCompanyId] = useState<string | null>(null);
@@ -526,6 +526,13 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
       await fetchCompanies();
       // Refresh projects to update project counts
       await fetchAllProjects();
+
+      const editedNumeric = /^\d+$/.test(String(editingCompanyId)) ? Number(editingCompanyId) : NaN;
+      const userCid = user?.company_id != null ? Number(user.company_id) : NaN;
+      if (!Number.isNaN(editedNumeric) && !Number.isNaN(userCid) && editedNumeric === userCid) {
+        await refreshUser();
+      }
+
       handleCloseModal();
       setEditingCompanyId(null);
       toast.showSuccess('Company updated successfully!');
@@ -944,6 +951,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
             placeholder="Search by company name..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            autoComplete="off"
             className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
           />
         </div>
@@ -1298,7 +1306,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                 </div>
               </div>
             ) : editingCompanyId ? (
-              <div className="p-6 space-y-6">
+              <form className="p-6 space-y-6" autoComplete="off" onSubmit={(e) => e.preventDefault()}>
                 <div>
                   <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
                     Company Name <span className="text-red-500">*</span>
@@ -1306,6 +1314,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                   <input
                     type="text"
                     name="registrationName"
+                    autoComplete="off"
                     value={formData.registrationName}
                     onChange={handleInputChange}
                     placeholder="Enter company registration name"
@@ -1323,6 +1332,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                   </label>
                   <textarea
                     name="registeredAddress"
+                    autoComplete="off"
                     value={formData.registeredAddress}
                     onChange={handleInputChange}
                     placeholder="Enter registered address"
@@ -1342,6 +1352,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                   <input
                     type="text"
                     name="companyRegistrationNo"
+                    autoComplete="off"
                     value={formData.companyRegistrationNo}
                     onChange={handleInputChange}
                     placeholder="Enter company registration number"
@@ -1366,6 +1377,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                           className="w-32 h-32 rounded-xl object-cover border-2 border-[#C2D642]/20"
                         />
                         <button
+                          type="button"
                           onClick={() => {
                             if (formData.logoPreview) {
                               URL.revokeObjectURL(formData.logoPreview);
@@ -1402,7 +1414,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                     )}
                   </div>
                 </div>
-              </div>
+              </form>
             ) : null}
 
             {/* Modal Footer */}

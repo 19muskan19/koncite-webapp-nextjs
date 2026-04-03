@@ -208,6 +208,7 @@ const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
       <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1024px)] max-h-[90vh] overflow-hidden my-6 sm:my-8 flex flex-col`}>
         {/* Close X - fixed at top right, stays visible while scrolling */}
         <button
+          type="button"
           onClick={onClose}
           disabled={isSubmitting}
           className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors disabled:opacity-50`}
@@ -226,13 +227,14 @@ const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
           </div>
         </div>
 
-        <div className="p-6 space-y-6">
+        <form className="p-6 space-y-6" autoComplete="off" onSubmit={(e) => e.preventDefault()}>
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
               Tag Project <span className="text-red-500">*</span>
             </label>
             <select
               name="projectId"
+              autoComplete="off"
               value={formData.projectId}
               onChange={handleInputChange}
               disabled={isLoadingProjects || isSubmitting}
@@ -260,6 +262,7 @@ const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
             <input
               type="text"
               name="subprojectName"
+              autoComplete="off"
               value={formData.subprojectName}
               onChange={handleInputChange}
               placeholder="Enter subproject name"
@@ -281,6 +284,7 @@ const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
               value={formData.plannedStartDate}
               onChange={(e) => handleInputChange(e as React.ChangeEvent<HTMLInputElement>)}
               disabled={isSubmitting}
+              autoComplete="off"
               iconClassName={textSecondary}
               className={`${
                 isDark
@@ -300,6 +304,7 @@ const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
               onChange={(e) => handleInputChange(e as React.ChangeEvent<HTMLInputElement>)}
               min={formData.plannedStartDate}
               disabled={isSubmitting}
+              autoComplete="off"
               iconClassName={textSecondary}
               className={`${
                 isDark
@@ -315,6 +320,7 @@ const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
             </label>
             <select
               name="status"
+              autoComplete="off"
               value={formData.status}
               onChange={handleInputChange}
               disabled={isSubmitting}
@@ -330,10 +336,11 @@ const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
               <option value="ongoing">Ongoing</option>
             </select>
           </div>
-        </div>
+        </form>
 
         <div className={`flex items-center justify-end gap-3 p-6 border-t border-inherit`}>
           <button
+            type="button"
             onClick={onClose}
             disabled={isSubmitting}
             className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
@@ -345,6 +352,7 @@ const CreateSubprojectModal: React.FC<CreateSubprojectModalProps> = ({
             Cancel
           </button>
           <button
+            type="button"
             onClick={handleCreateSubproject}
             disabled={isSubmitting || isLoadingProjects || projects.length === 0}
             className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642]/90 text-white transition-all shadow-md disabled:opacity-50 flex items-center gap-2"

@@ -41,6 +41,7 @@ import { useToast } from '../../contexts/ToastContext';
 import { useSidebar } from '../../contexts/SidebarContext';
 import { masterDataAPI, teamsAPI, safetyAPI, hinderanceAPI, dprAPI, activitiesHistoryAPI, labourHistoryAPI, materialsHistoryAPI, assetsHistoryAPI } from '../../services/api';
 import { getLogoUrl } from '@/utils/imageUtils';
+import { getTodayDateString } from '@/utils/dateUtils';
 
 interface Project {
   id: string;
@@ -162,8 +163,12 @@ interface SafetyEntry {
   id: string;
   serverId?: string | number; // Backend id for delete API
   details?: string;
+  /** Row date for safety-add (falls back to today if absent) */
+  date?: string;
   image?: string; // legacy single - normalized to images when loading
   images?: string[];
+  /** New upload — appended as multipart field `img` (preferred over data URL) */
+  imageFile?: File;
   /** Single company user (teams pivot id) — sent as company_users_id */
   company_users_id?: string;
   /** When API returns company_users_id as object without numeric id — show name/phone in UI */
@@ -182,8 +187,10 @@ interface HindranceEntry {
   id: string;
   serverId?: number; // ID from API for edit/delete
   details?: string;
+  date?: string;
   image?: string; // legacy single - normalized to images when loading
   images?: string[];
+  imageFile?: File;
   company_users_id?: string;
   companyUserDisplay?: { name: string; email?: string; phone?: string };
   remarks?: string;
@@ -302,6 +309,12 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const [showCreateMaterialModal, setShowCreateMaterialModal] = useState<boolean>(false);
   const [showCreateLabourModal, setShowCreateLabourModal] = useState<boolean>(false);
   const [showCreateAssetModal, setShowCreateAssetModal] = useState<boolean>(false);
+  /** After subproject pick: API reports a DPR already exists for today — edit it or go back. */
+  const [dprExistsPrompt, setDprExistsPrompt] = useState<null | {
+    dprId: number;
+    message: string;
+    subproject: Subproject | null;
+  }>(null);
   const projectModalScrollRef = useRef<HTMLDivElement>(null);
   const projectModalHeaderRef = useRef<HTMLDivElement>(null);
   const subprojectModalScrollRef = useRef<HTMLDivElement>(null);
@@ -404,9 +417,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
   const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
 
-  /** Format DPR date for list display. Uses dpr.date | dpr.name | dpr.dpr_date. Extracts YYYY-MM-DD from ISO strings to avoid timezone shifts. */
+  /** Format DPR date for list display. Prefer `name` (YYYY-MM-DD from client) over `date` — API may store `date` in UTC and show the previous calendar day. */
   const formatDprListDate = (dpr: any): string => {
-    const val = dpr?.date ?? dpr?.name ?? dpr?.dpr_date;
+    const val = dpr?.name ?? dpr?.date ?? dpr?.dpr_date;
     if (val == null || val === '') return '-';
     const s = String(val).trim();
     const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
@@ -932,68 +945,116 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     setSubprojectsSearchResults(prev => prev.map(s => s.id === subprojectId ? { ...s, status: newStatus } : s));
   };
 
-  // Step 3: Tap Next (subproject selected/skipped) -> dpr-add + activities prefetch in parallel, then navigate with data ready
-  const handleSubprojectSelected = async (subproject: Subproject | null) => {
+  // Step 3: Tap Next (subproject selected/skipped) -> dpr-exists-check, then dpr-add + activities prefetch (or prompt to edit existing)
+  const proceedCreateDprAfterExistCheck = async (subproject: Subproject | null) => {
     if (!selectedProject) return;
     setEditingDprId(null);
     setSelectedSubproject(subproject);
     setSubprojectSearchQuery('');
+    const projectId = selectedProject.numericId ?? Number(selectedProject.id);
+    const subprojectId = subproject ? (subproject.numericId ?? Number(subproject.id)) : null;
+    const dprName = getTodayDateString();
+
+    const [res, rawActivities] = await Promise.all([
+      dprAPI.add({
+        name: dprName,
+        projects_id: projectId,
+        sub_projects_id: subprojectId ?? '',
+        staps: '7',
+      }),
+      activitiesHistoryAPI.projectSearch(projectId, subprojectId ?? null, undefined),
+    ]);
+    const created = res?.dpr ?? res?.data?.dpr ?? res?.data ?? res;
+    const dprId = created?.id ?? created?.dpr_id ?? res?.data?.id ?? res?.data?.dpr_id ?? res?.id ?? res?.dpr_id ?? null;
+    if (dprId != null) setDprIdRes(dprId);
+
+    const getUnitName = (a: any) => {
+      const u = a.unit_id ?? a.units ?? a.unit;
+      const fromApi = (u?.unit ?? u?.name ?? (typeof a.unit === 'string' ? a.unit : '')) ?? '';
+      return typeof fromApi === 'string' ? fromApi : '';
+    };
+    const transformed: ActivityItem[] = (Array.isArray(rawActivities) ? rawActivities : []).map((a: any) => {
+      const actType = (a.type ?? a.activity_type ?? '').toString().toLowerCase();
+      const type: 'heading' | 'activity' = actType === 'heading' ? 'heading' : 'activity';
+      return {
+        id: a.uuid || String(a.id),
+        numericId: a.id,
+        name: a.activities || a.name || '',
+        project: selectedProject.name,
+        subproject: subproject?.name || '',
+        type,
+        unit: getUnitName(a),
+        qty: a.qty ?? a.quantity,
+        rate: a.rate,
+        amount: a.amount,
+        startDate: a.start_date ?? a.startDate,
+        endDate: a.end_date ?? a.endDate,
+        createdAt: a.created_at ?? a.createdAt,
+        heading: a.heading ?? a.parent_id,
+        parent_id: a.parent_id ?? a.heading
+      };
+    });
+    const cacheKey = `${projectId}-${subprojectId ?? 'none'}-${''}-${activitiesRefreshKey}`;
+    activitiesCacheRef.current = { key: cacheKey, data: transformed, ts: Date.now() };
+    setActivities(transformed);
+    setShowActivitySelection(true);
+    setShowSubprojectSelection(false);
+    router.replace(`${DPR_BASE}/activities`);
+  };
+
+  const handleSubprojectSelected = async (subproject: Subproject | null) => {
+    if (!selectedProject) return;
+    setDprExistsPrompt(null);
     setIsCreatingDpr(true);
     const projectId = selectedProject.numericId ?? Number(selectedProject.id);
     const subprojectId = subproject ? (subproject.numericId ?? Number(subproject.id)) : null;
-    const dprName = new Date().toLocaleDateString('en-CA') || new Date().toISOString().slice(0, 10) || 'DPR';
+    const dateStr = getTodayDateString();
 
     try {
-      const [res, rawActivities] = await Promise.all([
-        dprAPI.add({
-          name: dprName,
-          projects_id: projectId,
-          sub_projects_id: subprojectId ?? '',
-          staps: '7',
-        }),
-        activitiesHistoryAPI.projectSearch(projectId, subprojectId ?? null, undefined),
-      ]);
-      const created = res?.dpr ?? res?.data?.dpr ?? res?.data ?? res;
-      const dprId = created?.id ?? created?.dpr_id ?? res?.data?.id ?? res?.data?.dpr_id ?? res?.id ?? res?.dpr_id ?? null;
-      if (dprId != null) setDprIdRes(dprId);
-
-      const getUnitName = (a: any) => {
-        const u = a.unit_id ?? a.units ?? a.unit;
-        const fromApi = (u?.unit ?? u?.name ?? (typeof a.unit === 'string' ? a.unit : '')) ?? '';
-        return typeof fromApi === 'string' ? fromApi : '';
-      };
-      const transformed: ActivityItem[] = (Array.isArray(rawActivities) ? rawActivities : []).map((a: any) => {
-        const actType = (a.type ?? a.activity_type ?? '').toString().toLowerCase();
-        const type: 'heading' | 'activity' = actType === 'heading' ? 'heading' : 'activity';
-        return {
-          id: a.uuid || String(a.id),
-          numericId: a.id,
-          name: a.activities || a.name || '',
-          project: selectedProject.name,
-          subproject: subproject?.name || '',
-          type,
-          unit: getUnitName(a),
-          qty: a.qty ?? a.quantity,
-          rate: a.rate,
-          amount: a.amount,
-          startDate: a.start_date ?? a.startDate,
-          endDate: a.end_date ?? a.endDate,
-          createdAt: a.created_at ?? a.createdAt,
-          heading: a.heading ?? a.parent_id,
-          parent_id: a.parent_id ?? a.heading
-        };
+      const check = await dprAPI.existsCheckForDate({
+        project_id: projectId,
+        date: dateStr,
+        subproject_id: subprojectId ?? undefined,
       });
-      const cacheKey = `${projectId}-${subprojectId ?? 'none'}-${''}-${activitiesRefreshKey}`;
-      activitiesCacheRef.current = { key: cacheKey, data: transformed, ts: Date.now() };
-      setActivities(transformed);
-      setShowActivitySelection(true);
-      setShowSubprojectSelection(false);
-      router.replace(`${DPR_BASE}/activities`);
+      if (check.dpr_exists && check.dpr_id != null) {
+        setDprExistsPrompt({
+          dprId: check.dpr_id,
+          message:
+            check.message ||
+            'A DPR for this project and date is already entered. You can edit it or choose another project or sub-project.',
+          subproject,
+        });
+        return;
+      }
+      await proceedCreateDprAfterExistCheck(subproject);
     } catch (err: any) {
-      toast.showError(err?.message || 'Failed to create DPR');
+      toast.showError(err?.message || 'Failed to start DPR');
     } finally {
       setIsCreatingDpr(false);
     }
+  };
+
+  const handleDprExistsEditExisting = () => {
+    if (!dprExistsPrompt || !selectedProject) return;
+    const { dprId, subproject } = dprExistsPrompt;
+    const projId = selectedProject.numericId ?? selectedProject.id;
+    const subId = subproject ? (subproject.numericId ?? subproject.id) : null;
+    setDprExistsPrompt(null);
+    handleEditDpr({
+      id: dprId,
+      projects_id: projId,
+      sub_projects_id: subId,
+      projects: { id: projId, name: selectedProject.name, project_name: selectedProject.name },
+      sub_projects:
+        subId != null && subproject
+          ? { id: subId, name: subproject.name }
+          : null,
+    });
+    router.replace(`${DPR_BASE}/activities`);
+  };
+
+  const handleDprExistsChooseDifferent = () => {
+    setDprExistsPrompt(null);
   };
 
   const handleSelectSubproject = (subproject: Subproject) => {
@@ -1199,7 +1260,12 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       if (!idStr || (typeof r === 'string' && r.length > 20)) continue;
       const matchedActivity = activitiesList.find((a) => String(a.id) === idStr || String(a.numericId) === idStr || (numericActId && (a.numericId === numericActId || Number(a.id) === numericActId)));
       const id = matchedActivity ? String(matchedActivity.id) : idStr;
-      const name = act?.activities ?? act?.name ?? r?.activity_name ?? r?.activities_name ?? getActivityName(idStr);
+      const name =
+        (typeof act === 'string' && act.trim() ? act : null) ??
+        (act && typeof act === 'object' ? (act.activities ?? act.name) : null) ??
+        r?.activity_name ??
+        r?.activities_name ??
+        getActivityName(idStr);
       const qty = r?.qty ?? r?.activities_history_qty ?? r?.quantity ?? r?.activities_history_quantity ?? 0;
       const remarks = r?.remarkes ?? r?.activities_history_remarkes ?? r?.remarks ?? '';
       const contractor = getContractor(r?.vendors ?? r?.vendor ?? r?.vendors_id ?? r?.vendors ?? r?.contractor);
@@ -1245,14 +1311,10 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             arr = extractActivities(details);
           } catch { /* ignore */ }
         }
-        const ids = arr.map((e: any) => e?.activities_id ?? e?.activities_history_activities_id ?? e?.activity_id ?? e?.id).filter(Boolean);
-        if (ids.length > 0) {
-          try {
-            records = await activitiesHistoryAPI.edit(editingDprId, ids);
-          } catch {
-            records = arr;
-          }
-        } else if (arr.length > 0) {
+        if (arr.length > 0) {
+          // fetch-dpr-history-edit already returns flattened history rows (qty, img, FKs). Avoid
+          // activities-history-edit here: its Resource expects `activities` as a model, but flattened
+          // rows (and some DB shapes) use `activities` as the string name → 500 "id on string".
           records = arr;
         }
       } catch {
@@ -1692,12 +1754,13 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             const qty = Number(a.quantity ?? 0);
             const completion = totalQty > 0 ? Math.round((qty / totalQty) * 100) : 0;
             const imgs = (a.images || []).filter((url): url is string => !!url && typeof url === 'string');
+            const vendorId = getVendorId(a.contractor);
             const entry: {
               activities_history_activities_id: number;
               activities_history_qty: number;
               activities_history_completion?: number;
-              activities_history_vendors_id?: number | null;
-              activities_history_remarkes?: string;
+              activities_history_vendors_id: number | null;
+              activities_history_remarkes: string;
               activities_history_img?: string;
               activities_history_dpr_id?: number | null;
             } = {
@@ -1705,10 +1768,9 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
               activities_history_qty: qty,
               activities_history_completion: completion,
               activities_history_dpr_id: Number(dprId),
+              activities_history_vendors_id: vendorId,
+              activities_history_remarkes: a.remarks?.trim() ? a.remarks.trim() : '',
             };
-            const vendorId = getVendorId(a.contractor);
-            if (vendorId != null) entry.activities_history_vendors_id = vendorId;
-            if (a.remarks) entry.activities_history_remarkes = a.remarks;
             if (imgs.length > 0 && isDataUrl(imgs[0])) entry.activities_history_img = toRawBase64(imgs[0]);
             return entry;
           });
@@ -1835,7 +1897,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         dpr: {
           projects_id: projectId,
           sub_projects_id: subprojectId ?? '',
-          name: new Date().toLocaleDateString('en-CA'),
+          name: getTodayDateString(),
           staps: '7',
           force_new: '1',
         },
@@ -2448,15 +2510,42 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         };
       }
     }
+    const rowDate = item.date ?? item.dpr_date;
     return {
       id: item.uuid || String(item.id),
       serverId: item.id,
       details: item.details || item.description || item.name || '',
+      ...(rowDate != null && String(rowDate).trim() !== '' ? { date: String(rowDate) } : {}),
       images: parseImagesFromItem(item),
       company_users_id: pickCompanyUsersIdFromItem(item),
       companyUserDisplay,
       remarks: item.remarks || '',
     };
+  };
+
+  const safetyEntryHasPayload = (e: SafetyEntry) =>
+    !!(
+      e.details?.trim() ||
+      e.remarks?.trim() ||
+      e.company_users_id ||
+      e.imageFile instanceof File ||
+      (e.images?.length &&
+        e.images.some(
+          (img) => typeof img === 'string' && (img.startsWith('data:') || img.startsWith('http'))
+        ))
+    );
+
+  /** Unsaved wizard rows (serverId unset) are merged back after list fetch until safety-add saves them. */
+  const mergeApiSafetyWithLocalDrafts = (fromApi: SafetyEntry[], prev: SafetyEntry[]): SafetyEntry[] => {
+    const apiIds = new Set(fromApi.map((e) => e.id));
+    const drafts = prev.filter((e) => e.serverId == null && e.id && !apiIds.has(e.id));
+    return [...fromApi, ...drafts];
+  };
+
+  const mergeApiHindranceWithLocalDrafts = (fromApi: HindranceEntry[], prev: HindranceEntry[]): HindranceEntry[] => {
+    const apiIds = new Set(fromApi.map((e) => e.id));
+    const drafts = prev.filter((e) => e.serverId == null && e.id && !apiIds.has(e.id));
+    return [...fromApi, ...drafts];
   };
 
   // SafetyDPR: fetch-dpr-history-edit (edit mode) or safety-list when screen loads
@@ -2503,7 +2592,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             seen.add(key);
             return true;
           });
-        setSafetyEntries(mapped);
+        setSafetyEntries((prev) => mergeApiSafetyWithLocalDrafts(mapped, prev));
         setTeamMembers((prev) => mergeTeamMembersFromApiRows(filtered, prev));
       } catch (err: any) {
         toast.showError(err?.message || 'Failed to load safety list');
@@ -2528,16 +2617,30 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         };
       }
     }
+    const rowDate = item.date ?? item.dpr_date;
     return {
       id: item.uuid || String(item.id),
       serverId: item.id,
       details: item.details || item.description || item.name || '',
+      ...(rowDate != null && String(rowDate).trim() !== '' ? { date: String(rowDate) } : {}),
       images: parseImagesFromItem(item),
       company_users_id: pickCompanyUsersIdFromItem(item),
       companyUserDisplay,
       remarks: item.remarks || '',
     };
   };
+
+  const hindranceEntryHasPayload = (e: HindranceEntry) =>
+    !!(
+      e.details?.trim() ||
+      e.remarks?.trim() ||
+      e.company_users_id ||
+      e.imageFile instanceof File ||
+      (e.images?.length &&
+        e.images.some(
+          (img) => typeof img === 'string' && (img.startsWith('data:') || img.startsWith('http'))
+        ))
+    );
 
   // HinderanceDPR: fetch-dpr-history-edit (edit mode) or hinderance-list when screen loads
   useEffect(() => {
@@ -2583,7 +2686,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
             seen.add(key);
             return true;
           });
-        setHindranceEntries(mapped);
+        setHindranceEntries((prev) => mergeApiHindranceWithLocalDrafts(mapped, prev));
         setTeamMembers((prev) => mergeTeamMembersFromApiRows(filtered, prev));
       } catch (err: any) {
         toast.showError(err?.message || 'Failed to load hinderance list');
@@ -2770,9 +2873,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     reader.onload = () => {
       const result = reader.result as string;
       if (result) {
-        setSafetyEntries(prev => prev.map(entry =>
-          entry.id === id ? { ...entry, images: [result] } : entry
-        ));
+        setSafetyEntries((prev) =>
+          prev.map((entry) =>
+            entry.id === id ? { ...entry, imageFile: file, images: [result] } : entry
+          )
+        );
       }
     };
     reader.onerror = () => toast.showError('Failed to load image');
@@ -2781,12 +2886,14 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   };
 
   const handleSafetyEntryRemoveImage = (id: string, index: number) => {
-    setSafetyEntries(prev => prev.map(e => {
-      if (e.id !== id) return e;
-      const arr = e.images || (e.image ? [e.image] : []);
-      const next = arr.filter((_, i) => i !== index);
-      return { ...e, images: next };
-    }));
+    setSafetyEntries((prev) =>
+      prev.map((e) => {
+        if (e.id !== id) return e;
+        const arr = e.images || (e.image ? [e.image] : []);
+        const next = arr.filter((_, i) => i !== index);
+        return { ...e, images: next, imageFile: next.length ? e.imageFile : undefined };
+      })
+    );
   };
 
   const handleSafetyEntryCompanyUserChange = (entryId: string, companyUsersId: string) => {
@@ -2803,27 +2910,44 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   };
 
   const handleSafetyNext = async () => {
-    // Only save EXISTING entries via safety-add; NEW entries go in dpr-bulk-add
-    const existingEntries = safetyEntries.filter(e => e.serverId != null);
-    if (existingEntries.length > 0) {
-      setIsSubmittingSafety(true);
-      try {
-        for (const entry of existingEntries) {
-          const fd = buildSafetyAddFormData(entry);
-          if (!fd) {
-            toast.showError('Missing project or DPR. Please go back and complete project selection.');
-            setIsSubmittingSafety(false);
-            return;
-          }
-          await safetyAPI.addSafety(fd);
-        }
-      } catch (err: any) {
-        toast.showError(err?.message || 'Failed to save safety entries');
-        setIsSubmittingSafety(false);
+    const toSync = safetyEntries.filter(
+      (e) => e.serverId != null || (e.serverId == null && safetyEntryHasPayload(e))
+    );
+    if (toSync.length === 0) {
+      router.push(`${DPR_BASE}/hindrance`);
+      return;
+    }
+    let dprId = dprIdRes ?? editingDprId;
+    if (!dprId) {
+      dprId = await ensureDprId();
+      if (!dprId) {
+        toast.showError('Missing project or DPR. Please go back and complete project selection.');
         return;
       }
-      setIsSubmittingSafety(false);
     }
+    setIsSubmittingSafety(true);
+    try {
+      for (const entry of toSync) {
+        const fd = buildSafetyAddFormData(entry, dprId);
+        if (!fd) {
+          toast.showError('Missing project or DPR. Please go back and complete project selection.');
+          setIsSubmittingSafety(false);
+          return;
+        }
+        const res = await safetyAPI.addSafety(fd);
+        const newId = pickCreatedRowId(res);
+        if (entry.serverId == null && newId != null) {
+          setSafetyEntries((prev) =>
+            prev.map((x) => (x.id === entry.id ? { ...x, serverId: newId } : x))
+          );
+        }
+      }
+    } catch (err: any) {
+      toast.showError(err?.message || 'Failed to save safety entries');
+      setIsSubmittingSafety(false);
+      return;
+    }
+    setIsSubmittingSafety(false);
     router.push(`${DPR_BASE}/hindrance`);
   };
 
@@ -2861,9 +2985,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     reader.onload = () => {
       const result = reader.result as string;
       if (result) {
-        setHindranceEntries(prev => prev.map(entry =>
-          entry.id === id ? { ...entry, images: [result] } : entry
-        ));
+        setHindranceEntries((prev) =>
+          prev.map((entry) =>
+            entry.id === id ? { ...entry, imageFile: file, images: [result] } : entry
+          )
+        );
       }
     };
     reader.onerror = () => toast.showError('Failed to load image');
@@ -2872,12 +2998,14 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   };
 
   const handleHindranceEntryRemoveImage = (id: string, index: number) => {
-    setHindranceEntries(prev => prev.map(e => {
-      if (e.id !== id) return e;
-      const arr = e.images || (e.image ? [e.image] : []);
-      const next = arr.filter((_, i) => i !== index);
-      return { ...e, images: next };
-    }));
+    setHindranceEntries((prev) =>
+      prev.map((e) => {
+        if (e.id !== id) return e;
+        const arr = e.images || (e.image ? [e.image] : []);
+        const next = arr.filter((_, i) => i !== index);
+        return { ...e, images: next, imageFile: next.length ? e.imageFile : undefined };
+      })
+    );
   };
 
   const handleHindranceEntryCompanyUserChange = (entryId: string, companyUsersId: string) => {
@@ -2911,56 +3039,80 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     }
   };
 
-  /** Build FormData for safety-add (single entry, multipart). Per spec: img for single file; id when updating. */
-  const buildSafetyAddFormData = (entry: SafetyEntry): FormData | null => {
+  /** Build FormData for POST /safety-add — multipart; file field `img`; company_id from auth only. */
+  const buildSafetyAddFormData = (entry: SafetyEntry, dprIdOverride?: number | string | null): FormData | null => {
     const projectId = selectedProject?.numericId ?? selectedProject?.id;
     const subprojectId = selectedSubproject ? (selectedSubproject.numericId ?? selectedSubproject.id) : null;
-    const dprId = dprIdRes ?? editingDprId;
+    const dprId = dprIdOverride ?? dprIdRes ?? editingDprId;
     if (!projectId || !dprId) return null;
     const fd = new FormData();
     if (entry.serverId != null) fd.append('id', String(entry.serverId));
     fd.append('projects_id', String(projectId));
-    fd.append('sub_projects_id', subprojectId != null ? String(subprojectId) : '');
-    fd.append('dprId', String(dprId));
+    if (subprojectId != null && String(subprojectId).trim() !== '') {
+      fd.append('sub_projects_id', String(subprojectId));
+    }
     fd.append('dpr_id', String(dprId));
-    fd.append('name', (entry.details || '').substring(0, 100) || 'Safety');
+    fd.append('date', (entry.date && String(entry.date).trim()) || getTodayDateString());
+    fd.append('name', ((entry.details || '').trim()).substring(0, 100) || 'Safety');
     fd.append('details', entry.details || '');
     fd.append('remarks', entry.remarks || '');
     const cuid = normalizeNumericCompanyUsersId(entry.company_users_id);
-    if (cuid) fd.append('company_users_id', cuid);
-    const imgs = entry.images || (entry.image ? [entry.image] : []);
-    const uploadableImg = imgs.find((u): u is string => typeof u === 'string' && u.startsWith('data:'));
-    if (uploadableImg) {
-      const f = dataURLtoFile(uploadableImg, 'safety_img.jpg');
-      if (f) fd.append('img', f);
+    if (cuid) {
+      fd.append('company_users_id', cuid);
+      fd.append('company_user_id', cuid);
+    }
+    if (entry.imageFile instanceof File) {
+      fd.append('img', entry.imageFile);
+    } else {
+      const imgs = entry.images || (entry.image ? [entry.image] : []);
+      const uploadableImg = imgs.find((u): u is string => typeof u === 'string' && u.startsWith('data:'));
+      if (uploadableImg) {
+        const f = dataURLtoFile(uploadableImg, 'safety_img.jpg');
+        if (f) fd.append('img', f);
+      }
     }
     return fd;
   };
 
-  /** Build FormData for hinderance-add (single entry, multipart). Per spec: img for single file; id when updating. */
-  const buildHindranceAddFormData = (entry: HindranceEntry): FormData | null => {
+  /** Build FormData for POST /hinderance-add — same field contract as safety-add. */
+  const buildHindranceAddFormData = (entry: HindranceEntry, dprIdOverride?: number | string | null): FormData | null => {
     const projectId = selectedProject?.numericId ?? selectedProject?.id;
     const subprojectId = selectedSubproject ? (selectedSubproject.numericId ?? selectedSubproject.id) : null;
-    const dprId = dprIdRes ?? editingDprId;
+    const dprId = dprIdOverride ?? dprIdRes ?? editingDprId;
     if (!projectId || !dprId) return null;
     const fd = new FormData();
     if (entry.serverId != null) fd.append('id', String(entry.serverId));
     fd.append('projects_id', String(projectId));
-    fd.append('sub_projects_id', subprojectId != null ? String(subprojectId) : '');
-    fd.append('dprId', String(dprId));
+    if (subprojectId != null && String(subprojectId).trim() !== '') {
+      fd.append('sub_projects_id', String(subprojectId));
+    }
     fd.append('dpr_id', String(dprId));
-    fd.append('name', (entry.details || '').substring(0, 100) || 'Hindrance');
+    fd.append('date', (entry.date && String(entry.date).trim()) || getTodayDateString());
+    fd.append('name', ((entry.details || '').trim()).substring(0, 100) || 'Hindrance');
     fd.append('details', entry.details || '');
     fd.append('remarks', entry.remarks || '');
     const cuid = normalizeNumericCompanyUsersId(entry.company_users_id);
-    if (cuid) fd.append('company_users_id', cuid);
-    const imgs = entry.images || (entry.image ? [entry.image] : []);
-    const uploadableImg = imgs.find((u): u is string => typeof u === 'string' && u.startsWith('data:'));
-    if (uploadableImg) {
-      const f = dataURLtoFile(uploadableImg, 'hinderance_img.jpg');
-      if (f) fd.append('img', f);
+    if (cuid) {
+      fd.append('company_users_id', cuid);
+      fd.append('company_user_id', cuid);
+    }
+    if (entry.imageFile instanceof File) {
+      fd.append('img', entry.imageFile);
+    } else {
+      const imgs = entry.images || (entry.image ? [entry.image] : []);
+      const uploadableImg = imgs.find((u): u is string => typeof u === 'string' && u.startsWith('data:'));
+      if (uploadableImg) {
+        const f = dataURLtoFile(uploadableImg, 'hinderance_img.jpg');
+        if (f) fd.append('img', f);
+      }
     }
     return fd;
+  };
+
+  const pickCreatedRowId = (res: any): string | number | null => {
+    const d = res?.data ?? res;
+    const id = d?.id ?? d?.data?.id ?? res?.id;
+    return id != null ? id : null;
   };
 
   const buildDprFormData = (): FormData | null => {
@@ -2979,7 +3131,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
     // Send dpr as PHP array format (dpr[key]=value) so Laravel parses as array; avoids "offset on string" when backend expects array
     formData.append('dpr[projects_id]', String(projectId));
     formData.append('dpr[sub_projects_id]', subprojectId != null ? String(subprojectId) : '');
-    formData.append('dpr[name]', new Date().toLocaleDateString('en-CA')); // YYYY-MM-DD in system/local timezone
+    formData.append('dpr[name]', getTodayDateString());
     formData.append('dpr[staps]', '7');
     if (editingDprId != null) {
       formData.append('dpr[id]', String(editingDprId));
@@ -3001,11 +3153,14 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         const qty = Number(a.quantity ?? 0);
         const completion = totalQty > 0 ? Math.round((qty / totalQty) * 100) : 0;
         const vendorId = getVendorId(a.contractor);
-        const vendorNum = (vendorId !== '' && vendorId != null) ? Number(vendorId) : '';
+        const vendorNum = vendorId !== '' && vendorId != null ? Number(vendorId) : '';
         formData.append(`activities[${actIdx}][activities_history_activities_id]`, String(actId));
         formData.append(`activities[${actIdx}][activities_history_qty]`, String(qty));
         formData.append(`activities[${actIdx}][activities_history_completion]`, String(completion));
-        if (vendorNum !== '') formData.append(`activities[${actIdx}][activities_history_vendors_id]`, String(vendorNum));
+        formData.append(
+          `activities[${actIdx}][activities_history_vendors_id]`,
+          vendorNum !== '' && !Number.isNaN(vendorNum) ? String(vendorNum) : ''
+        );
         formData.append(`activities[${actIdx}][remaining_qty]`, '0');
         formData.append(`activities[${actIdx}][total_qty]`, String(totalQty > 0 ? totalQty : qty));
         formData.append(`activities[${actIdx}][activities_history_remarkes]`, a.remarks || '');
@@ -3078,75 +3233,40 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         astIdx++;
       }
     }
-    // Bulk create: include NEW safety/hinderance (serverId == null) in dpr-bulk-add per spec
-    const newSafetyEntries = safetyEntries.filter((e): e is SafetyEntry => e.serverId == null);
-    if (newSafetyEntries.length > 0 && projectId && dprId) {
-      newSafetyEntries.forEach((entry, idx) => {
-        formData.append(`safety[${idx}][projects_id]`, String(projectId));
-        formData.append(`safety[${idx}][sub_projects_id]`, subprojectId != null ? String(subprojectId) : '');
-        formData.append(`safety[${idx}][dpr_id]`, String(dprId));
-        formData.append(`safety[${idx}][name]`, (entry.details || '').substring(0, 100) || 'Safety');
-        formData.append(`safety[${idx}][details]`, entry.details || '');
-        formData.append(`safety[${idx}][remarks]`, entry.remarks || '');
-        const scuid = normalizeNumericCompanyUsersId(entry.company_users_id);
-        if (scuid) formData.append(`safety[${idx}][company_users_id]`, scuid);
-      });
-      newSafetyEntries.forEach((entry, idx) => {
-        const imgs = entry.images || (entry.image ? [entry.image] : []);
-        const firstImg = imgs.find((u): u is string => !!u && typeof u === 'string');
-        if (firstImg) {
-          const f = dataURLtoFile(firstImg, `safety_${idx}.jpg`);
-          if (f) formData.append(`safety_images[${idx}]`, f);
-        }
-      });
-    }
-    const newHindranceEntries = hindranceEntries.filter((e): e is HindranceEntry => e.serverId == null);
-    if (newHindranceEntries.length > 0 && projectId && dprId) {
-      newHindranceEntries.forEach((entry, idx) => {
-        formData.append(`hinderance[${idx}][projects_id]`, String(projectId));
-        formData.append(`hinderance[${idx}][sub_projects_id]`, subprojectId != null ? String(subprojectId) : '');
-        formData.append(`hinderance[${idx}][dpr_id]`, String(dprId));
-        formData.append(`hinderance[${idx}][name]`, (entry.details || '').substring(0, 100) || 'Hindrance');
-        formData.append(`hinderance[${idx}][details]`, entry.details || '');
-        formData.append(`hinderance[${idx}][remarks]`, entry.remarks || '');
-        const hcuid = normalizeNumericCompanyUsersId(entry.company_users_id);
-        if (hcuid) formData.append(`hinderance[${idx}][company_users_id]`, hcuid);
-      });
-      newHindranceEntries.forEach((entry, idx) => {
-        const imgs = entry.images || (entry.image ? [entry.image] : []);
-        const firstImg = imgs.find((u): u is string => !!u && typeof u === 'string');
-        if (firstImg) {
-          const f = dataURLtoFile(firstImg, `hinderance_${idx}.jpg`);
-          if (f) formData.append(`hinderance_images[${idx}]`, f);
-        }
-      });
-    }
+    // Safety / hinderance rows are created or updated via POST /safety-add and POST /hinderance-add (multipart, field `img`).
     return formData;
   };
 
   const handleHindranceNext = async () => {
     if (!selectedProject) return;
-    const newSafetyCount = safetyEntries.filter(e => e.serverId == null).length;
-    const newHindranceCount = hindranceEntries.filter(e => e.serverId == null).length;
-    if (newSafetyCount > 0 || newHindranceCount > 0) {
-      const dprId = await ensureDprId();
-      if (!dprId) {
+    setIsSubmittingHindrance(true);
+    let dprIdForRows = dprIdRes ?? editingDprId;
+    if (!dprIdForRows) {
+      dprIdForRows = await ensureDprId();
+      if (!dprIdForRows) {
         toast.showError('DPR not found. Please complete Activities first.');
+        setIsSubmittingHindrance(false);
         return;
       }
     }
-    setIsSubmittingHindrance(true);
-    // Only save EXISTING entries via hinderance-add; NEW entries go in dpr-bulk-add
-    const existingHindranceEntries = hindranceEntries.filter(e => e.serverId != null);
+    const hindranceToSync = hindranceEntries.filter(
+      (e) => e.serverId != null || (e.serverId == null && hindranceEntryHasPayload(e))
+    );
     try {
-      for (const entry of existingHindranceEntries) {
-        const fd = buildHindranceAddFormData(entry);
+      for (const entry of hindranceToSync) {
+        const fd = buildHindranceAddFormData(entry, dprIdForRows);
         if (!fd) {
           toast.showError('Missing project or DPR. Please go back and complete project selection.');
           setIsSubmittingHindrance(false);
           return;
         }
-        await hinderanceAPI.add(fd);
+        const res = await hinderanceAPI.add(fd);
+        const newId = pickCreatedRowId(res);
+        if (entry.serverId == null && newId != null) {
+          setHindranceEntries((prev) =>
+            prev.map((x) => (x.id === entry.id ? { ...x, serverId: Number(newId) } : x))
+          );
+        }
       }
     } catch (err: any) {
       toast.showError(err?.message || 'Failed to save hindrance entries');
@@ -3180,10 +3300,13 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
       toast.showSuccess('DPR saved successfully.');
       const optimisticId = finalDprId ?? created?.id;
       if (optimisticId != null) {
+        const reportDate =
+          created?.name ?? created?.date ?? created?.dpr_date ?? getTodayDateString();
         const newItem = {
           id: optimisticId,
           dpr_no: created?.dpr_no ?? created?.dpr_number ?? `DPR-${optimisticId}`,
-          date: created?.date ?? created?.dpr_date ?? new Date().toLocaleDateString('en-CA'),
+          name: reportDate,
+          date: reportDate,
           projects_id: selectedProject ? { id: selectedProject.id, name: selectedProject.name, project_name: selectedProject.name } : null,
           sub_projects_id: selectedSubproject ? { id: selectedSubproject.id, name: selectedSubproject.name } : null,
           projects: selectedProject ? { name: selectedProject.name, project_name: selectedProject.name } : created?.projects,
@@ -5325,6 +5448,49 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                   Next
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Existing DPR for today — edit or change selection */}
+      {dprExistsPrompt && (
+        <div
+          className="fixed top-0 right-0 bottom-0 bg-black/50 z-[60] flex items-center justify-center p-2 sm:p-4 overflow-y-auto"
+          style={{ left: sidebarWidth }}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="dpr-exists-title"
+        >
+          <div
+            className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-md overflow-hidden shadow-xl`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-6 border-b border-inherit">
+              <h2 id="dpr-exists-title" className={`text-lg font-black ${textPrimary}`}>
+                DPR already exists
+              </h2>
+              <p className={`text-sm mt-3 ${textSecondary}`}>{dprExistsPrompt.message}</p>
+            </div>
+            <div className="p-6 flex flex-col sm:flex-row gap-3 sm:justify-end">
+              <button
+                type="button"
+                onClick={handleDprExistsChooseDifferent}
+                className={`px-5 py-2.5 rounded-lg text-sm font-bold border transition-all ${
+                  isDark
+                    ? 'border-slate-600 text-slate-200 hover:bg-slate-800'
+                    : 'border-slate-200 text-slate-800 hover:bg-slate-50'
+                }`}
+              >
+                Choose different project or sub-project
+              </button>
+              <button
+                type="button"
+                onClick={handleDprExistsEditExisting}
+                className="px-5 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642]/90 text-white shadow-md"
+              >
+                Edit existing DPR
+              </button>
             </div>
           </div>
         </div>

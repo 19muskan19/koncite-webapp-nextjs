@@ -1,7 +1,34 @@
 /**
- * AI Finance Service - LocalStorage-based (no APIs)
- * All data is stored in localStorage under the ai-finance-* keys.
+ * AI Finance — Laravel `/finance/*` APIs + dashboard helpers.
  */
+
+import {
+  financeListTransactions,
+  financeSummary,
+  financeTimeseries,
+  financeBookTransaction,
+  financePatchTransaction,
+  financeGetTransaction,
+  distinctPartiesFromRows,
+  distinctProjectsFromRows,
+  summaryTrendsFromTimeseries,
+  expenseDistributionFromSummary,
+  financeErrorMessage,
+  type FinanceTransactionRow,
+} from './financeHttpApi';
+import {
+  DEFAULT_EXPENSE_CHART_COLOR,
+  EXPENSE_CATEGORY_COLORS,
+  FINANCE_DEFAULT_ITEM,
+  FINANCE_DEFAULT_PARTY,
+} from '@/constants/aiFinance';
+import { masterDataAPI } from './api';
+
+function num(v: unknown): number {
+  if (v == null || v === '') return 0;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
 
 export interface DashboardStats {
   totalIncome: number;
@@ -16,6 +43,7 @@ export interface DashboardStats {
 
 export interface Transaction {
   id: string;
+  uuid?: string;
   date: string;
   party: string;
   partyId?: string;
@@ -28,14 +56,15 @@ export interface Transaction {
   paid?: number;
   received?: number;
   balance: number;
-  status: 'completed' | 'pending';
+  status: 'completed' | 'pending' | 'cancelled';
   category?: string;
 }
 
-export interface ChartDataPoint {
+/** Daily income & expense (from `/finance/timeseries`). */
+export interface TimeseriesPoint {
   date: string;
-  amount: number;
-  name?: string;
+  income: number;
+  expense: number;
 }
 
 export interface Party {
@@ -57,153 +86,109 @@ export interface Payment {
   reference?: string;
 }
 
-interface StoredPayment extends Payment {
-  transactionId: string;
+function mapRow(row: FinanceTransactionRow): Transaction {
+  const type = String(row.transaction_type).toLowerCase() === 'income' ? 'income' : 'expense';
+  const total = num(row.total_amount);
+  const paidAmt = num(row.paid_amount);
+  const bal =
+    row.balance_amount != null && row.balance_amount !== ''
+      ? num(row.balance_amount)
+      : Math.max(0, total - paidAmt);
+  let status: Transaction['status'] = 'pending';
+  const rawSt = String(row.status).toLowerCase();
+  if (rawSt === 'paid') status = 'completed';
+  else if (rawSt === 'cancelled') status = 'cancelled';
+
+  return {
+    id: String(row.id),
+    uuid: row.uuid,
+    date: (row.transaction_date || '').slice(0, 10),
+    party: row.party ?? '',
+    project: row.project?.project_name ?? '—',
+    projectId:
+      row.project?.id != null ? String(row.project.id) : row.project_id != null ? String(row.project_id) : undefined,
+    item: row.item ?? '',
+    remarks: row.remarks_narration ?? undefined,
+    type,
+    total,
+    paid: type === 'expense' ? paidAmt : undefined,
+    received: type === 'income' ? paidAmt : undefined,
+    balance: bal,
+    status,
+    category: row.cost_code ?? undefined,
+  };
 }
 
-const STORAGE_KEYS = {
-  transactions: 'ai-finance-transactions',
-  parties: 'ai-finance-parties',
-  projects: 'ai-finance-projects',
-  payments: 'ai-finance-payments',
-} as const;
+function defaultRangeDays(days: number): { from: string; to: string } {
+  const to = new Date();
+  const from = new Date(to);
+  from.setDate(from.getDate() - days);
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  return { from: fmt(from), to: fmt(to) };
+}
 
 const formatCurrency = (n: number) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n);
 
-// Default seed data for first load
-const SEED_TRANSACTIONS: Transaction[] = [
-  { id: '1', date: '2025-03-15', party: 'Global Steel Ltd', partyId: '1', project: 'Skyline Tower', projectId: '1', item: 'Cement', remarks: 'Batch #4521', type: 'expense', total: 45000, paid: 45000, balance: 0, status: 'completed', category: 'Materials' },
-  { id: '2', date: '2025-03-14', party: 'ABC Constructions', partyId: '2', project: 'Residency Complex', projectId: '2', item: 'Progress Payment', remarks: 'Milestone 2', type: 'income', total: 250000, received: 250000, balance: 0, status: 'completed', category: 'Revenue' },
-  { id: '3', date: '2025-03-13', party: 'Metro Hardware', partyId: '3', project: 'Skyline Tower', projectId: '1', item: 'Tools & Equipment', remarks: 'Monthly rental', type: 'expense', total: 15000, paid: 10000, balance: 5000, status: 'pending', category: 'Equipment' },
-  { id: '4', date: '2025-03-12', party: 'XYZ Developers', partyId: '4', project: 'Residency Complex', projectId: '2', item: 'Advance Payment', remarks: 'Phase 1', type: 'income', total: 500000, received: 500000, balance: 0, status: 'completed', category: 'Revenue' },
-  { id: '5', date: '2025-03-11', party: 'Labour Contractor', partyId: '5', project: 'Skyline Tower', projectId: '1', item: 'Labour charges', remarks: 'Week 11', type: 'expense', total: 85000, paid: 0, balance: 85000, status: 'pending', category: 'Labour' },
-];
-
-const SEED_PARTIES: Party[] = [
-  { id: '1', name: 'Global Steel Ltd' },
-  { id: '2', name: 'ABC Constructions' },
-  { id: '3', name: 'Metro Hardware' },
-  { id: '4', name: 'XYZ Developers' },
-  { id: '5', name: 'Labour Contractor' },
-];
-
-const SEED_PROJECTS: Project[] = [
-  { id: '1', name: 'Skyline Tower' },
-  { id: '2', name: 'Residency Complex' },
-];
-
-const EXPENSE_CATEGORY_COLORS: Record<string, string> = {
-  Materials: '#C2D642',
-  Labour: '#22c55e',
-  Equipment: '#3b82f6',
-  Revenue: '#22c55e',
-  Other: '#f59e0b',
-};
-
-function isClient() {
-  return typeof window !== 'undefined';
+/** Map `GET /project-list` rows to finance filter `{ id, name }` (prefer numeric id for `project_id` query). */
+function mapMasterProjectToFilter(p: Record<string, unknown>): Project | null {
+  const numericId = p.id;
+  const uuid = p.uuid;
+  const id =
+    numericId != null && numericId !== ''
+      ? String(numericId)
+      : uuid != null && String(uuid).trim() !== ''
+        ? String(uuid)
+        : '';
+  const name = String(p.project_name ?? p.name ?? '').trim();
+  if (!id || !name) return null;
+  return { id, name };
 }
 
-function getStored<T>(key: string, fallback: T): T {
-  if (!isClient()) return fallback;
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
+let cachedFilterFetch: Promise<FinanceTransactionRow[]> | null = null;
+
+async function loadRowsForFilters(): Promise<FinanceTransactionRow[]> {
+  if (!cachedFilterFetch) {
+    cachedFilterFetch = financeListTransactions({ per_page: 200, page: 1 }).then((r) => r.items);
+    cachedFilterFetch.finally(() => {
+      setTimeout(() => {
+        cachedFilterFetch = null;
+      }, 30_000);
+    });
   }
-}
-
-function setStored<T>(key: string, value: T): void {
-  if (!isClient()) return;
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch (e) {
-    console.error('localStorage set failed:', e);
-  }
-}
-
-function getTransactions(): Transaction[] {
-  const stored = getStored<Transaction[]>(STORAGE_KEYS.transactions, []);
-  if (stored.length === 0) {
-    setStored(STORAGE_KEYS.transactions, SEED_TRANSACTIONS);
-    return SEED_TRANSACTIONS;
-  }
-  return stored;
-}
-
-function getParties(): Party[] {
-  const stored = getStored<Party[]>(STORAGE_KEYS.parties, []);
-  if (stored.length === 0) {
-    setStored(STORAGE_KEYS.parties, SEED_PARTIES);
-    return SEED_PARTIES;
-  }
-  return stored;
-}
-
-function getProjects(): Project[] {
-  const stored = getStored<Project[]>(STORAGE_KEYS.projects, []);
-  if (stored.length === 0) {
-    setStored(STORAGE_KEYS.projects, SEED_PROJECTS);
-    return SEED_PROJECTS;
-  }
-  return stored;
-}
-
-function getPaymentsList(): StoredPayment[] {
-  return getStored<StoredPayment[]>(STORAGE_KEYS.payments, []);
-}
-
-function computeDashboard(transactions: Transaction[]): DashboardStats {
-  const income = transactions.filter((t) => t.type === 'income').reduce((s, t) => s + t.total, 0);
-  const expense = transactions.filter((t) => t.type === 'expense').reduce((s, t) => s + t.total, 0);
-  const receivables = transactions.filter((t) => t.type === 'income' && t.balance > 0).reduce((s, t) => s + t.balance, 0);
-  const payables = transactions.filter((t) => t.type === 'expense' && t.balance > 0).reduce((s, t) => s + t.balance, 0);
-  const projectIds = new Set(transactions.map((t) => t.projectId || t.project).filter(Boolean));
-  return {
-    totalIncome: income,
-    totalExpense: expense,
-    netProfit: income - expense,
-    activeProjects: projectIds.size || 1,
-    totalReceivables: receivables,
-    totalPayables: payables,
-    incomeTrend: 12.5,
-    expenseTrend: -3.2,
-  };
-}
-
-function computeChartData(transactions: Transaction[]): ChartDataPoint[] {
-  return transactions
-    .slice()
-    .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
-    .map((t) => ({
-      date: t.date,
-      amount: t.type === 'income' ? t.total : -t.total,
-      name: t.party,
-    }));
-}
-
-function computeExpenseDistribution(transactions: Transaction[]): { name: string; value: number; color: string }[] {
-  const byCategory: Record<string, number> = {};
-  const expenses = transactions.filter((t) => t.type === 'expense');
-  const totalExpense = expenses.reduce((s, t) => s + t.total, 0) || 1;
-  expenses.forEach((t) => {
-    const cat = t.category || 'Other';
-    byCategory[cat] = (byCategory[cat] ?? 0) + t.total;
-  });
-  return Object.entries(byCategory).map(([name, value]) => ({
-    name,
-    value: Math.round((value / totalExpense) * 100),
-    color: EXPENSE_CATEGORY_COLORS[name] || '#64748b',
-  }));
+  return cachedFilterFetch;
 }
 
 export const financeAPI = {
   getDashboard: async (): Promise<DashboardStats> => {
-    const transactions = getTransactions();
-    return computeDashboard(transactions);
+    const { from, to } = defaultRangeDays(365);
+    const [summary, ts, projectsSource] = await Promise.all([
+      financeSummary(),
+      financeTimeseries({ date_from: from, date_to: to }),
+      financeListTransactions({ per_page: 200, page: 1 }),
+    ]);
+
+    const inc = summary.totals_by_type?.income;
+    const exp = summary.totals_by_type?.expense;
+    const totalIncome = num(inc?.total_amount);
+    const totalExpense = num(exp?.total_amount);
+    const trends = summaryTrendsFromTimeseries(ts);
+
+    const projectIds = new Set<string>();
+    for (const row of projectsSource.items) {
+      const pid = row.project?.id ?? row.project_id;
+      if (pid != null && pid !== '') projectIds.add(String(pid));
+    }
+
+    return {
+      totalIncome,
+      totalExpense,
+      netProfit: num(summary.net_amount ?? totalIncome - totalExpense),
+      activeProjects: projectIds.size,
+      totalReceivables: num(summary.total_receivables),
+      totalPayables: num(summary.total_payables),
+      ...trends,
+    };
   },
 
   getTransactions: async (params?: {
@@ -214,60 +199,89 @@ export const financeAPI = {
     fromDate?: string;
     toDate?: string;
   }): Promise<Transaction[]> => {
-    let list = [...getTransactions()];
-    if (params?.search) {
-      const q = params.search.toLowerCase();
-      list = list.filter(
-        (t) =>
-          (t.remarks ?? '').toLowerCase().includes(q) ||
-          (t.item ?? '').toLowerCase().includes(q) ||
-          (t.party ?? '').toLowerCase().includes(q) ||
-          (t.project ?? '').toLowerCase().includes(q) ||
-          (t.category ?? '').toLowerCase().includes(q)
-      );
+    try {
+      const apiParams: Parameters<typeof financeListTransactions>[0] = {
+        per_page: 200,
+        page: 1,
+        date_from: params?.fromDate,
+        date_to: params?.toDate,
+        project_id: params?.projectId,
+        search: params?.search,
+      };
+      if (params?.type && params.type !== 'all') {
+        apiParams.transaction_type = params.type;
+      }
+      const { items } = await financeListTransactions(apiParams);
+      let list = items.map(mapRow);
+      if (params?.partyId) {
+        const want = params.partyId.trim().toLowerCase();
+        list = list.filter((t) => t.party.trim().toLowerCase() === want);
+      }
+      return list;
+    } catch (e) {
+      throw new Error(financeErrorMessage(e));
     }
-    if (params?.type && params.type !== 'all') {
-      list = list.filter((t) => t.type === params.type);
-    }
-    if (params?.partyId) list = list.filter((t) => String(t.partyId ?? '') === String(params.partyId));
-    if (params?.projectId) list = list.filter((t) => String(t.projectId ?? '') === String(params.projectId));
-    if (params?.fromDate) {
-      const from = params.fromDate.slice(0, 10);
-      list = list.filter((t) => (t.date ?? '').slice(0, 10) >= from);
-    }
-    if (params?.toDate) {
-      const to = params.toDate.slice(0, 10);
-      list = list.filter((t) => (t.date ?? '').slice(0, 10) <= to);
-    }
-    return list;
   },
 
-  getRevenueVsExpenses: async (): Promise<ChartDataPoint[]> => {
-    const transactions = getTransactions();
-    const data = computeChartData(transactions);
-    return data.length > 0 ? data : [{ date: new Date().toISOString().slice(0, 10), amount: 0 }];
+  /** Daily series for charts (no derived “net” mixing). */
+  getTimeseries: async (days = 90): Promise<TimeseriesPoint[]> => {
+    const { from, to } = defaultRangeDays(days);
+    const series = await financeTimeseries({ date_from: from, date_to: to });
+    return series.map((p) => ({
+      date: p.date,
+      income: num(p.income),
+      expense: num(p.expense),
+    }));
+  },
+
+  getRevenueVsExpenses: async (): Promise<TimeseriesPoint[]> => {
+    return financeAPI.getTimeseries(90);
   },
 
   getExpenseDistribution: async (): Promise<{ name: string; value: number; color: string }[]> => {
-    const transactions = getTransactions();
-    const dist = computeExpenseDistribution(transactions);
-    return dist.length > 0 ? dist : [{ name: 'Other', value: 100, color: '#64748b' }];
+    const summary = await financeSummary();
+    return expenseDistributionFromSummary(summary, (code) => EXPENSE_CATEGORY_COLORS[code] || DEFAULT_EXPENSE_CHART_COLOR);
   },
 
   getReportsPnl: async (): Promise<{ revenue: number; expenses: number; netProfit: number }> => {
-    const stats = await financeAPI.getDashboard();
-    return { revenue: stats.totalIncome, expenses: stats.totalExpense, netProfit: stats.netProfit };
+    const summary = await financeSummary();
+    const inc = summary.totals_by_type?.income;
+    const exp = summary.totals_by_type?.expense;
+    const revenue = num(inc?.total_amount);
+    const expenses = num(exp?.total_amount);
+    return {
+      revenue,
+      expenses,
+      netProfit: num(summary.net_amount ?? revenue - expenses),
+    };
   },
 
-  getParties: async (): Promise<Party[]> => getParties(),
+  getParties: async (): Promise<Party[]> => {
+    const rows = await loadRowsForFilters();
+    return distinctPartiesFromRows(rows);
+  },
 
-  getProjects: async (): Promise<Project[]> => getProjects(),
+  getProjects: async (): Promise<Project[]> => {
+    try {
+      const raw = await masterDataAPI.getProjectsList();
+      if (!Array.isArray(raw)) return [];
+      const out: Project[] = [];
+      for (const item of raw) {
+        if (!item || typeof item !== 'object') continue;
+        const m = mapMasterProjectToFilter(item as Record<string, unknown>);
+        if (m) out.push(m);
+      }
+      out.sort((a, b) => a.name.localeCompare(b.name));
+      return out;
+    } catch {
+      const rows = await loadRowsForFilters();
+      return distinctProjectsFromRows(rows);
+    }
+  },
 
-  getPayments: async (transactionId: string): Promise<Payment[]> => {
-    const list = getPaymentsList();
-    return list
-      .filter((p) => p.transactionId === transactionId)
-      .map(({ transactionId: _, ...p }) => p);
+  getPayments: async (_transactionId: string): Promise<Payment[]> => {
+    void _transactionId;
+    return [];
   },
 
   recordPayment: async (payload: {
@@ -277,93 +291,56 @@ export const financeAPI = {
     mode: string;
     reference?: string;
   }): Promise<void> => {
-    const payments = getPaymentsList();
-    const newPayment: StoredPayment = {
-      id: `pay-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-      transactionId: payload.transactionId,
-      amount: payload.amount,
-      date: payload.date,
-      mode: payload.mode,
-      reference: payload.reference,
-    };
-    payments.push(newPayment);
-    setStored(STORAGE_KEYS.payments, payments);
-
-    // Update transaction paid/balance
-    const transactions = getTransactions();
-    const tx = transactions.find((t) => t.id === payload.transactionId);
-    if (tx) {
-      const txPayments = payments.filter((p) => p.transactionId === tx.id);
-      const totalPaid = txPayments.reduce((s, p) => s + p.amount, 0);
-      const newBalance = Math.max(0, tx.total - totalPaid);
-      tx.balance = newBalance;
-      if (tx.type === 'expense') {
-        tx.paid = totalPaid;
-      } else {
-        tx.received = totalPaid;
-      }
-      tx.status = newBalance <= 0 ? 'completed' : 'pending';
-      setStored(STORAGE_KEYS.transactions, transactions);
+    let row: FinanceTransactionRow;
+    try {
+      row = await financeGetTransaction(payload.transactionId);
+    } catch {
+      throw new Error('Could not load transaction to update payment');
     }
+    const currentPaid = num(row.paid_amount);
+    const total = num(row.total_amount);
+    const nextPaid = Math.min(total, currentPaid + payload.amount);
+    let nextStatus: string | undefined;
+    if (nextPaid >= total) nextStatus = 'paid';
+    else if (nextPaid > 0) nextStatus = 'partial';
+
+    const remarkNote = [payload.reference, payload.mode, payload.date].filter(Boolean).join(' · ');
+    const prevRemarks = row.remarks_narration?.trim() ?? '';
+    const remarks_narration = prevRemarks
+      ? `${prevRemarks}\n[Paid +${payload.amount} ${remarkNote}]`
+      : `[Paid +${payload.amount} ${remarkNote}]`;
+
+    await financePatchTransaction(payload.transactionId, {
+      paid_amount: nextPaid,
+      ...(nextStatus ? { status: nextStatus } : {}),
+      remarks_narration,
+    });
   },
 
   createTransaction: async (payload: Partial<Transaction>): Promise<Transaction> => {
-    const transactions = getTransactions();
-    const parties = getParties();
-    const projects = getProjects();
-    const partyName = payload.party ?? 'Unknown';
-    const projectName = payload.project ?? 'General';
+    const party = payload.party ?? FINANCE_DEFAULT_PARTY;
+    const type = payload.type ?? 'expense';
+    const total = num(payload.total);
+    let paid = num(payload.paid ?? payload.received ?? 0);
+    if (paid > total) paid = total;
 
-    // Auto-add party if new (e.g. "AI Entry")
-    let partyId = payload.partyId;
-    if (!parties.some((p) => p.name === partyName)) {
-      const maxP = parties.length ? Math.max(...parties.map((p) => parseInt(p.id, 10) || 0)) : 0;
-      const newPartyId = String(maxP + 1);
-      parties.push({ id: newPartyId, name: partyName });
-      setStored(STORAGE_KEYS.parties, parties);
-      partyId = newPartyId;
-    } else {
-      partyId = partyId ?? parties.find((p) => p.name === partyName)?.id;
-    }
-
-    // Auto-add project if new
-    let projectId = payload.projectId;
-    if (!projects.some((p) => p.name === projectName)) {
-      const maxPr = projects.length ? Math.max(...projects.map((p) => parseInt(p.id, 10) || 0)) : 0;
-      const newProjectId = String(maxPr + 1);
-      projects.push({ id: newProjectId, name: projectName });
-      setStored(STORAGE_KEYS.projects, projects);
-      projectId = newProjectId;
-    } else {
-      projectId = projectId ?? projects.find((p) => p.name === projectName)?.id;
-    }
-
-    const maxId = transactions.reduce((m, t) => Math.max(m, parseInt(t.id, 10) || 0), 0);
-    const id = String(maxId + 1);
-    const total = payload.total ?? 0;
-    const paid = payload.paid ?? payload.received ?? 0;
-    const balance = Math.max(0, total - paid);
-    const newTx: Transaction = {
-      id,
-      date: payload.date ?? new Date().toISOString().slice(0, 10),
-      party: partyName,
-      partyId,
-      project: projectName,
-      projectId,
-      item: payload.item ?? 'Misc',
-      remarks: payload.remarks,
-      type: payload.type ?? 'expense',
-      total,
-      paid: payload.type === 'expense' ? paid : undefined,
-      received: payload.type === 'income' ? paid : undefined,
-      balance,
-      status: balance <= 0 ? 'completed' : 'pending',
-      category: payload.category ?? 'Other',
+    const body = {
+      party,
+      transaction_type: type,
+      transaction_date: payload.date ?? new Date().toISOString().slice(0, 10),
+      item: payload.item ?? FINANCE_DEFAULT_ITEM,
+      remarks_narration: payload.remarks,
+      total_amount: total,
+      project_id: payload.projectId != null && payload.projectId !== '' ? payload.projectId : undefined,
+      currency: 'INR',
+      status: paid >= total && total > 0 ? 'paid' : paid > 0 ? 'partial' : 'pending',
+      paid_amount: paid,
+      ...(payload.category ? { cost_code: payload.category } : {}),
     };
-    transactions.push(newTx);
-    setStored(STORAGE_KEYS.transactions, transactions);
-    return newTx;
+
+    const created = await financeBookTransaction(body);
+    return mapRow(created);
   },
 };
 
-export { formatCurrency };
+export { formatCurrency, financeErrorMessage };

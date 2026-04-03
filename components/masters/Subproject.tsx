@@ -654,6 +654,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 disabled={isSearching}
+                autoComplete="off"
                 className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50`}
               />
               {isSearching && (
@@ -944,6 +945,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
           <div className={`relative w-full max-w-[min(92vw,1024px)] rounded-xl border ${cardClass} shadow-2xl max-h-[90vh] overflow-hidden flex flex-col`}>
             <button
+              type="button"
               onClick={handleCloseModal}
               className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`}
               title="Close"
@@ -963,7 +965,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
             </div>
 
             {/* Modal Body */}
-            <div className="p-6 space-y-6">
+            <form className="p-6 space-y-6" autoComplete="off" onSubmit={(e) => e.preventDefault()}>
               {/* Tag Project */}
               <div>
                 <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
@@ -971,6 +973,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                 </label>
                 <select
                   name="projectId"
+                  autoComplete="off"
                   value={formData.projectId}
                   onChange={(e) => {
                     const projectId = e.target.value;
@@ -1005,6 +1008,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                 <input
                   type="text"
                   name="subprojectName"
+                  autoComplete="off"
                   value={formData.subprojectName}
                   onChange={handleInputChange}
                   placeholder="Enter subproject name"
@@ -1025,6 +1029,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                   name="plannedStartDate"
                   value={formData.plannedStartDate}
                   onChange={(e) => handleInputChange(e as React.ChangeEvent<HTMLInputElement>)}
+                  autoComplete="off"
                   iconClassName={textSecondary}
                   className={`${
                     isDark 
@@ -1044,6 +1049,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                   value={formData.plannedEndDate}
                   onChange={(e) => handleInputChange(e as React.ChangeEvent<HTMLInputElement>)}
                   min={formData.plannedStartDate}
+                  autoComplete="off"
                   iconClassName={textSecondary}
                   className={`${
                     isDark 
@@ -1052,11 +1058,12 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                   } border`}
                 />
               </div>
-            </div>
+            </form>
 
             {/* Modal Footer */}
             <div className={`flex items-center justify-end gap-3 p-6 border-t border-inherit`}>
               <button
+                type="button"
                 onClick={handleCloseModal}
                 className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
                   isDark
@@ -1067,6 +1074,7 @@ const Subproject: React.FC<SubprojectProps> = ({ theme }) => {
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={handleCreateSubproject}
                 className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642] text-white transition-all shadow-md"
               >

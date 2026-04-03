@@ -35,8 +35,12 @@ export interface ContractorEntry {
   /** skilled | semiskilled | unskilled — for rate lookup when category is a master labour name */
   rateCategory?: string;
   headCount: number;
+  /** Unit for head-count / work quantity (matches labour entry day_labour_count_unit) */
+  labourCountUnit?: 'day' | 'hour';
   unitsWorked: number;
   otHoursPerPerson: number;
+  /** Unit for OT quantity (matches labour entry overtime_quantity_unit) */
+  overtimeQtyUnit?: 'day' | 'hour';
   amount: number;
   date: string;
   dateKey: string;

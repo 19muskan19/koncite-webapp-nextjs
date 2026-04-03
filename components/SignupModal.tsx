@@ -364,6 +364,8 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
 
       if (formData.profileImage) {
         formDataToSend.append('profileImage', formData.profileImage);
+        // Same file for the new company record when the API accepts it (common Laravel field name).
+        formDataToSend.append('company_logo', formData.profileImage);
       }
 
       // Log the data being sent (for debugging)

@@ -170,6 +170,7 @@ export default function DatePickerInput({
         onBlur={handleTextBlur}
         onFocus={handleTextFocus}
         name={name}
+        autoComplete="off"
         className={`w-full pl-10 pr-4 py-3 rounded-lg text-sm font-bold transition-all focus:ring-2 focus:ring-[#C2D642]/20 outline-none border ${className}`}
         {...restProps}
       />
@@ -178,6 +179,7 @@ export default function DatePickerInput({
         type="date"
         tabIndex={-1}
         aria-hidden="true"
+        autoComplete="off"
         min={min}
         max={max}
         className="absolute inset-0 w-full h-full opacity-0 pointer-events-none cursor-pointer"

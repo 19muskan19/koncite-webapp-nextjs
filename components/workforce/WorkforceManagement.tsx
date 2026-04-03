@@ -424,6 +424,114 @@ function punchLogSubjectKey(e: FacePunchLogEntry): string {
   return n ? `name:${n}` : `row:${e.punch_at}:${e.location ?? ''}`;
 }
 
+/** Normalize for deduping API rows ("Punch IN") vs session rows ("punch_in"). */
+function punchTypeBucket(punchType: string): 'in' | 'out' | 'other' {
+  const s = String(punchType).toLowerCase();
+  if (s.includes('out')) return 'out';
+  if (s.includes('in')) return 'in';
+  return 'other';
+}
+
+/** Dedupe server + session rows (same person, type, and second). */
+function punchEventDedupeKey(e: FacePunchLogEntry): string {
+  const t = Number.isFinite(Date.parse(e.punch_at)) ? Math.floor(Date.parse(e.punch_at) / 1000) : 0;
+  const sub = e.subjectId != null && e.subjectId > 0 ? `id:${e.subjectId}` : `n:${e.employee_name.trim().toLowerCase()}`;
+  return `${sub}|${punchTypeBucket(e.punch_type)}|${t}`;
+}
+
+/**
+ * Map GET /face/status-today payload: separate data.punch_in and data.punch_out arrays
+ * (username, user_type, subject_id, punch_time, punch_location { latitude, longitude, geo_accuracy }).
+ */
+function parseStatusTodayPunchRows(payload: unknown): {
+  punchIn: FacePunchLogEntry[];
+  punchOut: FacePunchLogEntry[];
+  date: string | null;
+} {
+  if (payload == null) return { punchIn: [], punchOut: [], date: null };
+  const top = payload as Record<string, unknown>;
+  const data = (top?.data as Record<string, unknown> | undefined) ?? top;
+  const dateRaw = data?.date;
+  const date = typeof dateRaw === 'string' ? dateRaw.slice(0, 10) : null;
+
+  const mapOne = (row: Record<string, unknown>, kind: 'punch_in' | 'punch_out'): FacePunchLogEntry | null => {
+    const punchTime = row.punch_time ?? row.punch_at;
+    if (punchTime == null || String(punchTime).trim() === '') return null;
+    const loc = row.punch_location;
+    let location: string | undefined;
+    if (loc && typeof loc === 'object' && !Array.isArray(loc)) {
+      const l = loc as Record<string, unknown>;
+      const lat = l.latitude;
+      const lng = l.longitude;
+      const acc = l.geo_accuracy ?? l.accuracy;
+      if (lat != null && lng != null) {
+        location = `${Number(lat).toFixed(5)}, ${Number(lng).toFixed(5)}`;
+        if (acc != null && acc !== '') location += ` (±${acc}m)`;
+      }
+    }
+    const ut = String(row.user_type ?? 'company_user').toLowerCase();
+    const subjectType: 'company_user' | 'workforce_profile' =
+      ut === 'workforce_profile' ? 'workforce_profile' : 'company_user';
+    const sid = Number(row.subject_id ?? row.subjectId ?? 0);
+    return {
+      employee_name: String(row.username ?? row.name ?? '—').trim() || '—',
+      punch_type: kind === 'punch_in' ? 'Punch IN' : 'Punch OUT',
+      punch_at: String(punchTime),
+      location,
+      subjectType,
+      subjectId: Number.isFinite(sid) && sid > 0 ? sid : undefined,
+    };
+  };
+
+  const punchIn: FacePunchLogEntry[] = [];
+  const punchOut: FacePunchLogEntry[] = [];
+  const ins = data?.punch_in;
+  const outs = data?.punch_out;
+  if (Array.isArray(ins)) {
+    for (const r of ins) {
+      if (r && typeof r === 'object') {
+        const e = mapOne(r as Record<string, unknown>, 'punch_in');
+        if (e) punchIn.push(e);
+      }
+    }
+  }
+  if (Array.isArray(outs)) {
+    for (const r of outs) {
+      if (r && typeof r === 'object') {
+        const e = mapOne(r as Record<string, unknown>, 'punch_out');
+        if (e) punchOut.push(e);
+      }
+    }
+  }
+  const sortDesc = (a: FacePunchLogEntry, b: FacePunchLogEntry) =>
+    new Date(b.punch_at).getTime() - new Date(a.punch_at).getTime();
+  punchIn.sort(sortDesc);
+  punchOut.sort(sortDesc);
+  return { punchIn, punchOut, date };
+}
+
+/** Merge status-today rows for one bucket with this-session facePunchLog lines of the same type. */
+function mergePunchRowsForBucket(
+  serverRows: FacePunchLogEntry[],
+  sessionRows: FacePunchLogEntry[],
+  bucket: 'in' | 'out'
+): FacePunchLogEntry[] {
+  const sessionFiltered = sessionRows.filter((r) => punchTypeBucket(r.punch_type) === bucket);
+  const byKey = new Map<string, FacePunchLogEntry>();
+  for (const r of serverRows) {
+    byKey.set(punchEventDedupeKey(r), r);
+  }
+  for (const r of sessionFiltered) {
+    const k = punchEventDedupeKey(r);
+    const existing = byKey.get(k);
+    if (!existing) byKey.set(k, r);
+    else if (!existing.photoThumb && r.photoThumb) byKey.set(k, r);
+  }
+  return Array.from(byKey.values()).sort(
+    (a, b) => new Date(b.punch_at).getTime() - new Date(a.punch_at).getTime()
+  );
+}
+
 /** One row per person in this session; latest successful punch wins. */
 function replacePunchLogEntryForSubject(prev: FacePunchLogEntry[], entry: FacePunchLogEntry): FacePunchLogEntry[] {
   const k = punchLogSubjectKey(entry);
@@ -702,10 +810,14 @@ interface LabourEntryRow {
   labourId: string;
   labourName: string;
   rateCategory: 'skilled' | 'semiskilled' | 'unskilled';
-  /** API: day_labour_count */
+  /** API: day_labour_count (head count / persons) */
   dayLabourCount: number | '';
-  /** API: overtime_hours */
+  /** Unit for the labour count quantity (days vs hours of work) */
+  labourCountUnit: 'day' | 'hour';
+  /** API: overtime_hours — interpreted per overtimeQtyUnit */
   overtimeHours: number | '';
+  /** Unit for overtime quantity (hours or days) */
+  overtimeQtyUnit: 'day' | 'hour';
   contractorLaborRateId?: number | null;
   dailyRate?: number | null;
   dayUnit?: 'day' | 'hour' | null;
@@ -722,7 +834,9 @@ const defaultLabourRow = (): LabourEntryRow => ({
   labourName: '',
   rateCategory: 'skilled',
   dayLabourCount: 0,
+  labourCountUnit: 'day',
   overtimeHours: 0,
+  overtimeQtyUnit: 'hour',
   contractorLaborRateId: null,
   dailyRate: null,
   dayUnit: null,
@@ -772,8 +886,13 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   const [faceSetupOk, setFaceSetupOk] = useState<boolean | null>(null);
   const [faceSetupError, setFaceSetupError] = useState<string | null>(null);
   const [punchType, setPunchType] = useState<'punch_in' | 'punch_out'>('punch_in');
-  /** Today's face punch log (this session). */
+  /** Today's face punch log (this session — e.g. photo preview from device). */
   const [facePunchLog, setFacePunchLog] = useState<FacePunchLogEntry[]>([]);
+  /** Punch IN / Punch OUT rows from GET /face/status-today (separate arrays). */
+  const [statusTodayPunchInRows, setStatusTodayPunchInRows] = useState<FacePunchLogEntry[]>([]);
+  const [statusTodayPunchOutRows, setStatusTodayPunchOutRows] = useState<FacePunchLogEntry[]>([]);
+  const [statusTodayDate, setStatusTodayDate] = useState<string | null>(null);
+  const [statusTodayLoading, setStatusTodayLoading] = useState(false);
   const [showCameraModal, setShowCameraModal] = useState(false);
   /** Punch mode when the camera modal was opened (for copy + API while modal is open). */
   const [punchModalKind, setPunchModalKind] = useState<'punch_in' | 'punch_out'>('punch_in');
@@ -977,6 +1096,117 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   const [logFilterDate, setLogFilterDate] = useState<string>(new Date().toISOString().slice(0, 10));
   const [logShowAllDates, setLogShowAllDates] = useState(false);
 
+  /** One grid row per labour line — matches spreadsheet-style logs (Project, Contractor, Category, Count, Unit, OT). */
+  const serverLabourLogRows = useMemo(() => {
+    type Line = {
+      entryUuid: string | null;
+      lineKey: string;
+      workDate: string;
+      project: string;
+      contractor: string;
+      category: string;
+      count: string;
+      unit: string;
+      ot: string;
+      status: string;
+    };
+    const lines: Line[] = [];
+    for (let ri = 0; ri < (apiLabourEntries?.length ?? 0); ri++) {
+      const row = apiLabourEntries[ri] as Record<string, unknown>;
+      const date = String(row.work_date ?? row.date ?? '—').slice(0, 10);
+      const project = String(
+        (row.project as { project_name?: string; name?: string } | undefined)?.project_name ??
+          (row.project as { name?: string } | undefined)?.name ??
+          row.project_name ??
+          '—'
+      );
+      const contractor = String(
+        (row.contractor as { name?: string } | undefined)?.name ??
+          (row.vendor as { name?: string; registration_name?: string } | undefined)?.name ??
+          (row.vendor as { registration_name?: string } | undefined)?.registration_name ??
+          row.contractor_name ??
+          '—'
+      );
+      const status =
+        row.status != null && String(row.status).trim() !== ''
+          ? String(row.status)
+          : row.notes != null && String(row.notes).trim() !== ''
+            ? String(row.notes)
+            : '—';
+      const cats =
+        (row.labour_categories as unknown[]) ??
+        (row.labourCategories as unknown[]) ??
+        (row.categories as unknown[]) ??
+        (Array.isArray(row.lines) ? (row.lines as unknown[]) : null);
+      if (Array.isArray(cats) && cats.length > 0) {
+        cats.forEach((rawLine, lineIndex) => {
+          const line = rawLine as Record<string, unknown>;
+          const labourObj = (line.labour ?? line.labours) as Record<string, unknown> | undefined;
+          const category = String(
+            (typeof labourObj?.name === 'string' ? labourObj.name : null) ??
+              (typeof line.labour_name === 'string' ? line.labour_name : null) ??
+              (typeof line.category_name === 'string' ? line.category_name : null) ??
+              (typeof line.name === 'string' ? line.name : null) ??
+              '—'
+          );
+          const headRaw = line.head_count ?? line.workers_count ?? line.manpower_count;
+          const countStr =
+            headRaw != null && headRaw !== '' && Number(headRaw) > 0 ? String(headRaw) : '—';
+          const dlc = Number(line.day_labour_count ?? line.units ?? 0);
+          const qtyU = String(
+            line.day_labour_count_unit ?? line.day_labour_countUnit ?? line.day_unit ?? line.dayUnit ?? 'day'
+          ).toLowerCase();
+          const unitWord = qtyU === 'hour' || qtyU === 'hr' ? 'Hour' : 'Day';
+          const unitStr =
+            Number.isFinite(dlc) && dlc > 0
+              ? `${dlc} ${unitWord}${dlc !== 1 ? 's' : ''}`
+              : '—';
+          const otN = Number(line.overtime_hours ?? line.overtimeHours ?? line.ot_hours ?? 0);
+          const otQtyU = String(
+            line.overtime_quantity_unit ?? line.overtimeQuantityUnit ?? 'hour'
+          ).toLowerCase();
+          const otIsDay = otQtyU === 'day' || otQtyU === 'days';
+          const otLabel = otIsDay
+            ? otN === 1
+              ? 'Day'
+              : 'Days'
+            : otN === 1
+              ? 'Hr'
+              : 'Hrs';
+          const otStr = Number.isFinite(otN) ? `${otN} ${otLabel}` : '—';
+          const uuid = row.uuid != null ? String(row.uuid) : null;
+          lines.push({
+            entryUuid: uuid,
+            lineKey: `${uuid ?? `row-${ri}`}-${lineIndex}`,
+            workDate: date,
+            project,
+            contractor,
+            category,
+            count: countStr,
+            unit: unitStr,
+            ot: otStr,
+            status,
+          });
+        });
+      } else {
+        const uuid = row.uuid != null ? String(row.uuid) : null;
+        lines.push({
+          entryUuid: uuid,
+          lineKey: `${uuid ?? `row-${ri}`}-0`,
+          workDate: date,
+          project,
+          contractor,
+          category: '—',
+          count: '—',
+          unit: '—',
+          ot: '—',
+          status,
+        });
+      }
+    }
+    return lines;
+  }, [apiLabourEntries]);
+
   const tabs = [
     { id: 'dashboard' as TabType, label: 'Dash', icon: LayoutDashboard },
     { id: 'punch' as TabType, label: 'Punch', icon: Clock },
@@ -1016,14 +1246,26 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
     setStaffPage(1);
   }, [staffSearchQuery, staffFilter]);
 
-  const refreshFaceStatusToday = useCallback(async () => {
+  const refreshFaceStatusToday = useCallback(async (opts?: { quiet?: boolean }) => {
     if (!isAuthenticated) return;
+    const quiet = opts?.quiet === true;
+    if (!quiet) setStatusTodayLoading(true);
     try {
       const params: Record<string, string | number> = {};
       if (companyId != null) params.company_id = companyId;
-      await faceAttendanceAPI.statusToday(params);
+      const raw = await faceAttendanceAPI.statusToday(params);
+      const { punchIn, punchOut, date } = parseStatusTodayPunchRows(raw);
+      setStatusTodayPunchInRows(punchIn);
+      setStatusTodayPunchOutRows(punchOut);
+      setStatusTodayDate(date);
     } catch {
-      /* best-effort refresh after punch */
+      if (!quiet) {
+        setStatusTodayPunchInRows([]);
+        setStatusTodayPunchOutRows([]);
+        setStatusTodayDate(null);
+      }
+    } finally {
+      if (!quiet) setStatusTodayLoading(false);
     }
   }, [isAuthenticated, companyId]);
 
@@ -1057,10 +1299,19 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
 
   useEffect(() => {
     if (activeTab !== 'punch' || !isAuthenticated) return;
-    refreshFaceStatusToday();
-    const t = setInterval(refreshFaceStatusToday, 120000);
+    void refreshFaceStatusToday({ quiet: false });
+    const t = setInterval(() => void refreshFaceStatusToday({ quiet: true }), 120000);
     return () => clearInterval(t);
   }, [activeTab, isAuthenticated, refreshFaceStatusToday]);
+
+  const recentPunchInDisplayRows = useMemo(
+    () => mergePunchRowsForBucket(statusTodayPunchInRows, facePunchLog, 'in'),
+    [statusTodayPunchInRows, facePunchLog]
+  );
+  const recentPunchOutDisplayRows = useMemo(
+    () => mergePunchRowsForBucket(statusTodayPunchOutRows, facePunchLog, 'out'),
+    [statusTodayPunchOutRows, facePunchLog]
+  );
 
   /** GET /face/check — logged-in user vs PersonGroup (eligibility hint before punch). */
   useEffect(() => {
@@ -1370,12 +1621,13 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
 
   useEffect(() => {
     if (activeTab !== 'contractor' || !isAuthenticated) return;
-    if (entriesDateTo < entriesDateFrom) return;
+    const from = entriesDateFrom <= entriesDateTo ? entriesDateFrom : entriesDateTo;
+    const to = entriesDateFrom <= entriesDateTo ? entriesDateTo : entriesDateFrom;
     let cancel = false;
     setApiLabourEntriesLoading(true);
     setApiLabourEntriesFetchError(null);
     labourEntriesAPI
-      .list({ work_date_from: entriesDateFrom, work_date_to: entriesDateTo })
+      .list({ work_date_from: from, work_date_to: to })
       .then((res) => {
         if (!cancel) {
           setApiLabourEntries(unwrapArrayPayload(res?.data ?? res));
@@ -1562,7 +1814,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
           setPunchType('punch_out');
         }
 
-        await refreshFaceStatusToday();
+        await refreshFaceStatusToday({ quiet: true });
       } catch (e: any) {
         if (kind === 'punch_in' && isAlreadyPunchedIn422(e) && geoLocation) {
           setShowCameraModal(false);
@@ -1601,7 +1853,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
           );
           toast.showInfo(e?.message || 'You are already punched in. Use Punch OUT.');
           try {
-            await refreshFaceStatusToday();
+            await refreshFaceStatusToday({ quiet: true });
           } catch {
             /* ignore refresh failure */
           }
@@ -1826,17 +2078,22 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
     }
   };
 
-  const resolveLabourRowRate = useCallback(async (rowIndex: number) => {
+  const resolveLabourRowRate = useCallback(async (rowIndex: number, rowOverride?: Partial<LabourEntryRow>) => {
     const { date, project_id, contractor_id, labourRows } = labourEntryFormRef.current;
-    const row = labourRows[rowIndex];
-    if (!date || !project_id || !contractor_id || !row?.labourId) {
-      toast.showWarning('Select project, contractor, work date, and labour category first');
+    const base = labourRows[rowIndex];
+    if (!base) return;
+    const row = { ...base, ...rowOverride };
+    if (!date || !project_id || !contractor_id || !row.labourId) {
+      if (rowOverride?.labourId) {
+        toast.showWarning('Select project, contractor, and work date first');
+      }
       return;
     }
+    const merge = rowOverride ?? {};
     setLabourEntryFormData((p) => ({
       ...p,
       labourRows: p.labourRows.map((r, i) =>
-        i === rowIndex ? { ...r, resolving: true, resolveError: undefined } : r
+        i === rowIndex ? { ...r, ...merge, resolving: true, resolveError: undefined } : r
       ),
     }));
     try {
@@ -1943,7 +2200,9 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
       return {
         labours_id: Number(r.labourId),
         day_labour_count: dlc,
+        day_labour_count_unit: r.labourCountUnit,
         overtime_hours: ot,
+        overtime_quantity_unit: r.overtimeQtyUnit,
         daily_rate: Number(r.dailyRate),
         day_unit: r.dayUnit as 'day' | 'hour',
         ot_rate: Number(r.otRate),
@@ -1977,8 +2236,10 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
             category: row.labourName.trim(),
             rateCategory: row.rateCategory,
             headCount: Math.max(1, dlc || 1),
+            labourCountUnit: row.labourCountUnit,
             unitsWorked: 1,
             otHoursPerPerson: ot,
+            overtimeQtyUnit: row.overtimeQtyUnit,
             date,
           });
         }
@@ -2145,6 +2406,398 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
     }
   };
 
+  const labourEntryFormPanel = (
+                <div className="p-4 space-y-4">
+                  <div>
+                    <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Work date *</label>
+                    <input
+                      type="date"
+                      value={labourEntryFormData.date}
+                      onChange={(e) =>
+                        setLabourEntryFormData((p) => ({
+                          ...p,
+                          date: e.target.value,
+                          labourRows: clearLabourRowRateFields(p.labourRows),
+                        }))
+                      }
+                      className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                    />
+                  </div>
+                  {labourEntryFormOptionsLoading && (
+                    <div className={`flex items-center gap-2 text-sm ${textSecondary}`}>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Loading form-options…
+                    </div>
+                  )}
+                 
+                  <div ref={labourEntryProjectRef} className="relative">
+                    <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Project *</label>
+                    <div
+                      onClick={() => setLabourEntryProjectDropdownOpen((o) => !o)}
+                      className={`flex items-center gap-2 w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'} cursor-pointer min-h-[42px]`}
+                    >
+                      <span className="flex-1 text-left truncate">
+                        {labourEntryFormData.project_id
+                          ? entryProjectList.find((p) => String(p.id) === String(labourEntryFormData.project_id))?.name ||
+                            '— Select project —'
+                          : '— Select project —'}
+                      </span>
+                      <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform ${labourEntryProjectDropdownOpen ? 'rotate-180' : ''}`} />
+                    </div>
+                    {labourEntryProjectDropdownOpen && (
+                      <div className={`absolute left-0 right-0 top-full mt-1 rounded-lg border ${borderClass} ${isDark ? 'bg-dropdown-panel' : 'bg-white'} shadow-lg z-50 overflow-hidden max-h-64 flex flex-col`}>
+                        <div className="flex items-center gap-1 p-2 border-b border-inherit">
+                          <Search className="w-4 h-4 flex-shrink-0 text-slate-400" />
+                          <input
+                            type="text"
+                            placeholder="Search projects..."
+                            value={labourEntryProjectSearch}
+                            onChange={(e) => setLabourEntryProjectSearch(e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            className={`flex-1 min-w-0 py-1.5 px-2 rounded border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-900' : 'bg-slate-50'} text-sm`}
+                          />
+                        </div>
+                        <div className="overflow-y-auto flex-1">
+                          {entryProjectList
+                            .filter((p) => !labourEntryProjectSearch.trim() || p.name.toLowerCase().includes(labourEntryProjectSearch.toLowerCase()))
+                            .map((p) => (
+                              <div
+                                key={p.id}
+                                onClick={() => {
+                                  setLabourEntryFormData((prev) => ({
+                                    ...prev,
+                                    project_id: String(p.id),
+                                    labourRows: clearLabourRowRateFields(prev.labourRows),
+                                  }));
+                                  setLabourEntryProjectDropdownOpen(false);
+                                  setLabourEntryProjectSearch('');
+                                }}
+                                className={`px-4 py-2 cursor-pointer hover:bg-[#6B8E23]/10 ${String(p.id) === String(labourEntryFormData.project_id) ? 'bg-[#6B8E23]/20' : ''} ${textPrimary}`}
+                              >
+                                {p.name}
+                              </div>
+                            ))}
+                          {entryProjectList.filter((p) => !labourEntryProjectSearch.trim() || p.name.toLowerCase().includes(labourEntryProjectSearch.toLowerCase())).length === 0 && (
+                            <div className={`px-4 py-3 text-sm ${textSecondary}`}>
+                              No projects.{' '}
+                              <Link href="/masters/projects" className="text-[#6B8E23] underline font-bold">
+                                Masters
+                              </Link>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <div ref={labourEntryContractorRef} className="relative">
+                    <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Contractor *</label>
+                    <div
+                      onClick={() => setLabourEntryContractorDropdownOpen((o) => !o)}
+                      className={`flex items-center gap-2 w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'} cursor-pointer min-h-[42px]`}
+                    >
+                      <span className="flex-1 text-left truncate">
+                        {labourEntryFormData.contractor_id
+                          ? entryContractorList.find((v) => String(v.id) === String(labourEntryFormData.contractor_id))
+                              ?.name || '— Select contractor —'
+                          : '— Select contractor —'}
+                      </span>
+                      <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform ${labourEntryContractorDropdownOpen ? 'rotate-180' : ''}`} />
+                    </div>
+                    {labourEntryContractorDropdownOpen && (
+                      <div className={`absolute left-0 right-0 top-full mt-1 rounded-lg border ${borderClass} ${isDark ? 'bg-dropdown-panel' : 'bg-white'} shadow-lg z-50 overflow-hidden max-h-64 flex flex-col`}>
+                        <div className="flex items-center gap-1 p-2 border-b border-inherit">
+                          <Search className="w-4 h-4 flex-shrink-0 text-slate-400" />
+                          <input
+                            type="text"
+                            placeholder="Search contractors..."
+                            value={labourEntryContractorSearch}
+                            onChange={(e) => setLabourEntryContractorSearch(e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            className={`flex-1 min-w-0 py-1.5 px-2 rounded border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-900' : 'bg-slate-50'} text-sm`}
+                          />
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setLabourEntryContractorDropdownOpen(false);
+                              setShowAddVendorModal(true);
+                            }}
+                            className="p-2 rounded-lg hover:bg-[#6B8E23]/20 text-[#6B8E23] transition-colors"
+                            title="Add contractor"
+                          >
+                            <Plus className="w-5 h-5" />
+                          </button>
+                        </div>
+                        <div className="overflow-y-auto flex-1">
+                          {entryContractorList
+                            .filter((v) => !labourEntryContractorSearch.trim() || (v.name || '').toLowerCase().includes(labourEntryContractorSearch.toLowerCase()))
+                            .map((v) => (
+                              <div
+                                key={v.id}
+                                onClick={() => {
+                                  setLabourEntryFormData((prev) => ({
+                                    ...prev,
+                                    contractor_id: String(v.id),
+                                    labourRows: clearLabourRowRateFields(prev.labourRows),
+                                  }));
+                                  setLabourEntryContractorDropdownOpen(false);
+                                  setLabourEntryContractorSearch('');
+                                }}
+                                className={`px-4 py-2 cursor-pointer hover:bg-[#6B8E23]/10 ${String(v.id) === String(labourEntryFormData.contractor_id) ? 'bg-[#6B8E23]/20' : ''} ${textPrimary}`}
+                              >
+                                {v.name}
+                              </div>
+                            ))}
+                          {entryContractorList.filter((v) => !labourEntryContractorSearch.trim() || (v.name || '').toLowerCase().includes(labourEntryContractorSearch.toLowerCase())).length === 0 && (
+                            <div className={`px-4 py-3 text-sm ${textSecondary}`}>
+                              No contractors.{' '}
+                              <Link href="/masters/vendors" className="text-[#6B8E23] underline font-bold">
+                                Create contractor in Masters
+                              </Link>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  {/* Labour Details - multiple categories */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className={`block text-sm font-bold ${textPrimary}`}>Labour Details</label>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setLabourEntryFormData((p) => ({
+                            ...p,
+                            labourRows: [...p.labourRows, defaultLabourRow()],
+                          }))
+                        }
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold bg-[#6B8E23]/20 text-[#6B8E23] hover:bg-[#6B8E23]/30 transition-colors"
+                      >
+                        <Plus className="w-4 h-4" />
+                        Add Type
+                      </button>
+                    </div>
+                    <div className="space-y-4">
+                      {labourEntryFormData.labourRows.map((row, idx) => {
+                        const project = entryProjectList.find((p) => String(p.id) === String(labourEntryFormData.project_id));
+                        const contractor = entryContractorList.find((v) => String(v.id) === String(labourEntryFormData.contractor_id));
+                        const projectName = project?.name ?? '';
+                        const contractorName = contractor?.name ?? '';
+                        return (
+                          <div
+                            key={idx}
+                            className={`p-3 rounded-lg border ${borderClass} ${isDark ? 'bg-slate-800/30' : 'bg-slate-50'}`}
+                          >
+                            <div className="flex items-center justify-between mb-2">
+                              <span className={`text-xs font-bold ${textSecondary}`}>Line {idx + 1}</span>
+                              {labourEntryFormData.labourRows.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setLabourEntryFormData((p) => ({
+                                      ...p,
+                                      labourRows: p.labourRows.filter((_, i) => i !== idx),
+                                    }))
+                                  }
+                                  className={`text-xs ${textSecondary} hover:text-red-500`}
+                                >
+                                  Remove
+                                </button>
+                              )}
+                            </div>
+                            <div className="space-y-3">
+                              <div>
+                                <label className={`block text-xs font-bold ${textPrimary} mb-1`}>
+                                  Labour category (from Masters)
+                                </label>
+                                <select
+                                  value={row.labourId}
+                                  onChange={(e) => {
+                                    const id = e.target.value;
+                                    const lab = entryLabourPicks.find((l) => String(l.numericId) === id);
+                                    const category = lab?.category ?? 'skilled';
+                                    setLabourEntryFormData((p) => ({
+                                      ...p,
+                                      labourRows: p.labourRows.map((r, i) =>
+                                        i === idx
+                                          ? {
+                                              ...r,
+                                              labourId: id,
+                                              labourName: lab?.name ?? '',
+                                              rateCategory: category,
+                                              contractorLaborRateId: null,
+                                              dailyRate: null,
+                                              dayUnit: null,
+                                              otRate: null,
+                                              otUnit: null,
+                                              resolveError: undefined,
+                                              resolving: false,
+                                            }
+                                          : r
+                                      ),
+                                    }));
+                                    if (id) {
+                                      void resolveLabourRowRate(idx, {
+                                        labourId: id,
+                                        labourName: lab?.name ?? '',
+                                        rateCategory: category,
+                                      });
+                                    }
+                                  }}
+                                  disabled={labourEntryFormOptionsLoading}
+                                  className={`w-full px-3 py-2 rounded-lg border ${borderClass} ${textPrimary} text-sm ${isDark ? 'bg-slate-800' : 'bg-white'} disabled:opacity-60`}
+                                >
+                                  <option value="">
+                                    {labourEntryFormOptionsLoading ? 'Loading…' : '— Select labour —'}
+                                  </option>
+                                  {entryLabourPicks.map((l) => (
+                                    <option key={String(l.numericId)} value={String(l.numericId)}>
+                                      {l.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                {row.resolving && (
+                                  <p className={`text-xs mt-1 ${textSecondary}`}>Loading contractor rate…</p>
+                                )}
+                                {row.resolveError && (
+                                  <p className="text-xs text-red-500 mt-1">{row.resolveError}</p>
+                                )}
+                                {row.dailyRate != null && row.dayUnit && (
+                                  <div className={`mt-2 flex flex-wrap gap-2 text-xs ${textPrimary}`}>
+                                    <span className="px-2 py-1 rounded bg-slate-200/50 dark:bg-slate-700/50">
+                                      Daily: {row.dailyRate} / {row.dayUnit}
+                                    </span>
+                                    <span className="px-2 py-1 rounded bg-slate-200/50 dark:bg-slate-700/50">
+                                      OT: {row.otRate ?? 0} / {row.otUnit ?? 'hour'}
+                                    </span>
+                                    {row.contractorLaborRateId != null && (
+                                      <span className="px-2 py-1 rounded bg-slate-200/50 dark:bg-slate-700/50">
+                                        Rate id: {row.contractorLaborRateId}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div className="min-w-0">
+                                    <label className={`block text-xs font-bold ${textPrimary} mb-1`}>
+                                      Head count *
+                                    </label>
+                                    <input
+                                      type="text"
+                                      inputMode="numeric"
+                                      value={row.dayLabourCount}
+                                      onChange={(e) => {
+                                        const v = e.target.value.replace(/\D/g, '');
+                                        setLabourEntryFormData((p) => ({
+                                          ...p,
+                                          labourRows: p.labourRows.map((r, i) =>
+                                            i === idx ? { ...r, dayLabourCount: v === '' ? '' : Math.max(0, parseInt(v, 10) || 0) } : r
+                                          ),
+                                        }));
+                                      }}
+                                      className={`w-full px-3 py-2 rounded-lg border ${borderClass} ${textPrimary} text-sm ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                                    />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <label className={`block text-xs font-bold ${textPrimary} mb-1`}>Unit</label>
+                                    <select
+                                      value={row.labourCountUnit}
+                                      onChange={(e) =>
+                                        setLabourEntryFormData((p) => ({
+                                          ...p,
+                                          labourRows: p.labourRows.map((r, i) =>
+                                            i === idx
+                                              ? { ...r, labourCountUnit: e.target.value as 'day' | 'hour' }
+                                              : r
+                                          ),
+                                        }))
+                                      }
+                                      className={`w-full px-3 py-2 rounded-lg border ${borderClass} ${textPrimary} text-sm ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                                    >
+                                      <option value="day">Days</option>
+                                      <option value="hour">Hrs</option>
+                                    </select>
+                                  </div>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div className="min-w-0">
+                                    <label className={`block text-xs font-bold ${textPrimary} mb-1`}>
+                                      OT (per person, optional)
+                                    </label>
+                                    <input
+                                      type="text"
+                                      inputMode="numeric"
+                                      value={row.overtimeHours}
+                                      onChange={(e) => {
+                                        const v = e.target.value.replace(/\D/g, '');
+                                        setLabourEntryFormData((p) => ({
+                                          ...p,
+                                          labourRows: p.labourRows.map((r, i) =>
+                                            i === idx ? { ...r, overtimeHours: v === '' ? '' : Math.max(0, parseInt(v, 10) || 0) } : r
+                                          ),
+                                        }));
+                                      }}
+                                      className={`w-full px-3 py-2 rounded-lg border ${borderClass} ${textPrimary} text-sm ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                                    />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <label className={`block text-xs font-bold ${textPrimary} mb-1`}>Unit</label>
+                                    <select
+                                      value={row.overtimeQtyUnit}
+                                      onChange={(e) =>
+                                        setLabourEntryFormData((p) => ({
+                                          ...p,
+                                          labourRows: p.labourRows.map((r, i) =>
+                                            i === idx
+                                              ? { ...r, overtimeQtyUnit: e.target.value as 'day' | 'hour' }
+                                              : r
+                                          ),
+                                        }))
+                                      }
+                                      className={`w-full px-3 py-2 rounded-lg border ${borderClass} ${textPrimary} text-sm ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                                    >
+                                      <option value="hour">Hrs</option>
+                                      <option value="day">Days</option>
+                                    </select>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => handleAddLabourEntry()}
+                      disabled={isSubmittingLabourEntry}
+                      className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg font-bold bg-[#6B8E23] text-white hover:bg-[#5a7a1e] disabled:opacity-50"
+                    >
+                      {isSubmittingLabourEntry ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
+                      Submit (POST /labour-entries)
+                    </button>
+                    {showAddLabourEntryModal && (
+                      <button
+                        onClick={() => {
+                          setShowAddLabourEntryModal(false);
+                          setLabourEntryProjectDropdownOpen(false);
+                          setLabourEntryContractorDropdownOpen(false);
+                          setLabourEntryProjectSearch('');
+                          setLabourEntryContractorSearch('');
+                        }}
+                        className="px-4 py-2.5 rounded-lg font-bold border border-inherit"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                  </div>
+                </div>
+  );
   return (
     <div className="space-y-4 sm:space-y-6 w-full min-w-0 max-w-full">
       {/* Page Header */}
@@ -2442,50 +3095,141 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
               </div>
 
               <div>
-                <h3 className={`text-sm font-bold ${textPrimary} mb-3`}>Recent face punches (this session)</h3>
-                <div className="overflow-x-auto rounded-lg border border-inherit">
-                  <table className="w-full min-w-[500px]">
-                    <thead>
-                      <tr className={`border-b ${borderClass} ${isDark ? 'bg-slate-800/50' : 'bg-slate-100'}`}>
-                        <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Person</th>
-                        <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Type</th>
-                        <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Photo</th>
-                        <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>When</th>
-                        <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Location</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {facePunchLog.length === 0 ? (
-                        <tr>
-                          <td colSpan={5} className={`py-8 text-center text-sm ${textSecondary}`}>
-                            No punches in this session yet
-                          </td>
-                        </tr>
-                      ) : (
-                        [...facePunchLog].reverse().map((r, idx) => (
-                          <tr key={r.uuid || idx} className={`border-b border-inherit hover:bg-black/5 dark:hover:bg-white/5`}>
-                            <td className={`py-3 px-4 text-sm font-medium ${textPrimary}`}>{r.employee_name}</td>
-                            <td className={`py-3 px-4 text-sm ${textPrimary}`}>{r.punch_type}</td>
-                            <td className="py-3 px-4">
-                              {r.photoThumb ? (
-                                <img src={r.photoThumb} alt="" className="w-12 h-12 rounded-lg object-cover" />
-                              ) : (
-                                <span className={`text-xs ${textSecondary}`}>—</span>
-                              )}
-                            </td>
-                            <td className={`py-3 px-4 text-sm ${textPrimary}`}>
-                              {typeof r.punch_at === 'string' && r.punch_at.includes('T')
-                                ? new Date(r.punch_at).toLocaleString()
-                                : String(r.punch_at)}
-                            </td>
-                            <td className={`py-3 px-4 text-xs ${textPrimary} max-w-[180px] truncate`} title={r.location}>
-                              {r.location}
-                            </td>
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                  <h3 className={`text-sm font-bold ${textPrimary}`}>
+                    Recent punches
+                    {statusTodayDate ? (
+                      <span className={`font-normal ${textSecondary}`}> · {statusTodayDate}</span>
+                    ) : null}
+                  </h3>
+                  {statusTodayLoading && (
+                    <span className={`inline-flex items-center gap-1.5 text-xs ${textSecondary}`}>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      Loading…
+                    </span>
+                  )}
+                </div>
+                <p className={`text-xs ${textSecondary} mb-4`}>
+                  From <strong className="font-semibold text-inherit">status-today</strong>
+                  {punchType === 'punch_in' ? (
+                    <>
+                      : <code className="text-[10px] opacity-80">data.punch_in</code>. Session punch-ins on this device are
+                      merged below.
+                    </>
+                  ) : (
+                    <>
+                      : <code className="text-[10px] opacity-80">data.punch_out</code>. Session punch-outs on this device are
+                      merged below.
+                    </>
+                  )}
+                </p>
+
+                <div className="space-y-6">
+                  {punchType === 'punch_in' && (
+                  <div>
+                    <h4 className={`text-xs font-black uppercase tracking-wide ${textPrimary} mb-2`}>Punch IN</h4>
+                    <div className="overflow-x-auto rounded-lg border border-inherit">
+                      <table className="w-full min-w-[360px]">
+                        <thead>
+                          <tr className={`border-b ${borderClass} ${isDark ? 'bg-slate-800/50' : 'bg-slate-100'}`}>
+                            <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Person</th>
+                            <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>When</th>
+                            <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Location</th>
                           </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
+                        </thead>
+                        <tbody>
+                          {recentPunchInDisplayRows.length === 0 ? (
+                            <tr>
+                              <td colSpan={3} className={`py-6 text-center text-sm ${textSecondary}`}>
+                                {statusTodayLoading ? (
+                                  <span className="inline-flex items-center justify-center gap-2">
+                                    <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+                                  </span>
+                                ) : (
+                                  'No punch-in records for this date yet.'
+                                )}
+                              </td>
+                            </tr>
+                          ) : (
+                            recentPunchInDisplayRows.map((r, idx) => (
+                              <tr
+                                key={`in-${punchEventDedupeKey(r)}-${idx}`}
+                                className={`border-b border-inherit hover:bg-black/5 dark:hover:bg-white/5`}
+                              >
+                                <td className={`py-3 px-4 text-sm font-medium ${textPrimary}`}>{r.employee_name}</td>
+                                <td className={`py-3 px-4 text-sm ${textPrimary}`}>
+                                  {(() => {
+                                    const d = new Date(r.punch_at);
+                                    return Number.isFinite(d.getTime()) ? d.toLocaleString() : String(r.punch_at);
+                                  })()}
+                                </td>
+                                <td
+                                  className={`py-3 px-4 text-xs ${textPrimary} max-w-[220px] truncate`}
+                                  title={r.location}
+                                >
+                                  {r.location ?? '—'}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  )}
+
+                  {punchType === 'punch_out' && (
+                  <div>
+                    <h4 className={`text-xs font-black uppercase tracking-wide ${textPrimary} mb-2`}>Punch OUT</h4>
+                    <div className="overflow-x-auto rounded-lg border border-inherit">
+                      <table className="w-full min-w-[360px]">
+                        <thead>
+                          <tr className={`border-b ${borderClass} ${isDark ? 'bg-slate-800/50' : 'bg-slate-100'}`}>
+                            <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Person</th>
+                            <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>When</th>
+                            <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Location</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {recentPunchOutDisplayRows.length === 0 ? (
+                            <tr>
+                              <td colSpan={3} className={`py-6 text-center text-sm ${textSecondary}`}>
+                                {statusTodayLoading ? (
+                                  <span className="inline-flex items-center justify-center gap-2">
+                                    <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+                                  </span>
+                                ) : (
+                                  'No punch-out records for this date yet.'
+                                )}
+                              </td>
+                            </tr>
+                          ) : (
+                            recentPunchOutDisplayRows.map((r, idx) => (
+                              <tr
+                                key={`out-${punchEventDedupeKey(r)}-${idx}`}
+                                className={`border-b border-inherit hover:bg-black/5 dark:hover:bg-white/5`}
+                              >
+                                <td className={`py-3 px-4 text-sm font-medium ${textPrimary}`}>{r.employee_name}</td>
+                                <td className={`py-3 px-4 text-sm ${textPrimary}`}>
+                                  {(() => {
+                                    const d = new Date(r.punch_at);
+                                    return Number.isFinite(d.getTime()) ? d.toLocaleString() : String(r.punch_at);
+                                  })()}
+                                </td>
+                                <td
+                                  className={`py-3 px-4 text-xs ${textPrimary} max-w-[220px] truncate`}
+                                  title={r.location}
+                                >
+                                  {r.location ?? '—'}
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -2573,21 +3317,19 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                       <th className={`text-left py-3 px-2 sm:px-4 text-xs font-bold uppercase ${textSecondary}`}>Name</th>
                       <th className={`text-left py-3 px-2 sm:px-4 text-xs font-bold uppercase ${textSecondary}`}>Email</th>
                       <th className={`text-left py-3 px-2 sm:px-4 text-xs font-bold uppercase ${textSecondary}`}>Designation</th>
-                      <th className={`text-left py-3 px-2 sm:px-4 text-xs font-bold uppercase ${textSecondary}`}>Subject</th>
                       <th className={`text-left py-3 px-2 sm:px-4 text-xs font-bold uppercase ${textSecondary}`}>Face</th>
-                      <th className={`text-left py-3 px-2 sm:px-4 text-xs font-bold uppercase ${textSecondary}`}> </th>
                     </tr>
                   </thead>
                   <tbody>
                     {staffTableLoading ? (
                       <tr>
-                        <td colSpan={7} className={`py-8 text-center ${textSecondary}`}>
+                        <td colSpan={5} className={`py-8 text-center ${textSecondary}`}>
                           <Loader2 className="w-6 h-6 animate-spin mx-auto" />
                         </td>
                       </tr>
                     ) : staffTabFaceRows.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className={`py-8 text-center ${textSecondary}`}>
+                        <td colSpan={5} className={`py-8 text-center ${textSecondary}`}>
                           {staffFilter === 'own_labor'
                             ? 'No own labour profiles in this filter (add field workers or check GET /face/attendees).'
                             : 'No company users in this filter.'}
@@ -2610,9 +3352,6 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                               <td className={`py-3 px-2 sm:px-4 text-sm font-medium ${textPrimary}`}>{a.name || '—'}</td>
                               <td className={`py-3 px-2 sm:px-4 text-sm ${textPrimary}`}>{a.email || '—'}</td>
                               <td className={`py-3 px-2 sm:px-4 text-sm ${textPrimary}`}>{a.designation || '—'}</td>
-                              <td className={`py-3 px-2 sm:px-4 text-xs ${textSecondary}`}>
-                                {a.subjectType.replace('_', ' ')} · {a.subjectId}
-                              </td>
                               <td className={`py-3 px-2 sm:px-4 text-sm`}>
                                 <div className="flex flex-wrap items-center gap-2">
                                   {!a.enrolled && (
@@ -2845,33 +3584,41 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                     &quot;Add Log&quot; (POST /labour-entries) to persist to the backend.
                   </p>
                 ) : (
-                  <div className="overflow-x-auto max-h-56 overflow-y-auto rounded-lg border border-inherit">
-                    <table className="w-full min-w-[640px] text-xs">
-                      <thead className={`sticky top-0 ${isDark ? 'bg-slate-800' : 'bg-slate-100'}`}>
+                  <div className="overflow-x-auto max-h-[28rem] overflow-y-auto rounded-lg border border-inherit">
+                    <table className="w-full min-w-[920px] text-xs">
+                      <thead className={`sticky top-0 z-[1] ${isDark ? 'bg-slate-800' : 'bg-slate-100'}`}>
                         <tr className={`border-b ${borderClass}`}>
                           <th className={`text-left py-2 px-2 ${textSecondary}`}>Date</th>
                           <th className={`text-left py-2 px-2 ${textSecondary}`}>Project</th>
                           <th className={`text-left py-2 px-2 ${textSecondary}`}>Contractor</th>
-                          <th className={`text-left py-2 px-2 ${textSecondary}`}>Summary</th>
+                          <th className={`text-left py-2 px-2 ${textSecondary}`}>Category / labour</th>
+                          <th className={`text-right py-2 px-2 ${textSecondary}`}>Count</th>
+                          <th className={`text-left py-2 px-2 ${textSecondary}`}>Unit</th>
+                          <th className={`text-left py-2 px-2 ${textSecondary}`}>Over time</th>
+                          <th className={`text-left py-2 px-2 ${textSecondary}`}>Status</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {apiLabourEntries.map((row: any, i: number) => (
+                        {serverLabourLogRows.map((line) => (
                           <tr
-                            key={row.uuid ?? i}
-                            className={`border-b border-inherit ${textPrimary} ${row.uuid ? 'cursor-pointer hover:bg-black/5 dark:hover:bg-white/5' : ''}`}
-                            onClick={() => row.uuid && setApiDetailModal({ kind: 'labour_entry', uuid: String(row.uuid) })}
-                            title={row.uuid ? 'View labour entry' : undefined}
+                            key={line.lineKey}
+                            className={`border-b border-inherit ${textPrimary} ${
+                              line.entryUuid ? 'cursor-pointer hover:bg-black/5 dark:hover:bg-white/5' : ''
+                            }`}
+                            onClick={() =>
+                              line.entryUuid && setApiDetailModal({ kind: 'labour_entry', uuid: line.entryUuid })
+                            }
+                            title={line.entryUuid ? 'View labour entry detail' : undefined}
                           >
-                            <td className="py-2 px-2">{row.work_date ?? row.date ?? '—'}</td>
-                            <td className="py-2 px-2">
-                              {row.project?.name ?? row.project?.project_name ?? row.project_name ?? '—'}
-                            </td>
-                            <td className="py-2 px-2">
-                              {row.contractor?.name ?? row.vendor?.name ?? '—'}
-                            </td>
-                            <td className="py-2 px-2 max-w-[200px] truncate" title={row.notes}>
-                              {row.notes ?? row.status ?? '—'}
+                            <td className="py-2 px-2 whitespace-nowrap">{line.workDate}</td>
+                            <td className="py-2 px-2">{line.project}</td>
+                            <td className="py-2 px-2">{line.contractor}</td>
+                            <td className="py-2 px-2 font-medium">{line.category}</td>
+                            <td className="py-2 px-2 text-right tabular-nums">{line.count}</td>
+                            <td className="py-2 px-2 tabular-nums">{line.unit}</td>
+                            <td className="py-2 px-2 tabular-nums">{line.ot}</td>
+                            <td className="py-2 px-2 max-w-[140px] truncate" title={line.status}>
+                              {line.status}
                             </td>
                           </tr>
                         ))}
@@ -2967,14 +3714,19 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                           {new Date(dateKey).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' })}
                         </h4>
                         <div className="overflow-x-auto rounded-lg border border-inherit">
-                          <table className="w-full min-w-[600px]">
+                          <table className="w-full min-w-[900px]">
                             <thead>
                               <tr className={`border-b ${borderClass} ${isDark ? 'bg-slate-800/50' : 'bg-slate-100'}`}>
-                                <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Category</th>
-                                <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Contractor · Project</th>
-                                <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Head</th>
-                                <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Units</th>
-                                <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>OT</th>
+                                <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Project</th>
+                                <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Contractor</th>
+                                <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>
+                                  Category / labour
+                                </th>
+                                <th className={`text-right py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Count</th>
+                                <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Unit</th>
+                                <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>
+                                  Over time
+                                </th>
                                 <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary}`}>Amount</th>
                                 <th className={`text-left py-3 px-4 text-xs font-bold uppercase ${textSecondary} w-16`}>Action</th>
                               </tr>
@@ -2982,15 +3734,21 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                             <tbody>
                               {byDate[dateKey].map((e) => (
                                 <tr key={e.id} className={`border-b border-inherit hover:bg-black/5 dark:hover:bg-white/5`}>
-                                  <td className={`py-3 px-4 text-sm ${textPrimary}`}>{e.category}</td>
-                                  <td className={`py-3 px-4 text-sm ${textPrimary}`}>
-                                    <span className="font-medium">{e.contractorName}</span>
-                                    <span className={`text-xs ${textSecondary}`}> · {e.projectName}</span>
+                                  <td className={`py-3 px-4 text-sm ${textPrimary}`}>{e.projectName}</td>
+                                  <td className={`py-3 px-4 text-sm ${textPrimary}`}>{e.contractorName}</td>
+                                  <td className={`py-3 px-4 text-sm font-medium ${textPrimary}`}>{e.category}</td>
+                                  <td className={`py-3 px-4 text-sm text-right tabular-nums ${textPrimary}`}>
+                                    {e.headCount > 0 ? e.headCount : '—'}
                                   </td>
-                                  <td className={`py-3 px-4 text-sm ${textPrimary}`}>{e.headCount}</td>
-                                  <td className={`py-3 px-4 text-sm ${textPrimary}`}>{e.unitsWorked} day(s)</td>
-                                  <td className={`py-3 px-4 text-sm ${textPrimary}`}>{e.otHoursPerPerson} hr</td>
-                                  <td className={`py-3 px-4 text-sm font-bold ${textPrimary}`}>₹{e.amount.toLocaleString('en-IN')}</td>
+                                  <td className={`py-3 px-4 text-sm tabular-nums ${textPrimary}`}>
+                                    {e.unitsWorked} {e.unitsWorked === 1 ? 'Day' : 'Days'}
+                                  </td>
+                                  <td className={`py-3 px-4 text-sm tabular-nums ${textPrimary}`}>
+                                    {e.otHoursPerPerson} Hrs
+                                  </td>
+                                  <td className={`py-3 px-4 text-sm font-bold ${textPrimary}`}>
+                                    ₹{e.amount.toLocaleString('en-IN')}
+                                  </td>
                                   <td className="py-3 px-4">
                                     <button
                                       onClick={() => {
@@ -3020,7 +3778,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
           {/* PAY TAB */}
           {activeTab === 'pay' && (
             <div className="space-y-6">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl">
                 <div>
                   <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Project</label>
                   <select
@@ -3061,19 +3819,6 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                       ))}
                   </select>
                 </div>
-                <div>
-                  <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Period</label>
-                  <select
-                    value={payPeriodFilter}
-                    onChange={(e) => setPayPeriodFilter(e.target.value as 'all' | 'weekly' | 'fortnight' | 'monthly')}
-                    className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
-                  >
-                    <option value="all">All</option>
-                    <option value="weekly">Weekly</option>
-                    <option value="fortnight">Fortnight</option>
-                    <option value="monthly">Monthly</option>
-                  </select>
-                </div>
               </div>
               {(() => {
                 const today = new Date();
@@ -3106,26 +3851,57 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                 const totalPaid = paidEntries.reduce((s, e) => s + e.amount, 0);
                 const unpaid = entries.filter((e) => !e.paid);
                 const outstanding = unpaid.reduce((s, e) => s + e.amount, 0);
+                const totalBilled = entries.reduce((s, e) => s + e.amount, 0);
                 const selectedTotal = unpaid
                   .filter((e) => selectedPayEntryIds.has(e.id))
                   .reduce((s, e) => s + e.amount, 0);
+                const periodPills: { id: typeof payPeriodFilter; label: string; hint: string }[] = [
+                  { id: 'all', label: 'All', hint: 'All dates' },
+                  { id: 'weekly', label: 'Weekly', hint: 'Last 7 days' },
+                  { id: 'fortnight', label: 'Fortnight', hint: 'Last 14 days' },
+                  { id: 'monthly', label: 'Monthly', hint: 'Last 30 days' },
+                ];
                 return (
                   <>
-                    <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 rounded-xl ${isDark ? 'bg-slate-800/50' : 'bg-slate-100'}`}>
+                    <div className={`grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 rounded-xl border ${borderClass} ${isDark ? 'bg-slate-800/50' : 'bg-slate-100'}`}>
                       <div>
-                        <p className={`text-xs font-bold uppercase ${textSecondary}`}>Total Paid</p>
+                        <p className={`text-xs font-bold uppercase tracking-wide ${textSecondary}`}>Total billed</p>
+                        <p className={`text-lg font-black ${textPrimary}`}>₹{totalBilled.toLocaleString('en-IN')}</p>
+                      </div>
+                      <div>
+                        <p className={`text-xs font-bold uppercase tracking-wide ${textSecondary}`}>Total paid</p>
                         <p className={`text-lg font-black ${textPrimary}`}>₹{totalPaid.toLocaleString('en-IN')}</p>
                       </div>
                       <div>
-                        <p className={`text-xs font-bold uppercase ${textSecondary}`}>Outstanding</p>
-                        <p className={`text-lg font-black ${outstanding > 0 ? 'text-red-600' : 'text-green-600'} ${textPrimary}`}>
+                        <p className={`text-xs font-bold uppercase tracking-wide ${textSecondary}`}>Outstanding</p>
+                        <p className={`text-lg font-black ${outstanding > 0 ? 'text-red-500 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                           ₹{outstanding.toLocaleString('en-IN')}
                         </p>
                       </div>
                     </div>
                     <div>
+                      <p className={`text-xs font-bold uppercase tracking-wide ${textSecondary} mb-2`}>Period filter</p>
+                      <div className="flex flex-wrap gap-2">
+                        {periodPills.map((p) => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => setPayPeriodFilter(p.id)}
+                            className={`inline-flex flex-col items-start px-3 py-2 rounded-lg border text-left text-sm font-bold transition-colors ${
+                              payPeriodFilter === p.id
+                                ? 'border-[#6B8E23] bg-[#6B8E23]/20 text-[#6B8E23]'
+                                : `${borderClass} ${textPrimary} hover:bg-black/5 dark:hover:bg-white/5`
+                            }`}
+                          >
+                            <span>{p.label}</span>
+                            <span className={`text-[10px] font-normal ${textSecondary}`}>{p.hint}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
                       <h3 className={`text-sm font-bold ${textPrimary} mb-3`}>Unpaid Logs</h3>
-                      <div className="flex gap-2 mb-3">
+                      <div className="flex flex-wrap gap-2 mb-3 items-center">
                         <button
                           onClick={() => {
                             const allSelected = unpaid.length > 0 && unpaid.every((e) => selectedPayEntryIds.has(e.id));
@@ -3148,21 +3924,25 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                           Pay Selected
                         </button>
                       </div>
-                      <div className="overflow-x-auto rounded-lg border border-inherit max-h-64 overflow-y-auto">
-                        <table className="w-full">
-                          <thead className={`sticky top-0 ${isDark ? 'bg-slate-800' : 'bg-slate-100'}`}>
+                      <div className="overflow-x-auto rounded-lg border border-inherit max-h-[28rem] overflow-y-auto">
+                        <table className="w-full min-w-[860px]">
+                          <thead className={`sticky top-0 z-[1] ${isDark ? 'bg-slate-800' : 'bg-slate-100'}`}>
                             <tr className={`border-b ${borderClass}`}>
-                              <th className="text-left py-2 px-3 text-xs font-bold w-8"/>
-                              <th className={`text-left py-2 px-3 text-xs font-bold ${textSecondary}`}>Date</th>
-                              <th className={`text-left py-2 px-3 text-xs font-bold ${textSecondary}`}>Project</th>
-                              <th className={`text-left py-2 px-3 text-xs font-bold ${textSecondary}`}>Contractor</th>
-                              <th className={`text-left py-2 px-3 text-xs font-bold ${textSecondary}`}>Category / Labour Details</th>
-                              <th className={`text-left py-2 px-3 text-xs font-bold ${textSecondary}`}>Amount</th>
+                              <th className="text-left py-2 px-2 text-xs font-bold w-8"/>
+                              <th className={`text-left py-2 px-2 text-xs font-bold ${textSecondary}`}>Date</th>
+                              <th className={`text-left py-2 px-2 text-xs font-bold ${textSecondary}`}>Project</th>
+                              <th className={`text-left py-2 px-2 text-xs font-bold ${textSecondary}`}>Contractor</th>
+                              <th className={`text-left py-2 px-2 text-xs font-bold ${textSecondary}`}>Category</th>
+                              <th className={`text-left py-2 px-2 text-xs font-bold ${textSecondary}`}>Head count</th>
+                              <th className={`text-left py-2 px-2 text-xs font-bold ${textSecondary}`}>Unit</th>
+                              <th className={`text-left py-2 px-2 text-xs font-bold ${textSecondary}`}>OT</th>
+                              <th className={`text-left py-2 px-2 text-xs font-bold ${textSecondary}`}>OT unit</th>
+                              <th className={`text-right py-2 px-2 text-xs font-bold ${textSecondary}`}>Amount</th>
                             </tr>
                           </thead>
                           <tbody>
                             {unpaid.length === 0 ? (
-                              <tr><td colSpan={6} className={`py-6 text-center text-sm ${textSecondary}`}>No unpaid logs</td></tr>
+                              <tr><td colSpan={10} className={`py-6 text-center text-sm ${textSecondary}`}>No unpaid logs</td></tr>
                             ) : (
                               unpaid.map((e) => {
                                 const rateInfo = getRateForDate(
@@ -3171,12 +3951,13 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                                   e.rateCategory || e.category,
                                   e.date
                                 );
-                                const unitLabel = rateInfo.unit === 'Hr' ? 'hrs' : 'days';
-                                const otUnitLabel = rateInfo.otUnit === 'Hr' ? 'hrs' : 'days';
-                                const labourDetails = `${e.category} · ${e.headCount} pax · ${e.unitsWorked} ${unitLabel} · ${e.otHoursPerPerson} ${otUnitLabel} OT`;
+                                const headUnit: 'day' | 'hour' =
+                                  e.labourCountUnit ?? (rateInfo.unit === 'Hr' ? 'hour' : 'day');
+                                const otUnit: 'day' | 'hour' =
+                                  e.overtimeQtyUnit ?? (rateInfo.otUnit === 'Hr' ? 'hour' : 'day');
                                 return (
-                                  <tr key={e.id} className={`border-b border-inherit hover:bg-black/5`}>
-                                    <td className="py-2 px-3">
+                                  <tr key={e.id} className={`border-b border-inherit hover:bg-black/5 dark:hover:bg-white/5`}>
+                                    <td className="py-2 px-2">
                                       <input
                                         type="checkbox"
                                         checked={selectedPayEntryIds.has(e.id)}
@@ -3188,16 +3969,15 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                                         })}
                                       />
                                     </td>
-                                    <td className={`py-2 px-3 text-sm ${textPrimary}`}>{new Date(e.date).toLocaleDateString()}</td>
-                                    <td className={`py-2 px-3 text-sm ${textPrimary}`}>{e.projectName}</td>
-                                    <td className={`py-2 px-3 text-sm ${textPrimary}`}>{e.contractorName}</td>
-                                    <td className={`py-2 px-3 text-sm ${textPrimary}`} title={labourDetails}>
-                                      <span className="font-medium">{e.category}</span>
-                                      <span className={`block text-xs ${textSecondary} mt-0.5`}>
-                                        {e.headCount} pax · {e.unitsWorked} {unitLabel} · {e.otHoursPerPerson} {otUnitLabel} OT
-                                      </span>
-                                    </td>
-                                    <td className={`py-2 px-3 text-sm font-bold ${textPrimary}`}>₹{e.amount.toLocaleString('en-IN')}</td>
+                                    <td className={`py-2 px-2 text-sm whitespace-nowrap ${textPrimary}`}>{new Date(e.date).toLocaleDateString()}</td>
+                                    <td className={`py-2 px-2 text-sm ${textPrimary}`}>{e.projectName}</td>
+                                    <td className={`py-2 px-2 text-sm ${textPrimary}`}>{e.contractorName}</td>
+                                    <td className={`py-2 px-2 text-sm font-medium ${textPrimary}`}>{e.category}</td>
+                                    <td className={`py-2 px-2 text-sm tabular-nums ${textPrimary}`}>{e.headCount}</td>
+                                    <td className={`py-2 px-2 text-sm ${textSecondary}`}>{headUnit === 'hour' ? 'Hrs' : 'Days'}</td>
+                                    <td className={`py-2 px-2 text-sm tabular-nums ${textPrimary}`}>{e.otHoursPerPerson}</td>
+                                    <td className={`py-2 px-2 text-sm ${textSecondary}`}>{otUnit === 'hour' ? 'Hrs' : 'Days'}</td>
+                                    <td className={`py-2 px-2 text-sm font-bold text-right ${textPrimary}`}>₹{e.amount.toLocaleString('en-IN')}</td>
                                   </tr>
                                 );
                               })
@@ -3751,349 +4531,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="p-4 space-y-4">
-              <div>
-                <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Work date *</label>
-                <input
-                  type="date"
-                  value={labourEntryFormData.date}
-                  onChange={(e) =>
-                    setLabourEntryFormData((p) => ({
-                      ...p,
-                      date: e.target.value,
-                      labourRows: clearLabourRowRateFields(p.labourRows),
-                    }))
-                  }
-                  className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
-                />
-              </div>
-              {labourEntryFormOptionsLoading && (
-                <div className={`flex items-center gap-2 text-sm ${textSecondary}`}>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Loading form-options…
-                </div>
-              )}
-             
-              <div ref={labourEntryProjectRef} className="relative">
-                <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Project *</label>
-                <div
-                  onClick={() => setLabourEntryProjectDropdownOpen((o) => !o)}
-                  className={`flex items-center gap-2 w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'} cursor-pointer min-h-[42px]`}
-                >
-                  <span className="flex-1 text-left truncate">
-                    {labourEntryFormData.project_id
-                      ? entryProjectList.find((p) => String(p.id) === String(labourEntryFormData.project_id))?.name ||
-                        '— Select project —'
-                      : '— Select project —'}
-                  </span>
-                  <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform ${labourEntryProjectDropdownOpen ? 'rotate-180' : ''}`} />
-                </div>
-                {labourEntryProjectDropdownOpen && (
-                  <div className={`absolute left-0 right-0 top-full mt-1 rounded-lg border ${borderClass} ${isDark ? 'bg-dropdown-panel' : 'bg-white'} shadow-lg z-50 overflow-hidden max-h-64 flex flex-col`}>
-                    <div className="flex items-center gap-1 p-2 border-b border-inherit">
-                      <Search className="w-4 h-4 flex-shrink-0 text-slate-400" />
-                      <input
-                        type="text"
-                        placeholder="Search projects..."
-                        value={labourEntryProjectSearch}
-                        onChange={(e) => setLabourEntryProjectSearch(e.target.value)}
-                        onClick={(e) => e.stopPropagation()}
-                        className={`flex-1 min-w-0 py-1.5 px-2 rounded border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-900' : 'bg-slate-50'} text-sm`}
-                      />
-                    </div>
-                    <div className="overflow-y-auto flex-1">
-                      {entryProjectList
-                        .filter((p) => !labourEntryProjectSearch.trim() || p.name.toLowerCase().includes(labourEntryProjectSearch.toLowerCase()))
-                        .map((p) => (
-                          <div
-                            key={p.id}
-                            onClick={() => {
-                              setLabourEntryFormData((prev) => ({
-                                ...prev,
-                                project_id: String(p.id),
-                                labourRows: clearLabourRowRateFields(prev.labourRows),
-                              }));
-                              setLabourEntryProjectDropdownOpen(false);
-                              setLabourEntryProjectSearch('');
-                            }}
-                            className={`px-4 py-2 cursor-pointer hover:bg-[#6B8E23]/10 ${String(p.id) === String(labourEntryFormData.project_id) ? 'bg-[#6B8E23]/20' : ''} ${textPrimary}`}
-                          >
-                            {p.name}
-                          </div>
-                        ))}
-                      {entryProjectList.filter((p) => !labourEntryProjectSearch.trim() || p.name.toLowerCase().includes(labourEntryProjectSearch.toLowerCase())).length === 0 && (
-                        <div className={`px-4 py-3 text-sm ${textSecondary}`}>
-                          No projects.{' '}
-                          <Link href="/masters/projects" className="text-[#6B8E23] underline font-bold">
-                            Masters
-                          </Link>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div ref={labourEntryContractorRef} className="relative">
-                <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Contractor *</label>
-                <div
-                  onClick={() => setLabourEntryContractorDropdownOpen((o) => !o)}
-                  className={`flex items-center gap-2 w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'} cursor-pointer min-h-[42px]`}
-                >
-                  <span className="flex-1 text-left truncate">
-                    {labourEntryFormData.contractor_id
-                      ? entryContractorList.find((v) => String(v.id) === String(labourEntryFormData.contractor_id))
-                          ?.name || '— Select contractor —'
-                      : '— Select contractor —'}
-                  </span>
-                  <ChevronDown className={`w-4 h-4 flex-shrink-0 transition-transform ${labourEntryContractorDropdownOpen ? 'rotate-180' : ''}`} />
-                </div>
-                {labourEntryContractorDropdownOpen && (
-                  <div className={`absolute left-0 right-0 top-full mt-1 rounded-lg border ${borderClass} ${isDark ? 'bg-dropdown-panel' : 'bg-white'} shadow-lg z-50 overflow-hidden max-h-64 flex flex-col`}>
-                    <div className="flex items-center gap-1 p-2 border-b border-inherit">
-                      <Search className="w-4 h-4 flex-shrink-0 text-slate-400" />
-                      <input
-                        type="text"
-                        placeholder="Search contractors..."
-                        value={labourEntryContractorSearch}
-                        onChange={(e) => setLabourEntryContractorSearch(e.target.value)}
-                        onClick={(e) => e.stopPropagation()}
-                        className={`flex-1 min-w-0 py-1.5 px-2 rounded border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-900' : 'bg-slate-50'} text-sm`}
-                      />
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setLabourEntryContractorDropdownOpen(false);
-                          setShowAddVendorModal(true);
-                        }}
-                        className="p-2 rounded-lg hover:bg-[#6B8E23]/20 text-[#6B8E23] transition-colors"
-                        title="Add contractor"
-                      >
-                        <Plus className="w-5 h-5" />
-                      </button>
-                    </div>
-                    <div className="overflow-y-auto flex-1">
-                      {entryContractorList
-                        .filter((v) => !labourEntryContractorSearch.trim() || (v.name || '').toLowerCase().includes(labourEntryContractorSearch.toLowerCase()))
-                        .map((v) => (
-                          <div
-                            key={v.id}
-                            onClick={() => {
-                              setLabourEntryFormData((prev) => ({
-                                ...prev,
-                                contractor_id: String(v.id),
-                                labourRows: clearLabourRowRateFields(prev.labourRows),
-                              }));
-                              setLabourEntryContractorDropdownOpen(false);
-                              setLabourEntryContractorSearch('');
-                            }}
-                            className={`px-4 py-2 cursor-pointer hover:bg-[#6B8E23]/10 ${String(v.id) === String(labourEntryFormData.contractor_id) ? 'bg-[#6B8E23]/20' : ''} ${textPrimary}`}
-                          >
-                            {v.name}
-                          </div>
-                        ))}
-                      {entryContractorList.filter((v) => !labourEntryContractorSearch.trim() || (v.name || '').toLowerCase().includes(labourEntryContractorSearch.toLowerCase())).length === 0 && (
-                        <div className={`px-4 py-3 text-sm ${textSecondary}`}>
-                          No contractors.{' '}
-                          <Link href="/masters/vendors" className="text-[#6B8E23] underline font-bold">
-                            Create contractor in Masters
-                          </Link>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-              {/* Labour Details - multiple categories */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className={`block text-sm font-bold ${textPrimary}`}>Labour Details</label>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setLabourEntryFormData((p) => ({
-                        ...p,
-                        labourRows: [...p.labourRows, defaultLabourRow()],
-                      }))
-                    }
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold bg-[#6B8E23]/20 text-[#6B8E23] hover:bg-[#6B8E23]/30 transition-colors"
-                  >
-                    <Plus className="w-4 h-4" />
-                    Add Type
-                  </button>
-                </div>
-                <div className="space-y-4">
-                  {labourEntryFormData.labourRows.map((row, idx) => {
-                    const project = entryProjectList.find((p) => String(p.id) === String(labourEntryFormData.project_id));
-                    const contractor = entryContractorList.find((v) => String(v.id) === String(labourEntryFormData.contractor_id));
-                    const projectName = project?.name ?? '';
-                    const contractorName = contractor?.name ?? '';
-                    return (
-                      <div
-                        key={idx}
-                        className={`p-3 rounded-lg border ${borderClass} ${isDark ? 'bg-slate-800/30' : 'bg-slate-50'}`}
-                      >
-                        <div className="flex items-center justify-between mb-2">
-                          <span className={`text-xs font-bold ${textSecondary}`}>Line {idx + 1}</span>
-                          {labourEntryFormData.labourRows.length > 1 && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setLabourEntryFormData((p) => ({
-                                  ...p,
-                                  labourRows: p.labourRows.filter((_, i) => i !== idx),
-                                }))
-                              }
-                              className={`text-xs ${textSecondary} hover:text-red-500`}
-                            >
-                              Remove
-                            </button>
-                          )}
-                        </div>
-                        <div className="space-y-3">
-                          <div>
-                            <label className={`block text-xs font-bold ${textPrimary} mb-1`}>
-                              Labour category (from Masters)
-                            </label>
-                            <select
-                              value={row.labourId}
-                              onChange={(e) => {
-                                const id = e.target.value;
-                                const lab = entryLabourPicks.find((l) => String(l.numericId) === id);
-                                setLabourEntryFormData((p) => ({
-                                  ...p,
-                                  labourRows: p.labourRows.map((r, i) =>
-                                    i === idx
-                                      ? {
-                                          ...r,
-                                          labourId: id,
-                                          labourName: lab?.name ?? '',
-                                          rateCategory: lab?.category ?? 'skilled',
-                                          contractorLaborRateId: null,
-                                          dailyRate: null,
-                                          dayUnit: null,
-                                          otRate: null,
-                                          otUnit: null,
-                                          resolveError: undefined,
-                                          resolving: false,
-                                        }
-                                      : r
-                                  ),
-                                }));
-                              }}
-                              disabled={labourEntryFormOptionsLoading}
-                              className={`w-full px-3 py-2 rounded-lg border ${borderClass} ${textPrimary} text-sm ${isDark ? 'bg-slate-800' : 'bg-white'} disabled:opacity-60`}
-                            >
-                              <option value="">
-                                {labourEntryFormOptionsLoading ? 'Loading…' : '— Select labour —'}
-                              </option>
-                              {entryLabourPicks.map((l) => (
-                                <option key={String(l.numericId)} value={String(l.numericId)}>
-                                  {l.name}
-                                </option>
-                              ))}
-                            </select>
-                            <div className="flex flex-wrap gap-2 mt-2">
-                              <button
-                                type="button"
-                                onClick={() => resolveLabourRowRate(idx)}
-                                disabled={row.resolving || !labourEntryFormData.project_id || !labourEntryFormData.contractor_id}
-                                className="text-xs font-bold px-2 py-1 rounded-lg bg-[#6B8E23]/20 text-[#6B8E23] disabled:opacity-40"
-                              >
-                                {row.resolving ? 'Resolving…' : 'Apply rate (resolve)'}
-                              </button>
-                            </div>
-                            {row.resolveError && (
-                              <p className="text-xs text-red-500 mt-1">{row.resolveError}</p>
-                            )}
-                            {row.dailyRate != null && row.dayUnit && (
-                              <div className={`mt-2 flex flex-wrap gap-2 text-xs ${textPrimary}`}>
-                                <span className="px-2 py-1 rounded bg-slate-200/50 dark:bg-slate-700/50">
-                                  Daily: {row.dailyRate} / {row.dayUnit}
-                                </span>
-                                <span className="px-2 py-1 rounded bg-slate-200/50 dark:bg-slate-700/50">
-                                  OT: {row.otRate ?? 0} / {row.otUnit ?? 'hour'}
-                                </span>
-                                {row.contractorLaborRateId != null && (
-                                  <span className="px-2 py-1 rounded bg-slate-200/50 dark:bg-slate-700/50">
-                                    Rate id: {row.contractorLaborRateId}
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                          <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <label className={`block text-xs font-bold ${textPrimary} mb-1`}>
-                                Day labour count *
-                              </label>
-                              <input
-                                type="text"
-                                inputMode="numeric"
-                                value={row.dayLabourCount}
-                                onChange={(e) => {
-                                  const v = e.target.value.replace(/\D/g, '');
-                                  setLabourEntryFormData((p) => ({
-                                    ...p,
-                                    labourRows: p.labourRows.map((r, i) =>
-                                      i === idx ? { ...r, dayLabourCount: v === '' ? '' : Math.max(0, parseInt(v, 10) || 0) } : r
-                                    ),
-                                  }));
-                                }}
-                                className={`w-full px-3 py-2 rounded-lg border ${borderClass} ${textPrimary} text-sm ${isDark ? 'bg-slate-800' : 'bg-white'}`}
-                              />
-                            </div>
-                            <div>
-                              <label className={`block text-xs font-bold ${textPrimary} mb-1`}>
-                                Overtime hours (optional)
-                              </label>
-                              <input
-                                type="text"
-                                inputMode="numeric"
-                                value={row.overtimeHours}
-                                onChange={(e) => {
-                                  const v = e.target.value.replace(/\D/g, '');
-                                  setLabourEntryFormData((p) => ({
-                                    ...p,
-                                    labourRows: p.labourRows.map((r, i) =>
-                                      i === idx ? { ...r, overtimeHours: v === '' ? '' : Math.max(0, parseInt(v, 10) || 0) } : r
-                                    ),
-                                  }));
-                                }}
-                                className={`w-full px-3 py-2 rounded-lg border ${borderClass} ${textPrimary} text-sm ${isDark ? 'bg-slate-800' : 'bg-white'}`}
-                              />
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => handleAddLabourEntry()}
-                  disabled={isSubmittingLabourEntry}
-                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg font-bold bg-[#6B8E23] text-white hover:bg-[#5a7a1e] disabled:opacity-50"
-                >
-                  {isSubmittingLabourEntry ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
-                  Submit (POST /labour-entries)
-                </button>
-                <button
-                  onClick={() => {
-                    setShowAddLabourEntryModal(false);
-                    setLabourEntryProjectDropdownOpen(false);
-                    setLabourEntryContractorDropdownOpen(false);
-                    setLabourEntryProjectSearch('');
-                    setLabourEntryContractorSearch('');
-                  }}
-                  className="px-4 py-2.5 rounded-lg font-bold border border-inherit"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
+            {labourEntryFormPanel}
           </div>
         </div>
       )}

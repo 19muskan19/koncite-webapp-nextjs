@@ -1,8 +1,11 @@
 /**
- * Returns today's date in YYYY-MM-DD format using the user's local timezone.
- * Use this instead of new Date().toISOString().split('T')[0] which returns UTC date
- * and can show the wrong day for users in timezones ahead of UTC (e.g. India).
+ * Calendar date in the user's local timezone as YYYY-MM-DD.
+ * Prefer this over `toISOString().slice(0, 10)` (UTC) and over relying on
+ * `toLocaleDateString('en-CA')` (can vary by runtime/ICU).
  */
-export function getTodayDateString(): string {
-  return new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD in local timezone
+export function getTodayDateString(d: Date = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }

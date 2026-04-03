@@ -228,7 +228,7 @@ const CreateCompanyModal: React.FC<CreateCompanyModalProps> = ({
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
       <div className={`relative ${bgPrimary} rounded-xl border ${cardClass} w-full max-w-[min(92vw,1024px)] max-h-[90vh] overflow-hidden flex flex-col shadow-2xl`}>
-        <button onClick={onClose} className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`} title="Close">
+        <button type="button" onClick={onClose} className={`absolute top-3 right-3 z-10 p-2 rounded-lg ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-100'} transition-colors`} title="Close">
           <X className={`w-5 h-5 ${textSecondary}`} />
         </button>
         <div className="flex-1 min-h-0 overflow-y-auto">
@@ -240,7 +240,7 @@ const CreateCompanyModal: React.FC<CreateCompanyModalProps> = ({
         </div>
 
         {/* Modal Body */}
-        <div className="p-6 space-y-6">
+        <form className="p-6 space-y-6" autoComplete="off" onSubmit={(e) => e.preventDefault()}>
           {/* Company Name */}
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
@@ -249,6 +249,7 @@ const CreateCompanyModal: React.FC<CreateCompanyModalProps> = ({
             <input
               type="text"
               name="registrationName"
+              autoComplete="off"
               value={formData.registrationName}
               onChange={handleInputChange}
               placeholder="Enter company registration name"
@@ -267,6 +268,7 @@ const CreateCompanyModal: React.FC<CreateCompanyModalProps> = ({
             </label>
             <textarea
               name="registeredAddress"
+              autoComplete="off"
               value={formData.registeredAddress}
               onChange={handleInputChange}
               placeholder="Enter registered address"
@@ -287,6 +289,7 @@ const CreateCompanyModal: React.FC<CreateCompanyModalProps> = ({
             <input
               type="text"
               name="companyRegistrationNo"
+              autoComplete="off"
               value={formData.companyRegistrationNo}
               onChange={handleInputChange}
               placeholder="Enter company registration number"
@@ -312,6 +315,7 @@ const CreateCompanyModal: React.FC<CreateCompanyModalProps> = ({
                     className="w-32 h-32 rounded-xl object-cover border-2 border-[#C2D642]/20"
                   />
                   <button
+                    type="button"
                     onClick={() => {
                       if (formData.logoPreview) {
                         URL.revokeObjectURL(formData.logoPreview);
@@ -348,11 +352,12 @@ const CreateCompanyModal: React.FC<CreateCompanyModalProps> = ({
               )}
             </div>
           </div>
-        </div>
+        </form>
 
         {/* Modal Footer */}
         <div className={`flex items-center justify-end gap-3 p-6 border-t border-inherit`}>
           <button
+            type="button"
             onClick={onClose}
             className={`px-6 py-2.5 rounded-lg text-sm font-bold transition-all ${
               isDark
@@ -363,6 +368,7 @@ const CreateCompanyModal: React.FC<CreateCompanyModalProps> = ({
             Cancel
           </button>
           <button
+            type="button"
             onClick={handleCreateCompany}
             disabled={isSubmitting}
             className="px-6 py-2.5 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#C2D642]/90 text-white transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"

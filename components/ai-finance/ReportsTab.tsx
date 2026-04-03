@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
+import { KONCITE_FINANCE_DATA_CHANGED } from '@/constants/aiFinance';
 import { financeAPI, formatCurrency } from '@/services/financeApi';
 import { Wallet, TrendingDown, TrendingUp } from 'lucide-react';
 import { cn } from '@/utils/cn';
@@ -16,9 +17,16 @@ export default function ReportsTab({ isDark }: ReportsTabProps) {
   const [cashflowData, setCashflowData] = useState<{ date: string; amount: number }[]>([]);
 
   useEffect(() => {
-    financeAPI.getReportsPnl().then(setPnl);
-    financeAPI.getExpenseDistribution().then((d) => setExpenseBreakdown(d.map((x) => ({ name: x.name, value: x.value }))));
-    financeAPI.getRevenueVsExpenses().then((d) => setCashflowData(d.slice(-15).map((x) => ({ date: x.date, amount: x.amount }))));
+    const refresh = () => {
+      financeAPI.getReportsPnl().then(setPnl);
+      financeAPI.getExpenseDistribution().then((d) => setExpenseBreakdown(d.map((x) => ({ name: x.name, value: x.value }))));
+      financeAPI.getRevenueVsExpenses().then((d) =>
+        setCashflowData(d.slice(-15).map((x) => ({ date: x.date, amount: x.income - x.expense })))
+      );
+    };
+    refresh();
+    window.addEventListener(KONCITE_FINANCE_DATA_CHANGED, refresh);
+    return () => window.removeEventListener(KONCITE_FINANCE_DATA_CHANGED, refresh);
   }, []);
 
   if (!pnl) {
@@ -58,35 +66,47 @@ export default function ReportsTab({ isDark }: ReportsTabProps) {
         <div className={cn('rounded-xl border p-6 transition-all hover:border-[#C2D642]/30', isDark ? 'card-dark' : 'card-light')}>
           <h3 className={cn('text-xs font-black uppercase tracking-widest mb-4', isDark ? 'text-slate-400' : 'text-slate-600')}>Expense Breakdown</h3>
           <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={expenseBreakdown} layout="vertical" margin={{ left: 80 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#334155' : '#e2e8f0'} />
-                <XAxis type="number" tick={{ fontSize: 11 }} stroke={isDark ? '#94a3b8' : '#64748b'} tickFormatter={(v) => `${v}%`} />
-                <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} stroke={isDark ? '#94a3b8' : '#64748b'} width={70} />
-                <Tooltip formatter={(v: number | undefined) => [`${v != null ? v : '—'}%`, 'Share']} contentStyle={{ backgroundColor: isDark ? '#1e293b' : '#fff', border: `1px solid ${isDark ? '#334155' : '#e2e8f0'}` }} />
-                <Bar dataKey="value" fill="#C2D642" radius={[0, 4, 4, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            {expenseBreakdown.length === 0 ? (
+              <p className={cn('text-sm font-semibold flex items-center justify-center h-full', isDark ? 'text-slate-500' : 'text-slate-500')}>
+                No expense data to chart yet
+              </p>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={expenseBreakdown} layout="vertical" margin={{ left: 80 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#334155' : '#e2e8f0'} />
+                  <XAxis type="number" tick={{ fontSize: 11 }} stroke={isDark ? '#94a3b8' : '#64748b'} tickFormatter={(v) => `${v}%`} />
+                  <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} stroke={isDark ? '#94a3b8' : '#64748b'} width={70} />
+                  <Tooltip formatter={(v: number | undefined) => [`${v != null ? v : '—'}%`, 'Share']} contentStyle={{ backgroundColor: isDark ? '#1e293b' : '#fff', border: `1px solid ${isDark ? '#334155' : '#e2e8f0'}` }} />
+                  <Bar dataKey="value" fill="#C2D642" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
         <div className={cn('rounded-xl border p-6 transition-all hover:border-[#C2D642]/30', isDark ? 'card-dark' : 'card-light')}>
           <h3 className={cn('text-xs font-black uppercase tracking-widest mb-4', isDark ? 'text-slate-400' : 'text-slate-600')}>Cashflow Trend</h3>
           <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={cashflowData}>
-                <defs>
-                  <linearGradient id="cashflowGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#C2D642" stopOpacity={0.4} />
-                    <stop offset="100%" stopColor="#C2D642" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#334155' : '#e2e8f0'} />
-                <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke={isDark ? '#94a3b8' : '#64748b'} />
-                <YAxis tick={{ fontSize: 11 }} stroke={isDark ? '#94a3b8' : '#64748b'} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}k`} />
-                <Tooltip formatter={(v: number | undefined) => [`₹${v != null ? v.toLocaleString() : '—'}`, 'Amount']} contentStyle={{ backgroundColor: isDark ? '#1e293b' : '#fff', border: `1px solid ${isDark ? '#334155' : '#e2e8f0'}` }} />
-                <Area type="monotone" dataKey="amount" stroke="#C2D642" fill="url(#cashflowGrad)" strokeWidth={2} />
-              </AreaChart>
-            </ResponsiveContainer>
+            {cashflowData.length === 0 ? (
+              <p className={cn('text-sm font-semibold flex items-center justify-center h-full', isDark ? 'text-slate-500' : 'text-slate-500')}>
+                No cashflow data to chart yet
+              </p>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={cashflowData}>
+                  <defs>
+                    <linearGradient id="cashflowGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#C2D642" stopOpacity={0.4} />
+                      <stop offset="100%" stopColor="#C2D642" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#334155' : '#e2e8f0'} />
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke={isDark ? '#94a3b8' : '#64748b'} />
+                  <YAxis tick={{ fontSize: 11 }} stroke={isDark ? '#94a3b8' : '#64748b'} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}k`} />
+                  <Tooltip formatter={(v: number | undefined) => [`₹${v != null ? v.toLocaleString() : '—'}`, 'Amount']} contentStyle={{ backgroundColor: isDark ? '#1e293b' : '#fff', border: `1px solid ${isDark ? '#334155' : '#e2e8f0'}` }} />
+                  <Area type="monotone" dataKey="amount" stroke="#C2D642" fill="url(#cashflowGrad)" strokeWidth={2} />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
       </div>

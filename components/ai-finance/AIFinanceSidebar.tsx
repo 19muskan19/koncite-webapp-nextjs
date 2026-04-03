@@ -1,17 +1,16 @@
 'use client';
 
 import React from 'react';
-import { LayoutDashboard, Receipt, BarChart3, Users, FolderKanban, Menu, X, Banknote } from 'lucide-react';
+import { LayoutDashboard, Receipt, BarChart3, Menu, X, Banknote } from 'lucide-react';
 import { cn } from '@/utils/cn';
+import { AI_FINANCE_APP_LABEL } from '@/constants/aiFinance';
 
-export type FinanceTab = 'dashboard' | 'transactions' | 'reports' | 'parties' | 'projects';
+export type FinanceTab = 'dashboard' | 'transactions' | 'reports';
 
 const navItems: { id: FinanceTab; label: string; icon: React.ElementType }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'transactions', label: 'Transactions', icon: Receipt },
   { id: 'reports', label: 'Reports', icon: BarChart3 },
-  { id: 'parties', label: 'Parties', icon: Users },
-  { id: 'projects', label: 'Projects', icon: FolderKanban },
 ];
 
 interface AIFinanceSidebarProps {
@@ -31,7 +30,7 @@ export default function AIFinanceSidebar({ activeTab, onTabChange, collapsed, on
             <div className="w-9 h-9 rounded-lg bg-[#C2D642] flex items-center justify-center shadow-sm">
               <Banknote className="w-5 h-5 text-slate-900" />
             </div>
-            <span className={cn('font-black', isDark ? 'text-white' : 'text-slate-900')}>ai-finance</span>
+            <span className={cn('font-black', isDark ? 'text-white' : 'text-slate-900')}>{AI_FINANCE_APP_LABEL}</span>
           </div>
         )}
         <button onClick={onToggle} className={cn('p-2 rounded-lg transition-colors', isDark ? 'hover:bg-[#C2D642]/15 text-slate-300 hover:text-[#C2D642]' : 'hover:bg-[#C2D642]/10 text-slate-600 hover:text-slate-900')} aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>

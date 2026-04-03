@@ -6,7 +6,7 @@ import * as XLSX from 'xlsx';
 import { ThemeType } from '../types';
 import { useToast } from '../contexts/ToastContext';
 import { useUser } from '../contexts/UserContext';
-import { masterDataAPI, documentAPI } from '../services/api';
+import { masterDataAPI, documentAPI, type DocumentDownloadSource } from '../services/api';
 import { getLogoUrl } from '@/utils/imageUtils';
 import {
   Folder,
@@ -50,8 +50,38 @@ interface FileItem {
   path?: string;
   originalPath?: string;
   deletedAt?: string;
-  fileData?: string; // Base64 encoded file data
+  fileData?: string; // Base64 encoded file data or absolute URL (e.g. gallery signed URL)
   mimeType?: string; // MIME type of the file
+  /** Image gallery API: numeric project_id for filtering (path may use slug only) */
+  galleryProjectId?: number | string | null;
+  gallerySubprojectId?: number | string | null;
+  /** `/documents/gallery` item `source` — forwarded as POST /documents/download `source` */
+  gallerySource?: DocumentDownloadSource | null;
+  /** Same as gallery `project_id`; used for project_path download branch when id is not a DMS uuid */
+  projectId?: number | null;
+}
+
+const DOCUMENT_DOWNLOAD_TIMEOUT_MS = 120000;
+
+/** Forward only DPR sources; `dms` is kept on FileItem for UI but must be omitted from POST /documents/download. */
+function gallerySourceToDownloadBody(
+  s: FileItem['gallerySource']
+): DocumentDownloadSource | undefined {
+  if (s == null || s === 'dms') return undefined;
+  if (s === 'safety' || s === 'hinderance' || s === 'activity' || s === 'hindrance') {
+    return s === 'hindrance' ? 'hinderance' : s;
+  }
+  return undefined;
+}
+
+function mapGalleryApiSource(raw: unknown): DocumentDownloadSource | null {
+  if (raw == null || String(raw).trim() === '') return null;
+  const s = String(raw).toLowerCase().trim();
+  if (s === 'hindrance') return 'hinderance';
+  if (s === 'safety' || s === 'hinderance' || s === 'activity' || s === 'dms' || s === 'hindrance') {
+    return s as DocumentDownloadSource;
+  }
+  return null;
 }
 
 interface Project {
@@ -132,6 +162,65 @@ function getDocTimestamp(doc: any): string | null | undefined {
   return v;
 }
 
+/** Normalizes /documents/gallery body: { status, data: [...] } or nested shapes. */
+function extractGalleryItems(body: unknown): any[] {
+  if (Array.isArray(body)) return body;
+  if (!body || typeof body !== 'object') return [];
+  const o = body as Record<string, unknown>;
+  const d = o.data;
+  if (Array.isArray(d)) return d;
+  if (d && typeof d === 'object' && Array.isArray((d as { data?: unknown }).data)) {
+    return (d as { data: any[] }).data;
+  }
+  return [];
+}
+
+function isGalleryTruthyStatus(body: unknown): boolean {
+  if (!body || typeof body !== 'object') return false;
+  const s = (body as { status?: unknown }).status;
+  return s === true || s === 1 || s === '1' || s === 'true';
+}
+
+/** Reads Laravel-style pagination from /documents/gallery (top-level, nested data, meta, or pagination). */
+function extractGalleryPagination(
+  body: unknown,
+  rowsLength: number,
+  perPage: number,
+  requestedPage: number
+): { total: number; lastPage: number } {
+  if (!body || typeof body !== 'object') {
+    return { total: rowsLength, lastPage: Math.max(1, rowsLength > 0 ? requestedPage : 1) };
+  }
+  const o = body as Record<string, unknown>;
+  const pick = (src: Record<string, unknown> | undefined | null) => {
+    if (!src || typeof src !== 'object') return {};
+    const rec = src as Record<string, unknown>;
+    return {
+      total: rec.total,
+      last_page: rec.last_page ?? rec.lastPage,
+      per_page: rec.per_page ?? rec.perPage,
+    };
+  };
+  let merged = { ...pick(o) };
+  const dataVal = o.data;
+  if (dataVal && typeof dataVal === 'object' && !Array.isArray(dataVal)) {
+    merged = { ...merged, ...pick(dataVal as Record<string, unknown>) };
+  }
+  merged = { ...merged, ...pick(o.meta as Record<string, unknown>) };
+  merged = { ...merged, ...pick(o.pagination as Record<string, unknown>) };
+
+  let total = Number(merged.total);
+  let lastPage = Number(merged.last_page);
+  const pp = Number(merged.per_page) || perPage;
+  if (!Number.isFinite(total)) {
+    total = rowsLength;
+  }
+  if (!Number.isFinite(lastPage) || lastPage < 1) {
+    lastPage = Math.max(1, Math.ceil(total / pp));
+  }
+  return { total, lastPage };
+}
+
 /** Convert URL segments to currentPath (internal state). projects needed to resolve slug to ID. */
 function urlSegmentsToPath(segments: string[], projects?: Project[]): string[] {
   if (segments.length === 0) return ['office'];
@@ -206,7 +295,10 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
   const [selectedProjectFilter, setSelectedProjectFilter] = useState<string>('all');
   const [showProjectDropdown, setShowProjectDropdown] = useState<boolean>(false);
   const [galleryPage, setGalleryPage] = useState<number>(1);
+  /** Matches API default bucket size (Laravel allows 1–100 per page; default 24). */
   const GALLERY_PAGE_SIZE = 24;
+  const [galleryApiLastPage, setGalleryApiLastPage] = useState(1);
+  const [galleryApiTotal, setGalleryApiTotal] = useState(0);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
   const [trashCount, setTrashCount] = useState<number>(0);
@@ -504,23 +596,36 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
           const response = await documentAPI.getGalleryImages({
             project_id: galleryProjectId,
             category: galleryProjectId ? 'project' : undefined,
-            page: 1,
-            per_page: 100,
+            page: galleryPage,
+            per_page: GALLERY_PAGE_SIZE,
           });
-          
-          if (response.status && response.data) {
-            const galleryImages: FileItem[] = response.data.map((img: any) => {
-              const ts = getDocTimestamp(img);
+
+          const rows = extractGalleryItems(response);
+          const pag = extractGalleryPagination(response, rows.length, GALLERY_PAGE_SIZE, galleryPage);
+          setGalleryApiLastPage(Math.max(1, pag.lastPage));
+          setGalleryApiTotal(Math.max(0, pag.total));
+
+          if (isGalleryTruthyStatus(response) || rows.length > 0) {
+            const galleryImages: FileItem[] = rows.map((img: any) => {
+              const ts = img.uploaded_at_full ?? img.uploaded_at ?? getDocTimestamp(img);
+              const directUrl = String(img.url ?? img.file_url ?? '').trim();
               return {
-                id: img.uuid || img.id,
-                name: img.original_name ?? img.name,
+                id: (img.uuid && String(img.uuid).trim()) || String(img.id ?? ''),
+                name: img.original_name ?? img.name ?? 'image',
                 size: img.file_size ? `${(img.file_size / 1024).toFixed(2)} KB` : '0 KB',
-                lastModified: ts ? formatFileDate(ts) : '—',
+                lastModified: ts ? formatFileDate(typeof ts === 'string' ? ts : String(ts)) : '—',
                 owner: img.uploaded_by || 'Unknown',
                 type: 'file' as const,
-                path: img.blob_path,
-                fileData: img.url,
-                mimeType: img.mime_type,
+                path: typeof img.blob_path === 'string' ? img.blob_path : img.blob_path != null ? String(img.blob_path) : undefined,
+                fileData: directUrl || undefined,
+                mimeType: typeof img.mime_type === 'string' ? img.mime_type : undefined,
+                galleryProjectId: img.project_id ?? null,
+                gallerySubprojectId: img.subproject_id ?? null,
+                gallerySource: mapGalleryApiSource(img.source),
+                projectId:
+                  img.project_id != null && Number.isFinite(Number(img.project_id))
+                    ? Math.trunc(Number(img.project_id))
+                    : null,
               };
             });
             setDocuments(galleryImages);
@@ -528,6 +633,8 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
             setSelectedFiles(new Set());
           } else {
             setDocuments([]);
+            setGalleryApiLastPage(1);
+            setGalleryApiTotal(0);
           }
         } catch (galleryErr: any) {
           // Check if it's a 401 error - don't show error toast as interceptor handles logout
@@ -538,6 +645,8 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
           }
           
           setDocuments([]);
+          setGalleryApiLastPage(1);
+          setGalleryApiTotal(0);
         }
         return;
       }
@@ -692,7 +801,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
       setDocumentsError(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentPath, isLoading, selectedProjectFilter]);
+  }, [currentPath, isLoading, selectedProjectFilter, galleryPage]);
 
   // Load projects when opening a project URL (needed to resolve slug to ID)
   useEffect(() => {
@@ -1008,8 +1117,14 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
       let matchesProject = true;
       if (selectedProjectFilter !== 'all') {
         const projectId = selectedProjectFilter.replace('project_', '');
-        const filePath = (file as any).originalPath || file.path || '';
-        matchesProject = filePath.includes(`project_${projectId}`) || filePath.includes(projectId);
+        const filePath = (file as FileItem).originalPath || file.path || '';
+        const gpid = file.galleryProjectId;
+        matchesProject =
+          (gpid != null && String(gpid) === String(projectId)) ||
+          filePath.includes(`project_${projectId}`) ||
+          filePath.includes(`_${projectId}_`) ||
+          filePath.includes(`/${projectId}/`) ||
+          filePath.includes(projectId);
       }
       
       return matchesSearch && matchesName && matchesProject;
@@ -1018,19 +1133,18 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
     return matchesSearch;
   });
 
-  // Paginated gallery files (image-gallery only)
-  const galleryTotalPages = currentPath[0] === 'image-gallery'
-    ? Math.max(1, Math.ceil(filteredFiles.length / GALLERY_PAGE_SIZE))
-    : 1;
-  const paginatedGalleryFiles = currentPath[0] === 'image-gallery'
-    ? filteredFiles.slice((galleryPage - 1) * GALLERY_PAGE_SIZE, galleryPage * GALLERY_PAGE_SIZE)
-    : filteredFiles;
-  const galleryStart = currentPath[0] === 'image-gallery' && filteredFiles.length > 0
-    ? (galleryPage - 1) * GALLERY_PAGE_SIZE + 1
-    : 0;
-  const galleryEnd = currentPath[0] === 'image-gallery'
-    ? Math.min(galleryPage * GALLERY_PAGE_SIZE, filteredFiles.length)
-    : filteredFiles.length;
+  // Gallery: server returns `page`/`per_page` slices; client filters (name) apply within the current page only.
+  const galleryTotalPages =
+    currentPath[0] === 'image-gallery' ? Math.max(1, galleryApiLastPage) : 1;
+  const paginatedGalleryFiles = filteredFiles;
+  const galleryStart =
+    currentPath[0] === 'image-gallery' && galleryApiTotal > 0
+      ? (galleryPage - 1) * GALLERY_PAGE_SIZE + 1
+      : 0;
+  const galleryEnd =
+    currentPath[0] === 'image-gallery'
+      ? Math.min(galleryPage * GALLERY_PAGE_SIZE, galleryApiTotal)
+      : filteredFiles.length;
 
   // Reset gallery page when filters change
   useEffect(() => {
@@ -1628,7 +1742,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
     file.type === 'file' &&
     file.fileData &&
     typeof file.fileData === 'string' &&
-    (file.fileData.startsWith('http') || file.fileData.startsWith('data:')) &&
+    (file.fileData.startsWith('http') || file.fileData.startsWith('data:') || file.fileData.trim().startsWith('//')) &&
     (file.mimeType?.startsWith('image/') || /\.(jpe?g|png|gif|webp|bmp)$/i.test(file.name || ''));
 
   const isViewableExcel = (file: FileItem) =>
@@ -1642,7 +1756,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
     try {
       if (isPdf(file)) {
         if (hasDirectUrl(file) || (file.fileData && typeof file.fileData === 'string' && file.fileData.startsWith('data:'))) {
-          window.open(file.fileData as string, '_blank', 'noopener,noreferrer');
+          window.open(hasDirectUrl(file) ? getDirectFileDataUrl(file) : (file.fileData as string), '_blank', 'noopener,noreferrer');
         } else if (file.path || isUuid(file.id)) {
           const blob = await fetchFileBlob(file);
           const blobUrl = URL.createObjectURL(blob);
@@ -1653,7 +1767,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
         }
       } else {
         if (hasDirectUrl(file)) {
-          window.open(file.fileData as string, '_blank', 'noopener,noreferrer');
+          window.open(getDirectFileDataUrl(file), '_blank', 'noopener,noreferrer');
         } else if (file.path || isUuid(file.id)) {
           const blob = await fetchFileBlob(file);
           const blobUrl = URL.createObjectURL(blob);
@@ -1690,7 +1804,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
         } else if (file.fileData && file.mimeType && typeof file.fileData === 'string' && file.fileData.startsWith('data:')) {
           blob = base64ToBlob(file.fileData, file.mimeType);
         } else if (hasDirectUrl(file)) {
-          const res = await fetch(file.fileData as string);
+          const res = await fetch(getDirectFileDataUrl(file));
           blob = await res.blob();
         } else {
           toast.showWarning(`File "${file.name}" cannot be downloaded`);
@@ -1754,8 +1868,9 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
     }
   };
 
+  /** Ctrl/Cmd+A and any “select all” UI: gallery selects current page only; other views use full filtered list. */
   const selectAllFiles = () => {
-    setSelectedFiles(new Set(filteredFiles.map(file => file.id)));
+    setSelectedFiles(new Set(paginatedGalleryFiles.map((file) => file.id)));
   };
 
   const clearSelection = () => {
@@ -2033,19 +2148,56 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
   const isPdf = (file: FileItem) =>
     file.mimeType === 'application/pdf' || (file.name || '').toLowerCase().endsWith('.pdf');
 
-  const hasDirectUrl = (file: FileItem) =>
-    typeof file.fileData === 'string' && (file.fileData.startsWith('https') || file.fileData.startsWith('http'));
+  const hasDirectUrl = (file: FileItem) => {
+    if (typeof file.fileData !== 'string') return false;
+    const u = file.fileData.trim();
+    return u.startsWith('http://') || u.startsWith('https://') || u.startsWith('//');
+  };
 
-  /** Fetch file blob via API - uses POST /documents/download. Sends both uuid and path so backend can use whichever it expects. */
+  /** Absolute URL for fetch (protocol-relative → https). */
+  const getDirectFileDataUrl = (file: FileItem): string => {
+    const u = (file.fileData as string).trim();
+    return u.startsWith('//') ? `https:${u}` : u;
+  };
+
+  /**
+   * Fetch file via POST /documents/download — passes DPR gallery `source`, optional `project_id`,
+   * and project+path mode when id is not a DMS uuid (composite gallery ids).
+   */
   const fetchFileBlob = async (file: FileItem): Promise<Blob> => {
-    if (!file.path && !isUuid(file.id)) {
-      throw new Error(`File "${file.name}" cannot be downloaded (no path or ID)`);
+    const path = (file.path && String(file.path).trim()) || '';
+    const uuid = isUuid(file.id) ? file.id : undefined;
+    const pidRaw = file.projectId ?? file.galleryProjectId;
+    const projectId =
+      pidRaw != null && Number.isFinite(Number(pidRaw)) && Number(pidRaw) > 0
+        ? Math.trunc(Number(pidRaw))
+        : undefined;
+    const source = gallerySourceToDownloadBody(file.gallerySource ?? undefined);
+
+    if (!uuid && !path) {
+      throw new Error(`File "${file.name}" cannot be downloaded (no path or UUID)`);
     }
-    return documentAPI.downloadDocument(
-      file.path || file.id,
-      file.name,
-      isUuid(file.id) ? file.id : undefined
-    );
+
+    if (!uuid && projectId != null && path) {
+      return documentAPI.downloadDocumentByProjectPath(projectId, path, file.name, {
+        source,
+        timeoutMs: DOCUMENT_DOWNLOAD_TIMEOUT_MS,
+      });
+    }
+
+    if (uuid) {
+      return documentAPI.downloadDocument('', file.name, uuid, {
+        source,
+        projectId,
+        timeoutMs: DOCUMENT_DOWNLOAD_TIMEOUT_MS,
+      });
+    }
+
+    return documentAPI.downloadDocument(path || file.id, file.name, undefined, {
+      source,
+      projectId,
+      timeoutMs: DOCUMENT_DOWNLOAD_TIMEOUT_MS,
+    });
   };
 
   const sanitizeDownloadFilename = (name: string): string => {
@@ -2065,6 +2217,24 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
     setTimeout(() => URL.revokeObjectURL(url), 100);
   };
 
+  /**
+   * Last resort for signed Azure / cross-origin URLs when fetch() fails CORS and /documents/download
+   * does not apply. Opens the URL (often inline image); user can save from the tab.
+   */
+  const triggerDirectUrlDownload = (absoluteUrl: string, fileName: string) => {
+    const u = absoluteUrl.trim();
+    if (!u) return;
+    const a = document.createElement('a');
+    a.href = u;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.download = sanitizeDownloadFilename(fileName);
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
   const handleDownloadFiles = async () => {
     if (selectedFiles.size === 0) {
       toast.showWarning('Please select files to download');
@@ -2082,7 +2252,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
       try {
         if (isPdf(file)) {
           if (hasDirectUrl(file)) {
-            window.open(file.fileData as string, '_blank', 'noopener,noreferrer');
+            window.open(getDirectFileDataUrl(file), '_blank', 'noopener,noreferrer');
             successCount += 1;
           } else if (file.path || isUuid(file.id)) {
             const blob = await fetchFileBlob(file);
@@ -2099,14 +2269,35 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
         let blob: Blob;
         if (file.file) {
           blob = file.file;
+        } else if (hasDirectUrl(file)) {
+          let resolved: Blob | null = null;
+          try {
+            const res = await fetch(getDirectFileDataUrl(file), { mode: 'cors', credentials: 'omit' });
+            if (res.ok) {
+              const b = await res.blob();
+              if (b && b.size > 0) resolved = b;
+            }
+          } catch {
+            resolved = null;
+          }
+          if (!resolved && (file.path || isUuid(file.id))) {
+            try {
+              const b = await fetchFileBlob(file);
+              if (b && b.size > 0) resolved = b;
+            } catch {
+              resolved = null;
+            }
+          }
+          if (!resolved) {
+            triggerDirectUrlDownload(getDirectFileDataUrl(file), file.name || 'download');
+            successCount += 1;
+            continue;
+          }
+          blob = resolved;
         } else if (file.path || isUuid(file.id)) {
           blob = await fetchFileBlob(file);
         } else if (file.fileData && file.mimeType && typeof file.fileData === 'string' && file.fileData.startsWith('data:')) {
           blob = base64ToBlob(file.fileData, file.mimeType);
-        } else if (hasDirectUrl(file)) {
-          const res = await fetch(file.fileData as string);
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          blob = await res.blob();
         } else if (file.fileData && file.mimeType && typeof file.fileData === 'string' && !file.fileData.startsWith('http')) {
           blob = base64ToBlob(file.fileData, file.mimeType);
         } else {
@@ -2315,8 +2506,8 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
   // Handle keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+A to select all
-      if (e.ctrlKey && e.key === 'a') {
+      // Ctrl+A / Cmd+A to select all (current gallery page only in image gallery)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
         e.preventDefault();
         selectAllFiles();
       }
@@ -2324,16 +2515,15 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
       if (e.key === 'Escape') {
         clearSelection();
       }
-      // Delete key to delete selected files
-      if (e.key === 'Delete' && selectedFiles.size > 0) {
+      // Delete key to delete selected files (not in image gallery — download only there)
+      if (e.key === 'Delete' && selectedFiles.size > 0 && currentPath[0] !== 'image-gallery') {
         handleDeleteFiles();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedFiles, filteredFiles]);
+  }, [selectedFiles, filteredFiles, currentPath, paginatedGalleryFiles]);
 
   return (
     <div className={`flex flex-col md:flex-row w-full min-h-0 h-[calc(100vh-3.5rem-2rem)] sm:h-[calc(100vh-4rem-2rem)] md:h-[calc(100vh-3.5rem-2rem)] lg:h-[calc(100vh-4rem-2rem)] max-h-[100dvh] ${bgPrimary} rounded-xl border overflow-hidden ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
@@ -3531,25 +3721,14 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
                 </button>
               </>
             ) : currentPath[0] === 'image-gallery' ? (
-              <>
-                <button
-                  onClick={handleDownloadFiles}
-                  className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-[#C2D642]/60 bg-transparent hover:bg-[#C2D642]/10 transition-colors text-[#C2D642]"
-                  title="Download selected images"
-                >
-                  <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                  <span className="text-[10px] sm:text-xs font-bold hidden sm:inline">Download</span>
-                </button>
-                
-                <button
-                  onClick={handleDeleteFiles}
-                  className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-red-500 bg-transparent hover:bg-red-500/10 transition-colors text-red-500"
-                  title="Delete selected images"
-                >
-                  <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                  <span className="text-[10px] sm:text-xs font-bold hidden sm:inline">Delete</span>
-                </button>
-              </>
+              <button
+                onClick={handleDownloadFiles}
+                className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg border border-[#C2D642]/60 bg-transparent hover:bg-[#C2D642]/10 transition-colors text-[#C2D642]"
+                title="Download selected images"
+              >
+                <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                <span className="text-[10px] sm:text-xs font-bold hidden sm:inline">Download</span>
+              </button>
             ) : (
               <>
                 <button

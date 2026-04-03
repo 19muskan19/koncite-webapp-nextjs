@@ -690,6 +690,26 @@ export const userAPI = {
       } as ApiError;
     }
   },
+
+  /**
+   * GET /my-accessible-menus — Next.js sidebar: nested menus, flat list, effective permissions by slug.
+   * Call after login and whenever company-user permissions change.
+   */
+  getMyAccessibleMenus: async (): Promise<any> => {
+    try {
+      const response = await apiClient.get('/my-accessible-menus');
+      if (response.data?.status === false || response.data?.success === false) {
+        throw new Error(response.data?.message || 'Failed to load accessible menus');
+      }
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to fetch accessible menus',
+        errors: error.response?.data?.errors || {},
+        status: error.response?.status,
+      } as ApiError;
+    }
+  },
 };
 
 // Master Data API - CRUD operations for projects, companies, materials, etc.
@@ -3086,13 +3106,15 @@ export const safetyAPI = {
       } as ApiError;
     }
   },
-  /** safety-add POST FormData (multipart) - Create new → submit */
+  /**
+   * POST /safety-add — multipart/form-data (Bearer via apiClient).
+   * Fields: name, date, details, remarks, dpr_id, projects_id; optional sub_projects_id;
+   * optional company_users_id / company_user_id; optional id (update); file field img.
+   * Do not set Content-Type manually — axios sets multipart boundary for FormData.
+   */
   addSafety: async (data: FormData | Record<string, any>): Promise<any> => {
     try {
-      const config = data instanceof FormData
-        ? { headers: { 'Content-Type': 'multipart/form-data' } } as const
-        : {};
-      const response = await apiClient.post('/safety-add', data, config);
+      const response = await apiClient.post('/safety-add', data);
       return response.data;
     } catch (error: any) {
       throw {
@@ -3149,13 +3171,12 @@ export const hinderanceAPI = {
       } as ApiError;
     }
   },
-  /** hinderance-add POST FormData (multipart) - Create new → submit */
+  /**
+   * POST /hinderance-add — same multipart contract as safety-add; optional img.
+   */
   add: async (data: FormData | Record<string, any>): Promise<any> => {
     try {
-      const config = data instanceof FormData
-        ? { headers: { 'Content-Type': 'multipart/form-data' } } as const
-        : {};
-      const response = await apiClient.post('/hinderance-add', data, config);
+      const response = await apiClient.post('/hinderance-add', data);
       return response.data;
     } catch (error: any) {
       throw {
@@ -3211,8 +3232,10 @@ export const activitiesHistoryAPI = {
     activities_history_activities_id: number;
     activities_history_qty: number;
     activities_history_completion?: number;
-    activities_history_vendors_id?: number | null;
-    activities_history_remarkes?: string;
+    /** Always send (null when no contractor) — Laravel may require the key. */
+    activities_history_vendors_id: number | null;
+    /** Always send (empty string ok) — Laravel may require the key. */
+    activities_history_remarkes: string;
     activities_history_img?: string; // base64
     activities_history_dpr_id?: number | null;
   }>): Promise<any> => {
@@ -3230,9 +3253,14 @@ export const activitiesHistoryAPI = {
   edit: async (dprId: number | string, activityIds: (number | string)[]): Promise<any[]> => {
     try {
       const ids = activityIds.map((id) => (typeof id === 'number' ? id : parseInt(String(id), 10))).filter((n) => !isNaN(n));
-      const response = await apiClient.post('/activities-history-edit/', {
-        dprId: Number(dprId),
+      const nid = Number(dprId);
+      // Backend variants: typo getActivites vs getActivities; snake_case dpr_id (matches fetch-dpr-history-edit).
+      // No trailing slash — avoids duplicate route / proxy quirks.
+      const response = await apiClient.post('/activities-history-edit', {
+        dprId: nid,
+        dpr_id: nid,
         getActivites: ids,
+        getActivities: ids,
       });
       const data = response.data?.data ?? response.data?.response ?? response.data ?? [];
       return Array.isArray(data) ? data : [];
@@ -3511,7 +3539,11 @@ export const labourEntriesAPI = {
     labour_categories: Array<{
       labours_id: number;
       day_labour_count: number;
+      /** Unit for day_labour_count (work quantity); distinct from rate day_unit */
+      day_labour_count_unit?: 'day' | 'hour';
       overtime_hours?: number;
+      /** Unit for overtime_hours quantity; distinct from rate ot_unit */
+      overtime_quantity_unit?: 'day' | 'hour';
       daily_rate: number;
       day_unit: 'day' | 'hour';
       ot_rate: number;
@@ -3798,6 +3830,65 @@ export const materialsHistoryAPI = {
 
 // DPR API - Matching Laravel routes (DprController)
 export const dprAPI = {
+  /**
+   * POST /dpr-exists-check — same company/user/project/date/subproject as dpr-add duplicate logic.
+   * Body: project_id (or projects_id), date (Y-m-d), subproject_id (or sub_projects_id) optional.
+   */
+  existsCheckForDate: async (params: {
+    project_id: number | string;
+    date: string;
+    subproject_id?: number | string | null;
+  }): Promise<{
+    dpr_exists: boolean;
+    dpr_id: number | null;
+    message?: string;
+    date?: string;
+    projects_id?: number;
+    sub_projects_id?: number | null;
+  }> => {
+    try {
+      const pid = Number(params.project_id);
+      const dateStr = String(params.date).trim().slice(0, 10);
+      const body: Record<string, unknown> = {
+        project_id: pid,
+        projects_id: pid,
+        date: dateStr,
+      };
+      const rawSub = params.subproject_id;
+      if (rawSub != null && rawSub !== '') {
+        const sid = Number(rawSub);
+        if (!Number.isNaN(sid)) {
+          body.subproject_id = sid;
+          body.sub_projects_id = sid;
+        }
+      }
+      const response = await apiClient.post('/dpr-exists-check', body);
+      const top = response.data as Record<string, unknown> | undefined;
+      const inner = (top?.data ?? top?.response ?? top) as Record<string, unknown> | undefined;
+      const dpr_exists = Boolean(inner?.dpr_exists);
+      const dprRaw = inner?.dpr_id;
+      const dpr_id =
+        dprRaw != null && dprRaw !== ''
+          ? Number(dprRaw)
+          : null;
+      return {
+        dpr_exists,
+        dpr_id: !Number.isNaN(dpr_id as number) ? (dpr_id as number) : null,
+        message: typeof top?.message === 'string' ? (top.message as string) : undefined,
+        date: inner?.date as string | undefined,
+        projects_id: inner?.projects_id != null ? Number(inner.projects_id) : undefined,
+        sub_projects_id:
+          inner?.sub_projects_id != null && inner.sub_projects_id !== ''
+            ? Number(inner.sub_projects_id)
+            : null,
+      };
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to check for existing DPR',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
   getList: async (params?: { project?: number | string; subproject?: number | string; date?: string; userId?: number | string; emp_id?: number | string }): Promise<any[]> => {
     const toArray = (val: any): any[] => {
       if (Array.isArray(val)) return val;
@@ -4039,7 +4130,41 @@ export const azureStorageAPI = {
   },
 };
 
-// Document Management API - Matching Laravel DocumentManagementController
+/** Optional POST /documents/download body fields for DPR gallery + project-scoped blobs. */
+export type DocumentDownloadSource = 'safety' | 'hinderance' | 'activity' | 'dms' | 'hindrance';
+
+export interface DocumentDownloadOptions {
+  /** DPR gallery only: safety | hinderance | activity — do not send for `dms` (normal AzureDocument download). */
+  source?: DocumentDownloadSource;
+  /** When set with blob path and no DMS uuid, Laravel resolves project Azure path (do not send uuid). */
+  projectId?: number;
+  /** If set, sent as full_path in addition to file_path. */
+  fullPath?: string;
+  /** Default 120000 for this request only (global apiClient timeout stays 30s). */
+  timeoutMs?: number;
+}
+
+/** Only DPR gallery sources may be sent; `dms` and unknown values are omitted (standard DMS uuid download). */
+function normalizeDocumentDownloadSource(source?: string): string | undefined {
+  if (source == null || String(source).trim() === '') return undefined;
+  const s = String(source).toLowerCase().trim();
+  if (s === 'hindrance') return 'hinderance';
+  if (s === 'safety' || s === 'hinderance' || s === 'activity') return s;
+  return undefined;
+}
+
+/**
+ * Laravel documents API group (Bearer `Authorization`, `scopes:company` on mobile/Next).
+ *
+ * Coverage: GET /documents; POST /documents/upload; POST /documents/folder; POST /documents/download;
+ * DELETE /documents/delete; POST /documents/move-to-trash; GET /documents/trash; POST /documents/restore;
+ * DELETE /documents/permanent-delete; POST /documents/share; GET /documents/shared;
+ * DELETE /documents/unshare; GET /documents/team-members; GET /documents/gallery;
+ * POST /documents/generate-public-link; POST /documents/revoke-public-link.
+ * AI helpers live under /documents/ai/* — see `dmsAiService.ts` (context/upload/search) plus `/ai-agent/*` for chat sessions.
+ *
+ * Primary consumer: `components/DocumentManagement.tsx`. `deleteFile` is available for path-based hard delete when needed.
+ */
 export const documentAPI = {
   /**
    * Get documents
@@ -4129,10 +4254,21 @@ export const documentAPI = {
   },
 
   /**
-   * Download document - POST /api/documents/download
-   * Backend may expect uuid (to look up document) or file_path. Send both when available.
+   * Download document — POST /documents/download (Bearer auth).
+   *
+   * - **uuid**: DMS / shared row; optional **source** for DPR gallery; optional **project_id**.
+   * - **projectId + path, no uuid**: project Azure blob / gallery composite id — sends **project_id**,
+   *   **file_path**, **full_path** (same path unless `fullPath` set). Do not send uuid in this branch.
+   * - **file_path only** (no uuid, no projectId): legacy `storage/app/public/`.
+   *
+   * Uses **timeoutMs** (default 120000) for this request only.
    */
-  downloadDocument: async (file_path: string, original_name?: string, uuid?: string): Promise<Blob> => {
+  downloadDocument: async (
+    file_path: string,
+    original_name?: string,
+    uuid?: string,
+    options?: DocumentDownloadOptions
+  ): Promise<Blob> => {
     const parseBlobError = async (data: any): Promise<string> => {
       if (data instanceof Blob) {
         try {
@@ -4146,21 +4282,67 @@ export const documentAPI = {
       return (data?.message as string) || 'Failed to download document';
     };
 
+    const timeoutMs = options?.timeoutMs ?? 120000;
+    const isValidUuid =
+      typeof uuid === 'string' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uuid.trim());
+
+    const projectIdRaw = options?.projectId != null ? Number(options.projectId) : NaN;
+    const useProjectPath =
+      Number.isFinite(projectIdRaw) &&
+      projectIdRaw > 0 &&
+      !isValidUuid;
+
     const body: Record<string, string> = {};
-    if (original_name) body.original_name = original_name;
-    const isValidUuid = uuid && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uuid);
-    if (isValidUuid) {
-      body.uuid = uuid;
-      body.item_uuid = uuid;
+    if (original_name && String(original_name).trim()) {
+      body.original_name = String(original_name).trim();
     }
-    if (file_path && file_path.trim()) body.file_path = file_path;
+
+    const src = normalizeDocumentDownloadSource(options?.source);
+    if (src) body.source = src;
+
+    if (useProjectPath) {
+      const fp = (file_path && String(file_path).trim()) || '';
+      if (!fp) {
+        throw {
+          message: 'Project download requires file_path (Azure / blob path)',
+          errors: {},
+        } as ApiError;
+      }
+      const full = (options?.fullPath && String(options.fullPath).trim()) || fp;
+      body.project_id = String(Math.trunc(projectIdRaw));
+      body.file_path = fp;
+      body.full_path = full;
+    } else if (isValidUuid) {
+      const u = uuid!.trim();
+      body.uuid = u;
+      body.item_uuid = u;
+      if (Number.isFinite(projectIdRaw) && projectIdRaw > 0) {
+        body.project_id = String(Math.trunc(projectIdRaw));
+      }
+    } else {
+      const fp = (file_path && String(file_path).trim()) || '';
+      if (!fp) {
+        throw {
+          message: 'Download requires a DMS uuid, legacy file_path, or project_id + file_path',
+          errors: {},
+        } as ApiError;
+      }
+      body.file_path = fp;
+      if (options?.fullPath && String(options.fullPath).trim()) {
+        body.full_path = String(options.fullPath).trim();
+      }
+      if (Number.isFinite(projectIdRaw) && projectIdRaw > 0) {
+        body.project_id = String(Math.trunc(projectIdRaw));
+        if (!body.full_path) body.full_path = fp;
+      }
+    }
 
     try {
-      const response = await apiClient.post(
-        '/documents/download',
-        body,
-        { responseType: 'blob' }
-      );
+      const response = await apiClient.post('/documents/download', body, {
+        responseType: 'blob',
+        timeout: timeoutMs,
+      });
       const blob = response.data as Blob;
       if (!blob || blob.size === 0) {
         throw new Error('Server returned empty file');
@@ -4171,12 +4353,28 @@ export const documentAPI = {
       }
       return blob;
     } catch (error: any) {
-      const message = error.response?.data instanceof Blob
-        ? await parseBlobError(error.response.data)
-        : (error.response?.data?.message || 'Failed to download document');
+      const message =
+        error.response?.data instanceof Blob
+          ? await parseBlobError(error.response.data)
+          : (error.response?.data?.message || error.message || 'Failed to download document');
       throw { message, errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
+
+  /**
+   * Project-scoped path download — never sends uuid (Laravel requirement for this branch).
+   */
+  downloadDocumentByProjectPath: async (
+    projectId: number,
+    fullPath: string,
+    original_name?: string,
+    options?: Omit<DocumentDownloadOptions, 'projectId' | 'fullPath'>
+  ): Promise<Blob> =>
+    documentAPI.downloadDocument(fullPath, original_name, undefined, {
+      ...options,
+      projectId,
+      fullPath: fullPath,
+    }),
 
   /**
    * Delete file
@@ -4343,14 +4541,53 @@ export const documentAPI = {
   },
 
   /**
-   * Alias for downloadDocument - sends uuid as primary param for backend lookup.
+   * Generate a time-limited or passworded public link for a document (optional UI).
+   * POST /api/documents/generate-public-link
    */
-  downloadDocumentByUuid: async (uuid: string, original_name?: string): Promise<Blob> =>
-    documentAPI.downloadDocument(uuid, original_name, uuid),
+  generatePublicLink: async (data: {
+    uuid?: string;
+    item_uuid?: string;
+    expires_in_days?: number;
+    password?: string;
+  }): Promise<any> => {
+    try {
+      const response = await apiClient.post('/documents/generate-public-link', data);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to generate public link',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
 
   /**
-   * Get gallery images
+   * Revoke a previously generated public link.
+   * POST /api/documents/revoke-public-link
+   */
+  revokePublicLink: async (data: { uuid?: string; item_uuid?: string; token?: string }): Promise<any> => {
+    try {
+      const response = await apiClient.post('/documents/revoke-public-link', data);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to revoke public link',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /** Download by DMS / gallery uuid; forwards optional **source** and **projectId** for DPR gallery rows. */
+  downloadDocumentByUuid: async (
+    uuid: string,
+    original_name?: string,
+    options?: Omit<DocumentDownloadOptions, 'fullPath'>
+  ): Promise<Blob> => documentAPI.downloadDocument('', original_name, uuid, options),
+
+  /**
+   * Get gallery images (aggregated DPR-linked + DMS gallery sources, paginated).
    * GET /api/documents/gallery
+   * Query: project_id?, category?, page (≥1), per_page (1–100, default 24).
    */
   getGalleryImages: async (params?: {
     project_id?: number;
@@ -4359,7 +4596,14 @@ export const documentAPI = {
     per_page?: number;
   }): Promise<any> => {
     try {
-      const response = await apiClient.get('/documents/gallery', { params });
+      const rawPage = params?.page != null ? Number(params.page) : 1;
+      const page = Math.max(1, Number.isFinite(rawPage) ? Math.floor(rawPage) : 1);
+      let perPage = params?.per_page != null ? Number(params.per_page) : 24;
+      if (!Number.isFinite(perPage)) perPage = 24;
+      perPage = Math.min(100, Math.max(1, Math.floor(perPage)));
+      const response = await apiClient.get('/documents/gallery', {
+        params: { ...params, page, per_page: perPage },
+      });
       return response.data;
     } catch (error: any) {
       throw {
@@ -4457,7 +4701,7 @@ export const commonAPI = {
 };
 
 // Teams / Staff API - Admin > User Management > Teams (TeamsController)
-// Routes: teams-list, teams-add, teams-search, teams-edit/{uuid}, teams-details, teams-delete/{uuid}, teams-password-update/{uuid}, teams-chat
+// Routes: teams-list, teams-add, teams-search, teams-edit/{uuid}, teams-details, teams-delete/{uuid}, teams-password-update/{uuid}, teams-chat, user-permission/{uuid}, add-user-permission (POST)
 export const teamsAPI = {
   /**
    * GET /teams-list -> teamsList()
@@ -4470,6 +4714,29 @@ export const teamsAPI = {
     } catch (error: any) {
       throw {
         message: error.response?.data?.message || 'Failed to fetch staff list',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * GET /role-list — legacy list (some screens still use it).
+   * Prefer `roleManagementAPI.listRoles()` → GET /role-management for Role management UI parity with web.
+   */
+  getRoleList: async (): Promise<Array<{ id: string | number; name: string; slug?: string; company_id?: string | number }>> => {
+    try {
+      const response = await apiClient.get('/role-list');
+      const raw = response.data?.data ?? response.data;
+      if (!Array.isArray(raw)) return [];
+      return raw.map((r: any) => ({
+        id: r.id,
+        name: String(r.name ?? ''),
+        slug: r.slug != null ? String(r.slug) : undefined,
+        company_id: r.company_id,
+      }));
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch role list',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
@@ -4519,6 +4786,41 @@ export const teamsAPI = {
     } catch (error: any) {
       throw {
         message: error.response?.data?.message || 'Failed to fetch staff',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * GET /user-permission/{uuid} -> userPermission()
+   * Load permission payload for the staff member before opening the permissions UI.
+   */
+  getUserPermission: async (uuid: string): Promise<any> => {
+    try {
+      const response = await apiClient.get(`/user-permission/${encodeURIComponent(uuid)}`);
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch user permissions',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * POST /add-user-permission -> addUserPermission()
+   * Body: { updateId: company_user id, permission?: Record<permission_id, string[]> }
+   */
+  addUserPermission: async (body: { updateId: number; permission: Record<string, string[]> }): Promise<any> => {
+    try {
+      const response = await apiClient.post('/add-user-permission', body);
+      if (response.data?.status === false || response.data?.success === false) {
+        throw new Error(response.data?.message || 'Save failed');
+      }
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to save user permissions',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
@@ -4584,6 +4886,170 @@ export const teamsAPI = {
     } catch (error: any) {
       throw {
         message: error.response?.data?.message || 'Failed to fetch teams chat',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
+/**
+ * Laravel `/api/role-management/*` (RouteServiceProvider + `role-management` group, company Bearer token, etc.)
+ *
+ * | Method | Path | Purpose |
+ * | GET | `/` | List roles (index) |
+ * | GET | `/add/{id}` | Form payload for add/edit role |
+ * | GET | `/add-permission/{id}` | Menus + current permissions for role |
+ * | POST | `/add-permission` | Save permissions `{ updateId, permission }` |
+ * | POST | `/add-role` | Create/update role `{ role, uuid? }` |
+ * | GET | `/edit/{uuid}` | Role details for edit |
+ * | DELETE | `/delete/{id}` | Delete role |
+ *
+ * **v1:** `NEXT_PUBLIC_ROLE_MANAGEMENT_API_BASE=v1/role-management`
+ *
+ * Do **not** `POST .../add-permission` with only `updateId` on open — it can clear assignments.
+ */
+const ROLE_MANAGEMENT_API_BASE = (
+  typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_ROLE_MANAGEMENT_API_BASE : undefined
+)?.trim()
+  .replace(/^\/+|\/+$/g, '') || 'role-management';
+
+function roleManagementRoot(): string {
+  return `/${ROLE_MANAGEMENT_API_BASE}`;
+}
+
+function roleManagementPath(segment: string): string {
+  const s = segment.replace(/^\/+/, '');
+  return `/${ROLE_MANAGEMENT_API_BASE}/${s}`;
+}
+
+function assertRoleManagementOk(data: any): void {
+  if (data && typeof data === 'object' && 'status' in data && (data as { status?: boolean }).status === false) {
+    throw new Error((data as { message?: string }).message || 'Request failed');
+  }
+}
+
+/** JSON CRUD for company roles + permissions (mirrors web `/company/roleManagment`). */
+export const roleManagementAPI = {
+  /** GET /role-management — list roles for company (+ global roles). */
+  listRoles: async (): Promise<
+    Array<{ id: string | number; name: string; slug?: string; company_id?: string | number }>
+  > => {
+    try {
+      const response = await apiClient.get(roleManagementRoot());
+      let raw: unknown = response.data?.data ?? response.data;
+      if (
+        raw &&
+        typeof raw === 'object' &&
+        !Array.isArray(raw) &&
+        'data' in raw &&
+        Array.isArray((raw as { data: unknown }).data)
+      ) {
+        raw = (raw as { data: unknown[] }).data;
+      }
+      if (!Array.isArray(raw)) return [];
+      return (raw as Record<string, unknown>[]).map((r) => ({
+        id: r.id as string | number,
+        name: String(r.name ?? ''),
+        slug: r.slug != null ? String(r.slug) : undefined,
+        company_id: r.company_id as string | number | undefined,
+      }));
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to fetch roles',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /** GET /role-management/add/{id} — `id` empty or `0` for new-role form. */
+  getAddForm: async (id: string | number): Promise<any> => {
+    try {
+      const response = await apiClient.get(roleManagementPath(`add/${encodeURIComponent(String(id))}`));
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to load role form',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /** GET /role-management/edit/{uuid} */
+  getEditRole: async (uuid: string | number): Promise<any> => {
+    try {
+      const response = await apiClient.get(roleManagementPath(`edit/${encodeURIComponent(String(uuid))}`));
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch role',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * POST /role-management/add-role — create `{ role }` or update `{ role, uuid }` (uuid = role id per Laravel).
+   */
+  addRole: async (payload: { role: string; uuid?: string | number }): Promise<any> => {
+    try {
+      const body: Record<string, unknown> = { role: payload.role };
+      if (payload.uuid != null && String(payload.uuid).trim() !== '') {
+        body.uuid = payload.uuid;
+      }
+      const response = await apiClient.post(roleManagementPath('add-role'), body);
+      assertRoleManagementOk(response.data);
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to save role',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /** DELETE /role-management/delete/{id} */
+  deleteRole: async (id: string | number): Promise<void> => {
+    try {
+      const response = await apiClient.delete(roleManagementPath(`delete/${encodeURIComponent(String(id))}`));
+      assertRoleManagementOk(response.data);
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to delete role',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
+export const rolePermissionsAPI = {
+  /** Load matrix: **GET only** — Laravel route `add-permission/{id}` allows GET/HEAD, not POST. */
+  getRolePermission: async (roleId: number): Promise<any> => {
+    const id = encodeURIComponent(String(roleId));
+    const pathWithId = roleManagementPath(`add-permission/${id}`);
+    const unwrap = (response: { data?: any }) => response.data?.data ?? response.data;
+
+    try {
+      const response = await apiClient.get(pathWithId);
+      return unwrap(response);
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to fetch role permissions',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  addRolePermission: async (body: { updateId: number; permission: Record<string, string[]> }): Promise<any> => {
+    try {
+      const response = await apiClient.post(roleManagementPath('add-permission'), body);
+      assertRoleManagementOk(response.data);
+      if (response.data?.success === false) {
+        throw new Error(response.data?.message || 'Save failed');
+      }
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to save role permissions',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
@@ -6461,6 +6927,7 @@ export default {
   document: documentAPI,
   common: commonAPI,
   teams: teamsAPI,
+  rolePermissions: rolePermissionsAPI,
   materialRequest: materialRequestAPI,
   rfq: rfqAPI,
   goodsReturn: goodsReturnAPI,
