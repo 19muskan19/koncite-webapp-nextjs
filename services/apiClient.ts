@@ -10,7 +10,7 @@ interface ErrorResponseData {
 // API Base URL Configuration
 // In browser: use /api-proxy to avoid CORS (Next.js rewrites proxy to backend). Server-side: use backend URL directly.
 const isBrowser = typeof window !== 'undefined';
-const backendApiUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging.koncite.com/api';
+const backendApiUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://koncite.com/api';
 const isCrossOrigin = /^https?:\/\//.test(backendApiUrl);
 export const API_BASE_URL = isBrowser && isCrossOrigin ? '/api-proxy' : backendApiUrl;
 

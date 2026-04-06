@@ -1240,7 +1240,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         return arr.map((u: string) => {
           if (!u || typeof u !== 'string') return '';
           if (u.startsWith('http://') || u.startsWith('https://') || u.startsWith('data:')) return u;
-          const base = String(process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging.koncite.com/api').replace(/\/$/, '');
+          const base = String(process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://koncite.com/api').replace(/\/$/, '');
           return u.startsWith('/') ? `${base}${u}` : `${base}/${u}`;
         }).filter(Boolean);
       };
@@ -2466,7 +2466,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
   const resolveImageUrl = (url: string): string => {
     if (!url || typeof url !== 'string') return '';
     if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) return url;
-    const baseUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging.koncite.com/api';
+    const baseUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://koncite.com/api';
     const base = String(baseUrl).replace(/\/$/, '');
     return url.startsWith('/') ? `${base}${url}` : `${base}/${url}`;
   };
