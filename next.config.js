@@ -13,7 +13,7 @@ const nextConfig = {
   async rewrites() {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://koncite.com/api';
     const base = apiUrl.replace(/\/+$/, '');
-    const origin = base.replace(/\/api\/?$/, ''); // e.g. https://koncite.com
+    const origin = base.replace(/\/api\/?$/, ''); // e.g.   https://koncite.com
     return [
       {
         source: '/api-proxy/:path*',
