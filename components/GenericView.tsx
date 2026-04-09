@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType, ViewType } from '../types';
 import { 
   Users, 
@@ -160,13 +160,6 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
   const [prList, setPrList] = useState<any[]>([]);
   const [isLoadingPrList, setIsLoadingPrList] = useState(false);
   const [prSearchQuery, setPrSearchQuery] = useState('');
-  /** Main PR list: server filters — empty = all projects; project only = all MRs for project; + subproject = narrowed */
-  const [prListFilterProjectId, setPrListFilterProjectId] = useState<string>('');
-  const [prListFilterSubprojectId, setPrListFilterSubprojectId] = useState<string>('');
-  const [prFilterProjects, setPrFilterProjects] = useState<PRProject[]>([]);
-  const [prFilterSubprojects, setPrFilterSubprojects] = useState<PRSubproject[]>([]);
-  const [isLoadingPrFilterProjects, setIsLoadingPrFilterProjects] = useState(false);
-  const [isLoadingPrFilterSubprojects, setIsLoadingPrFilterSubprojects] = useState(false);
   const [prListPage, setPrListPage] = useState(1);
   const [rfqListPage, setRfqListPage] = useState(1);
   const [grnListPage, setGrnListPage] = useState(1);
@@ -319,99 +312,20 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
       .finally(() => setIsLoadingActivities(false));
   }, [currentView, prStep, prSelectedProject, prSelectedSubproject, prEditingId]);
 
-  // PR report page: load projects for filter dropdowns
-  useEffect(() => {
-    if (currentView !== ViewType.INVENTORY_PR) {
-      setPrFilterProjects([]);
-      setPrListFilterProjectId('');
-      setPrListFilterSubprojectId('');
-      setPrFilterSubprojects([]);
-      return;
-    }
-    const token =
-      typeof document !== 'undefined' ? document.cookie.split('; ').find((c) => c.startsWith('auth_token='))?.split('=')[1] : null;
-    const authFlag = typeof localStorage !== 'undefined' ? localStorage.getItem('isAuthenticated') === 'true' : false;
-    if (!token || !authFlag) {
-      setPrFilterProjects([]);
-      setIsLoadingPrFilterProjects(false);
-      return;
-    }
-    setIsLoadingPrFilterProjects(true);
-    masterDataAPI
-      .getProjects()
-      .then((fetched: any[]) => {
-        const transformed: PRProject[] = (Array.isArray(fetched) ? fetched : []).map((p: any) => {
-          const numId = Number.isFinite(Number(p.id))
-            ? Number(p.id)
-            : Number.isFinite(Number(p.projects_id))
-              ? Number(p.projects_id)
-              : Number.isFinite(Number(p.project_id))
-                ? Number(p.project_id)
-                : undefined;
-          return {
-            id: p.uuid || String(p.id),
-            numericId: numId,
-            name: p.project_name || p.name || '',
-            logo: getLogoUrl(p.logo, p.project_name || p.name || '', '6B8E23'),
-            code: p.code || '',
-            company: p.companies?.registration_name || p.companies?.name || p.company || p.company_name || '',
-            location: p.address || p.location || '',
-          };
-        });
-        setPrFilterProjects(transformed);
-      })
-      .catch(() => setPrFilterProjects([]))
-      .finally(() => setIsLoadingPrFilterProjects(false));
-  }, [currentView]);
-
-  // PR report: subprojects for selected filter project
-  useEffect(() => {
-    if (currentView !== ViewType.INVENTORY_PR || !prListFilterProjectId) {
-      setPrFilterSubprojects([]);
-      setIsLoadingPrFilterSubprojects(false);
-      return;
-    }
-    setIsLoadingPrFilterSubprojects(true);
-    masterDataAPI
-      .getProjectSubprojects(prListFilterProjectId)
-      .then((result: any) => {
-        const list = Array.isArray(result) ? result : result?.subProject ?? result?.data ?? [];
-        const transformed: PRSubproject[] = list.map((sub: any) => ({
-          id: sub.uuid || String(sub.id),
-          numericId: Number.isFinite(Number(sub.id)) ? Number(sub.id) : undefined,
-          name: sub.name || sub.subproject_name || '',
-          code: sub.code || `SUB${String(sub.id || '').padStart(3, '0')}`,
-          project: '',
-          manager: sub.manager || sub.project_manager || '',
-          status: sub.status || 'pending',
-        }));
-        setPrFilterSubprojects(transformed);
-      })
-      .catch(() => setPrFilterSubprojects([]))
-      .finally(() => setIsLoadingPrFilterSubprojects(false));
-  }, [currentView, prListFilterProjectId]);
-
-  // Fetch Material Requests list for INVENTORY_PR main view (server-side project / subproject filter)
-  const fetchPrList = useCallback(() => {
+  // Fetch Material Requests list for INVENTORY_PR main view
+  const fetchPrList = () => {
     if (currentView !== ViewType.INVENTORY_PR) return;
     setIsLoadingPrList(true);
-    const filters: Parameters<typeof materialRequestAPI.list>[0] | undefined = prListFilterProjectId
-      ? {
-          projectId: prListFilterProjectId,
-          ...(prListFilterSubprojectId ? { subprojectId: prListFilterSubprojectId } : {}),
-        }
-      : undefined;
-    materialRequestAPI
-      .list(filters)
+    materialRequestAPI.list()
       .then((data) => setPrList(Array.isArray(data) ? data : []))
       .catch(() => setPrList([]))
       .finally(() => setIsLoadingPrList(false));
-  }, [currentView, prListFilterProjectId, prListFilterSubprojectId]);
+  };
 
   useEffect(() => {
     if (currentView !== ViewType.INVENTORY_PR) return;
     fetchPrList();
-  }, [currentView, fetchPrList]);
+  }, [currentView]);
 
   const fetchRfqList = () => {
     if (currentView !== ViewType.INVENTORY_RFQ) return;
@@ -906,7 +820,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
 
   const getFullPdfUrl = (url: string) => {
     if (!url) return '';
-    const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || '';
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging.koncite.com/api';
     return url.startsWith('http') ? url : apiBase.replace(/\/api\/?$/, '') + (url.startsWith('/') ? url : '/' + url);
   };
 
@@ -1646,106 +1560,44 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
       )}
 
       {/* Search and Filter Bar */}
-      <div className={`flex flex-col gap-3 sm:gap-4 p-4 rounded-xl border ${cardClass}`}>
-        {currentView === ViewType.INVENTORY_PR && (
-          <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-2 gap-3 w-full max-w-2xl">
-            <div className="min-w-0">
-              <label
-                htmlFor="pr-filter-project"
-                className={`block text-[10px] sm:text-xs font-bold uppercase tracking-wider mb-1.5 ${textSecondary}`}
-              >
-                Project
-              </label>
-              <select
-                id="pr-filter-project"
-                value={prListFilterProjectId}
-                disabled={isLoadingPrFilterProjects}
-                onChange={(e) => {
-                  setPrListFilterProjectId(e.target.value);
-                  setPrListFilterSubprojectId('');
-                  setPrListPage(1);
-                }}
-                className={`w-full px-3 py-2 rounded-lg text-sm font-bold border outline-none focus:ring-2 focus:ring-[#6B8E23]/30 ${
-                  isDark ? 'bg-slate-800/80 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
-                } disabled:opacity-60`}
-              >
-                <option value="">All projects</option>
-                {prFilterProjects.map((p) => (
-                  <option key={p.id} value={String(p.numericId ?? p.id)}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="min-w-0">
-              <label
-                htmlFor="pr-filter-subproject"
-                className={`block text-[10px] sm:text-xs font-bold uppercase tracking-wider mb-1.5 ${textSecondary}`}
-              >
-                Subproject
-              </label>
-              <select
-                id="pr-filter-subproject"
-                value={prListFilterSubprojectId}
-                disabled={!prListFilterProjectId || isLoadingPrFilterSubprojects}
-                onChange={(e) => {
-                  setPrListFilterSubprojectId(e.target.value);
-                  setPrListPage(1);
-                }}
-                className={`w-full px-3 py-2 rounded-lg text-sm font-bold border outline-none focus:ring-2 focus:ring-[#6B8E23]/30 ${
-                  isDark ? 'bg-slate-800/80 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
-                } disabled:opacity-60`}
-              >
-                <option value="">{prListFilterProjectId ? 'All subprojects' : 'Select a project first'}</option>
-                {prFilterSubprojects.map((s) => (
-                  <option key={s.id} value={String(s.numericId ?? s.id)}>
-                    {s.name || s.code}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-        )}
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4">
-          <div className="flex-1 relative min-w-0">
-            <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
-            <input 
-              type="text" 
-              placeholder={isInventorySection(currentView) ? (currentView === ViewType.INVENTORY_PR ? "Search by Req No, project, subproject, created by..." : currentView === ViewType.INVENTORY_ISSUE_RETURN ? "Search by return no, project, date..." : currentView === ViewType.INVENTORY_ISSUE_SLIP ? "Search by issue no, project, date..." : currentView === ViewType.INVENTORY_GRN_MRN_SLIP ? "Search by GRN no, project, date..." : "Search by project, reference no...") : "Search..."} 
-              value={isInventorySection(currentView) ? (currentView === ViewType.INVENTORY_PR ? prSearchQuery : inventorySearchQuery) : ''}
-              onChange={(e) => {
-                if (currentView === ViewType.INVENTORY_PR) { setPrSearchQuery(e.target.value); setPrListPage(1); }
-                else if (currentView === ViewType.INVENTORY_RFQ) { setInventorySearchQuery(e.target.value); setRfqListPage(1); }
-                else if (currentView === ViewType.INVENTORY_GRN_MRN_SLIP) { setInventorySearchQuery(e.target.value); setGrnListPage(1); }
-                else if (currentView === ViewType.INVENTORY_ISSUE_RETURN) { setInventorySearchQuery(e.target.value); setReturnListPage(1); }
-                else if (currentView === ViewType.INVENTORY_ISSUE_SLIP) { setInventorySearchQuery(e.target.value); setIssueListPage(1); }
-                else if (isInventorySection(currentView)) setInventorySearchQuery(e.target.value);
-              }}
-              className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-            />
-          </div>
-          {isInventorySection(currentView) ? (
-            <button 
-              type="button"
-              onClick={() => {
-                if (currentView === ViewType.INVENTORY_PR) { setPrSearchQuery(''); fetchPrList(); }
-                else if (currentView === ViewType.INVENTORY_RFQ) { setInventorySearchQuery(''); fetchRfqList(); }
-                else if (currentView === ViewType.INVENTORY_ISSUE_RETURN) { setInventorySearchQuery(''); fetchReturnList(); }
-                else if (currentView === ViewType.INVENTORY_ISSUE_SLIP) { setInventorySearchQuery(''); fetchIssueList(); }
-                else if (currentView === ViewType.INVENTORY_GRN_MRN_SLIP) { setInventorySearchQuery(''); fetchGrnList(); }
-                else setInventorySearchQuery('');
-              }}
-              className={`flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all shrink-0 ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'} shadow-sm`}
-              title="Refresh"
-            >
-              <RefreshCw className="w-4 h-4" /> Refresh
-            </button>
-          ) : (
-            <button className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'} border ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
-              <Filter className="w-4 h-4" /> Filter
-            </button>
-          )}
+      <div className={`flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-4 p-4 rounded-xl border ${cardClass}`}>
+        <div className="flex-1 relative min-w-0">
+          <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
+          <input 
+            type="text" 
+            placeholder={isInventorySection(currentView) ? (currentView === ViewType.INVENTORY_PR ? "Search by Req No, project, subproject, created by..." : currentView === ViewType.INVENTORY_ISSUE_RETURN ? "Search by return no, project, date..." : currentView === ViewType.INVENTORY_ISSUE_SLIP ? "Search by issue no, project, date..." : currentView === ViewType.INVENTORY_GRN_MRN_SLIP ? "Search by GRN no, project, date..." : "Search by project, reference no...") : "Search..."} 
+            value={isInventorySection(currentView) ? (currentView === ViewType.INVENTORY_PR ? prSearchQuery : inventorySearchQuery) : ''}
+            onChange={(e) => {
+              if (currentView === ViewType.INVENTORY_PR) { setPrSearchQuery(e.target.value); setPrListPage(1); }
+              else if (currentView === ViewType.INVENTORY_RFQ) { setInventorySearchQuery(e.target.value); setRfqListPage(1); }
+              else if (currentView === ViewType.INVENTORY_GRN_MRN_SLIP) { setInventorySearchQuery(e.target.value); setGrnListPage(1); }
+              else if (currentView === ViewType.INVENTORY_ISSUE_RETURN) { setInventorySearchQuery(e.target.value); setReturnListPage(1); }
+              else if (currentView === ViewType.INVENTORY_ISSUE_SLIP) { setInventorySearchQuery(e.target.value); setIssueListPage(1); }
+              else if (isInventorySection(currentView)) setInventorySearchQuery(e.target.value);
+            }}
+            className={`w-full pl-10 pr-4 py-2 rounded-lg text-sm ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} border focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+          />
         </div>
+        {isInventorySection(currentView) ? (
+          <button 
+            onClick={() => {
+              if (currentView === ViewType.INVENTORY_PR) { setPrSearchQuery(''); fetchPrList(); }
+              else if (currentView === ViewType.INVENTORY_RFQ) { setInventorySearchQuery(''); fetchRfqList(); }
+              else if (currentView === ViewType.INVENTORY_ISSUE_RETURN) { setInventorySearchQuery(''); fetchReturnList(); }
+              else if (currentView === ViewType.INVENTORY_ISSUE_SLIP) { setInventorySearchQuery(''); fetchIssueList(); }
+              else if (currentView === ViewType.INVENTORY_GRN_MRN_SLIP) { setInventorySearchQuery(''); fetchGrnList(); }
+              else setInventorySearchQuery('');
+            }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all shrink-0 ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-600' : 'bg-white hover:bg-slate-50 text-slate-900 border border-slate-200'} shadow-sm`}
+            title="Refresh"
+          >
+            <RefreshCw className="w-4 h-4" /> Refresh
+          </button>
+        ) : (
+          <button className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'} border ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
+            <Filter className="w-4 h-4" /> Filter
+          </button>
+        )}
       </div>
 
       {/* Data Table */}
@@ -1762,24 +1614,22 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                 <table className="w-full">
                   <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
                     <tr>
-                      <th className={`px-4 sm:px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Req No</th>
-                      <th className={`px-4 sm:px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Date</th>
-                      <th className={`px-4 sm:px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Project</th>
-                      <th className={`px-4 sm:px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Subproject</th>
-                      <th className={`px-4 sm:px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Created By</th>
-                      <th className={`px-4 sm:px-6 py-4 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>Actions</th>
+                      <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Req No</th>
+                      <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Date</th>
+                      <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Project Name</th>
+                      <th className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary}`}>Created By</th>
+                      <th className={`px-6 py-4 text-right text-xs font-black uppercase tracking-wider ${textSecondary}`}>Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-inherit">
                     {paginatedPrList.map((pr: any) => (
                       <tr key={pr.id || pr.uuid} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
-                        <td className={`px-4 sm:px-6 py-4 text-sm font-bold ${textPrimary}`}>{pr.request_no ?? pr.request_id ?? pr.id ?? '-'}</td>
-                        <td className={`px-4 sm:px-6 py-4 text-sm whitespace-nowrap ${textPrimary}`}>{pr.date ?? pr.name ?? '-'}</td>
-                        <td className={`px-4 sm:px-6 py-4 text-sm max-w-[140px] sm:max-w-none truncate sm:whitespace-normal ${textPrimary}`}>{pr.projects_id?.project_name ?? pr.project_name ?? pr.projects?.project_name ?? pr.projects?.name ?? '-'}</td>
-                        <td className={`px-4 sm:px-6 py-4 text-sm max-w-[120px] sm:max-w-none truncate sm:whitespace-normal ${textPrimary}`}>{pr.sub_projects_id?.name ?? pr.sub_projects?.name ?? pr.subproject?.name ?? pr.sub_project_name ?? '—'}</td>
-                        <td className={`px-4 sm:px-6 py-4 text-sm max-w-[120px] sm:max-w-none truncate ${textPrimary}`}>{pr.users?.name ?? pr.created_by ?? pr.user?.name ?? '-'}</td>
-                        <td className="px-4 sm:px-6 py-4 text-right">
-                          <div className="flex items-center justify-end gap-1 flex-wrap sm:flex-nowrap">
+                        <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>{pr.request_no ?? pr.request_id ?? pr.id ?? '-'}</td>
+                        <td className={`px-6 py-4 text-sm ${textPrimary}`}>{pr.date ?? pr.name ?? '-'}</td>
+                        <td className={`px-6 py-4 text-sm ${textPrimary}`}>{pr.projects_id?.project_name ?? pr.project_name ?? pr.projects?.project_name ?? pr.projects?.name ?? '-'}</td>
+                        <td className={`px-6 py-4 text-sm ${textPrimary}`}>{pr.users?.name ?? pr.created_by ?? pr.user?.name ?? '-'}</td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex items-center justify-end gap-1">
                             <button onClick={() => handlePRViewClick(pr)} className="p-2 rounded-lg bg-blue-500/20 text-blue-600 hover:bg-blue-500/30 transition-colors dark:bg-blue-500/20 dark:text-blue-400 dark:hover:bg-blue-500/30" title="View PDF (opens in new tab)">
                               <Eye className="w-4 h-4" />
                             </button>
@@ -1819,14 +1669,10 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
               </div>
             </div>
           ) : (
-            <div className={`p-8 sm:p-12 rounded-xl border text-center ${cardClass}`}>
+            <div className={`p-12 rounded-xl border text-center ${cardClass}`}>
               <Icon className={`w-16 h-16 mx-auto mb-4 ${textSecondary} opacity-50`} />
               <h3 className={`text-lg font-black mb-2 ${textPrimary}`}>No Purchase Requests</h3>
-              <p className={`text-sm ${textSecondary} max-w-md mx-auto`}>
-                {prListFilterProjectId || prListFilterSubprojectId
-                  ? 'No records match the selected project or subproject. Try different filters or clear the project filter to see all PRs.'
-                  : 'Create your first purchase request using the Create New button above.'}
-              </p>
+              <p className={`text-sm ${textSecondary}`}>Create your first purchase request using the Create New button above</p>
             </div>
           )}
         </>

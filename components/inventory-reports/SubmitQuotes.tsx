@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import AppLayout from '@/components/AppLayout';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -14,82 +14,11 @@ import {
   Package,
   Loader2,
   X,
-  Search,
   Building2,
   Eye,
   Share2,
 } from 'lucide-react';
 import { masterDataAPI, materialRequestAPI, rfqAPI } from '@/services/api';
-
-/** MR date field → YYYY-MM-DD start for comparison */
-function getMrDateKey(mr: any): string {
-  const raw = mr?.date ?? mr?.request_date ?? mr?.created_at ?? '';
-  const s = String(raw).trim();
-  if (!s) return '';
-  return s.length >= 10 ? s.slice(0, 10) : s;
-}
-
-/** Display / business request number (may differ from internal id) */
-function getMrRequestNo(mr: any): string {
-  const v = mr?.request_no ?? mr?.request_no_display ?? mr?.indent_no ?? mr?.mr_no ?? mr?.request_number;
-  return String(v ?? '').trim();
-}
-
-/** Match MR by request number or id (substring, exact, digits-only fuzzy) */
-function filterMrByRequestNumberQuery(mrs: any[], q: string): any[] {
-  const qTrim = q.trim();
-  if (!qTrim) return [];
-  const qLower = qTrim.toLowerCase();
-  const qDigits = qTrim.replace(/\D/g, '');
-  return mrs.filter((mr: any) => {
-    const rn = getMrRequestNo(mr);
-    const id = String(mr?.id ?? mr?.uuid ?? '').trim();
-    if (rn && (rn.toLowerCase() === qLower || rn.toLowerCase().includes(qLower))) return true;
-    if (id && (id === qTrim || id.includes(qTrim))) return true;
-    if (qDigits.length >= 1) {
-      const rnDigits = rn.replace(/\D/g, '');
-      const idDigits = id.replace(/\D/g, '');
-      // Avoid matching every MR: only substring when query is long enough (e.g. 900403), else prefix/exact
-      if (rnDigits) {
-        if (rnDigits === qDigits) return true;
-        if (qDigits.length >= 4 && rnDigits.includes(qDigits)) return true;
-        if (qDigits.length < 4 && rnDigits.startsWith(qDigits)) return true;
-      }
-      if (idDigits) {
-        if (idDigits === qDigits) return true;
-        if (qDigits.length >= 4 && idDigits.includes(qDigits)) return true;
-        if (qDigits.length < 4 && idDigits.startsWith(qDigits)) return true;
-      }
-    }
-    return false;
-  });
-}
-
-function dedupeMrById(rows: any[]): any[] {
-  const seen = new Set<string>();
-  const out: any[] = [];
-  for (const mr of rows) {
-    const k = String(mr?.id ?? mr?.uuid ?? '');
-    if (!k || seen.has(k)) continue;
-    seen.add(k);
-    out.push(mr);
-  }
-  return out;
-}
-
-/** Default modal list: material requests from the last 15 days (inclusive of today) */
-function isMrWithinLast15Days(mr: any): boolean {
-  const key = getMrDateKey(mr);
-  if (!key || !/^\d{4}-\d{2}-\d{2}$/.test(key)) return false;
-  const t = new Date(key + 'T12:00:00').getTime();
-  if (Number.isNaN(t)) return false;
-  const end = new Date();
-  end.setHours(23, 59, 59, 999);
-  const start = new Date();
-  start.setDate(start.getDate() - 15);
-  start.setHours(0, 0, 0, 0);
-  return t >= start.getTime() && t <= end.getTime();
-}
 
 type RfqStep = 'submit' | 'quotesDetails' | 'vendorList' | 'doc';
 
@@ -153,10 +82,6 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showMrSelectModal, setShowMrSelectModal] = useState(false);
-  const [mrModalSearch, setMrModalSearch] = useState('');
-  const [mrSearchFetchLoading, setMrSearchFetchLoading] = useState(false);
-  /** When user searches by digits: result rows (API + fallback); null = not in digit-search mode */
-  const [mrDigitSearchResult, setMrDigitSearchResult] = useState<any[] | null>(null);
   const [rfqData, setRfqData] = useState<any>(null);
   /** type 0 = materials path, 1 = image path - for material-request-send-to-vendor */
   const [rfqPathType, setRfqPathType] = useState<0 | 1>(1);
@@ -168,7 +93,6 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
   const [materialsMaster, setMaterialsMaster] = useState<any[]>([]);
   /** PDF URL from generate-pdf API (doc step) */
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
-  const [vendorSearchQuery, setVendorSearchQuery] = useState('');
   const imageInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -237,8 +161,10 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
     const mrObj = rfqData?.data?.material_requests ?? rfqData?.material_requests;
     const requestNoToPass = typeof mrObj === 'object' && mrObj != null ? (mrObj as any)?.request_no : null;
     const mrIdFromRfq = typeof mrObj === 'object' && mrObj != null ? (mrObj as any)?.id : null;
-    // Full project list (do not filter by request_no) so modal can show last 15 days + search older MRs
-    const filters: { projectId: string | number; subprojectId?: string | number } = { projectId: projectIdToUse };
+    const filters: { projectId: string | number; subprojectId?: string | number; request_no?: string } = { projectId: projectIdToUse };
+    if (mode === 'edit' && requestNoToPass && String(requestNoToPass).trim()) {
+      filters.request_no = String(requestNoToPass).trim();
+    }
     materialRequestAPI.list(filters).then((list) => {
       setMaterialRequests(list);
       if (mode === 'edit' && !urlMrId && !urlMrRequestNo) {
@@ -271,112 +197,6 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
     }).catch(() => setMaterialRequests([]));
     rfqAPI.projectToStoreList(projectIdToUse, 'quotes', editId ?? rfqId ?? undefined).catch(() => null);
   }, [pid, mode, project?.id, projectNumericId, editId, rfqId, rfqData, urlMrId, urlMrRequestNo]);
-
-  const materialRequestsLast15 = useMemo(
-    () => materialRequests.filter(isMrWithinLast15Days),
-    [materialRequests]
-  );
-
-  const displayedMrForModal = useMemo(() => {
-    const q = mrModalSearch.trim();
-    if (!q) return materialRequestsLast15;
-
-    // Exact date
-    if (/^\d{4}-\d{2}-\d{2}$/.test(q)) {
-      return materialRequests.filter((mr: any) => getMrDateKey(mr) === q);
-    }
-
-    // Numeric request no. / id: show client matches immediately, merge with API when ready.
-    // Always re-filter API rows — backend may ignore request_no and return the full project list.
-    if (/^\d+$/.test(q)) {
-      const client = filterMrByRequestNumberQuery(materialRequests, q);
-      if (mrDigitSearchResult === null) return client;
-      const fromApi = filterMrByRequestNumberQuery(mrDigitSearchResult, q);
-      return dedupeMrById([...fromApi, ...client]);
-    }
-
-    // Alphanumeric request reference (e.g. MR-123) — client match only
-    if (/^[A-Za-z0-9\-_/]+$/.test(q) && !/^\d+$/.test(q)) {
-      const byReq = filterMrByRequestNumberQuery(materialRequests, q);
-      if (byReq.length > 0) return byReq;
-    }
-
-    const lower = q.toLowerCase();
-    return materialRequests.filter((mr: any) => {
-      const blob = [
-        getMrRequestNo(mr),
-        mr?.id,
-        mr?.uuid,
-        getMrDateKey(mr),
-        mr?.users?.name,
-        mr?.created_by,
-        mr?.user?.name,
-      ]
-        .map((x) => String(x ?? '').toLowerCase())
-        .join(' ');
-      return blob.includes(lower);
-    });
-  }, [materialRequests, materialRequestsLast15, mrModalSearch, mrDigitSearchResult]);
-
-  const filteredVendorsForSend = useMemo(() => {
-    const q = vendorSearchQuery.trim().toLowerCase();
-    if (!q) return vendors;
-    return vendors.filter((v: any) => {
-      const name = String(v.name ?? v.vendor_name ?? v.company_name ?? '').toLowerCase();
-      const email = String(v.email ?? v.contact_person_email ?? v.contactPersonEmail ?? '').toLowerCase();
-      const phone = String(v.phone ?? v.mobile ?? v.contact_phone ?? '').toLowerCase();
-      return name.includes(q) || email.includes(q) || phone.includes(q);
-    });
-  }, [vendors, vendorSearchQuery]);
-
-  useEffect(() => {
-    if (step !== 'vendorList') setVendorSearchQuery('');
-  }, [step]);
-
-  useEffect(() => {
-    if (showMrSelectModal) {
-      setMrModalSearch('');
-      setMrDigitSearchResult(null);
-      setMrSearchFetchLoading(false);
-    }
-  }, [showMrSelectModal]);
-
-  useEffect(() => {
-    const q = mrModalSearch.trim();
-    if (!showMrSelectModal || !/^\d+$/.test(q)) {
-      setMrDigitSearchResult(null);
-      setMrSearchFetchLoading(false);
-      return;
-    }
-    const mrObjForProject = rfqData?.data?.material_requests ?? rfqData?.material_requests;
-    const projectIdFromRfq = typeof mrObjForProject?.projects_id === 'object'
-      ? (mrObjForProject?.projects_id as any)?.id ?? (mrObjForProject?.projects_id as any)?.uuid
-      : mrObjForProject?.projects_id;
-    const projectIdToUse =
-      getProjectsIdForApi() ??
-      pid ??
-      (mode === 'edit' && project?.id) ??
-      (mode === 'edit' && projectIdFromRfq != null && projectIdFromRfq !== '' ? String(projectIdFromRfq) : undefined) ??
-      undefined;
-    if (!projectIdToUse || String(projectIdToUse).trim() === '') return;
-
-    setMrSearchFetchLoading(true);
-    const tid = setTimeout(() => {
-      materialRequestAPI
-        .list({ projectId: projectIdToUse, request_no: q })
-        .then((list) => {
-          const arr = Array.isArray(list) ? list : [];
-          const client = filterMrByRequestNumberQuery(materialRequests, q);
-          const matched = filterMrByRequestNumberQuery(arr, q);
-          setMrDigitSearchResult(matched.length > 0 ? dedupeMrById([...matched, ...client]) : client);
-        })
-        .catch(() => {
-          setMrDigitSearchResult(filterMrByRequestNumberQuery(materialRequests, q));
-        })
-        .finally(() => setMrSearchFetchLoading(false));
-    }, 400);
-    return () => clearTimeout(tid);
-  }, [mrModalSearch, showMrSelectModal, materialRequests, pid, mode, project?.id, projectNumericId, rfqData, editId, urlMrId, urlMrRequestNo]);
 
   useEffect(() => {
     if (step === 'quotesDetails' && (selectedMrId || selectedMrRequestNo || urlMrId || urlMrRequestNo || rfqId || editId)) {
@@ -761,7 +581,7 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
 
   const getFullPdfUrl = (url: string) => {
     if (!url) return '';
-    const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || '';
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging.koncite.com/api';
     return url.startsWith('http') ? url : apiBase.replace(/\/api\/?$/, '') + (url.startsWith('/') ? url : '/' + url);
   };
 
@@ -1041,9 +861,7 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
                   </button>
                 )}
                 {materialRequests.length > 0 && !selectedMrId && (
-                  <span className={`text-xs ${textSecondary}`}>
-                    ({materialRequestsLast15.length} in last 15 days · {materialRequests.length} total)
-                  </span>
+                  <span className={`text-xs ${textSecondary}`}>({materialRequests.length} available)</span>
                 )}
               </div>
             )}
@@ -1146,53 +964,31 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
           <div className={`rounded-xl border p-6 ${cardClass}`}>
             <h2 className={`text-lg font-bold mb-4 ${textPrimary}`}>Send to Vendors</h2>
             {vendors.length > 0 ? (
-              <>
-                <div className="relative mb-4">
-                  <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} pointer-events-none`} />
-                  <input
-                    type="search"
-                    value={vendorSearchQuery}
-                    onChange={(e) => setVendorSearchQuery(e.target.value)}
-                    placeholder="Search by name, email, or phone…"
-                    className={`w-full pl-10 pr-3 py-2.5 rounded-lg border text-sm ${
-                      isDark ? 'bg-slate-800 border-slate-600 text-slate-100 placeholder:text-slate-500' : 'bg-white border-slate-300 text-slate-900'
-                    } focus:ring-2 focus:ring-[#6B8E23]/40 focus:border-[#6B8E23] outline-none`}
-                    autoComplete="off"
-                    aria-label="Search vendors"
-                  />
-                </div>
-                {filteredVendorsForSend.length > 0 ? (
-                  <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                    {filteredVendorsForSend.map((v: any) => {
-                      const id = String(v.id ?? v.uuid ?? '');
-                      const checked = selectedVendorIds.has(id);
-                      return (
-                        <label
-                          key={id}
-                          className={`flex flex-wrap items-center gap-x-3 gap-y-1 p-3 rounded-lg cursor-pointer ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            onChange={() => toggleVendor(id)}
-                            className="rounded border-[#6B8E23] shrink-0"
-                          />
-                          <span className={`font-medium ${textPrimary}`}>{v.name ?? v.vendor_name ?? 'Vendor'}</span>
-                          {(v.email ?? v.contact_person_email ?? v.contactPersonEmail) && (
-                            <span className={`text-sm ${textSecondary}`}>
-                              {v.email ?? v.contact_person_email ?? v.contactPersonEmail}
-                            </span>
-                          )}
-                        </label>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <p className={`py-6 text-center text-sm ${textSecondary}`}>
-                    No vendors match &quot;{vendorSearchQuery.trim()}&quot;. Try a different search.
-                  </p>
-                )}
-              </>
+              <div className="space-y-2">
+                {vendors.map((v: any) => {
+                  const id = String(v.id ?? v.uuid ?? '');
+                  const checked = selectedVendorIds.has(id);
+                  return (
+                    <label
+                      key={id}
+                      className={`flex items-center gap-3 p-3 rounded-lg cursor-pointer ${isDark ? 'hover:bg-slate-800/50' : 'hover:bg-slate-50'}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleVendor(id)}
+                        className="rounded border-[#6B8E23]"
+                      />
+                      <span className={`font-medium ${textPrimary}`}>{v.name ?? v.vendor_name ?? 'Vendor'}</span>
+                      {(v.email ?? v.contact_person_email ?? v.contactPersonEmail) && (
+                        <span className={`text-sm ${textSecondary}`}>
+                          {v.email ?? v.contact_person_email ?? v.contactPersonEmail}
+                        </span>
+                      )}
+                    </label>
+                  );
+                })}
+              </div>
             ) : (
               <p className={`py-8 text-center ${textSecondary}`}>No vendors found. Add vendors in Masters.</p>
             )}
@@ -1273,48 +1069,26 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
         {showMrSelectModal && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
             <div className={`${bgPrimary} rounded-xl border max-w-lg w-full p-6 ${cardClass}`}>
-              <h3 className={`text-lg font-bold mb-1 ${textPrimary}`}>Select Material Request</h3>
-              <p className={`text-xs mb-3 ${textSecondary}`}>
-                By default, only requests from the <span className="font-semibold text-[#6B8E23]">last 15 days</span> are shown.
-                Search by request number or date (YYYY-MM-DD) to find older records.
-              </p>
-              <div className="relative mb-4">
-                <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} pointer-events-none`} />
-                <input
-                  type="search"
-                  value={mrModalSearch}
-                  onChange={(e) => setMrModalSearch(e.target.value)}
-                  placeholder="Request number, date (YYYY-MM-DD), or name…"
-                  className={`w-full pl-10 pr-3 py-2.5 rounded-lg border text-sm ${
-                    isDark ? 'bg-slate-800 border-slate-600 text-slate-100 placeholder:text-slate-500' : 'bg-white border-slate-300 text-slate-900'
-                  } focus:ring-2 focus:ring-[#6B8E23]/40 focus:border-[#6B8E23] outline-none`}
-                  autoComplete="off"
-                />
-              </div>
+              <h3 className={`text-lg font-bold mb-4 ${textPrimary}`}>Select Material Request</h3>
               {materialRequests.length > 0 ? (
-                <div className="space-y-2 max-h-64 overflow-y-auto relative min-h-[120px]">
-                  {mrSearchFetchLoading && /^\d+$/.test(mrModalSearch.trim()) && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/10 rounded-lg z-10">
-                      <Loader2 className="w-8 h-8 animate-spin text-[#6B8E23]" />
-                    </div>
-                  )}
-                  {displayedMrForModal.map((mr: any) => {
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {materialRequests.map((mr: any) => {
                     const id = String(mr.id ?? mr.uuid ?? '');
-                    const mrReqNo = getMrRequestNo(mr) || String(mr?.request_id ?? '');
+                    const mrReqNo = String(mr?.request_no ?? '');
                     const isSelected = selectedMrId === id || (Boolean(selectedMrRequestNo && mrReqNo) && selectedMrRequestNo === mrReqNo);
                     return (
                       <button
                         key={id}
                         onClick={() => {
                           setSelectedMrId(id);
-                          setSelectedMrRequestNo(getMrRequestNo(mr) || String(mr.request_id ?? id));
+                          setSelectedMrRequestNo(mr.request_no ?? mr.request_id ?? id);
                           setQuoteImage(null);
                         }}
                         className={`w-full text-left p-3 rounded-lg border ${isSelected ? 'border-[#6B8E23] bg-[#6B8E23]/10' : isDark ? 'border-slate-600' : 'border-slate-200'}`}
                       >
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                           <span className={`font-medium ${textPrimary}`}>
-                            {getMrRequestNo(mr) || `MR #${id}`}
+                            {mr.request_no ?? `MR #${id}`}
                           </span>
                           {mr.date && (
                             <span className={`text-sm ${textSecondary}`}>{mr.date}</span>
@@ -1326,13 +1100,6 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
                       </button>
                     );
                   })}
-                  {!mrSearchFetchLoading && displayedMrForModal.length === 0 && (
-                    <p className={`py-6 text-center text-sm ${textSecondary}`}>
-                      {mrModalSearch.trim()
-                        ? 'No material requests match your search. Try another request number or date.'
-                        : 'No material requests in the last 15 days for this project.'}
-                    </p>
-                  )}
                 </div>
               ) : (
                 <p className={`py-8 text-center ${textSecondary}`}>No material requests for this project.</p>

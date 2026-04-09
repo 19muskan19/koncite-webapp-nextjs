@@ -11,7 +11,7 @@ const nextConfig = {
   },
   // Proxy API requests through Next.js to avoid CORS when frontend and backend are different origins
   async rewrites() {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://backoffice.koncite.com/api';
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging.koncite.com/api';
     const base = apiUrl.replace(/\/+$/, '');
     const origin = base.replace(/\/api\/?$/, ''); // e.g.   https://koncite.com
     return [

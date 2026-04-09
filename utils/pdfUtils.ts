@@ -6,7 +6,7 @@
 export function getFullPdfUrl(url: string): string {
   if (!url) return '';
   if (url.startsWith('http')) return url;
-  const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || '';
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging.koncite.com/api';
   const base = apiBase.replace(/\/api\/?$/, '');
   return base + (url.startsWith('/') ? url : '/' + url);
 }

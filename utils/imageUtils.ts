@@ -36,7 +36,7 @@ function resolveLogoPath(path: string): string {
   if (trimmed.startsWith('//')) {
     return `https:${trimmed}`;
   }
-  const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://backoffice.koncite.com/api';
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging.koncite.com/api';
   const base = String(apiBase).replace(/\/api\/?$/, '');
   // Bare filename (e.g. 177433419227.jpg) -> assume logo folder per getImgUpload($file, 'logo')
   let pathPart = trimmed.startsWith('/') ? trimmed : trimmed.includes('/') ? `/${trimmed}` : `/logo/${trimmed}`;
@@ -54,7 +54,7 @@ function toSameOriginLogoUrl(url: string): string {
     if (url.startsWith('http://') || url.startsWith('https://')) {
       return url;
     }
-    const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://backoffice.koncite.com/api';
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging.koncite.com/api';
     const origin = String(apiBase).replace(/\/api\/?$/, '');
     // If URL is from our backend origin, use same-origin path (proxied via rewrites)
     if (url.startsWith(origin)) {
@@ -156,7 +156,7 @@ export function getCompanyLogoImageSrc(logo: string | Record<string, unknown> | 
  */
 function toSameOriginStorageUrl(url: string): string {
   try {
-    const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://backoffice.koncite.com/api';
+    const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging.koncite.com/api';
     const origin = String(apiBase).replace(/\/api\/?$/, '');
     if (url.startsWith(origin + '/storage/') || url.startsWith(origin + '/storage')) {
       const path = url.slice(origin.length);
@@ -178,7 +178,7 @@ export function getProfileImageUrl(value: string | null | undefined, fallbackNam
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:')) {
     return toSameOriginStorageUrl(trimmed);
   }
-  const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://backoffice.koncite.com/api';
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging.koncite.com/api';
   const storageBase = String(apiBase).replace(/\/api\/?$/, '');
   const path = trimmed.startsWith('storage/') ? trimmed : trimmed.includes('/') ? `storage/${trimmed}` : `storage/profile_image/${trimmed}`;
   const fullUrl = path.startsWith('/') ? `${storageBase}${path}` : `${storageBase}/${path}`;
@@ -197,7 +197,7 @@ export function getProfilePhotoImageSrc(value: string | null | undefined): strin
     if (!isValidLogoUrl(trimmed)) return null;
     return toSameOriginStorageUrl(trimmed);
   }
-  const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://backoffice.koncite.com/api';
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging.koncite.com/api';
   const storageBase = String(apiBase).replace(/\/api\/?$/, '');
   const path = trimmed.startsWith('storage/')
     ? trimmed
