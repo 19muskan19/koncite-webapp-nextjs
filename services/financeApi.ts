@@ -17,10 +17,9 @@ import {
   type FinanceTransactionRow,
 } from './financeHttpApi';
 import {
-  DEFAULT_EXPENSE_CHART_COLOR,
-  EXPENSE_CATEGORY_COLORS,
   FINANCE_DEFAULT_ITEM,
   FINANCE_DEFAULT_PARTY,
+  getExpenseCategoryChartColor,
 } from '@/constants/aiFinance';
 import { masterDataAPI } from './api';
 
@@ -240,7 +239,7 @@ export const financeAPI = {
 
   getExpenseDistribution: async (): Promise<{ name: string; value: number; color: string }[]> => {
     const summary = await financeSummary();
-    return expenseDistributionFromSummary(summary, (code) => EXPENSE_CATEGORY_COLORS[code] || DEFAULT_EXPENSE_CHART_COLOR);
+    return expenseDistributionFromSummary(summary, (code, index) => getExpenseCategoryChartColor(code, index));
   },
 
   getReportsPnl: async (): Promise<{ revenue: number; expenses: number; netProfit: number }> => {

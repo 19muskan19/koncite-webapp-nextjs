@@ -27,7 +27,13 @@ import {
   type AiChatTurn,
 } from '@/services/dmsAiService';
 import { listAgentSessions, type AiSession } from '@/services/aiAgentService';
-import { extractFinanceTransactionFromAgentResponse, unwrapAgentPayload } from '@/services/financeAgentParse';
+import {
+  extractFinanceTransactionFromAgentResponse,
+  extractTransactionFromAssistText,
+  unwrapAgentPayload,
+  type ParsedAgentTransaction,
+} from '@/services/financeAgentParse';
+import FinanceChatMarkdown from './FinanceChatMarkdown';
 import AIFinanceChatSessionsSidebar, { type FinanceSessionListItem } from './AIFinanceChatSessionsSidebar';
 
 function getUserInitial(user: { name?: string; email?: string } | null): string {
@@ -43,17 +49,7 @@ interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
-  parsedTransaction?: {
-    type: 'income' | 'expense';
-    total: number;
-    paid?: number;
-    received?: number;
-    category?: string;
-    balance?: number;
-    item?: string;
-    project?: string;
-    party?: string;
-  };
+  parsedTransaction?: ParsedAgentTransaction;
 }
 
 function turnsToChatMessages(turns: AiChatTurn[]): ChatMessage[] {
@@ -339,9 +335,11 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
       const reply =
         extractReplyFromResponse(inner) ||
         (typeof raw === 'object' && raw !== null ? extractReplyFromResponse(raw) : '');
-      const parsed =
+      const replyTrim = reply.trim() || '—';
+      const fromApi =
         extractFinanceTransactionFromAgentResponse(raw) ?? extractFinanceTransactionFromAgentResponse(inner);
-      addMessage('assistant', reply.trim() || '—', parsed ?? undefined);
+      const fromText = fromApi ? undefined : extractTransactionFromAssistText(replyTrim);
+      addMessage('assistant', replyTrim, fromApi ?? fromText ?? undefined);
     } catch (e: unknown) {
       const errMsg = e && typeof e === 'object' && 'message' in e && typeof (e as Error).message === 'string' ? (e as Error).message.trim() : '';
       addMessage('assistant', errMsg || AI_FINANCE_ASSISTANT_UNAVAILABLE);
@@ -366,9 +364,11 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
       const reply =
         extractReplyFromResponse(inner) ||
         (typeof raw === 'object' && raw !== null ? extractReplyFromResponse(raw) : '');
-      const parsed =
+      const replyTrim = reply.trim() || '—';
+      const fromApi =
         extractFinanceTransactionFromAgentResponse(raw) ?? extractFinanceTransactionFromAgentResponse(inner);
-      addMessage('assistant', reply.trim() || '—', parsed ?? undefined);
+      const fromText = fromApi ? undefined : extractTransactionFromAssistText(replyTrim);
+      addMessage('assistant', replyTrim, fromApi ?? fromText ?? undefined);
     } catch (err: unknown) {
       const errMsg = err && typeof err === 'object' && 'message' in err && typeof (err as Error).message === 'string' ? (err as Error).message.trim() : '';
       addMessage('assistant', errMsg || AI_FINANCE_INVOICE_UNAVAILABLE);
@@ -459,11 +459,11 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
                       <div className="space-y-3">
                         <div
                           className={cn(
-                            'rounded-2xl px-4 py-3.5 text-sm font-normal break-words leading-relaxed shadow-sm',
-                            isDark ? 'bg-[#2d2d2d] text-white/[0.95]' : 'bg-slate-200/95 text-slate-900'
+                            'rounded-2xl px-4 py-3.5 break-words shadow-sm border',
+                            isDark ? 'bg-[#2d2d2d] border-white/[0.06]' : 'bg-white border-slate-200/90'
                           )}
                         >
-                          {m.content}
+                          <FinanceChatMarkdown content={m.content} isDark={isDark} />
                         </div>
                         {m.parsedTransaction && (
                           <div
@@ -498,6 +498,12 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
                               </span>
                             </div>
                             <dl className="space-y-3 mb-4">
+                              {m.parsedTransaction.party && (
+                                <div>
+                                  <dt className={cn('text-xs font-medium mb-0.5', isDark ? 'text-white/55' : 'text-slate-500')}>Party / Vendor</dt>
+                                  <dd className={cn('text-sm font-semibold', isDark ? 'text-white' : 'text-slate-900')}>{m.parsedTransaction.party}</dd>
+                                </div>
+                              )}
                               {m.parsedTransaction.category && (
                                 <div>
                                   <dt className={cn('text-xs font-medium mb-0.5', isDark ? 'text-white/55' : 'text-slate-500')}>Category</dt>
@@ -516,10 +522,16 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
                                   <dd className={cn('text-sm font-semibold', isDark ? 'text-white' : 'text-slate-900')}>{m.parsedTransaction.project}</dd>
                                 </div>
                               )}
-                              {m.parsedTransaction.party && (
+                              {m.parsedTransaction.invoiceDate && (
                                 <div>
-                                  <dt className={cn('text-xs font-medium mb-0.5', isDark ? 'text-white/55' : 'text-slate-500')}>Party</dt>
-                                  <dd className={cn('text-sm font-semibold', isDark ? 'text-white' : 'text-slate-900')}>{m.parsedTransaction.party}</dd>
+                                  <dt className={cn('text-xs font-medium mb-0.5', isDark ? 'text-white/55' : 'text-slate-500')}>Invoice date</dt>
+                                  <dd className={cn('text-sm font-semibold', isDark ? 'text-white' : 'text-slate-900')}>{m.parsedTransaction.invoiceDate}</dd>
+                                </div>
+                              )}
+                              {m.parsedTransaction.invoiceRef && (
+                                <div>
+                                  <dt className={cn('text-xs font-medium mb-0.5', isDark ? 'text-white/55' : 'text-slate-500')}>Invoice / receipt</dt>
+                                  <dd className={cn('text-sm font-semibold break-all', isDark ? 'text-white' : 'text-slate-900')}>{m.parsedTransaction.invoiceRef}</dd>
                                 </div>
                               )}
                             </dl>
@@ -567,10 +579,11 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
               {processing && (
                 <div className={cn('flex gap-2 sm:gap-3 justify-start')}>
                   <div className="w-7 h-7 sm:w-8 sm:h-8 bg-[#C2D642] rounded-lg flex items-center justify-center flex-shrink-0">
-                    <Loader2 className="w-4 h-4 sm:w-5 sm:h-5 text-slate-900 animate-spin" />
+                    <Bot className="w-4 h-4 sm:w-5 sm:h-5 text-slate-900" />
                   </div>
-                  <div className={cn('rounded-lg sm:rounded-xl px-3 py-2.5 border', bubbleAssistant)}>
-                    <Loader2 className="w-4 h-4 animate-spin text-slate-500" />
+                  <div className={cn('rounded-lg sm:rounded-xl px-3 py-2.5 border flex items-center', bubbleAssistant)}>
+                    <Loader2 className="w-4 h-4 animate-spin text-slate-500" aria-hidden />
+                    <span className="sr-only">Processing</span>
                   </div>
                 </div>
               )}
@@ -617,8 +630,9 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
                     'p-2 rounded-lg transition-colors flex-shrink-0 min-w-[40px] min-h-[40px] flex items-center justify-center',
                     activeSessionId && input.trim() && !processing ? 'bg-[#C2D642] hover:bg-[#A8B838] text-slate-900' : isDark ? 'bg-[#2d2d2d] text-slate-400 cursor-not-allowed' : 'bg-slate-200 text-slate-400 cursor-not-allowed'
                   )}
+                  aria-busy={processing}
                 >
-                  {processing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                  <Send className={cn('w-4 h-4', processing && 'opacity-50')} />
                 </button>
               </div>
             </div>

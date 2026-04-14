@@ -29,6 +29,11 @@ const nextConfig = {
         source: '/storage/:path*',
         destination: `${origin}/storage/:path*`,
       },
+      // Company web UI ajax (session/CSRF + Bearer) — e.g. PR status on material_requests
+      {
+        source: '/company-proxy/:path*',
+        destination: `${origin}/company/:path*`,
+      },
     ];
   },
   // Avoid persistent webpack disk cache on Windows (can hit EPERM / locking) but keep a fast dev cache.

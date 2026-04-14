@@ -19,6 +19,17 @@ module.exports = {
   ],
   theme: {
     extend: {
+      keyframes: {
+        /* Duplicated row: 0 and -50% match visually → seamless loop; motion is right-to-left */
+        'partners-marquee': {
+          '0%': { transform: 'translateX(0)' },
+          '100%': { transform: 'translateX(-50%)' },
+        },
+      },
+      animation: {
+        /* Seamless loop: duplicated row + translateX(-50%) */
+        'partners-marquee': 'partners-marquee 55s linear infinite',
+      },
       colors: {
         'dropdown-panel': '#2e343d',
         'dropdown-panel-hover': '#3f4756',

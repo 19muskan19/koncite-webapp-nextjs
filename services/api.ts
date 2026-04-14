@@ -1,4 +1,4 @@
-import apiClient, { API_BASE_URL, getAuthToken } from './apiClient';
+import apiClient, { API_BASE_URL, getAuthToken, companyAjaxClient, getLaravelCsrfToken } from './apiClient';
 import { setCookie, removeCookie } from '../utils/cookies';
 
 // Types
@@ -3074,6 +3074,131 @@ export const projectAllocationAPI = {
     } catch (error: any) {
       throw {
         message: error.response?.data?.message || 'Failed to delete project permission',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
+/** PR Approval — project ↔ user allocation (company_users.id per project). */
+const PR_APPROVAL_ADD_PATH =
+  process.env.NEXT_PUBLIC_PR_APPROVAL_ADD_PATH?.replace(/^\/+/, '') ?? 'pr-approval-add';
+
+const PR_LIST_PATH = process.env.NEXT_PUBLIC_PR_LIST_PATH?.replace(/^\/+/, '') ?? 'pr-list';
+
+const PR_DETAILS_PATH = process.env.NEXT_PUBLIC_PR_DETAILS_PATH?.replace(/^\/+/, '') ?? 'pr-details';
+
+const PR_APPROVE_PATH =
+  process.env.NEXT_PUBLIC_PR_APPROVE_PATH?.replace(/^\/+/, '') ?? 'pr-approve';
+
+const PR_REJECT_PATH =
+  process.env.NEXT_PUBLIC_PR_REJECT_PATH?.replace(/^\/+/, '') ?? 'pr-reject';
+
+/**
+ * Company web ajax: `POST|PUT /company/ajax/company-custome-update-status`
+ * Body: uuid, find=material_requests, getUrl=company, title=pr_status, status=1|2, CSRF.
+ */
+const COMPANY_PR_STATUS_PATH =
+  process.env.NEXT_PUBLIC_COMPANY_PR_STATUS_PATH?.replace(/^\/+/, '') ?? 'ajax/company-custome-update-status';
+
+export const prApprovalAPI = {
+  /**
+   * GET /api/pr-list (or /api/v1/pr-list if `NEXT_PUBLIC_PR_LIST_PATH` is set).
+   * Response: array of PR summaries (uuid, request_id, status, status_label, project fields, dates, …).
+   */
+  list: async (): Promise<unknown> => {
+    try {
+      const response = await apiClient.get(`/${PR_LIST_PATH}`);
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to load PR list',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * GET /api/pr-details/{uuid} — full PR with material_request_details lines.
+   */
+  details: async (uuid: string): Promise<unknown> => {
+    try {
+      const response = await apiClient.get(
+        `/${PR_DETAILS_PATH}/${encodeURIComponent(String(uuid).trim())}`
+      );
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to load PR details',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * POST /api/pr-approve — body `{ uuid }` (override path with `NEXT_PUBLIC_PR_APPROVE_PATH`).
+   */
+  approve: async (uuid: string): Promise<unknown> => {
+    try {
+      const response = await apiClient.post(
+        `/${PR_APPROVE_PATH}`,
+        { uuid: String(uuid).trim() },
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to approve purchase request',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * POST /api/pr-reject — body `{ uuid }` (override path with `NEXT_PUBLIC_PR_REJECT_PATH`).
+   */
+  reject: async (uuid: string): Promise<unknown> => {
+    try {
+      const response = await apiClient.post(
+        `/${PR_REJECT_PATH}`,
+        { uuid: String(uuid).trim() },
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to reject purchase request',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * POST /api/pr-approval-add (or /api/v1/pr-approval-add if `NEXT_PUBLIC_PR_APPROVAL_ADD_PATH` is set).
+   * Body: `{ project_id, user_allocation: number[] }` — Bearer via apiClient.
+   */
+  add: async (params: {
+    project_id: number;
+    user_allocation: number[];
+    /** If true, send `material_request_id` instead of `project_id` (same integer value). */
+    useMaterialRequestId?: boolean;
+  }): Promise<unknown> => {
+    try {
+      const body: Record<string, unknown> = {
+        user_allocation: params.user_allocation,
+      };
+      if (params.useMaterialRequestId) {
+        body.material_request_id = params.project_id;
+      } else {
+        body.project_id = params.project_id;
+      }
+      const response = await apiClient.post(`/${PR_APPROVAL_ADD_PATH}`, body, {
+        headers: { 'Content-Type': 'application/json' },
+      });
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to save PR approval allocation',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }

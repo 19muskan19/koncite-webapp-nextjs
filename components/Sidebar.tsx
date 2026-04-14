@@ -22,7 +22,9 @@ import {
   LogOut,
   ClipboardList,
   Warehouse,
-  Banknote
+  Banknote,
+  HardHat,
+  MessageSquare,
 } from 'lucide-react';
 import { ViewType, ThemeType } from '@/types';
 import { useUser } from '@/contexts/UserContext';
@@ -102,6 +104,20 @@ const BASE_SIDEBAR_NAV_ITEMS: NavItem[] = [
     menuSlug: 'dashboard',
   },
   {
+    id: 'PRE_CONSTRUCTION',
+    label: 'Pre Construction',
+    icon: HardHat,
+    menuSlug: 'pre-construction',
+    children: [
+      {
+        label: 'AI-Tendering',
+        id: 'PRE_CONSTRUCTION_AI_TENDERING',
+        path: '/pre-construction/ai-tendering',
+        menuSlug: 'pre-construction-ai-tendering',
+      },
+    ],
+  },
+  {
     id: 'OPERATIONS',
     label: 'Operations',
     icon: ClipboardList,
@@ -145,7 +161,7 @@ const BASE_SIDEBAR_NAV_ITEMS: NavItem[] = [
       {
         label: 'PR Approvals',
         id: ViewType.PR_APPROVAL_MANAGE,
-        path: '/pr-management/pr-approval-manage',
+        path: '/pr-approval',
         menuSlug: 'inventory-pr-approvals',
       },
       {
@@ -398,14 +414,8 @@ const BASE_SIDEBAR_NAV_ITEMS: NavItem[] = [
           {
             label: 'PR Approval Manage',
             id: ViewType.PR_APPROVAL_MANAGE,
-            path: '/pr-management/pr-approval-manage',
+            path: '/pr-approval-manage',
             menuSlug: 'admin-workflow-pr-approval',
-          },
-          {
-            label: 'PR',
-            id: ViewType.PR,
-            path: '/pr-management/pr',
-            menuSlug: 'admin-workflow-pr',
           },
         ],
       },
@@ -442,6 +452,12 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen, s
     () => filterNavItemsByAllowedSlugs(BASE_SIDEBAR_NAV_ITEMS, allowedSlugSet),
     [allowedSlugSet]
   );
+  const aiAssistantHref = '/askme';
+  const showAiAssistantShortcut = useMemo(() => {
+    if (!allowedSlugSet) return true;
+    return allowedSlugSet.has('ai-finance') || allowedSlugSet.has('ai-hub');
+  }, [allowedSlugSet]);
+  const aiAssistantActive = pathname?.startsWith('/askme') ?? false;
   const router = useRouter();
   const [openDropdowns, setOpenDropdowns] = useState<Set<string>>(new Set());
   const isDark = theme === 'dark';
@@ -806,6 +822,36 @@ const Sidebar: React.FC<SidebarProps> = ({ theme, sidebarOpen, setSidebarOpen, s
             );
           })}
         </nav>
+
+        {showAiAssistantShortcut && (
+          <div className={`shrink-0 border-t border-inherit p-2 sm:p-3 ${!sidebarOpen ? 'flex justify-center' : ''}`}>
+            <Link
+              href={aiAssistantHref}
+              onClick={() => {
+                if (!sidebarPinned) setSidebarOpen(false);
+              }}
+              className={`flex items-center gap-3 rounded-xl transition-all ${
+                sidebarOpen ? 'p-3 sm:p-2.5' : 'p-2.5 justify-center w-full'
+              } ${
+                aiAssistantActive
+                  ? isDark
+                    ? 'text-slate-100 bg-slate-700/50 ring-1 ring-[#C2D642]/35'
+                    : 'text-slate-800 bg-slate-100 ring-1 ring-[#C2D642]/35'
+                  : 'opacity-90 hover:opacity-100 hover:bg-black/10 dark:hover:bg-white/10 text-[#C2D642]'
+              }`}
+              aria-label="AI chat assistant"
+              title="AI chat assistant"
+            >
+              <MessageSquare
+                className={`flex-shrink-0 ${sidebarOpen ? 'w-4 h-4' : 'w-5 h-5 lg:w-6 lg:h-6'}`}
+                strokeWidth={2.25}
+              />
+              {sidebarOpen && (
+                <span className="text-sm font-extrabold tracking-tight truncate">AI assistant</span>
+              )}
+            </Link>
+          </div>
+        )}
       </aside>
     </>
   );

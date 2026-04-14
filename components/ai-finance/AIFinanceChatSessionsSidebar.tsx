@@ -85,7 +85,7 @@ export default function AIFinanceChatSessionsSidebar({
             className={cn('p-1.5 rounded-md transition-colors', isDark ? 'hover:bg-[#2a2a2a]' : 'hover:bg-slate-200')}
             aria-label="Refresh sessions"
           >
-            <RefreshCw className={cn('w-3.5 h-3.5', textSecondary, loading && 'animate-spin')} />
+            <RefreshCw className={cn('w-3.5 h-3.5', textSecondary)} />
           </button>
           <button
             type="button"

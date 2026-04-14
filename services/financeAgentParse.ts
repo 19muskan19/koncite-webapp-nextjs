@@ -26,6 +26,9 @@ export type ParsedAgentTransaction = {
   item?: string;
   project?: string;
   party?: string;
+  /** From invoice / markdown when available */
+  invoiceDate?: string;
+  invoiceRef?: string;
 };
 
 function num(v: unknown): number {
@@ -123,4 +126,100 @@ export function extractFinanceTransactionFromAgentResponse(raw: unknown): Parsed
     }
   }
   return undefined;
+}
+
+function parseInrAmountString(raw: string): number {
+  const cleaned = raw.replace(/[₹\s]/g, '').replace(/,/g, '');
+  const n = Number(cleaned);
+  return Number.isFinite(n) && n > 0 ? n : NaN;
+}
+
+/**
+ * When the agent returns markdown prose but no JSON transaction, infer a draft from common labels
+ * (electricity bills, etc.) so the Confirm & Save card can still appear.
+ */
+export function extractTransactionFromAssistText(text: string): ParsedAgentTransaction | undefined {
+  if (!text || text.length < 24) return undefined;
+
+  let total = NaN;
+  const amtPatterns: RegExp[] = [
+    /\*\*Total amount:\*\*\s*\*\*₹?\s*([\d,]+)\*\*/i,
+    /\*\*Total amount:\*\*\s*₹?\s*([\d,]+)/i,
+    /Total amount:?\s*\*?\*?\s*₹?\s*([\d,]+)/i,
+    /(?:^|\n)[-*]\s*\*?\*?Total amount:?\*?\*?\s*[*₹\s]*([\d,]+)/i,
+  ];
+  for (const re of amtPatterns) {
+    const m = text.match(re);
+    if (m) {
+      total = parseInrAmountString(m[1]);
+      if (Number.isFinite(total)) break;
+    }
+  }
+  if (!Number.isFinite(total)) {
+    if (/\b(?:Total\s+amount|Invoice\s+total|Amount\s+due)\b/i.test(text)) {
+      const loose = text.match(/\b₹\s*([\d,]+)\b/);
+      if (loose) total = parseInrAmountString(loose[1]);
+    }
+  }
+  if (!Number.isFinite(total)) return undefined;
+
+  let type: 'income' | 'expense' = 'expense';
+  const typeM = text.match(/(?:Transaction type|Type):\*?\*?\s*(income|expense)/i);
+  if (typeM) type = typeM[1].toLowerCase() as 'income' | 'expense';
+
+  let party: string | undefined;
+  const vp = text.match(
+    /(?:Vendor\s*\/\s*Party|Vendor|Party|Supplier):\*?\*?\s*([^\n*]+?)(?:\n|$|\*(?!\*))/i
+  );
+  if (vp) party = vp[1].replace(/\s+$/, '').trim();
+
+  let item: string | undefined;
+  const im = text.match(/(?:Item\s*\/\s*Service|Item|Service):\*?\*?\s*([^\n*]+?)(?:\n|$)/i);
+  if (im) item = im[1].trim();
+
+  let category: string | undefined;
+  const cm = text.match(/Cost code[^:\n]*:\*?\*?\s*([^\n*]+?)(?:\n|$)/i);
+  if (cm) category = cm[1].trim();
+
+  let project: string | undefined;
+  const pmA = text.match(/\*\*([^*]+)\*\*\s*\(Project ID:\s*(\d+)\)/);
+  const pmB = text.match(/([A-Za-z][^.\n*]{1,80}?)\s*\(Project ID:\s*(\d+)\)/);
+  if (pmA) project = `${pmA[1].trim()} (ID ${pmA[2]})`;
+  else if (pmB) project = `${pmB[1].trim().replace(/\s+$/, '')} (ID ${pmB[2]})`;
+  else {
+    const idOnly = text.match(/Project ID:\s*(\d+)/i);
+    if (idOnly) project = `(ID ${idOnly[1]})`;
+  }
+
+  let invoiceDate: string | undefined;
+  const dm = text.match(/Invoice date:?\*?\*?\s*\*?\*?([^*\n]+?)\*?\*?(?:\n|$)/i);
+  if (dm) invoiceDate = dm[1].trim();
+
+  let invoiceRef: string | undefined;
+  const ir = text.match(
+    /(?:Invoice\s*\/\s*Receipt No|Invoice No|Receipt No):\*?\*?\s*([^\n*]+?)(?:\n|$)/i
+  );
+  if (ir) invoiceRef = ir[1].trim();
+
+  let paid: number | undefined;
+  let received: number | undefined;
+  const paySt = text.match(/Payment status:?\*?\*?\s*(paid|unpaid|pending)/i);
+  if (paySt && paySt[1].toLowerCase() === 'paid') {
+    if (type === 'expense') paid = total;
+    else received = total;
+  }
+
+  return {
+    type,
+    total,
+    paid,
+    received,
+    category,
+    balance: type === 'expense' && paid != null ? Math.max(0, total - paid) : undefined,
+    item,
+    project,
+    party,
+    invoiceDate,
+    invoiceRef,
+  };
 }

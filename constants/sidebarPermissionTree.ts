@@ -18,6 +18,11 @@ export type SidebarPermissionNode = {
 export const SIDEBAR_PERMISSION_TREE: SidebarPermissionNode[] = [
   { key: 'dashboard', label: 'Dashboard' },
   {
+    key: 'pre-construction',
+    label: 'Pre Construction',
+    children: [{ key: 'pre-construction-ai-tendering', label: 'AI-Tendering' }],
+  },
+  {
     key: 'operations',
     label: 'Operations',
     children: [

@@ -13,16 +13,46 @@ export const PAYMENT_MODES = ['Cash', 'Bank Transfer', 'Cheque', 'UPI', 'Credit 
 
 export type PaymentMode = (typeof PAYMENT_MODES)[number];
 
-/** Chart colors keyed by expense category name; unknown categories get `DEFAULT_CHART_COLOR`. */
+/** Chart colors keyed by expense category / cost_code label (exact or case-insensitive). */
 export const EXPENSE_CATEGORY_COLORS: Record<string, string> = {
   Materials: '#C2D642',
   Labour: '#22c55e',
   Equipment: '#3b82f6',
   Revenue: '#22c55e',
   Other: '#f59e0b',
+  Uncoded: '#94a3b8',
+  'Electrical / Utilities': '#0ea5e9',
+  'Civil / Waterproofing': '#f97316',
+  'Maintenance / Electrical': '#a855f7',
+  Plumbing: '#14b8a6',
 };
 
+/** When no explicit mapping exists, cycle by slice index so each segment is distinct. */
+export const EXPENSE_CHART_PALETTE = [
+  '#C2D642',
+  '#22c55e',
+  '#3b82f6',
+  '#f59e0b',
+  '#a855f7',
+  '#14b8a6',
+  '#f97316',
+  '#ec4899',
+  '#6366f1',
+  '#84cc16',
+] as const;
+
 export const DEFAULT_EXPENSE_CHART_COLOR = '#64748b';
+
+export function getExpenseCategoryChartColor(label: string, index: number): string {
+  const t = label.trim();
+  const direct = EXPENSE_CATEGORY_COLORS[t];
+  if (direct) return direct;
+  const lower = t.toLowerCase();
+  for (const [k, v] of Object.entries(EXPENSE_CATEGORY_COLORS)) {
+    if (k.toLowerCase() === lower) return v;
+  }
+  return EXPENSE_CHART_PALETTE[index % EXPENSE_CHART_PALETTE.length]!;
+}
 
 /** Chat / session failure (check auth and `/api/ai-agent` routes). */
 export const AI_FINANCE_ASSISTANT_UNAVAILABLE =
