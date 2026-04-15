@@ -26,6 +26,11 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { masterDataAPI, goodsIssueAPI } from '../../services/api';
 import { useToast } from '../../contexts/ToastContext';
+import type { InventoryReportMeta } from '@/types/inventoryReportMeta';
+import { useUser } from '@/contexts/UserContext';
+import { getSameOriginAssetPathForPdf } from '@/utils/imageUtils';
+import { loadCompanyLogoRasterForPdf } from '@/utils/pdfImage';
+import { mergeInventoryReportMeta } from '@/utils/inventoryMergedReportMeta';
 
 interface Project {
   id: string | number;
@@ -67,6 +72,7 @@ const formatNum = (n: any) => {
 
 const IssueOutwardDetailsReport: React.FC<IssueOutwardDetailsReportProps> = ({ theme }) => {
   const toast = useToast();
+  const { company: userCompany } = useUser();
   const projects = useProjectsFromMasters();
   const [stores, setStores] = useState<Store[]>([]);
   const [issueTypes, setIssueTypes] = useState<IssueType[]>([]);
@@ -78,6 +84,7 @@ const IssueOutwardDetailsReport: React.FC<IssueOutwardDetailsReportProps> = ({ t
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'materials' | 'machines'>('materials');
   const [isLoading, setIsLoading] = useState(false);
+  const [reportMeta, setReportMeta] = useState<InventoryReportMeta | null>(null);
   const [tableData, setTableData] = useState<ReportRow[]>([]);
   const [tableSearch, setTableSearch] = useState<string>('');
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
@@ -121,6 +128,20 @@ const IssueOutwardDetailsReport: React.FC<IssueOutwardDetailsReportProps> = ({ t
     load();
   }, [selectedProject]);
 
+  const mergedReportMeta = useMemo(
+    () =>
+      mergeInventoryReportMeta({
+        reportMeta,
+        userCompany,
+        projects,
+        selectedProject,
+        dateMode: 'range',
+        fromDate,
+        toDate,
+      }),
+    [reportMeta, userCompany, projects, selectedProject, fromDate, toDate]
+  );
+
   const loadReportData = useCallback(async () => {
     if (!selectedProject) {
       setTableData([]);
@@ -128,6 +149,7 @@ const IssueOutwardDetailsReport: React.FC<IssueOutwardDetailsReportProps> = ({ t
     }
     setIsLoading(true);
     setTableData([]);
+    setReportMeta(null);
     try {
       const proj = projects.find((p) => String(p.id) === String(selectedProject) || p.name === selectedProject);
       const projId = proj?.id ?? selectedProject;
@@ -136,7 +158,7 @@ const IssueOutwardDetailsReport: React.FC<IssueOutwardDetailsReportProps> = ({ t
 
       let rows: ReportRow[] = [];
       try {
-        const raw = await goodsIssueAPI.getReport({
+        const res = await goodsIssueAPI.getReport({
           projectId: projId,
           storeId: selectedStore || undefined,
           issueToId: selectedIssueTo || undefined,
@@ -146,7 +168,8 @@ const IssueOutwardDetailsReport: React.FC<IssueOutwardDetailsReportProps> = ({ t
           dataType: activeTab,
           reportType: 'issue-details',
         });
-        const arr = Array.isArray(raw) ? raw : [];
+        setReportMeta(res.meta != null ? res.meta : null);
+        const arr = res.rows ?? [];
         for (const item of arr) {
           const mat = item?.materials ?? item?.material ?? item?.assets ?? item;
           const code = mat?.code ?? item?.code ?? '-';
@@ -175,7 +198,7 @@ const IssueOutwardDetailsReport: React.FC<IssueOutwardDetailsReportProps> = ({ t
           });
         }
       } catch {
-        /* API may not be available, fall through to build from list+edit */
+        setReportMeta(null);
       }
 
       if (rows.length === 0) {
@@ -345,24 +368,105 @@ const IssueOutwardDetailsReport: React.FC<IssueOutwardDetailsReportProps> = ({ t
       URL.revokeObjectURL(a.href);
       toast.showSuccess('Downloaded');
     } else if (format === 'PDF') {
-      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-      doc.setFontSize(16);
-      doc.text(`Issue (Outward) Details Report - ${activeTab === 'materials' ? 'Material' : 'Machines/Assets'}`, 14, 15);
-      doc.setFontSize(10);
-      const tableHeaders = [headers];
-      const tableBody = filteredAndSorted.map((r) => [
-        r.issueNo, r.date, r.code, r.materialsMachine, r.specification, r.unit,
-        formatNum(r.issueQty), r.activities, r.issueBy, r.issueTo,
-      ]);
-      autoTable(doc, { head: tableHeaders, body: tableBody, startY: 22, styles: { fontSize: 8 }, headStyles: { fillColor: [0, 51, 102], textColor: [255, 255, 255] } });
-      doc.save('issue-outward-details-report.pdf');
-      toast.showSuccess('Downloaded');
+      void (async () => {
+        try {
+          const rm = mergedReportMeta;
+          const reportTitle = `Issue (Outward) Details Report - ${activeTab === 'materials' ? 'Material' : 'Machines/Assets'}`;
+          const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+          const margin = 14;
+          let y = 12;
+          doc.setFontSize(16);
+          doc.text(reportTitle, margin, y);
+          y += 9;
+          const raster = await loadCompanyLogoRasterForPdf(rm?.company?.logo ?? userCompany?.logo ?? null);
+          const bandTop = y;
+          let textX = margin;
+          let logoH = 0;
+          if (raster) {
+            try {
+              const ar = raster.widthPx / raster.heightPx;
+              const th = 14;
+              const tw = Math.min(ar * th, 32);
+              const thDraw = tw / ar;
+              doc.addImage(raster.dataUrl, raster.format, margin, bandTop, tw, thDraw);
+              textX = margin + tw + 5;
+              logoH = thDraw;
+            } catch {
+              /* text-only */
+            }
+          }
+          doc.setFontSize(9);
+          let lineY = bandTop + 3.5;
+          const line = (s: string) => {
+            doc.text(s, textX, lineY);
+            lineY += 4.8;
+          };
+          if (rm?.company?.name) line(`Company: ${String(rm.company.name)}`);
+          if (rm?.project?.name) line(`Project: ${String(rm.project.name)}`);
+          if (rm?.subProject?.name) line(`Sub project: ${String(rm.subProject.name)}`);
+          const sd = rm?.selectedDate;
+          if (sd?.from && sd?.to) line(`Period: ${sd.from} – ${sd.to}`);
+          else if (sd?.date) line(`Date: ${String(sd.date)}`);
+          y = Math.max(bandTop + logoH, lineY + 1) + 5;
+          doc.setFontSize(10);
+          const tableHeaders = [headers];
+          const tableBody = filteredAndSorted.map((r) => [
+            r.issueNo,
+            r.date,
+            r.code,
+            r.materialsMachine,
+            r.specification,
+            r.unit,
+            formatNum(r.issueQty),
+            r.activities,
+            r.issueBy,
+            r.issueTo,
+          ]);
+          autoTable(doc, {
+            head: tableHeaders,
+            body: tableBody,
+            startY: y,
+            styles: { fontSize: 8 },
+            headStyles: { fillColor: [0, 51, 102], textColor: [255, 255, 255] },
+          });
+          doc.save('issue-outward-details-report.pdf');
+          toast.showSuccess('Downloaded');
+        } catch {
+          toast.showError('Could not generate PDF');
+        }
+      })();
     } else if (format === 'Print') {
+      const rm = mergedReportMeta;
+      const reportTitle = `Issue (Outward) Details Report - ${activeTab === 'materials' ? 'Material' : 'Machines/Assets'}`;
+      const esc = (s: string) =>
+        String(s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      const companyImg = getSameOriginAssetPathForPdf(rm?.company?.logo ?? userCompany?.logo ?? null) || '';
+      const metaLines = [
+        rm?.company?.name ? `<p style="margin:0 0 4px 0"><strong>Company:</strong> ${esc(String(rm.company.name))}</p>` : '',
+        rm?.project?.name ? `<p style="margin:0 0 4px 0"><strong>Project:</strong> ${esc(String(rm.project.name))}</p>` : '',
+        rm?.subProject?.name ? `<p style="margin:0 0 4px 0"><strong>Sub project:</strong> ${esc(String(rm.subProject.name))}</p>` : '',
+        rm?.selectedDate?.from && rm?.selectedDate?.to
+          ? `<p style="margin:0 0 4px 0"><strong>Period:</strong> ${esc(`${rm.selectedDate.from} – ${rm.selectedDate.to}`)}</p>`
+          : rm?.selectedDate?.date
+            ? `<p style="margin:0 0 4px 0"><strong>Date:</strong> ${esc(String(rm.selectedDate.date))}</p>`
+            : '',
+      ]
+        .filter(Boolean)
+        .join('');
+      const headerRow = `<h1 style="margin:0 0 14px 0;font-size:18px;font-weight:bold">${esc(reportTitle)}</h1>
+<div style="display:flex;align-items:flex-start;gap:20px;margin-bottom:18px;flex-wrap:wrap">
+  ${companyImg ? `<div style="flex-shrink:0"><img src="${esc(companyImg.startsWith('/') ? `${typeof window !== 'undefined' ? window.location.origin : ''}${companyImg}` : companyImg)}" alt="" style="max-height:56px;max-width:200px;object-fit:contain" /></div>` : ''}
+  <div style="font-size:13px;line-height:1.55;min-width:200px">${metaLines}</div>
+</div>`;
       const printContent = `
 <!DOCTYPE html><html><head><title>Issue Outward Details Report</title>
 <style>body{font-family:Arial;padding:20px} table{width:100%;border-collapse:collapse;font-size:12px} th,td{border:1px solid #000;padding:6px;text-align:left} th{background:#f0f0f0}</style>
 </head><body>
-<h1>Issue (Outward) Details Report - ${activeTab === 'materials' ? 'Material' : 'Machines/Assets'}</h1>
+${headerRow}
 <table><thead><tr>${headers.map((h) => `<th>${h}</th>`).join('')}</tr></thead>
 <tbody>${filteredAndSorted.map((r) => `<tr><td>${r.issueNo}</td><td>${r.date}</td><td>${r.code}</td><td>${r.materialsMachine}</td><td>${r.specification}</td><td>${r.unit}</td><td>${formatNum(r.issueQty)}</td><td>${r.activities}</td><td>${r.issueBy}</td><td>${r.issueTo}</td></tr>`).join('')}</tbody></table>
 </body></html>`;

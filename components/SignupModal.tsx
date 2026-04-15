@@ -7,6 +7,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from '../contexts/ToastContext';
 import { authAPI, commonAPI } from '../services/api';
 import { sortCountryCodes, findCountryByDialCode } from '../utils/countryCodeUtils';
+import { EMAIL_INVALID_MESSAGE, isValidEmailAddress } from '@/utils/emailValidation';
 import TermsAndPrivacyModal from './TermsAndPrivacyModal';
 
 interface CountryCode {
@@ -280,8 +281,8 @@ const SignupModal: React.FC<SignupModalProps> = ({ isOpen, onClose, onSignup, lo
 
     if (!formData.email.trim()) {
       newErrors.email = 'Email is required';
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
-      newErrors.email = 'Invalid email format';
+    } else if (!isValidEmailAddress(formData.email)) {
+      newErrors.email = EMAIL_INVALID_MESSAGE;
     }
 
     if (!formData.countryCode.trim()) {

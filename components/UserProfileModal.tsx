@@ -8,6 +8,7 @@ import { useUser } from '@/contexts/UserContext';
 import { userAPI, commonAPI } from '@/services/api';
 import { sortCountryCodes, findCountryByDialCode } from '@/utils/countryCodeUtils';
 import { getProfileImageUrl } from '@/utils/imageUtils';
+import { EMAIL_INVALID_MESSAGE, isValidEmailAddress } from '@/utils/emailValidation';
 
 interface CountryCode {
   code: string;
@@ -316,7 +317,7 @@ const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onClose }) 
     const newErrors: Partial<ProfileFormData> = {};
     if (!formData.name.trim()) newErrors.name = 'Name is required';
     if (!formData.email.trim()) newErrors.email = 'Email is required';
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) newErrors.email = 'Invalid email format';
+    else if (!isValidEmailAddress(formData.email)) newErrors.email = EMAIL_INVALID_MESSAGE;
     if (!formData.countryCode.trim()) newErrors.countryCode = 'Please select a country code';
     if (!formData.phone.trim()) newErrors.phone = 'Phone number is required';
     else if (!/^\d+$/.test(formData.phone)) newErrors.phone = 'Phone must contain only numbers';

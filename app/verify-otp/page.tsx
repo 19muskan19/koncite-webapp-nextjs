@@ -8,6 +8,7 @@ import { useTheme } from '@/contexts/ThemeContext';
 import { useToast } from '@/contexts/ToastContext';
 import { authAPI } from '@/services/api';
 import { usePageTitle } from '@/hooks/usePageTitle';
+import { EMAIL_INVALID_MESSAGE, isValidEmailAddress } from '@/utils/emailValidation';
 
 export default function VerifyOtpPage() {
   usePageTitle('Verify OTP');
@@ -69,6 +70,11 @@ export default function VerifyOtpPage() {
       setError('Email is required');
       return;
     }
+    if (!isValidEmailAddress(email)) {
+      setError(EMAIL_INVALID_MESSAGE);
+      toast.showWarning(EMAIL_INVALID_MESSAGE);
+      return;
+    }
     if (otp.length !== 4) {
       setError('Please enter the 4-digit code');
       return;
@@ -100,6 +106,11 @@ export default function VerifyOtpPage() {
     if (countdown > 0) return;
     if (!email.trim()) {
       setError('Email is required to resend OTP');
+      return;
+    }
+    if (!isValidEmailAddress(email)) {
+      setError(EMAIL_INVALID_MESSAGE);
+      toast.showWarning(EMAIL_INVALID_MESSAGE);
       return;
     }
     // Sign-in 2FA flow: no resend endpoint - user must log in again

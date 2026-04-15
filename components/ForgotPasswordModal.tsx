@@ -6,6 +6,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from '../contexts/ToastContext';
 import { authAPI } from '../services/api';
 import OtpVerificationModal from './OtpVerificationModal';
+import { EMAIL_INVALID_MESSAGE, isValidEmailAddress } from '@/utils/emailValidation';
 
 interface ForgotPasswordModalProps {
   isOpen: boolean;
@@ -38,6 +39,11 @@ const ForgotPasswordModal: React.FC<ForgotPasswordModalProps> = ({ isOpen, onClo
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    if (!isValidEmailAddress(email)) {
+      setError(EMAIL_INVALID_MESSAGE);
+      toast.showWarning(EMAIL_INVALID_MESSAGE);
+      return;
+    }
     setIsLoading(true);
 
     try {

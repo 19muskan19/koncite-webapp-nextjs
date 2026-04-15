@@ -64,6 +64,7 @@ import {
   labourEntriesAPI,
 } from '@/services/api';
 import { useToast } from '@/contexts/ToastContext';
+import { EMAIL_INVALID_MESSAGE, isValidEmailAddress } from '@/utils/emailValidation';
 import { useUser } from '@/contexts/UserContext';
 
 type TabType = 'dashboard' | 'punch' | 'staff' | 'contractor' | 'pay';
@@ -1990,6 +1991,10 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
     }
     if (companyId == null) {
       toast.showWarning('Company ID is missing from your profile');
+      return;
+    }
+    if (email.trim() && !isValidEmailAddress(email)) {
+      toast.showWarning(EMAIL_INVALID_MESSAGE);
       return;
     }
     setIsSubmittingStaff(true);

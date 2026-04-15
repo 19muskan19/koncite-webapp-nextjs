@@ -151,10 +151,12 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
       toast.showSuccess(msg + detail);
       setOpeningStockForm((prev) => ({ ...prev, file: null }));
       if (openingStockFileInputRef.current) openingStockFileInputRef.current.value = '';
-      // Refresh available opening stock if viewing same project/store
-      if (availableStockFilters.project === openingStockForm.project && availableStockFilters.storeWarehouse === openingStockForm.storeWarehouse) {
-        fetchAvailableOpeningStock();
-      }
+      setAvailableStockFilters((prev) => ({
+        ...prev,
+        project: openingStockForm.project,
+        storeWarehouse: openingStockForm.storeWarehouse,
+      }));
+      void fetchAvailableOpeningStock(openingStockForm.project, openingStockForm.storeWarehouse);
     } catch (err: any) {
       toast.showError(getExactErrorMessage(err) || 'Failed to import opening stock');
     } finally {
@@ -241,21 +243,28 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
     }
   }, [activeTab, availableStockFilters.project, isAuthenticated]);
 
-  const fetchAvailableOpeningStock = React.useCallback(async () => {
-    if (!availableStockFilters.project || !availableStockFilters.storeWarehouse) {
-      setAvailableOpeningStockList([]);
-      return;
-    }
-    setIsLoadingAvailableOpeningStock(true);
-    try {
-      const data = await masterDataAPI.getMaterialsOpeningList(availableStockFilters.project, availableStockFilters.storeWarehouse);
-      setAvailableOpeningStockList(Array.isArray(data) ? data : []);
-    } catch {
-      setAvailableOpeningStockList([]);
-    } finally {
-      setIsLoadingAvailableOpeningStock(false);
-    }
-  }, [availableStockFilters.project, availableStockFilters.storeWarehouse]);
+  const fetchAvailableOpeningStock = React.useCallback(
+    async (overrideProject?: string, overrideStore?: string) => {
+      const projectId = overrideProject ?? availableStockFilters.project;
+      const storeId = overrideStore ?? availableStockFilters.storeWarehouse;
+      if (!projectId || !storeId) {
+        if (overrideProject == null && overrideStore == null) {
+          setAvailableOpeningStockList([]);
+        }
+        return;
+      }
+      setIsLoadingAvailableOpeningStock(true);
+      try {
+        const data = await masterDataAPI.getMaterialsOpeningList(projectId, storeId);
+        setAvailableOpeningStockList(Array.isArray(data) ? data : []);
+      } catch {
+        setAvailableOpeningStockList([]);
+      } finally {
+        setIsLoadingAvailableOpeningStock(false);
+      }
+    },
+    [availableStockFilters.project, availableStockFilters.storeWarehouse]
+  );
 
   // Fetch available opening stock when project and store selected
   useEffect(() => {
@@ -1328,7 +1337,16 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                             const name = m?.name ?? row.name ?? row.material_name ?? row.materials_name ?? '-';
                             const spec = m?.specification ?? row.specification ?? '-';
                             const unit = m?.unit ?? row.unit ?? row.units?.unit ?? '-';
-                            const opening = row.qty ?? row.opening ?? row.opening_qty ?? '-';
+                            const rawOpening = row.quantity ?? row.qty ?? row.opening ?? row.opening_qty;
+                            const opening =
+                              rawOpening != null && rawOpening !== ''
+                                ? Number.isFinite(Number(rawOpening))
+                                  ? Number(rawOpening).toLocaleString('en-IN', {
+                                      minimumFractionDigits: 0,
+                                      maximumFractionDigits: 4,
+                                    })
+                                  : String(rawOpening)
+                                : '-';
                             return (
                               <tr key={row.id || index} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
                                 <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{index + 1}</td>
@@ -1414,6 +1432,7 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
         onSuccess={(importedCodes) => {
           setLastImportedCodes(importedCodes || []);
           setShowBulkUploadModal(false);
+          setListCurrentPage(1);
           fetchMaterials();
         }}
       />

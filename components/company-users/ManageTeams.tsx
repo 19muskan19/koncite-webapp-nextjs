@@ -31,6 +31,7 @@ import TeamMemberPermissionsModal, {
   type TeamPermissionApiContext,
 } from '@/components/company-users/TeamMemberPermissionsModal';
 import { unwrapPermissionMatrixPayload } from '@/utils/unwrapPermissionMatrixPayload';
+import { EMAIL_INVALID_MESSAGE, isValidEmailAddress } from '@/utils/emailValidation';
 
 interface CountryCode {
   code: string;
@@ -679,6 +680,10 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
       toast.showWarning(`Required: ${missing.join(', ')}`);
       return;
     }
+    if (!isValidEmailAddress(formData.email)) {
+      toast.showWarning(EMAIL_INVALID_MESSAGE);
+      return;
+    }
     if (formData.password !== formData.confirmPassword) {
       toast.showWarning('Passwords do not match');
       return;
@@ -835,6 +840,10 @@ const ManageTeams: React.FC<ManageTeamsProps> = ({ theme }) => {
     if (!formData.designation?.trim()) missing.push('Designation');
     if (missing.length > 0) {
       toast.showWarning(`Required: ${missing.join(', ')}`);
+      return;
+    }
+    if (!isValidEmailAddress(formData.email)) {
+      toast.showWarning(EMAIL_INVALID_MESSAGE);
       return;
     }
     if (formData.phone && !/^\d{10}$/.test(formData.phone)) {

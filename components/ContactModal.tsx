@@ -3,7 +3,9 @@
 import React, { useState, useEffect } from 'react';
 import { X, Mail, User, Phone, FileText, MessageSquare, ChevronDown, Loader2 } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
+import { useToast } from '../contexts/ToastContext';
 import { sortCountryCodes, findCountryByDialCode } from '../utils/countryCodeUtils';
+import { EMAIL_INVALID_MESSAGE, isValidEmailAddress } from '../utils/emailValidation';
 
 interface ContactModalProps {
   isOpen: boolean;
@@ -24,6 +26,7 @@ const getFlagUrl = (countryCode: string) => {
 
 const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) => {
   const { isDark } = useTheme();
+  const toast = useToast();
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -130,6 +133,10 @@ const ContactModal: React.FC<ContactModalProps> = ({ isOpen, onClose }) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isValidEmailAddress(formData.email)) {
+      toast.showWarning(EMAIL_INVALID_MESSAGE);
+      return;
+    }
     setIsSubmitting(true);
     setSubmitStatus(null);
 

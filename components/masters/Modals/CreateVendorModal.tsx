@@ -7,6 +7,7 @@ import { X, Loader2, ChevronDown, Search } from 'lucide-react';
 import { masterDataAPI } from '@/services/api';
 import { getExactErrorMessage } from '@/utils/errorUtils';
 import { sortCountryCodes, findCountryByDialCode } from '@/utils/countryCodeUtils';
+import { EMAIL_INVALID_MESSAGE, isValidEmailAddress } from '@/utils/emailValidation';
 
 interface CountryCode {
   code: string;
@@ -240,10 +241,8 @@ const CreateVendorModal: React.FC<CreateVendorModalProps> = ({
       return false;
     }
 
-    // Basic email validation
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(formData.email.trim())) {
-      toast.showWarning('Please enter a valid email address');
+    if (!isValidEmailAddress(formData.email)) {
+      toast.showWarning(EMAIL_INVALID_MESSAGE);
       return false;
     }
 

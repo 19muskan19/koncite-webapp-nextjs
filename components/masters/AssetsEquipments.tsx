@@ -228,21 +228,28 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
     }
   }, [activeTab, openingStockSubTab, openingStockForm.project, isAuthenticated]);
 
-  const fetchAvailableOpeningStock = React.useCallback(async () => {
-    if (!availableStockFilters.project || !availableStockFilters.storeWarehouse) {
-      setAvailableOpeningStockList([]);
-      return;
-    }
-    setIsLoadingAvailableOpeningStock(true);
-    try {
-      const data = await masterDataAPI.getAssetsOpeningStockList(availableStockFilters.project, availableStockFilters.storeWarehouse);
-      setAvailableOpeningStockList(Array.isArray(data) ? data : []);
-    } catch {
-      setAvailableOpeningStockList([]);
-    } finally {
-      setIsLoadingAvailableOpeningStock(false);
-    }
-  }, [availableStockFilters.project, availableStockFilters.storeWarehouse]);
+  const fetchAvailableOpeningStock = React.useCallback(
+    async (overrideProject?: string, overrideStore?: string) => {
+      const projectId = overrideProject ?? availableStockFilters.project;
+      const storeId = overrideStore ?? availableStockFilters.storeWarehouse;
+      if (!projectId || !storeId) {
+        if (overrideProject == null && overrideStore == null) {
+          setAvailableOpeningStockList([]);
+        }
+        return;
+      }
+      setIsLoadingAvailableOpeningStock(true);
+      try {
+        const data = await masterDataAPI.getAssetsOpeningStockList(projectId, storeId);
+        setAvailableOpeningStockList(Array.isArray(data) ? data : []);
+      } catch {
+        setAvailableOpeningStockList([]);
+      } finally {
+        setIsLoadingAvailableOpeningStock(false);
+      }
+    },
+    [availableStockFilters.project, availableStockFilters.storeWarehouse]
+  );
 
   useEffect(() => {
     if (activeTab !== 'openingStock' || openingStockSubTab !== 'available') {
@@ -604,6 +611,13 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
       const msg = data?.message ?? 'Opening stock imported successfully';
       toast.showSuccess(msg);
       setOpeningStockForm(prev => ({ ...prev, file: null }));
+      if (openingStockFileInputRef.current) openingStockFileInputRef.current.value = '';
+      setAvailableStockFilters((prev) => ({
+        ...prev,
+        project: openingStockForm.project,
+        storeWarehouse: openingStockForm.storeWarehouse,
+      }));
+      void fetchAvailableOpeningStock(openingStockForm.project, openingStockForm.storeWarehouse);
     } catch (err: any) {
       toast.showError(err?.message || 'Failed to import opening stock');
     } finally {
@@ -1367,7 +1381,17 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                             const code = a?.code ?? row.code ?? row.asset_code ?? '-';
                             const spec = a?.specification ?? row.specification ?? '-';
                             const unit = a?.unit ?? a?.units?.unit ?? row.unit ?? row.units?.unit ?? '-';
-                            const opening = row.qty ?? row.opening ?? row.opening_qty ?? '-';
+                            const rawOpening =
+                              row.quantity ?? row.qty ?? row.opening ?? row.opening_qty ?? row.total_inward ?? row.total_stock_qty;
+                            const opening =
+                              rawOpening != null && rawOpening !== ''
+                                ? Number.isFinite(Number(rawOpening))
+                                  ? Number(rawOpening).toLocaleString('en-IN', {
+                                      minimumFractionDigits: 0,
+                                      maximumFractionDigits: 4,
+                                    })
+                                  : String(rawOpening)
+                                : '-';
                             return (
                               <tr key={row.id || index} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
                                 <td className={`px-4 py-3 text-sm font-bold ${textPrimary}`}>{index + 1}</td>
@@ -1440,6 +1464,7 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
         onClose={() => setShowBulkUploadModal(false)}
         onSuccess={() => {
           setShowBulkUploadModal(false);
+          setListCurrentPage(1);
           fetchAssets();
         }}
       />

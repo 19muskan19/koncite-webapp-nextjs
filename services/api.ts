@@ -1,5 +1,7 @@
 import apiClient, { API_BASE_URL, getAuthToken, companyAjaxClient, getLaravelCsrfToken } from './apiClient';
 import { setCookie, removeCookie } from '../utils/cookies';
+import type { InventoryReportMeta, InventoryReportResult } from '../types/inventoryReportMeta';
+import { parseInventoryReportResponse } from '../utils/inventoryReportResponse';
 
 // Types
 export type CountryCode = '91' | '971';
@@ -2640,7 +2642,7 @@ export const masterDataAPI = {
   /**
    * Available assets opening stock – GET/POST assets-available-opening-stock
    * Filters: project_id, store_id (nullable; both applied with AND when provided)
-   * Response: AssetsOpeningStockResource[] with qty, asset, project, store
+   * Response: AssetsOpeningStockResource[] with quantity (and sometimes qty/opening), asset, project, store
    */
   getAssetsOpeningStockList: async (projectId?: number | string, storeId?: number | string): Promise<any[]> => {
     try {
@@ -5285,7 +5287,7 @@ export const materialRequestAPI = {
    * Backend type: 'pr'
    * All filters optional. With no filters, returns all materials with material requests.
    * Request: { type: 'pr', projectId|project?, subProjectId|subproject?, dateForm|date_from?, dateTo|date_to?, indentNo|indent_no? }
-   * Response: data.material - array with sl_no, name, specification, code, unit, totalRequiredQty, totalRequiredDate, requiredforActivities, remarks, currentStock
+   * Response envelope may include `meta` (company, project, subProject logos/names) alongside `data.material`.
    */
   getReport: async (filters?: {
     projectId?: number | string;
@@ -5298,7 +5300,7 @@ export const materialRequestAPI = {
     date_to?: string;
     indentNo?: string;
     indent_no?: string;
-  }): Promise<any[]> => {
+  }): Promise<InventoryReportResult> => {
     try {
       const payload: Record<string, unknown> = { type: 'pr' };
       const project = filters?.projectId ?? filters?.project;
@@ -5312,26 +5314,9 @@ export const materialRequestAPI = {
       const indentNo = (filters?.indentNo ?? filters?.indent_no ?? '').trim();
       if (indentNo) payload.indentNo = indentNo;
       const response = await apiClient.post('/inventory/inventory-report', payload);
-      const root = response.data?.data ?? response.data;
-      const inner =
-        root && typeof root === 'object' && 'data' in root && (root as { data?: unknown }).data != null
-          ? (root as { data: unknown }).data
-          : root;
-      const material =
-        (inner && typeof inner === 'object'
-          ? (inner as { material?: unknown; materials?: unknown }).material ??
-            (inner as { material?: unknown; materials?: unknown }).materials
-          : undefined) ??
-        (root && typeof root === 'object'
-          ? (root as { material?: unknown; materials?: unknown }).material ??
-            (root as { material?: unknown; materials?: unknown }).materials
-          : undefined);
-      if (Array.isArray(material)) return material;
-      if (Array.isArray(root)) return root;
-      if (Array.isArray(inner)) return inner as unknown[];
-      return [];
+      return parseInventoryReportResponse(response.data);
     } catch (error: any) {
-      if (error?.response?.status === 404 || error?.response?.status === 422) return [];
+      if (error?.response?.status === 404 || error?.response?.status === 422) return { rows: [], meta: null };
       throw {
         message: error.response?.data?.message || 'Failed to load PR report',
         errors: error.response?.data?.errors || {},
@@ -5786,7 +5771,7 @@ export const rfqAPI = {
     prepared_by?: number | string;
     rfqno?: string;
     rfq_no?: string;
-  }): Promise<any[]> => {
+  }): Promise<InventoryReportResult> => {
     try {
       const payload: Record<string, unknown> = { type: 'rfq' };
       const project = filters?.projectId ?? filters?.project;
@@ -5802,26 +5787,9 @@ export const rfqAPI = {
       const rfqno = (filters?.rfqno ?? filters?.rfq_no ?? '').trim();
       if (rfqno) payload.rfqno = rfqno;
       const response = await apiClient.post('/inventory/inventory-report', payload);
-      const root = response.data?.data ?? response.data;
-      const inner =
-        root && typeof root === 'object' && 'data' in root && (root as { data?: unknown }).data != null
-          ? (root as { data: unknown }).data
-          : root;
-      const material =
-        (inner && typeof inner === 'object'
-          ? (inner as { material?: unknown; materials?: unknown }).material ??
-            (inner as { material?: unknown; materials?: unknown }).materials
-          : undefined) ??
-        (root && typeof root === 'object'
-          ? (root as { material?: unknown; materials?: unknown }).material ??
-            (root as { material?: unknown; materials?: unknown }).materials
-          : undefined);
-      if (Array.isArray(material)) return material;
-      if (Array.isArray(root)) return root;
-      if (Array.isArray(inner)) return inner as unknown[];
-      return [];
+      return parseInventoryReportResponse(response.data);
     } catch (error: any) {
-      if (error?.response?.status === 404 || error?.response?.status === 422) return [];
+      if (error?.response?.status === 404 || error?.response?.status === 422) return { rows: [], meta: null };
       throw { message: error.response?.data?.message || 'Failed to load RFQ report', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
@@ -6068,7 +6036,7 @@ export const goodsReturnAPI = {
     dateTo?: string;
     search?: string;
     dataType: 'materials' | 'machines';
-  }): Promise<any[]> => {
+  }): Promise<InventoryReportResult> => {
     try {
       const payload: Record<string, unknown> = {
         type: 'issue-return',
@@ -6091,12 +6059,10 @@ export const goodsReturnAPI = {
       }
       if (filters.search != null && String(filters.search).trim()) payload.search = filters.search.trim();
       const response = await apiClient.post('/inventory/inventory-report', payload);
-      const data = response.data?.data ?? response.data;
-      const assets = data?.assets ?? data?.material ?? data?.materials ?? data;
-      return Array.isArray(assets) ? assets : [];
+      return parseInventoryReportResponse(response.data);
     } catch (error: any) {
       if (error?.response?.status === 404 || error?.response?.status === 422) {
-        return [];
+        return { rows: [], meta: null };
       }
       throw { message: error.response?.data?.message || 'Failed to load Issue Return report', errors: error.response?.data?.errors || {} } as ApiError;
     }
@@ -6243,7 +6209,7 @@ export const goodsIssueAPI = {
     search?: string;
     dataType?: 'materials' | 'machines';
     reportType?: 'issue-slip' | 'issue-details';
-  }): Promise<any[]> => {
+  }): Promise<InventoryReportResult> => {
     try {
       const reportType = filters.reportType ?? 'issue-slip';
       const dateStr = (filters.date ?? filters.dateFrom ?? '').toString().slice(0, 10);
@@ -6252,7 +6218,7 @@ export const goodsIssueAPI = {
       const store = filters.storeId != null && filters.storeId !== '' ? filters.storeId : undefined;
 
       if (reportType === 'issue-slip') {
-        if (!project || !store || !dateStr) return [];
+        if (!project || !store || !dateStr) return { rows: [], meta: null };
       }
 
       const payload: Record<string, unknown> = {
@@ -6271,12 +6237,10 @@ export const goodsIssueAPI = {
       if (filters.issueToId != null && filters.issueToId !== '') payload.entry_type = filters.issueToId;
       if (filters.search != null && String(filters.search).trim()) payload.search = filters.search.trim();
       const response = await apiClient.post('/inventory/inventory-report', payload);
-      const data = response.data?.data ?? response.data;
-      const arr = data?.assets ?? data?.material ?? data?.materials ?? data;
-      return Array.isArray(arr) ? arr : [];
+      return parseInventoryReportResponse(response.data);
     } catch (error: any) {
       if (error?.response?.status === 404 || error?.response?.status === 422) {
-        return [];
+        return { rows: [], meta: null };
       }
       throw { message: error.response?.data?.message || 'Failed to load Issue report', errors: error.response?.data?.errors || {} } as ApiError;
     }
@@ -6458,7 +6422,7 @@ export const goodsReceiptAPI = {
     dataType?: 'materials' | 'machines';
     item_type?: 'materials' | 'machines';
     reportType?: 'grn-slip' | 'grn-details';
-  }): Promise<any[] | { fetchHeadData?: any; assets: any[] }> => {
+  }): Promise<InventoryReportResult> => {
     try {
       const reportType = filters.reportType ?? 'grn-slip';
       const project = filters.projectId ?? filters.project;
@@ -6468,10 +6432,10 @@ export const goodsReceiptAPI = {
       const itemType = filters.dataType ?? filters.item_type ?? 'materials';
 
       if (reportType === 'grn-slip' && (!project || !store || !dateStr)) {
-        return { assets: [], fetchHeadData: undefined };
+        return { rows: [], meta: null, fetchHeadData: undefined };
       }
       if (reportType === 'grn-details' && (!project || !store || !dateStr || !dateToStr)) {
-        return [];
+        return { rows: [], meta: null };
       }
 
       const payload: Record<string, unknown> = {
@@ -6491,16 +6455,20 @@ export const goodsReceiptAPI = {
       if (supplier != null && supplier !== '') payload.supplier = supplier;
       if (filters.search != null && String(filters.search).trim()) payload.search = filters.search.trim();
       const response = await apiClient.post('/inventory/inventory-report', payload);
+      const parsed = parseInventoryReportResponse(response.data);
       const data = response.data?.data ?? response.data;
-      const arr = data?.assets ?? data?.material ?? data?.materials ?? data;
-      const assets = Array.isArray(arr) ? arr : [];
+      const fd =
+        parsed.fetchHeadData ??
+        (data && typeof data === 'object'
+          ? (data as Record<string, unknown>).fetchHeadData ?? (data as Record<string, unknown>).fetch_head_data
+          : undefined);
       if (reportType === 'grn-slip') {
-        return { fetchHeadData: data?.fetchHeadData ?? data?.fetch_head_data, assets };
+        return { rows: parsed.rows, meta: parsed.meta, fetchHeadData: fd };
       }
-      return assets;
+      return { rows: parsed.rows, meta: parsed.meta };
     } catch (error: any) {
       if (error?.response?.status === 404 || error?.response?.status === 422) {
-        return [];
+        return { rows: [], meta: null };
       }
       throw { message: error.response?.data?.message || 'Failed to load GRN report', errors: error.response?.data?.errors || {} } as ApiError;
     }

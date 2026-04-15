@@ -151,6 +151,33 @@ export function getCompanyLogoImageSrc(logo: string | Record<string, unknown> | 
 }
 
 /**
+ * Prefer `/logo/...` or `/storage/...` on the app origin so `fetch()` + jsPDF work (Next rewrites proxy to the API).
+ * Falls back to the resolved absolute URL when the asset is hosted elsewhere.
+ */
+export function getSameOriginAssetPathForPdf(
+  logo: string | Record<string, unknown> | null | undefined
+): string | null {
+  const resolved = getCompanyLogoImageSrc(logo);
+  if (!resolved) return null;
+  if (resolved.startsWith('/')) return resolved;
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'https://staging.koncite.com/api';
+  const backendOrigin = String(apiBase).replace(/\/api\/?$/, '');
+  if (resolved.startsWith(backendOrigin)) {
+    const p = resolved.slice(backendOrigin.length);
+    return p.startsWith('/') ? p : `/${p}`;
+  }
+  try {
+    const u = new URL(resolved);
+    if (u.pathname.startsWith('/logo/') || u.pathname.startsWith('/storage/')) {
+      return u.pathname + u.search + u.hash;
+    }
+  } catch {
+    /* ignore */
+  }
+  return resolved;
+}
+
+/**
  * Convert storage URL to same-origin path when possible.
  * Uses Next.js rewrite /storage/:path* so images load from same origin (avoids CORS).
  */

@@ -22,6 +22,10 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { masterDataAPI } from '../../services/api';
 import { useToast } from '../../contexts/ToastContext';
+import { useUser } from '@/contexts/UserContext';
+import { getSameOriginAssetPathForPdf } from '@/utils/imageUtils';
+import { loadCompanyLogoRasterForPdf } from '@/utils/pdfImage';
+import { mergeCompanyOnlyMeta } from '@/utils/inventoryMergedReportMeta';
 
 interface ReportRow {
   id: string;
@@ -58,6 +62,7 @@ const formatNum = (n: any) => {
 
 const GlobalStockDetailsReport: React.FC<GlobalStockDetailsReportProps> = ({ theme }) => {
   const toast = useToast();
+  const { company: userCompany } = useUser();
   const [activeTab, setActiveTab] = useState<'materials' | 'assets'>('materials');
   const [isLoading, setIsLoading] = useState(false);
   const [tableData, setTableData] = useState<ReportRow[]>([]);
@@ -71,6 +76,8 @@ const GlobalStockDetailsReport: React.FC<GlobalStockDetailsReportProps> = ({ the
   const cardClass = isDark ? 'card-dark' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
+
+  const mergedReportMeta = useMemo(() => mergeCompanyOnlyMeta(userCompany), [userCompany]);
 
   const loadReportData = useCallback(async () => {
     setIsLoading(true);
@@ -129,7 +136,7 @@ const GlobalStockDetailsReport: React.FC<GlobalStockDetailsReportProps> = ({ the
               const name = mat?.name ?? item?.name ?? item?.material_name ?? item?.materials_name ?? item?.assets?.name ?? '-';
               const spec = mat?.specification ?? item?.specification ?? '-';
               const unit = mat?.unit ?? item?.unit ?? (mat?.units?.unit ?? '-');
-              const qty = Number(item?.qty ?? item?.opening ?? item?.opening_qty ?? 0);
+              const qty = Number(item?.quantity ?? item?.qty ?? item?.opening ?? item?.opening_qty ?? 0);
               if (qty <= 0) continue;
               allRows.push({
                 id: `${projId}-${item?.id ?? i}-${allRows.length}`,
@@ -304,36 +311,88 @@ const GlobalStockDetailsReport: React.FC<GlobalStockDetailsReportProps> = ({ the
       URL.revokeObjectURL(a.href);
       toast.showSuccess('Downloaded');
     } else if (format === 'PDF') {
-      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-      doc.setFontSize(16);
-      doc.text(`Global Stock Details - ${activeTab === 'materials' ? 'Material' : 'Assets'}`, 14, 15);
-      doc.setFontSize(10);
-      const tableHeaders = [headers];
-      const tableBody = filteredAndSorted.map((r, idx) => [
-        String(idx + 1),
-        r.code,
-        r.name,
-        r.specification,
-        r.unit,
-        ...projectColumns.map((p) => formatNum(r.byProject[p] ?? 0)),
-        formatNum(r.totalQty),
-      ]);
-      autoTable(doc, {
-        head: tableHeaders,
-        body: tableBody,
-        startY: 22,
-        styles: { fontSize: 7 },
-        headStyles: { fillColor: [0, 51, 102], textColor: [255, 255, 255] },
-        horizontalPageBreak: true,
-      });
-      doc.save(`global-stock-details-${activeTab}.pdf`);
-      toast.showSuccess('Downloaded');
+      void (async () => {
+        try {
+          const rm = mergedReportMeta;
+          const reportTitle = `Global Stock Details - ${activeTab === 'materials' ? 'Material' : 'Assets'}`;
+          const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+          const margin = 14;
+          let y = 12;
+          doc.setFontSize(16);
+          doc.text(reportTitle, margin, y);
+          y += 9;
+          const raster = await loadCompanyLogoRasterForPdf(rm?.company?.logo ?? userCompany?.logo ?? null);
+          const bandTop = y;
+          let textX = margin;
+          let logoH = 0;
+          if (raster) {
+            try {
+              const ar = raster.widthPx / raster.heightPx;
+              const th = 14;
+              const tw = Math.min(ar * th, 32);
+              const thDraw = tw / ar;
+              doc.addImage(raster.dataUrl, raster.format, margin, bandTop, tw, thDraw);
+              textX = margin + tw + 5;
+              logoH = thDraw;
+            } catch {
+              /* text-only */
+            }
+          }
+          doc.setFontSize(9);
+          let lineY = bandTop + 3.5;
+          if (rm?.company?.name) {
+            doc.text(`Company: ${String(rm.company.name)}`, textX, lineY);
+            lineY += 4.8;
+          }
+          y = Math.max(bandTop + logoH, lineY + 1) + 5;
+          doc.setFontSize(10);
+          const tableHeaders = [headers];
+          const tableBody = filteredAndSorted.map((r, idx) => [
+            String(idx + 1),
+            r.code,
+            r.name,
+            r.specification,
+            r.unit,
+            ...projectColumns.map((p) => formatNum(r.byProject[p] ?? 0)),
+            formatNum(r.totalQty),
+          ]);
+          autoTable(doc, {
+            head: tableHeaders,
+            body: tableBody,
+            startY: y,
+            styles: { fontSize: 7 },
+            headStyles: { fillColor: [0, 51, 102], textColor: [255, 255, 255] },
+            horizontalPageBreak: true,
+          });
+          doc.save(`global-stock-details-${activeTab}.pdf`);
+          toast.showSuccess('Downloaded');
+        } catch {
+          toast.showError('Could not generate PDF');
+        }
+      })();
     } else if (format === 'Print') {
+      const rm = mergedReportMeta;
+      const reportTitle = `Global Stock Details - ${activeTab === 'materials' ? 'Material' : 'Assets'}`;
+      const esc = (s: string) =>
+        String(s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      const companyImg = getSameOriginAssetPathForPdf(rm?.company?.logo ?? userCompany?.logo ?? null) || '';
+      const metaLines = rm?.company?.name
+        ? `<p style="margin:0 0 4px 0"><strong>Company:</strong> ${esc(String(rm.company.name))}</p>`
+        : '';
+      const headerRow = `<h1 style="margin:0 0 14px 0;font-size:18px;font-weight:bold">${esc(reportTitle)}</h1>
+<div style="display:flex;align-items:flex-start;gap:20px;margin-bottom:18px;flex-wrap:wrap">
+  ${companyImg ? `<div style="flex-shrink:0"><img src="${esc(companyImg.startsWith('/') ? `${typeof window !== 'undefined' ? window.location.origin : ''}${companyImg}` : companyImg)}" alt="" style="max-height:56px;max-width:200px;object-fit:contain" /></div>` : ''}
+  <div style="font-size:13px;line-height:1.55;min-width:200px">${metaLines}</div>
+</div>`;
       const printContent = `
 <!DOCTYPE html><html><head><title>Global Stock Details Report</title>
 <style>body{font-family:Arial;padding:20px} table{width:100%;border-collapse:collapse;font-size:12px} th,td{border:1px solid #000;padding:6px;text-align:left} th{background:#f0f0f0}</style>
 </head><body>
-<h1>Global Stock Details - ${activeTab === 'materials' ? 'Material' : 'Assets'}</h1>
+${headerRow}
 <table><thead><tr>${headers.map((h) => `<th>${h}</th>`).join('')}</tr></thead>
 <tbody>${filteredAndSorted
         .map(

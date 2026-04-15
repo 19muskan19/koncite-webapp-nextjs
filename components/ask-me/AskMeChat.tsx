@@ -79,14 +79,18 @@ export default function AskMeChat() {
   /**
    * Load session list. Keep deps **only `[userId]`** — do not depend on `toast` or the callback
    * identity will change every render and retrigger `useEffect` → infinite GET /sessions + toasts.
-   * After send / new chat use `{ silent: true }` so a failing list endpoint does not spam errors.
+   * After new session use `{ silent: true, background: true }` to update the list without a loading spinner.
+   * Do not call this after every chat message — the active thread is already in UI state.
    */
-  const loadSessions = useCallback(async (options?: { silent?: boolean }) => {
+  const loadSessions = useCallback(async (options?: { silent?: boolean; background?: boolean }) => {
     if (!userId) {
       setSessions([]);
       return;
     }
-    setLoadingSessions(true);
+    const showLoading = !options?.background;
+    if (showLoading) {
+      setLoadingSessions(true);
+    }
     try {
       const rows = await fetchCopilotSessions(userId);
       rows.sort((a, b) => {
@@ -103,7 +107,9 @@ export default function AskMeChat() {
         console.warn('[Ask me] Session list refresh failed (silent):', e);
       }
     } finally {
-      setLoadingSessions(false);
+      if (showLoading) {
+        setLoadingSessions(false);
+      }
     }
   }, [userId]);
 
@@ -114,6 +120,30 @@ export default function AskMeChat() {
     }
     void loadSessions();
   }, [userId, loadSessions]);
+
+  /** Creates a server session when none exists (e.g. first message without clicking New chat). */
+  const ensureCopilotSession = async (): Promise<string | null> => {
+    if (sessionIdRef.current) return sessionIdRef.current;
+    if (!userId) return null;
+    setSessionBusy(true);
+    try {
+      const created = await createCopilotSession({
+        userId,
+        name: `Ask me · ${new Date().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`,
+      });
+      const sid = getCopilotSessionId(created);
+      if (!sid) throw new Error('No session id returned from server.');
+      sessionIdRef.current = sid;
+      setSessionId(sid);
+      await loadSessions({ silent: true, background: true });
+      return sid;
+    } catch (e: unknown) {
+      toast.showError(getErrorMessage(e));
+      return null;
+    } finally {
+      setSessionBusy(false);
+    }
+  };
 
   const startNewChat = async () => {
     if (!userId) {
@@ -133,7 +163,7 @@ export default function AskMeChat() {
       setMessages([]);
       setInput('');
       setPendingFiles([]);
-      await loadSessions({ silent: true });
+      await loadSessions({ silent: true, background: true });
     } catch (e: unknown) {
       toast.showError(getErrorMessage(e));
     } finally {
@@ -189,11 +219,16 @@ export default function AskMeChat() {
     const trimmed = input.trim();
     if (!trimmed && pendingFiles.length === 0) return;
 
-    // User messages only call POST /chat — session must exist (New chat or pick from History).
-    const sid = sessionIdRef.current;
-    if (!sid) {
-      toast.showWarning('Click New chat to start a session, then send your message.');
+    if (!userId) {
+      toast.showWarning('Sign in to send a message.');
       return;
+    }
+
+    let sid = sessionIdRef.current;
+    if (!sid) {
+      const createdId = await ensureCopilotSession();
+      if (!createdId) return;
+      sid = createdId;
     }
 
     const files = pendingFiles.map((p) => p.file);
@@ -242,7 +277,6 @@ export default function AskMeChat() {
           content: reply || 'No reply text was returned.',
         },
       ]);
-      void loadSessions({ silent: true });
     } catch (e: unknown) {
       const msg = getErrorMessage(e);
       toast.showError(msg);
@@ -259,9 +293,9 @@ export default function AskMeChat() {
     }
   };
 
-  const disabledComposer = sending || sessionBusy;
-  /** Sending only hits POST /chat; require an active session from New chat or History. */
-  const canSend = !!sessionId && (input.trim().length > 0 || pendingFiles.length > 0);
+  const disabledComposer = sending || sessionBusy || !userId;
+  /** First send creates a session automatically if needed (no need to click New chat first). */
+  const canSend = !!userId && (input.trim().length > 0 || pendingFiles.length > 0);
 
   return (
     <div
@@ -334,9 +368,9 @@ export default function AskMeChat() {
           <div className="min-w-0">
             <h1 className={`text-base font-black ${textPrimary} tracking-tight`}>Ask me</h1>
             <p className={`text-xs ${textSecondary}`}>
-              {sessionId
-                ? 'Type a message or attach a file.'
-                : 'Use New chat or open a session from History to continue.'}
+              {!userId
+                ? 'Sign in to chat.'
+                : 'Type a message or attach a file — your first send starts the chat.'}
             </p>
           </div>
         </header>
