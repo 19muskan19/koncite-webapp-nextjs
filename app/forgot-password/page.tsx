@@ -7,6 +7,7 @@ import { useToast } from '@/contexts/ToastContext';
 import { authAPI } from '@/services/api';
 import Link from 'next/link';
 import OtpVerificationModal from '@/components/OtpVerificationModal';
+import { EMAIL_INVALID_MESSAGE, isValidEmailAddress } from '@/utils/emailValidation';
 
 type Step = 'email' | 'otp' | 'password';
 
@@ -33,6 +34,11 @@ export default function ForgotPasswordPage() {
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    if (!isValidEmailAddress(email)) {
+      setError(EMAIL_INVALID_MESSAGE);
+      toast.showWarning(EMAIL_INVALID_MESSAGE);
+      return;
+    }
     setIsLoading(true);
 
     try {

@@ -1,5 +1,7 @@
-import apiClient, { API_BASE_URL, getAuthToken } from './apiClient';
+import apiClient, { API_BASE_URL, getAuthToken, companyAjaxClient, getLaravelCsrfToken } from './apiClient';
 import { setCookie, removeCookie } from '../utils/cookies';
+import type { InventoryReportMeta, InventoryReportResult } from '../types/inventoryReportMeta';
+import { parseInventoryReportResponse } from '../utils/inventoryReportResponse';
 
 // Types
 export type CountryCode = '91' | '971';
@@ -2640,7 +2642,7 @@ export const masterDataAPI = {
   /**
    * Available assets opening stock – GET/POST assets-available-opening-stock
    * Filters: project_id, store_id (nullable; both applied with AND when provided)
-   * Response: AssetsOpeningStockResource[] with qty, asset, project, store
+   * Response: AssetsOpeningStockResource[] with quantity (and sometimes qty/opening), asset, project, store
    */
   getAssetsOpeningStockList: async (projectId?: number | string, storeId?: number | string): Promise<any[]> => {
     try {
@@ -3074,6 +3076,131 @@ export const projectAllocationAPI = {
     } catch (error: any) {
       throw {
         message: error.response?.data?.message || 'Failed to delete project permission',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+};
+
+/** PR Approval — project ↔ user allocation (company_users.id per project). */
+const PR_APPROVAL_ADD_PATH =
+  process.env.NEXT_PUBLIC_PR_APPROVAL_ADD_PATH?.replace(/^\/+/, '') ?? 'pr-approval-add';
+
+const PR_LIST_PATH = process.env.NEXT_PUBLIC_PR_LIST_PATH?.replace(/^\/+/, '') ?? 'pr-list';
+
+const PR_DETAILS_PATH = process.env.NEXT_PUBLIC_PR_DETAILS_PATH?.replace(/^\/+/, '') ?? 'pr-details';
+
+const PR_APPROVE_PATH =
+  process.env.NEXT_PUBLIC_PR_APPROVE_PATH?.replace(/^\/+/, '') ?? 'pr-approve';
+
+const PR_REJECT_PATH =
+  process.env.NEXT_PUBLIC_PR_REJECT_PATH?.replace(/^\/+/, '') ?? 'pr-reject';
+
+/**
+ * Company web ajax: `POST|PUT /company/ajax/company-custome-update-status`
+ * Body: uuid, find=material_requests, getUrl=company, title=pr_status, status=1|2, CSRF.
+ */
+const COMPANY_PR_STATUS_PATH =
+  process.env.NEXT_PUBLIC_COMPANY_PR_STATUS_PATH?.replace(/^\/+/, '') ?? 'ajax/company-custome-update-status';
+
+export const prApprovalAPI = {
+  /**
+   * GET /api/pr-list (or /api/v1/pr-list if `NEXT_PUBLIC_PR_LIST_PATH` is set).
+   * Response: array of PR summaries (uuid, request_id, status, status_label, project fields, dates, …).
+   */
+  list: async (): Promise<unknown> => {
+    try {
+      const response = await apiClient.get(`/${PR_LIST_PATH}`);
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to load PR list',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * GET /api/pr-details/{uuid} — full PR with material_request_details lines.
+   */
+  details: async (uuid: string): Promise<unknown> => {
+    try {
+      const response = await apiClient.get(
+        `/${PR_DETAILS_PATH}/${encodeURIComponent(String(uuid).trim())}`
+      );
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to load PR details',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * POST /api/pr-approve — body `{ uuid }` (override path with `NEXT_PUBLIC_PR_APPROVE_PATH`).
+   */
+  approve: async (uuid: string): Promise<unknown> => {
+    try {
+      const response = await apiClient.post(
+        `/${PR_APPROVE_PATH}`,
+        { uuid: String(uuid).trim() },
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to approve purchase request',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * POST /api/pr-reject — body `{ uuid }` (override path with `NEXT_PUBLIC_PR_REJECT_PATH`).
+   */
+  reject: async (uuid: string): Promise<unknown> => {
+    try {
+      const response = await apiClient.post(
+        `/${PR_REJECT_PATH}`,
+        { uuid: String(uuid).trim() },
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to reject purchase request',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * POST /api/pr-approval-add (or /api/v1/pr-approval-add if `NEXT_PUBLIC_PR_APPROVAL_ADD_PATH` is set).
+   * Body: `{ project_id, user_allocation: number[] }` — Bearer via apiClient.
+   */
+  add: async (params: {
+    project_id: number;
+    user_allocation: number[];
+    /** If true, send `material_request_id` instead of `project_id` (same integer value). */
+    useMaterialRequestId?: boolean;
+  }): Promise<unknown> => {
+    try {
+      const body: Record<string, unknown> = {
+        user_allocation: params.user_allocation,
+      };
+      if (params.useMaterialRequestId) {
+        body.material_request_id = params.project_id;
+      } else {
+        body.project_id = params.project_id;
+      }
+      const response = await apiClient.post(`/${PR_APPROVAL_ADD_PATH}`, body, {
+        headers: { 'Content-Type': 'application/json' },
+      });
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to save PR approval allocation',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
@@ -5160,7 +5287,7 @@ export const materialRequestAPI = {
    * Backend type: 'pr'
    * All filters optional. With no filters, returns all materials with material requests.
    * Request: { type: 'pr', projectId|project?, subProjectId|subproject?, dateForm|date_from?, dateTo|date_to?, indentNo|indent_no? }
-   * Response: data.material - array with sl_no, name, specification, code, unit, totalRequiredQty, totalRequiredDate, requiredforActivities, remarks, currentStock
+   * Response envelope may include `meta` (company, project, subProject logos/names) alongside `data.material`.
    */
   getReport: async (filters?: {
     projectId?: number | string;
@@ -5173,7 +5300,7 @@ export const materialRequestAPI = {
     date_to?: string;
     indentNo?: string;
     indent_no?: string;
-  }): Promise<any[]> => {
+  }): Promise<InventoryReportResult> => {
     try {
       const payload: Record<string, unknown> = { type: 'pr' };
       const project = filters?.projectId ?? filters?.project;
@@ -5187,26 +5314,9 @@ export const materialRequestAPI = {
       const indentNo = (filters?.indentNo ?? filters?.indent_no ?? '').trim();
       if (indentNo) payload.indentNo = indentNo;
       const response = await apiClient.post('/inventory/inventory-report', payload);
-      const root = response.data?.data ?? response.data;
-      const inner =
-        root && typeof root === 'object' && 'data' in root && (root as { data?: unknown }).data != null
-          ? (root as { data: unknown }).data
-          : root;
-      const material =
-        (inner && typeof inner === 'object'
-          ? (inner as { material?: unknown; materials?: unknown }).material ??
-            (inner as { material?: unknown; materials?: unknown }).materials
-          : undefined) ??
-        (root && typeof root === 'object'
-          ? (root as { material?: unknown; materials?: unknown }).material ??
-            (root as { material?: unknown; materials?: unknown }).materials
-          : undefined);
-      if (Array.isArray(material)) return material;
-      if (Array.isArray(root)) return root;
-      if (Array.isArray(inner)) return inner as unknown[];
-      return [];
+      return parseInventoryReportResponse(response.data);
     } catch (error: any) {
-      if (error?.response?.status === 404 || error?.response?.status === 422) return [];
+      if (error?.response?.status === 404 || error?.response?.status === 422) return { rows: [], meta: null };
       throw {
         message: error.response?.data?.message || 'Failed to load PR report',
         errors: error.response?.data?.errors || {},
@@ -5661,7 +5771,7 @@ export const rfqAPI = {
     prepared_by?: number | string;
     rfqno?: string;
     rfq_no?: string;
-  }): Promise<any[]> => {
+  }): Promise<InventoryReportResult> => {
     try {
       const payload: Record<string, unknown> = { type: 'rfq' };
       const project = filters?.projectId ?? filters?.project;
@@ -5677,26 +5787,9 @@ export const rfqAPI = {
       const rfqno = (filters?.rfqno ?? filters?.rfq_no ?? '').trim();
       if (rfqno) payload.rfqno = rfqno;
       const response = await apiClient.post('/inventory/inventory-report', payload);
-      const root = response.data?.data ?? response.data;
-      const inner =
-        root && typeof root === 'object' && 'data' in root && (root as { data?: unknown }).data != null
-          ? (root as { data: unknown }).data
-          : root;
-      const material =
-        (inner && typeof inner === 'object'
-          ? (inner as { material?: unknown; materials?: unknown }).material ??
-            (inner as { material?: unknown; materials?: unknown }).materials
-          : undefined) ??
-        (root && typeof root === 'object'
-          ? (root as { material?: unknown; materials?: unknown }).material ??
-            (root as { material?: unknown; materials?: unknown }).materials
-          : undefined);
-      if (Array.isArray(material)) return material;
-      if (Array.isArray(root)) return root;
-      if (Array.isArray(inner)) return inner as unknown[];
-      return [];
+      return parseInventoryReportResponse(response.data);
     } catch (error: any) {
-      if (error?.response?.status === 404 || error?.response?.status === 422) return [];
+      if (error?.response?.status === 404 || error?.response?.status === 422) return { rows: [], meta: null };
       throw { message: error.response?.data?.message || 'Failed to load RFQ report', errors: error.response?.data?.errors || {} } as ApiError;
     }
   },
@@ -5943,7 +6036,7 @@ export const goodsReturnAPI = {
     dateTo?: string;
     search?: string;
     dataType: 'materials' | 'machines';
-  }): Promise<any[]> => {
+  }): Promise<InventoryReportResult> => {
     try {
       const payload: Record<string, unknown> = {
         type: 'issue-return',
@@ -5966,12 +6059,10 @@ export const goodsReturnAPI = {
       }
       if (filters.search != null && String(filters.search).trim()) payload.search = filters.search.trim();
       const response = await apiClient.post('/inventory/inventory-report', payload);
-      const data = response.data?.data ?? response.data;
-      const assets = data?.assets ?? data?.material ?? data?.materials ?? data;
-      return Array.isArray(assets) ? assets : [];
+      return parseInventoryReportResponse(response.data);
     } catch (error: any) {
       if (error?.response?.status === 404 || error?.response?.status === 422) {
-        return [];
+        return { rows: [], meta: null };
       }
       throw { message: error.response?.data?.message || 'Failed to load Issue Return report', errors: error.response?.data?.errors || {} } as ApiError;
     }
@@ -6118,7 +6209,7 @@ export const goodsIssueAPI = {
     search?: string;
     dataType?: 'materials' | 'machines';
     reportType?: 'issue-slip' | 'issue-details';
-  }): Promise<any[]> => {
+  }): Promise<InventoryReportResult> => {
     try {
       const reportType = filters.reportType ?? 'issue-slip';
       const dateStr = (filters.date ?? filters.dateFrom ?? '').toString().slice(0, 10);
@@ -6127,7 +6218,7 @@ export const goodsIssueAPI = {
       const store = filters.storeId != null && filters.storeId !== '' ? filters.storeId : undefined;
 
       if (reportType === 'issue-slip') {
-        if (!project || !store || !dateStr) return [];
+        if (!project || !store || !dateStr) return { rows: [], meta: null };
       }
 
       const payload: Record<string, unknown> = {
@@ -6146,12 +6237,10 @@ export const goodsIssueAPI = {
       if (filters.issueToId != null && filters.issueToId !== '') payload.entry_type = filters.issueToId;
       if (filters.search != null && String(filters.search).trim()) payload.search = filters.search.trim();
       const response = await apiClient.post('/inventory/inventory-report', payload);
-      const data = response.data?.data ?? response.data;
-      const arr = data?.assets ?? data?.material ?? data?.materials ?? data;
-      return Array.isArray(arr) ? arr : [];
+      return parseInventoryReportResponse(response.data);
     } catch (error: any) {
       if (error?.response?.status === 404 || error?.response?.status === 422) {
-        return [];
+        return { rows: [], meta: null };
       }
       throw { message: error.response?.data?.message || 'Failed to load Issue report', errors: error.response?.data?.errors || {} } as ApiError;
     }
@@ -6333,7 +6422,7 @@ export const goodsReceiptAPI = {
     dataType?: 'materials' | 'machines';
     item_type?: 'materials' | 'machines';
     reportType?: 'grn-slip' | 'grn-details';
-  }): Promise<any[] | { fetchHeadData?: any; assets: any[] }> => {
+  }): Promise<InventoryReportResult> => {
     try {
       const reportType = filters.reportType ?? 'grn-slip';
       const project = filters.projectId ?? filters.project;
@@ -6343,10 +6432,10 @@ export const goodsReceiptAPI = {
       const itemType = filters.dataType ?? filters.item_type ?? 'materials';
 
       if (reportType === 'grn-slip' && (!project || !store || !dateStr)) {
-        return { assets: [], fetchHeadData: undefined };
+        return { rows: [], meta: null, fetchHeadData: undefined };
       }
       if (reportType === 'grn-details' && (!project || !store || !dateStr || !dateToStr)) {
-        return [];
+        return { rows: [], meta: null };
       }
 
       const payload: Record<string, unknown> = {
@@ -6366,16 +6455,20 @@ export const goodsReceiptAPI = {
       if (supplier != null && supplier !== '') payload.supplier = supplier;
       if (filters.search != null && String(filters.search).trim()) payload.search = filters.search.trim();
       const response = await apiClient.post('/inventory/inventory-report', payload);
+      const parsed = parseInventoryReportResponse(response.data);
       const data = response.data?.data ?? response.data;
-      const arr = data?.assets ?? data?.material ?? data?.materials ?? data;
-      const assets = Array.isArray(arr) ? arr : [];
+      const fd =
+        parsed.fetchHeadData ??
+        (data && typeof data === 'object'
+          ? (data as Record<string, unknown>).fetchHeadData ?? (data as Record<string, unknown>).fetch_head_data
+          : undefined);
       if (reportType === 'grn-slip') {
-        return { fetchHeadData: data?.fetchHeadData ?? data?.fetch_head_data, assets };
+        return { rows: parsed.rows, meta: parsed.meta, fetchHeadData: fd };
       }
-      return assets;
+      return { rows: parsed.rows, meta: parsed.meta };
     } catch (error: any) {
       if (error?.response?.status === 404 || error?.response?.status === 422) {
-        return [];
+        return { rows: [], meta: null };
       }
       throw { message: error.response?.data?.message || 'Failed to load GRN report', errors: error.response?.data?.errors || {} } as ApiError;
     }

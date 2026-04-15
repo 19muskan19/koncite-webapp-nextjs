@@ -96,7 +96,12 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
 
   // Minimize sidebar when user navigates to AI Finance, AI Hub or Document Management (full-width experience)
   useEffect(() => {
-    if (pathname?.startsWith('/ai-finance') || pathname?.startsWith('/ai-agents') || pathname?.startsWith('/document-management')) {
+    if (
+      pathname?.startsWith('/ai-finance') ||
+      pathname?.startsWith('/ai-agents') ||
+      pathname?.startsWith('/document-management') ||
+      pathname?.startsWith('/askme')
+    ) {
       setSidebarOpen(false);
     }
   }, [pathname]);
@@ -459,7 +464,12 @@ const AppLayoutContent: React.FC<{ children: React.ReactNode }> = ({ children })
         <div className={`flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar ${getThemeClass('theme')} p-3 sm:p-4`}>
           <MainSidebarProvider setSidebarOpen={setSidebarOpen}>
             <div className={`${
-              pathname?.startsWith('/ai-finance') || pathname?.startsWith('/ai-agents') || pathname?.startsWith('/document-management') ? 'max-w-full h-full' : 'max-w-[1400px] mx-auto fade-in-premium'
+              pathname?.startsWith('/ai-finance') ||
+              pathname?.startsWith('/ai-agents') ||
+              pathname?.startsWith('/document-management') ||
+              pathname?.startsWith('/askme')
+                ? 'max-w-full h-full'
+                : 'max-w-[1400px] mx-auto fade-in-premium'
             }`}>
               {children}
             </div>

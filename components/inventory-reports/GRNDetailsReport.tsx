@@ -26,6 +26,10 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { masterDataAPI, goodsReceiptAPI } from '../../services/api';
 import { useToast } from '../../contexts/ToastContext';
+import type { InventoryReportMeta } from '@/types/inventoryReportMeta';
+import { useUser } from '@/contexts/UserContext';
+import { getSameOriginAssetPathForPdf } from '@/utils/imageUtils';
+import { loadCompanyLogoRasterForPdf } from '@/utils/pdfImage';
 
 interface Project {
   id: string | number;
@@ -76,6 +80,7 @@ const formatNum = (n: any) => {
 
 const GRNDetailsReport: React.FC<GRNDetailsReportProps> = ({ theme }) => {
   const toast = useToast();
+  const { company: userCompany } = useUser();
   const projects = useProjectsFromMasters();
   const [stores, setStores] = useState<Store[]>([]);
   const [entryTypes, setEntryTypes] = useState<EntryType[]>([]);
@@ -89,6 +94,7 @@ const GRNDetailsReport: React.FC<GRNDetailsReportProps> = ({ theme }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'materials' | 'machines'>('materials');
   const [isLoading, setIsLoading] = useState(false);
+  const [reportMeta, setReportMeta] = useState<InventoryReportMeta | null>(null);
   const [tableData, setTableData] = useState<ReportRow[]>([]);
   const [tableSearch, setTableSearch] = useState<string>('');
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
@@ -145,6 +151,58 @@ const GRNDetailsReport: React.FC<GRNDetailsReportProps> = ({ theme }) => {
     load();
   }, [selectedProject]);
 
+  /** API `meta` plus UI + signed-in company for PDF/Print when API omits `meta`. */
+  const mergedReportMeta = useMemo((): InventoryReportMeta | null => {
+    const proj = projects.find((p) => String(p.id) === String(selectedProject) || p.name === selectedProject);
+    const api = reportMeta;
+
+    const companyName = (api?.company?.name?.trim() || userCompany?.name?.trim() || '').trim();
+    const companyLogo =
+      api?.company?.logo != null && String(api.company.logo).trim() ? api.company.logo : userCompany?.logo ?? null;
+
+    const projectName = (api?.project?.name?.trim() || proj?.name?.trim() || '').trim();
+    const projectLogo = api?.project?.logo ?? null;
+
+    const subName = (api?.subProject?.name?.trim() || '').trim();
+    const subLogo = api?.subProject?.logo ?? null;
+
+    const selectedDate =
+      api?.selectedDate && (api.selectedDate.from || api.selectedDate.to || api.selectedDate.date)
+        ? api.selectedDate
+        : fromDate.length >= 10 && toDate.length >= 10
+          ? { from: fromDate.slice(0, 10), to: toDate.slice(0, 10) }
+          : api?.selectedDate;
+
+    if (!companyName && !projectName && !subName && !companyLogo && !projectLogo && !subLogo) {
+      return null;
+    }
+
+    return {
+      ...(companyName || companyLogo
+        ? { company: { name: companyName || undefined, logo: typeof companyLogo === 'string' ? companyLogo : null } }
+        : {}),
+      ...(projectName || projectLogo
+        ? {
+            project: {
+              id: api?.project?.id ?? (proj?.id != null ? Number(proj.id) : null),
+              name: projectName || undefined,
+              logo: projectLogo,
+            },
+          }
+        : {}),
+      ...(subName || subLogo
+        ? {
+            subProject: {
+              id: api?.subProject?.id ?? null,
+              name: subName || undefined,
+              logo: subLogo,
+            },
+          }
+        : {}),
+      ...(selectedDate ? { selectedDate } : {}),
+    };
+  }, [reportMeta, userCompany, projects, selectedProject, fromDate, toDate]);
+
   const loadReportData = useCallback(async () => {
     if (!selectedProject || !selectedStore || !fromDate || !toDate) {
       setTableData([]);
@@ -152,6 +210,7 @@ const GRNDetailsReport: React.FC<GRNDetailsReportProps> = ({ theme }) => {
     }
     setIsLoading(true);
     setTableData([]);
+    setReportMeta(null);
     try {
       const proj = projects.find((p) => String(p.id) === String(selectedProject) || p.name === selectedProject);
       const projId = proj?.id ?? selectedProject;
@@ -160,7 +219,7 @@ const GRNDetailsReport: React.FC<GRNDetailsReportProps> = ({ theme }) => {
 
       let rows: ReportRow[] = [];
       try {
-        const raw = await goodsReceiptAPI.getReport({
+        const res = await goodsReceiptAPI.getReport({
           projectId: projId,
           storeId: selectedStore,
           entryTypeId: selectedEntryType || undefined,
@@ -171,7 +230,8 @@ const GRNDetailsReport: React.FC<GRNDetailsReportProps> = ({ theme }) => {
           dataType: activeTab,
           reportType: 'grn-details',
         });
-        const arr = Array.isArray(raw) ? raw : (raw?.assets ?? []);
+        setReportMeta(res.meta != null ? res.meta : null);
+        const arr = res.rows ?? [];
         for (const item of arr) {
           const mat = item?.materials ?? item?.material ?? item?.assets ?? item;
           const code = mat?.code ?? item?.code ?? '-';
@@ -208,7 +268,7 @@ const GRNDetailsReport: React.FC<GRNDetailsReportProps> = ({ theme }) => {
           });
         }
       } catch {
-        /* API may not be available, fall through to build from list+edit */
+        setReportMeta(null);
       }
 
       if (rows.length === 0 && selectedStore) {
@@ -382,31 +442,121 @@ const GRNDetailsReport: React.FC<GRNDetailsReportProps> = ({ theme }) => {
       URL.revokeObjectURL(a.href);
       toast.showSuccess('Downloaded');
     } else if (format === 'PDF') {
-      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-      doc.setFontSize(16);
-      doc.text(`GRN (MRN) Details Report - ${activeTab === 'materials' ? 'Material' : 'Machines/Assets'}`, 14, 15);
-      doc.setFontSize(10);
-      const tableHeaders = [headers];
-      const tableBody = filteredAndSorted.map((r) => [
-        r.grnNo, r.date, r.code, r.name, r.specification, r.unit,
-        formatNum(r.receiptQty), formatNum(r.rejectQty), formatNum(r.acceptedQty), formatNum(r.rate), formatNum(r.amount),
-        formatNum(r.poQty), formatNum(r.poBalance), r.remarks,
-      ]);
-      autoTable(doc, { head: tableHeaders, body: tableBody, startY: 22, styles: { fontSize: 8 }, headStyles: { fillColor: [0, 51, 102], textColor: [255, 255, 255] } });
-      const blob = doc.output('blob');
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'grn-details-report.pdf';
-      a.click();
-      URL.revokeObjectURL(url);
-      toast.showSuccess('Downloaded');
+      void (async () => {
+        try {
+          const rm = mergedReportMeta;
+          const reportTitle = `GRN (MRN) Details Report - ${activeTab === 'materials' ? 'Material' : 'Machines/Assets'}`;
+          const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+          const margin = 14;
+          let y = 12;
+
+          doc.setFontSize(16);
+          doc.text(reportTitle, margin, y);
+          y += 9;
+
+          const rawCompanyLogo = rm?.company?.logo ?? userCompany?.logo ?? null;
+          const raster = await loadCompanyLogoRasterForPdf(rawCompanyLogo);
+
+          const bandTop = y;
+          const logoMaxH = 14;
+          const logoMaxW = 32;
+          let textX = margin;
+          let logoH = 0;
+
+          if (raster) {
+            try {
+              const ar = raster.widthPx / raster.heightPx;
+              const th = logoMaxH;
+              const tw = Math.min(ar * th, logoMaxW);
+              const thDraw = tw / ar;
+              doc.addImage(raster.dataUrl, raster.format, margin, bandTop, tw, thDraw);
+              textX = margin + tw + 5;
+              logoH = thDraw;
+            } catch {
+              /* text-only header */
+            }
+          }
+
+          doc.setFontSize(9);
+          let lineY = bandTop + 3.5;
+          const line = (s: string) => {
+            doc.text(s, textX, lineY);
+            lineY += 4.8;
+          };
+          if (rm?.company?.name) line(`Company: ${String(rm.company.name)}`);
+          if (rm?.project?.name) line(`Project: ${String(rm.project.name)}`);
+          if (rm?.subProject?.name) line(`Sub project: ${String(rm.subProject.name)}`);
+          const sd = rm?.selectedDate;
+          if (sd?.from && sd?.to) line(`Period: ${sd.from} – ${sd.to}`);
+          else if (sd?.date) line(`Date: ${String(sd.date)}`);
+
+          const metaBottom = Math.max(bandTop + logoH, lineY + 1);
+          y = metaBottom + 5;
+
+          doc.setFontSize(10);
+          const tableHeaders = [headers];
+          const tableBody = filteredAndSorted.map((r) => [
+            r.grnNo,
+            r.date,
+            r.code,
+            r.name,
+            r.specification,
+            r.unit,
+            formatNum(r.receiptQty),
+            formatNum(r.rejectQty),
+            formatNum(r.acceptedQty),
+            formatNum(r.rate),
+            formatNum(r.amount),
+            formatNum(r.poQty),
+            formatNum(r.poBalance),
+            r.remarks,
+          ]);
+          autoTable(doc, {
+            head: tableHeaders,
+            body: tableBody,
+            startY: y,
+            styles: { fontSize: 8 },
+            headStyles: { fillColor: [0, 51, 102], textColor: [255, 255, 255] },
+          });
+          doc.save('grn-details-report.pdf');
+          toast.showSuccess('Downloaded');
+        } catch {
+          toast.showError('Could not generate PDF');
+        }
+      })();
     } else if (format === 'Print') {
+      const rm = mergedReportMeta;
+      const reportTitle = `GRN (MRN) Details Report - ${activeTab === 'materials' ? 'Material' : 'Machines/Assets'}`;
+      const esc = (s: string) =>
+        String(s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      const companyImg =
+        getSameOriginAssetPathForPdf(rm?.company?.logo ?? userCompany?.logo ?? null) || '';
+      const metaLines = [
+        rm?.company?.name ? `<p style="margin:0 0 4px 0"><strong>Company:</strong> ${esc(String(rm.company.name))}</p>` : '',
+        rm?.project?.name ? `<p style="margin:0 0 4px 0"><strong>Project:</strong> ${esc(String(rm.project.name))}</p>` : '',
+        rm?.subProject?.name ? `<p style="margin:0 0 4px 0"><strong>Sub project:</strong> ${esc(String(rm.subProject.name))}</p>` : '',
+        rm?.selectedDate?.from && rm?.selectedDate?.to
+          ? `<p style="margin:0 0 4px 0"><strong>Period:</strong> ${esc(`${rm.selectedDate.from} – ${rm.selectedDate.to}`)}</p>`
+          : rm?.selectedDate?.date
+            ? `<p style="margin:0 0 4px 0"><strong>Date:</strong> ${esc(String(rm.selectedDate.date))}</p>`
+            : '',
+      ]
+        .filter(Boolean)
+        .join('');
+      const headerRow = `<h1 style="margin:0 0 14px 0;font-size:18px;font-weight:bold">${esc(reportTitle)}</h1>
+<div style="display:flex;align-items:flex-start;gap:20px;margin-bottom:18px;flex-wrap:wrap">
+  ${companyImg ? `<div style="flex-shrink:0"><img src="${esc(companyImg.startsWith('/') ? `${typeof window !== 'undefined' ? window.location.origin : ''}${companyImg}` : companyImg)}" alt="" style="max-height:56px;max-width:200px;object-fit:contain" /></div>` : ''}
+  <div style="font-size:13px;line-height:1.55;min-width:200px">${metaLines}</div>
+</div>`;
       const printContent = `
 <!DOCTYPE html><html><head><title>GRN Details Report</title>
 <style>body{font-family:Arial;padding:20px} table{width:100%;border-collapse:collapse;font-size:12px} th,td{border:1px solid #000;padding:6px;text-align:left} th{background:#f0f0f0}</style>
 </head><body>
-<h1>GRN (MRN) Details Report - ${activeTab === 'materials' ? 'Material' : 'Machines/Assets'}</h1>
+${headerRow}
 <table><thead><tr>${headers.map((h) => `<th>${h}</th>`).join('')}</tr></thead>
 <tbody>${filteredAndSorted.map((r) => `<tr><td>${r.grnNo}</td><td>${r.date}</td><td>${r.code}</td><td>${r.name}</td><td>${r.specification}</td><td>${r.unit}</td><td>${formatNum(r.receiptQty)}</td><td>${formatNum(r.rejectQty)}</td><td>${formatNum(r.acceptedQty)}</td><td>${formatNum(r.rate)}</td><td>${formatNum(r.amount)}</td><td>${formatNum(r.poQty)}</td><td>${formatNum(r.poBalance)}</td><td>${r.remarks}</td></tr>`).join('')}</tbody></table>
 </body></html>`;

@@ -393,10 +393,89 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
           <div id="ai-features" className="scroll-mt-20"></div>
           <div className="max-w-7xl mx-auto" ref={featuresRef}>
             <div className="text-center mb-6 md:mb-8">
-              <h2 className={`text-3xl md:text-4xl lg:text-5xl font-black ${textPrimary} mb-3`}>
+              
+
+              {/* Single-row infinite marquee: partners & recognitions only */}
+              <div className="relative mb-6 md:mb-8 w-full overflow-hidden rounded-xl border border-slate-200/60 py-4 dark:border-slate-700/60">
+                <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-12 bg-gradient-to-r from-[#faf9f6] to-transparent dark:from-[#0a0a0a] dark:to-transparent" />
+                <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-12 bg-gradient-to-l from-[#faf9f6] to-transparent dark:from-[#0a0a0a] dark:to-transparent" />
+                <div className="flex w-max animate-partners-marquee will-change-transform">
+                  {[0, 1].map((dup) => (
+                    <div
+                      key={dup}
+                      className="flex shrink-0 items-center gap-4 px-4 md:gap-8 md:px-8"
+                      {...(dup === 1 ? { 'aria-hidden': true as const } : {})}
+                    >
+                      <span
+                        className={`shrink-0 text-[10px] font-bold uppercase tracking-wider sm:text-xs ${textSecondary}`}
+                      >
+                        Supported by
+                      </span>
+                      <img
+                        src="/images/build3.png"
+                        alt={dup === 0 ? 'build3' : ''}
+                        className="h-8 w-auto shrink-0 object-contain opacity-90 sm:h-10 md:h-11"
+                        width={160}
+                        height={40}
+                        draggable={false}
+                      />
+                      <img
+                        src="/images/gsf.png"
+                        alt={dup === 0 ? 'GSF' : ''}
+                        className="h-8 w-auto shrink-0 object-contain opacity-90 sm:h-10 md:h-11"
+                        width={160}
+                        height={40}
+                        draggable={false}
+                      />
+                      <span className="shrink-0 text-slate-300 dark:text-slate-600">|</span>
+                      <span
+                        className={`shrink-0 text-[10px] font-bold uppercase tracking-wider sm:text-xs ${textSecondary}`}
+                      >
+                        Recognition
+                      </span>
+                      <img
+                        src="/images/realityNXT.png"
+                        alt={dup === 0 ? 'RealtyNXT' : ''}
+                        className="h-8 w-auto shrink-0 object-contain opacity-90 sm:h-10 md:h-11"
+                        width={160}
+                        height={40}
+                        draggable={false}
+                      />
+                      <img
+                        src="/images/top12.png"
+                        alt={dup === 0 ? 'Top 12 ConTech Startups' : ''}
+                        className="h-8 w-auto shrink-0 object-contain opacity-90 sm:h-10 md:h-11"
+                        width={160}
+                        height={40}
+                        draggable={false}
+                      />
+                      <p
+                        className={`shrink-0 whitespace-nowrap text-xs font-semibold sm:text-sm md:text-base lg:text-lg ${textPrimary}`}
+                      >
+                        Recognized among Top 12 ConTech Startups in India at TECH DEMO DAY 2026 by RealtyNXT
+                      </p>
+                      <span className="shrink-0 text-slate-300 dark:text-slate-600">|</span>
+                      <img
+                        src="/images/bhaaratpitch.png"
+                        alt={dup === 0 ? 'Bhaarat Pitch' : ''}
+                        className="h-8 w-auto max-w-[140px] shrink-0 object-contain opacity-90 sm:h-10 sm:max-w-none md:h-11"
+                        width={200}
+                        height={40}
+                        draggable={false}
+                      />
+                      <p
+                        className={`shrink-0 whitespace-nowrap text-xs font-semibold sm:text-sm md:text-base lg:text-lg ${textPrimary}`}
+                      >
+                        Recognized among Top Startups at Goa
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+               <h2 className={`text-3xl md:text-4xl lg:text-5xl font-black ${textPrimary} mb-3`}>
                 Everything you need to manage construction
               </h2>
-              <p className={`text-lg md:text-xl ${textSecondary} font-normal max-w-4xl mx-auto mb-6 md:mb-8`}>
+              <p className={`text-lg md:text-xl ${textSecondary} font-normal max-w-4xl mx-auto mb-8 md:mb-10`}>
                 AI-powered assistants that simplify site data entries, reporting and data access.
               </p>
             </div>
@@ -932,33 +1011,103 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
             </div>
             <div className="grid md:grid-cols-3 gap-6 md:gap-8 max-w-5xl mx-auto">
               {[
-                { name: 'Starter', price: '$99', features: ['Up to 5 users', 'Document management', 'Basic reporting', 'Email support'], popular: false },
-                { name: 'Professional', price: '$299', features: ['Up to 25 users', 'All features included', 'AI-powered tools', 'Priority support', 'Advanced analytics'], popular: true },
-                { name: 'Enterprise', price: 'Custom', features: ['Unlimited users', 'Custom integrations', 'Dedicated support', 'Advanced security', 'Custom training'], popular: false }
+                {
+                  name: 'Starter',
+                  price: '₹5,000',
+                  features: [
+                    'Yearly plan — billed annually',
+                    'Projects included: 3',
+                    'Users included: 10',
+                    'Document storage: 20 GB',
+                    'AI monthly credits: 500',
+                    'Online training support: 10 hrs',
+                    'AI includes free credits to get started; additional usage can be purchased as needed.',
+                    'Included in every plan',
+                    'Daily Progress',
+                    'Workforce',
+                    'Tasks',
+                    'Inventory',
+                    'Documents',
+                    'AI Accounts',
+                    'AI Hub',
+                  ],
+                  popular: false,
+                },
+                {
+                  name: 'Business',
+                  price: '₹10,000',
+                  features: [
+                    'Yearly plan — billed annually',
+                    'Projects included: 6',
+                    'Users included: 35',
+                    'Document storage: 100 GB',
+                    'AI monthly credits: 2,000',
+                    'Online training support: 50 hrs',
+                    'AI includes free credits to get started; additional usage can be purchased as needed.',
+                    'Included in every plan',
+                    'Daily Progress',
+                    'Workforce',
+                    'Tasks',
+                    'Inventory',
+                    'Documents',
+                    'AI Accounts',
+                    'AI Hub',
+                  ],
+                  popular: true,
+                },
+                {
+                  name: 'Enterprise',
+                  price: '₹25,000',
+                  features: [
+                    'Yearly plan — billed annually',
+                    'Projects included: 12',
+                    'Users included: 75',
+                    'Document storage: 500 GB',
+                    'AI monthly credits: 5,000',
+                    'Online training support: 100 hrs',
+                    'AI includes free credits to get started; additional usage can be purchased as needed.',
+                    'Included in every plan',
+                    'Daily Progress',
+                    'Workforce',
+                    'Tasks',
+                    'Inventory',
+                    'Documents',
+                    'AI Accounts',
+                    'AI Hub',
+                  ],
+                  popular: false,
+                },
               ].map((plan, idx) => (
                 <div 
                   key={idx} 
                   className={`p-8 rounded-xl border ${plan.popular ? 'border-2 border-[#C2D642]' : borderClass} ${plan.popular ? (isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5') : cardClass} hover:shadow-2xl hover:scale-105 hover:-translate-y-2 transition-all duration-300 cursor-pointer group relative opacity-0 animate-[scaleIn_0.6s_ease-out_forwards] ${plan.popular ? 'hover:border-[#C2D642] hover:ring-2 hover:ring-[#C2D642]/20' : 'hover:border-[#C2D642]'}`}
                   style={{ animationDelay: `${idx * 100}ms` }}
                 >
-                  {plan.popular && (
-                    <span className="absolute top-4 right-4 px-3 py-1 bg-[#C2D642] text-white text-xs font-bold rounded-full">POPULAR</span>
-                  )}
-                  <h3 className={`text-2xl font-bold mb-2 ${textPrimary} group-hover:text-[#C2D642] transition-colors duration-300`}>{plan.name}</h3>
-                  <p className="text-3xl font-black mb-4 text-[#C2D642] group-hover:scale-110 transition-transform duration-300 inline-block">
-                    {plan.price}
-                    {plan.price !== 'Custom' && <span className={`text-lg ${textSecondary} font-normal`}>/mo</span>}
-                  </p>
-                  <ul className={`space-y-3 mb-6 ${textSecondary}`}>
-                    {plan.features.map((feature, fIdx) => (
-                      <li key={fIdx} className="flex items-start gap-2">
-                        <Check className="w-5 h-5 text-[#C2D642] flex-shrink-0 mt-0.5" />
-                        <span>{feature}</span>
-                      </li>
-                    ))}
-                  </ul>
+                  <h3 className={`text-2xl font-bold mb-4 ${textPrimary} group-hover:text-[#C2D642] transition-colors duration-300`}>{plan.name}</h3>
+                  <div
+                    className="mb-6 select-none pointer-events-none"
+                    style={{ filter: 'blur(8px)' }}
+                  >
+                    {plan.popular && (
+                      <div className="flex justify-end mb-3">
+                        <span className="px-3 py-1 bg-[#C2D642] text-white text-xs font-bold rounded-full">POPULAR</span>
+                      </div>
+                    )}
+                    <p className="text-3xl font-black mb-4 text-[#C2D642] group-hover:scale-110 transition-transform duration-300 inline-block">
+                      {plan.price}
+                      {plan.price !== 'Custom' && <span className={`text-lg ${textSecondary} font-normal`}>/mo</span>}
+                    </p>
+                    <ul className={`space-y-3 ${textSecondary}`}>
+                      {plan.features.map((feature, fIdx) => (
+                        <li key={fIdx} className="flex items-start gap-2">
+                          <Check className="w-5 h-5 text-[#C2D642] flex-shrink-0 mt-0.5" />
+                          <span>{feature}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                   <button
-                    onClick={plan.name === 'Enterprise' ? () => setShowContactModal(true) : onLoginClick}
+                    onClick={()=> setShowContactModal(true)}
                     className={`w-full px-4 py-2 border-2 border-[#C2D642] hover:bg-[#C2D642] ${plan.popular ? 'bg-[#C2D642] text-white' : 'text-[#C2D642] hover:text-white'} rounded-lg font-semibold transition-all duration-300 hover:scale-105 hover:shadow-lg group-hover:shadow-xl`}
                   >
                     {plan.name === 'Enterprise' ? 'Contact Sales' : 'Get Started'}

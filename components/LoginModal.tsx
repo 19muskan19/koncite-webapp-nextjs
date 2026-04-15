@@ -6,6 +6,7 @@ import { X, LogIn, Mail, Lock, Loader2, Eye, EyeOff, ShieldCheck } from 'lucide-
 import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from '../contexts/ToastContext';
 import { authAPI, mergeLoginFailurePayload } from '../services/api';
+import { EMAIL_INVALID_MESSAGE, isValidEmailAddress } from '../utils/emailValidation';
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -153,13 +154,23 @@ const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin, signU
     e.preventDefault();
     setError('');
     setShowVerifyEmailCta(false);
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setError('Email is required');
+      return;
+    }
+    if (!isValidEmailAddress(trimmedEmail)) {
+      setError(EMAIL_INVALID_MESSAGE);
+      toast.showWarning(EMAIL_INVALID_MESSAGE);
+      return;
+    }
     setIsLoading(true);
 
     try {
-      const response = await authAPI.login(email, password);
+      const response = await authAPI.login(trimmedEmail, password);
 
       const requiresOtp = response?.data?.requires_otp_verification === true || response?.requires_otp_verification === true;
-      const twoFactorEmail = response?.data?.email || response?.email || email;
+      const twoFactorEmail = response?.data?.email || response?.email || trimmedEmail;
 
       if (requiresOtp && twoFactorEmail) {
         toast.showSuccess(response.message || 'OTP sent to your email. Please verify to complete login.');
@@ -178,7 +189,7 @@ const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin, signU
       const hasToken = !!(response?.data?.token || (response as { token?: string }).token);
       const payload =
         mergeLoginFailurePayload(response as unknown as Record<string, unknown>) ?? response?.data;
-      const verifyEmailTarget = emailForOtpFromPayload(payload, email);
+      const verifyEmailTarget = emailForOtpFromPayload(payload, trimmedEmail);
       if (!hasToken && !requiresOtp && shouldOfferEmailVerification(loginMessage, payload) && verifyEmailTarget) {
         setError(loginMessage || 'Please verify your email to continue.');
         setEmail(verifyEmailTarget);
@@ -189,7 +200,7 @@ const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin, signU
       }
 
       toast.showSuccess(response.message || 'Login successful!');
-      onLogin(email, password);
+      onLogin(trimmedEmail, password);
       setEmail('');
       setPassword('');
     } catch (error: any) {
@@ -202,7 +213,7 @@ const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin, signU
             : undefined
         ) ??
         error?.data;
-      const verifyEmailTarget = emailForOtpFromPayload(payload, email);
+      const verifyEmailTarget = emailForOtpFromPayload(payload, trimmedEmail);
 
       if (shouldOfferEmailVerification(errorMessage, payload) && verifyEmailTarget) {
         setError(errorMessage || 'Please verify your email to continue.');

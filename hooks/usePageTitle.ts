@@ -5,8 +5,10 @@ import { usePathname } from 'next/navigation';
 const routeTitles: Record<string, string> = {
   '/': 'KONCITE - Construction Platform',
   '/dashboard': 'Dashboard - KONCITE',
+  '/pre-construction/ai-tendering': 'AI-Tendering - KONCITE',
   '/document-management': 'Document Management - KONCITE',
   '/ai-finance': 'AI Finance - KONCITE',
+  '/askme': 'Ask me - KONCITE',
   '/ai-agents': 'AI Agents - KONCITE',
   '/ai-agents/dpr': 'DPR - AI Hub - KONCITE',
   '/ai-agents/inventory': 'Inventory - AI Hub - KONCITE',
@@ -33,7 +35,9 @@ const routeTitles: Record<string, string> = {
   '/masters/subproject': 'Subproject - KONCITE',
   '/work-contractor': 'Work Contractor - KONCITE',
   '/pr-management/pr': 'PR Management - KONCITE',
-  '/pr-management/pr-approval-manage': 'PR Approval Management - KONCITE',
+  '/pr-approval': 'PR Approvals - KONCITE',
+  '/pr-approval-manage': 'PR Approval — Manage allocation - KONCITE',
+  '/pr-management/pr-approval-manage': 'PR Approval — Project & User Allocation - KONCITE',
   '/inventory-reports/rfq': 'RFQ - KONCITE',
   '/inventory-reports/rfq-report': 'RFQ Report - KONCITE',
   '/inventory-reports/pr': 'PR - KONCITE',
@@ -66,7 +70,15 @@ export const usePageTitle = (customTitle?: string) => {
     const docMgmtTitle = pathname?.startsWith('/document-management') ? 'Document Management - KONCITE' : undefined;
     const rfqSubmitTitle = pathname?.match(/^\/inventory-reports\/rfq\/[^/]+\/submit-quotes/) ? 'Submit Quotes - RFQ - KONCITE' : undefined;
     const rfqCreateTitle = pathname?.startsWith('/inventory-reports/rfq/create') ? 'Create RFQ - KONCITE' : undefined;
-    const title = customTitle || exactTitle || rfqSubmitTitle || rfqCreateTitle || docMgmtTitle || 'KONCITE - Construction Platform';
+    const prApprovalDetailTitle = pathname?.match(/^\/pr-approval\/[^/]+$/) ? 'PR details - KONCITE' : undefined;
+    const title =
+      customTitle ||
+      exactTitle ||
+      rfqSubmitTitle ||
+      rfqCreateTitle ||
+      prApprovalDetailTitle ||
+      docMgmtTitle ||
+      'KONCITE - Construction Platform';
     document.title = title;
   }, [pathname, customTitle]);
 };

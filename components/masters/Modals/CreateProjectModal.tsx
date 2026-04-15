@@ -11,6 +11,7 @@ import { parseClientPhonePartsFromApi } from '@/utils/clientPhoneUtils';
 import DatePickerInput from '@/components/ui/DatePickerInput';
 import { masterDataAPI, teamsAPI } from '@/services/api';
 import { extractProjectLogoFromApi, getLogoUrl } from '@/utils/imageUtils';
+import { EMAIL_INVALID_MESSAGE, isValidEmailAddress } from '@/utils/emailValidation';
 
 interface Project {
   id: string;
@@ -658,6 +659,11 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         ? `Required field "${missingFields[0]}" is empty. Please fill it before submitting.`
         : `The following required fields are empty: ${missingFields.join(', ')}. Please fill them before submitting.`;
       toast.showWarning(msg);
+      return;
+    }
+
+    if (formData.own_project_or_contractor === 'yes' && !isValidEmailAddress(formData.client_email)) {
+      toast.showWarning(EMAIL_INVALID_MESSAGE);
       return;
     }
 

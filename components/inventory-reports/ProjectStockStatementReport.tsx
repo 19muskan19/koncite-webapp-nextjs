@@ -25,6 +25,10 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { masterDataAPI } from '../../services/api';
 import { useToast } from '../../contexts/ToastContext';
+import { useUser } from '@/contexts/UserContext';
+import { getSameOriginAssetPathForPdf } from '@/utils/imageUtils';
+import { loadCompanyLogoRasterForPdf } from '@/utils/pdfImage';
+import { mergeProjectScopedMeta } from '@/utils/inventoryMergedReportMeta';
 
 interface Project {
   id: string | number;
@@ -59,6 +63,7 @@ const formatNum = (n: any) => {
 
 const ProjectStockStatementReport: React.FC<ProjectStockStatementReportProps> = ({ theme }) => {
   const toast = useToast();
+  const { company: userCompany } = useUser();
   const projects = useProjectsFromMasters();
   const [stores, setStores] = useState<Store[]>([]);
   const [selectedProject, setSelectedProject] = useState<string>('');
@@ -94,6 +99,11 @@ const ProjectStockStatementReport: React.FC<ProjectStockStatementReportProps> = 
     };
     load();
   }, [selectedProject]);
+
+  const mergedReportMeta = useMemo(
+    () => mergeProjectScopedMeta({ userCompany, projects, selectedProject }),
+    [userCompany, projects, selectedProject]
+  );
 
   const loadReportData = useCallback(async () => {
     if (!selectedProject) {
@@ -168,7 +178,7 @@ const ProjectStockStatementReport: React.FC<ProjectStockStatementReportProps> = 
             const spec = mat?.specification ?? item?.specification ?? '-';
             const unit = mat?.unit ?? item?.unit ?? (mat?.units?.unit ?? '-');
             const cls = mat?.class ?? item?.class ?? item?.class_of_materials ?? '';
-            const qty = Number(item?.qty ?? item?.opening ?? item?.opening_qty ?? 0);
+            const qty = Number(item?.quantity ?? item?.qty ?? item?.opening ?? item?.opening_qty ?? 0);
             rows.push({
               id: `${item?.id ?? i}-${rows.length}`,
               ...(dataType === 'materials' ? { class: typeof cls === 'object' ? (cls?.name ?? '-') : (cls ?? '-') } : {}),
@@ -265,26 +275,93 @@ const ProjectStockStatementReport: React.FC<ProjectStockStatementReportProps> = 
       URL.revokeObjectURL(a.href);
       toast.showSuccess('Downloaded');
     } else if (format === 'PDF') {
-      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-      doc.setFontSize(16);
-      doc.text(`Project Stock Statement - ${activeTab === 'materials' ? 'Material' : 'Assets'}`, 14, 15);
-      doc.setFontSize(10);
-      const tableHeaders = [headers];
-      const tableBody = filteredAndSorted.map((r, idx) => {
-        const base = isMaterials
-          ? [String(idx + 1), r.class ?? '-', r.code, r.name, r.specification, r.unit]
-          : [String(idx + 1), r.code, r.name, r.specification, r.unit];
-        return [...base, formatNum(r.totalInward), formatNum(r.totalIssue), formatNum(r.availableStock)];
-      });
-      autoTable(doc, { head: tableHeaders, body: tableBody, startY: 22, styles: { fontSize: 8 }, headStyles: { fillColor: [0, 51, 102], textColor: [255, 255, 255] } });
-      doc.save(`project-stock-statement-${activeTab}.pdf`);
-      toast.showSuccess('Downloaded');
+      void (async () => {
+        try {
+          const rm = mergedReportMeta;
+          const reportTitle = `Project Stock Statement - ${activeTab === 'materials' ? 'Material' : 'Assets'}`;
+          const storeName = stores.find((s) => String(s.id) === String(selectedStore))?.name?.trim() || '';
+          const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+          const margin = 14;
+          let y = 12;
+          doc.setFontSize(16);
+          doc.text(reportTitle, margin, y);
+          y += 9;
+          const raster = await loadCompanyLogoRasterForPdf(rm?.company?.logo ?? userCompany?.logo ?? null);
+          const bandTop = y;
+          let textX = margin;
+          let logoH = 0;
+          if (raster) {
+            try {
+              const ar = raster.widthPx / raster.heightPx;
+              const th = 14;
+              const tw = Math.min(ar * th, 32);
+              const thDraw = tw / ar;
+              doc.addImage(raster.dataUrl, raster.format, margin, bandTop, tw, thDraw);
+              textX = margin + tw + 5;
+              logoH = thDraw;
+            } catch {
+              /* text-only */
+            }
+          }
+          doc.setFontSize(9);
+          let lineY = bandTop + 3.5;
+          const line = (s: string) => {
+            doc.text(s, textX, lineY);
+            lineY += 4.8;
+          };
+          if (rm?.company?.name) line(`Company: ${String(rm.company.name)}`);
+          if (rm?.project?.name) line(`Project: ${String(rm.project.name)}`);
+          if (storeName) line(`Store: ${storeName}`);
+          y = Math.max(bandTop + logoH, lineY + 1) + 5;
+          doc.setFontSize(10);
+          const tableHeaders = [headers];
+          const tableBody = filteredAndSorted.map((r, idx) => {
+            const base = isMaterials
+              ? [String(idx + 1), r.class ?? '-', r.code, r.name, r.specification, r.unit]
+              : [String(idx + 1), r.code, r.name, r.specification, r.unit];
+            return [...base, formatNum(r.totalInward), formatNum(r.totalIssue), formatNum(r.availableStock)];
+          });
+          autoTable(doc, {
+            head: tableHeaders,
+            body: tableBody,
+            startY: y,
+            styles: { fontSize: 8 },
+            headStyles: { fillColor: [0, 51, 102], textColor: [255, 255, 255] },
+          });
+          doc.save(`project-stock-statement-${activeTab}.pdf`);
+          toast.showSuccess('Downloaded');
+        } catch {
+          toast.showError('Could not generate PDF');
+        }
+      })();
     } else if (format === 'Print') {
+      const rm = mergedReportMeta;
+      const reportTitle = `Project Stock Statement - ${activeTab === 'materials' ? 'Material' : 'Assets'}`;
+      const storeName = stores.find((s) => String(s.id) === String(selectedStore))?.name?.trim() || '';
+      const esc = (s: string) =>
+        String(s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      const companyImg = getSameOriginAssetPathForPdf(rm?.company?.logo ?? userCompany?.logo ?? null) || '';
+      const metaLines = [
+        rm?.company?.name ? `<p style="margin:0 0 4px 0"><strong>Company:</strong> ${esc(String(rm.company.name))}</p>` : '',
+        rm?.project?.name ? `<p style="margin:0 0 4px 0"><strong>Project:</strong> ${esc(String(rm.project.name))}</p>` : '',
+        storeName ? `<p style="margin:0 0 4px 0"><strong>Store:</strong> ${esc(storeName)}</p>` : '',
+      ]
+        .filter(Boolean)
+        .join('');
+      const headerRow = `<h1 style="margin:0 0 14px 0;font-size:18px;font-weight:bold">${esc(reportTitle)}</h1>
+<div style="display:flex;align-items:flex-start;gap:20px;margin-bottom:18px;flex-wrap:wrap">
+  ${companyImg ? `<div style="flex-shrink:0"><img src="${esc(companyImg.startsWith('/') ? `${typeof window !== 'undefined' ? window.location.origin : ''}${companyImg}` : companyImg)}" alt="" style="max-height:56px;max-width:200px;object-fit:contain" /></div>` : ''}
+  <div style="font-size:13px;line-height:1.55;min-width:200px">${metaLines}</div>
+</div>`;
       const printContent = `
 <!DOCTYPE html><html><head><title>Project Stock Statement</title>
 <style>body{font-family:Arial;padding:20px} table{width:100%;border-collapse:collapse;font-size:12px} th,td{border:1px solid #000;padding:6px;text-align:left} th{background:#f0f0f0}</style>
 </head><body>
-<h1>Project Stock Statement - ${activeTab === 'materials' ? 'Material' : 'Assets'}</h1>
+${headerRow}
 <table><thead><tr>${headers.map((h) => `<th>${h}</th>`).join('')}</tr></thead>
 <tbody>${filteredAndSorted.map((r, idx) => {
         const base = isMaterials

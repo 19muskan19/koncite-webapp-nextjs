@@ -445,90 +445,95 @@ const Subscription: React.FC<SubscriptionProps> = ({ theme }) => {
                     : `${cardClass} border ${mutedBorder} hover:border-[#C2D642]/40`
                 }`}
               >
-                {isPopular && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 z-10">
-                    <span className="px-4 py-1 bg-[#C2D642] text-white text-[11px] sm:text-xs font-black uppercase tracking-wide rounded-full shadow-md">
-                      Most popular
-                    </span>
-                  </div>
-                )}
-
-                <div className={`p-5 sm:p-6 flex flex-col flex-1 ${isPopular ? 'pt-8' : ''}`}>
-                  <div className="flex items-center gap-2 mb-3">
+                <div className="p-5 sm:p-6 flex flex-col flex-1">
+                  <div className="flex items-center gap-2 mb-4">
                     <Zap className={`w-5 h-5 ${isPopular ? 'text-[#C2D642]' : textSecondary}`} />
                     <h2 className={`text-lg sm:text-xl font-black ${textPrimary}`}>{plan.name}</h2>
                   </div>
 
-                  <div className="mb-5">
-                    <div className="flex items-baseline gap-1 flex-wrap">
-                      <span
-                        className={`text-3xl sm:text-4xl md:text-[2.5rem] font-black tabular-nums leading-none ${
-                          isPopular ? 'text-[#C2D642]' : textPrimary
-                        }`}
-                      >
-                        {formatPrice(plan.monthlyPrice, region)}
-                      </span>
-                      <span className={`text-sm font-bold ${textSecondary}`}>/month</span>
+                  <div
+                    className="mb-5 flex-1 select-none pointer-events-none min-h-0"
+                    style={{ filter: 'blur(8px)' }}
+                  >
+                    {isPopular && (
+                      <div className="flex justify-center mb-3">
+                        <span className="px-4 py-1 bg-[#C2D642] text-white text-[11px] sm:text-xs font-black uppercase tracking-wide rounded-full shadow-md">
+                          Most popular
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="mb-5">
+                      <div className="flex items-baseline gap-1 flex-wrap">
+                        <span
+                          className={`text-3xl sm:text-4xl md:text-[2.5rem] font-black tabular-nums leading-none ${
+                            isPopular ? 'text-[#C2D642]' : textPrimary
+                          }`}
+                        >
+                          {formatPrice(plan.monthlyPrice, region)}
+                        </span>
+                        <span className={`text-sm font-bold ${textSecondary}`}>/month</span>
+                      </div>
+                      <p className={`text-xs sm:text-sm mt-2 ${textSecondary}`}>Yearly plan — billed annually</p>
                     </div>
-                    <p className={`text-xs sm:text-sm mt-2 ${textSecondary}`}>Yearly plan — billed annually</p>
-                  </div>
 
-                  <div className={`space-y-3 mb-5 pb-5 border-b ${mutedBorder}`}>
-                    <QuotaRow
-                      icon={<FolderKanban className="w-4 h-4" />}
-                      label="Projects included"
-                      value={String(plan.projects)}
-                      isDark={isDark}
-                      highlight={isPopular}
-                    />
-                    <QuotaRow
-                      icon={<Users className="w-4 h-4" />}
-                      label="Users included"
-                      value={String(plan.users)}
-                      isDark={isDark}
-                      highlight={isPopular}
-                    />
-                    <QuotaRow
-                      icon={<HardDrive className="w-4 h-4" />}
-                      label="Document storage"
-                      value={`${plan.storageGb} GB`}
-                      isDark={isDark}
-                      highlight={isPopular}
-                    />
-                    <QuotaRow
-                      icon={<Sparkles className="w-4 h-4" />}
-                      label="AI monthly credits"
-                      value={plan.aiCredits.toLocaleString(region === 'india' ? 'en-IN' : 'en-US')}
-                      isDark={isDark}
-                      highlight={isPopular}
-                    />
-                    <QuotaRow
-                      icon={<GraduationCap className="w-4 h-4" />}
-                      label="Online training support"
-                      value={`${plan.trainingHours} hrs`}
-                      isDark={isDark}
-                      highlight={isPopular}
-                    />
-                  </div>
+                    <div className={`space-y-3 mb-5 pb-5 border-b ${mutedBorder}`}>
+                      <QuotaRow
+                        icon={<FolderKanban className="w-4 h-4" />}
+                        label="Projects included"
+                        value={String(plan.projects)}
+                        isDark={isDark}
+                        highlight={isPopular}
+                      />
+                      <QuotaRow
+                        icon={<Users className="w-4 h-4" />}
+                        label="Users included"
+                        value={String(plan.users)}
+                        isDark={isDark}
+                        highlight={isPopular}
+                      />
+                      <QuotaRow
+                        icon={<HardDrive className="w-4 h-4" />}
+                        label="Document storage"
+                        value={`${plan.storageGb} GB`}
+                        isDark={isDark}
+                        highlight={isPopular}
+                      />
+                      <QuotaRow
+                        icon={<Sparkles className="w-4 h-4" />}
+                        label="AI monthly credits"
+                        value={plan.aiCredits.toLocaleString(region === 'india' ? 'en-IN' : 'en-US')}
+                        isDark={isDark}
+                        highlight={isPopular}
+                      />
+                      <QuotaRow
+                        icon={<GraduationCap className="w-4 h-4" />}
+                        label="Online training support"
+                        value={`${plan.trainingHours} hrs`}
+                        isDark={isDark}
+                        highlight={isPopular}
+                      />
+                    </div>
 
-                  <p className={`text-[11px] sm:text-xs ${textSecondary} mb-4 leading-relaxed`}>
-                    AI includes free credits to get started; additional usage can be purchased as needed.
-                  </p>
-
-                  <div className="mb-5">
-                    <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>
-                      Included in every plan
+                    <p className={`text-[11px] sm:text-xs ${textSecondary} mb-4 leading-relaxed`}>
+                      AI includes free credits to get started; additional usage can be purchased as needed.
                     </p>
-                    <ul className="space-y-2">
-                      {COMMON_FEATURES.map((f) => (
-                        <li key={f} className="flex items-start gap-2">
-                          <Check
-                            className={`w-4 h-4 shrink-0 mt-0.5 ${isPopular ? 'text-[#C2D642]' : 'text-[#C2D642]/90'}`}
-                          />
-                          <span className={`text-xs sm:text-sm ${textPrimary}`}>{f}</span>
-                        </li>
-                      ))}
-                    </ul>
+
+                    <div>
+                      <p className={`text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}>
+                        Included in every plan
+                      </p>
+                      <ul className="space-y-2">
+                        {COMMON_FEATURES.map((f) => (
+                          <li key={f} className="flex items-start gap-2">
+                            <Check
+                              className={`w-4 h-4 shrink-0 mt-0.5 ${isPopular ? 'text-[#C2D642]' : 'text-[#C2D642]/90'}`}
+                            />
+                            <span className={`text-xs sm:text-sm ${textPrimary}`}>{f}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   </div>
 
                   <div className="mt-auto pt-2">
@@ -564,29 +569,32 @@ const Subscription: React.FC<SubscriptionProps> = ({ theme }) => {
                 </p>
               </div>
             </div>
-
-            <div className="mt-4 flex flex-col sm:flex-row sm:items-center gap-2">
-              <label htmlFor="addon-base-tier" className={`text-xs font-bold uppercase tracking-wider ${textSecondary}`}>
-                Your base plan
-              </label>
-              <select
-                id="addon-base-tier"
-                value={addonBaseTier}
-                onChange={(e) => setAddonBaseTier(e.target.value as PlanId)}
-                className={`max-w-xs rounded-lg px-3 py-2 text-sm font-bold border outline-none focus:ring-2 focus:ring-[#C2D642]/40 ${
-                  isDark
-                    ? 'bg-slate-800 border-slate-600 text-slate-100'
-                    : 'bg-white border-slate-300 text-slate-900'
-                }`}
-              >
-                {data.plans.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
           </div>
+
+          <div className="select-none pointer-events-none" style={{ filter: 'blur(8px)' }}>
+            <div className={`px-5 sm:px-6 py-4 border-b ${mutedBorder}`}>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                <label htmlFor="addon-base-tier" className={`text-xs font-bold uppercase tracking-wider ${textSecondary}`}>
+                  Your base plan
+                </label>
+                <select
+                  id="addon-base-tier"
+                  value={addonBaseTier}
+                  onChange={(e) => setAddonBaseTier(e.target.value as PlanId)}
+                  className={`max-w-xs rounded-lg px-3 py-2 text-sm font-bold border outline-none focus:ring-2 focus:ring-[#C2D642]/40 ${
+                    isDark
+                      ? 'bg-slate-800 border-slate-600 text-slate-100'
+                      : 'bg-white border-slate-300 text-slate-900'
+                  }`}
+                >
+                  {data.plans.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
 
           <div className={`divide-y ${mutedBorder}`}>
             {ADDON_KEYS.map((key) => {
@@ -662,7 +670,7 @@ const Subscription: React.FC<SubscriptionProps> = ({ theme }) => {
           </div>
 
           <div
-            className={`px-5 sm:px-6 py-4 border-t ${mutedBorder} flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 ${
+            className={`px-5 sm:px-6 py-4 border-t ${mutedBorder} ${
               isDark ? 'bg-slate-800/40' : 'bg-slate-50/90'
             }`}
           >
@@ -677,28 +685,6 @@ const Subscription: React.FC<SubscriptionProps> = ({ theme }) => {
                 /mo). Yearly billing is 12× this total. Estimates before taxes; final billing may vary.
               </p>
             </div>
-            <button
-              type="button"
-              disabled={selectedPaymentMonthly <= 0}
-              onClick={() =>
-                console.log('Proceed to pay', {
-                  basePlanMonthly,
-                  addonTotal,
-                  selectedPaymentMonthly,
-                  region,
-                  addonBaseTier,
-                  addonEnabled,
-                  addonQty,
-                })
-              }
-              className={`px-6 py-3 rounded-xl text-sm font-bold transition-all shrink-0 ${
-                selectedPaymentMonthly > 0
-                  ? 'bg-[#C2D642] hover:bg-[#b8cc3a] text-white shadow-md'
-                  : 'bg-slate-600/40 text-slate-500 cursor-not-allowed'
-              }`}
-            >
-              Proceed to pay
-            </button>
           </div>
 
           <details className={`border-t ${mutedBorder} group`}>
@@ -727,6 +713,36 @@ const Subscription: React.FC<SubscriptionProps> = ({ theme }) => {
               </table>
             </div>
           </details>
+
+          <div
+            className={`px-5 sm:px-6 py-4 border-t ${mutedBorder} flex flex-col sm:flex-row sm:items-center sm:justify-end gap-4 ${
+              isDark ? 'bg-slate-800/40' : 'bg-slate-50/90'
+            }`}
+          >
+            <button
+              type="button"
+              disabled={selectedPaymentMonthly <= 0}
+              onClick={() =>
+                console.log('Proceed to pay', {
+                  basePlanMonthly,
+                  addonTotal,
+                  selectedPaymentMonthly,
+                  region,
+                  addonBaseTier,
+                  addonEnabled,
+                  addonQty,
+                })
+              }
+              className={`px-6 py-3 rounded-xl text-sm font-bold transition-all shrink-0 ${
+                selectedPaymentMonthly > 0
+                  ? 'bg-[#C2D642] hover:bg-[#b8cc3a] text-white shadow-md'
+                  : 'bg-slate-600/40 text-slate-500 cursor-not-allowed'
+              }`}
+            >
+              Proceed to pay
+            </button>
+          </div>
+          </div>
         </div>
 
         <p className={`text-center text-xs ${textSecondary} max-w-2xl mx-auto pb-2`}>

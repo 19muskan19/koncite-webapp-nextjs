@@ -14,6 +14,28 @@ const backendApiUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC
 const isCrossOrigin = /^https?:\/\//.test(backendApiUrl);
 export const API_BASE_URL = isBrowser && isCrossOrigin ? '/api-proxy' : backendApiUrl;
 
+/** Laravel app origin without trailing `/api` (for company routes outside `/api`). */
+export const BACKEND_ORIGIN = backendApiUrl.replace(/\/api\/?$/, '').replace(/\/+$/, '');
+
+/** Proxied base for `/company/*` ajax (see next.config rewrites `company-proxy`). */
+export const COMPANY_AJAX_BASE_URL = isBrowser && isCrossOrigin ? '/company-proxy' : `${BACKEND_ORIGIN}/company`;
+
+/** Laravel CSRF: meta tag or `XSRF-TOKEN` cookie (URL-decoded). */
+export function getLaravelCsrfToken(): string | null {
+  if (typeof document !== 'undefined') {
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    const fromMeta = meta?.getAttribute('content');
+    if (fromMeta) return fromMeta;
+  }
+  const raw = getCookie('XSRF-TOKEN');
+  if (!raw) return null;
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 // Get auth token from cookies or localStorage (fallback)
 export const getAuthToken = (): string | null => {
   // First try cookies
@@ -134,7 +156,7 @@ apiClient.interceptors.response.use(
           console.error('Forbidden (403):', msg, { url, method: error.config?.method });
           break;
         }
-        case 404:
+        case 404: {
           // Suppress 404 logs for known endpoints that may not exist or return 404 during normal use
           const url = error.config?.url || '';
           const suppress404 = [
@@ -142,10 +164,14 @@ apiClient.interceptors.response.use(
             '/get-work-overview', '/get-work-process', '/get-work-process-activities', '/get-inventory-stocks', '/get-inward-stocks',
             '/tasks/get-user-list',
           ].some(p => url.includes(p));
-          if (!suppress404) {
+          /** Copilot (Ask me): `/sessions` / `/chat` may 404 until Laravel routes exist; callers handle empty list / errors. */
+          const copilot404 =
+            /(^|\/)sessions(\/|\?|$)/.test(url) || /(^|\/)chat(\?|$)/.test(url);
+          if (!suppress404 && !copilot404) {
             console.error('Not Found: The requested resource does not exist', url);
           }
           break;
+        }
         case 422:
           // Validation errors - these will be handled by the component
           break;
@@ -167,6 +193,56 @@ apiClient.interceptors.response.use(
       console.error('Error:', error.message);
     }
     
+    return Promise.reject(error);
+  }
+);
+
+/**
+ * Company-area ajax (e.g. `company/ajax/company-custome-update-status`).
+ * Same Bearer auth as apiClient; adds `X-XSRF-TOKEN` when CSRF cookie/meta exists.
+ */
+export const companyAjaxClient: AxiosInstance = axios.create({
+  baseURL: COMPANY_AJAX_BASE_URL,
+  headers: { Accept: 'application/json' },
+  timeout: 30000,
+});
+
+companyAjaxClient.interceptors.request.use(
+  (config) => {
+    const token = getAuthToken();
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    const xsrf = getLaravelCsrfToken();
+    if (xsrf) {
+      config.headers['X-XSRF-TOKEN'] = xsrf;
+    }
+    if (config.data instanceof FormData) {
+      delete config.headers['Content-Type'];
+    } else if (!config.headers['Content-Type']) {
+      config.headers['Content-Type'] = 'application/json';
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+companyAjaxClient.interceptors.response.use(
+  (response) => response,
+  (error: AxiosError) => {
+    // Reuse same handling shape as apiClient for consistency
+    if (error.response?.status === 401 && typeof window !== 'undefined') {
+      const token = getAuthToken();
+      const reqPath = String(error.config?.url || '');
+      if (token && !reqPath.includes('/documents')) {
+        const { removeCookie } = require('../utils/cookies');
+        removeCookie('auth_token');
+        removeCookie('isAuthenticated');
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('isAuthenticated');
+        window.location.href = '/';
+      }
+    }
     return Promise.reject(error);
   }
 );

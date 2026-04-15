@@ -237,19 +237,19 @@ export function summaryTrendsFromTimeseries(
 
 export function expenseDistributionFromSummary(
   summary: FinanceSummaryData,
-  expenseColor: (code: string) => string
+  expenseColor: (code: string, index: number) => string
 ): { name: string; value: number; color: string }[] {
   const rows = summary.by_cost_code?.filter((r) => String(r.transaction_type).toLowerCase() === 'expense') ?? [];
   const amounts = rows.map((r) => num(r.total_amount));
   const total = amounts.reduce((a, b) => a + b, 0);
   if (total <= 0) return [];
-  return rows.map((r) => {
+  return rows.map((r, index) => {
     const label = (r.cost_code?.trim() || 'Uncoded').trim();
     const v = num(r.total_amount);
     return {
       name: label,
       value: Math.round((v / total) * 100),
-      color: expenseColor(label),
+      color: expenseColor(label, index),
     };
   });
 }

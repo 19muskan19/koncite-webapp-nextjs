@@ -24,6 +24,10 @@ import DatePickerInput from '../ui/DatePickerInput';
 import { useProjectsFromMasters, useSubprojectsFromMasters } from '../../hooks/useProjectsFromMasters';
 import { masterDataAPI, materialRequestAPI } from '../../services/api';
 import { useToast } from '../../contexts/ToastContext';
+import type { InventoryReportMeta } from '@/types/inventoryReportMeta';
+import { useUser } from '@/contexts/UserContext';
+import { getSameOriginAssetPathForPdf } from '@/utils/imageUtils';
+import { loadCompanyLogoRasterForPdf } from '@/utils/pdfImage';
 
 interface Project {
   id: string | number;
@@ -96,6 +100,7 @@ function openingStockRowMatchesScope(
 
 const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
   const toast = useToast();
+  const { company: userCompany } = useUser();
   const [selectedProject, setSelectedProject] = useState<string>('');
   const [selectedSubProject, setSelectedSubProject] = useState<string>('');
   const projects = useProjectsFromMasters();
@@ -105,6 +110,8 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
   const [toDate, setToDate] = useState<string>('');
   const [indentNo, setIndentNo] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
+  /** Set when /inventory-report returns (includes company/project logos from `meta`). */
+  const [reportMeta, setReportMeta] = useState<InventoryReportMeta | null>(null);
   const [tableData, setTableData] = useState<ReportRow[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
@@ -120,6 +127,61 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
     if (!selectedProject) setSelectedSubProject('');
   }, [selectedProject]);
 
+  /** API `meta` plus UI selections and signed-in company so PDF/Print/header stay populated when the report API fails or omits `meta`. */
+  const mergedReportMeta = useMemo((): InventoryReportMeta | null => {
+    const proj = projects.find((p) => String(p.id) === String(selectedProject) || p.name === selectedProject);
+    const sub = subprojects.find((s) => String(s.id) === String(selectedSubProject));
+    const api = reportMeta;
+
+    const companyName = (api?.company?.name?.trim() || userCompany?.name?.trim() || '').trim();
+    const companyLogo =
+      api?.company?.logo != null && String(api.company.logo).trim() ? api.company.logo : userCompany?.logo ?? null;
+
+    const projectName = (api?.project?.name?.trim() || proj?.name?.trim() || '').trim();
+    const projectLogo = api?.project?.logo ?? null;
+
+    const subName = (
+      selectedSubProject ? api?.subProject?.name?.trim() || sub?.name?.trim() || '' : api?.subProject?.name?.trim() || ''
+    ).trim();
+    const subLogo = api?.subProject?.logo ?? null;
+
+    const selectedDate =
+      api?.selectedDate && (api.selectedDate.from || api.selectedDate.to || api.selectedDate.date)
+        ? api.selectedDate
+        : fromDate.length >= 10 && toDate.length >= 10
+          ? { from: fromDate.slice(0, 10), to: toDate.slice(0, 10) }
+          : api?.selectedDate;
+
+    if (!companyName && !projectName && !subName && !companyLogo && !projectLogo && !subLogo) {
+      return null;
+    }
+
+    return {
+      ...(companyName || companyLogo
+        ? { company: { name: companyName || undefined, logo: typeof companyLogo === 'string' ? companyLogo : null } }
+        : {}),
+      ...(projectName || projectLogo
+        ? {
+            project: {
+              id: api?.project?.id ?? (proj?.id != null ? Number(proj.id) : null),
+              name: projectName || undefined,
+              logo: projectLogo,
+            },
+          }
+        : {}),
+      ...(subName || subLogo
+        ? {
+            subProject: {
+              id: api?.subProject?.id ?? (sub?.id != null ? Number(sub.id) : null),
+              name: subName || undefined,
+              logo: subLogo,
+            },
+          }
+        : {}),
+      ...(selectedDate ? { selectedDate } : {}),
+    };
+  }, [reportMeta, userCompany, projects, subprojects, selectedProject, selectedSubProject, fromDate, toDate]);
+
   const loadReportData = useCallback(async () => {
     const hasProject = Boolean(selectedProject);
     const hasIndentNo = Boolean(indentNo.trim());
@@ -129,6 +191,7 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
     }
     setIsLoading(true);
     setTableData([]);
+    setReportMeta(null);
     try {
       const proj = projects.find((p) => String(p.id) === String(selectedProject) || p.name === selectedProject);
       const projId = proj?.id ?? selectedProject;
@@ -136,14 +199,15 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
       let rows: ReportRow[] = [];
       /** When true, /inventory-report returned successfully — empty `material` must show empty table (no list+edit fill-in). */
       let prReportApiCompleted = false;
+      let metaFromApi: InventoryReportMeta | null = null;
       try {
-        const raw = await materialRequestAPI.getReport({
+        const { rows: arr, meta } = await materialRequestAPI.getReport({
           projectId: projId || undefined,
           indentNo: indentNo.trim() || undefined,
           ...(selectedSubProject ? { subProjectId: selectedSubProject } : {}),
         });
+        metaFromApi = meta ?? null;
         prReportApiCompleted = true;
-        const arr = Array.isArray(raw) ? raw : [];
         let srNo = 0;
         for (const item of arr) {
           srNo++;
@@ -169,6 +233,11 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
       } catch {
         /* Report API error — allow list+edit fallback when project is selected */
         prReportApiCompleted = false;
+        metaFromApi = null;
+      }
+
+      if (prReportApiCompleted) {
+        setReportMeta(metaFromApi);
       }
 
       if (rows.length === 0 && hasProject && !prReportApiCompleted) {
@@ -250,9 +319,13 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
       }
       }
       setTableData(rows);
+      if (!prReportApiCompleted) {
+        setReportMeta(null);
+      }
     } catch (err: any) {
       toast.showError(err?.message || 'Failed to load report data');
       setTableData([]);
+      setReportMeta(null);
     } finally {
       setIsLoading(false);
     }
@@ -352,41 +425,118 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
       URL.revokeObjectURL(a.href);
       toast.showSuccess('Downloaded');
     } else if (format === 'PDF') {
-      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-      doc.setFontSize(16);
-      doc.text('Indent (Purchase Request) Report', 14, 15);
-      doc.setFontSize(10);
+      void (async () => {
+        try {
+          const rm = mergedReportMeta;
+          const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+          const margin = 14;
+          let y = 12;
 
-      const tableHeaders = [headers];
-      const tableBody = filteredAndSorted.map((r) => [
-        String(r.srNo),
-        r.code,
-        r.materials,
-        r.specification,
-        r.unit,
-        formatNum(r.requiredQty),
-        r.requiredDate,
-        r.requiredForActivities,
-        r.remarks,
-        formatNum(r.currentStock),
-      ]);
+          doc.setFontSize(16);
+          doc.text('Indent (Purchase Request) Report', margin, y);
+          y += 9;
 
-      autoTable(doc, {
-        head: tableHeaders,
-        body: tableBody,
-        startY: 22,
-        styles: { fontSize: 8 },
-        headStyles: { fillColor: [0, 51, 102], textColor: [255, 255, 255] },
-      });
+          const rawCompanyLogo = rm?.company?.logo ?? userCompany?.logo ?? null;
+          const raster = await loadCompanyLogoRasterForPdf(rawCompanyLogo);
 
-      doc.save('indent-report.pdf');
-      toast.showSuccess('Downloaded');
+          const bandTop = y;
+          const logoMaxH = 14;
+          const logoMaxW = 32;
+          let textX = margin;
+          let logoH = 0;
+
+          if (raster) {
+            try {
+              const ar = raster.widthPx / raster.heightPx;
+              const th = logoMaxH;
+              const tw = Math.min(ar * th, logoMaxW);
+              const thDraw = tw / ar;
+              doc.addImage(raster.dataUrl, raster.format, margin, bandTop, tw, thDraw);
+              textX = margin + tw + 5;
+              logoH = thDraw;
+            } catch {
+              /* text-only header */
+            }
+          }
+
+          doc.setFontSize(9);
+          let lineY = bandTop + 3.5;
+          const line = (s: string) => {
+            doc.text(s, textX, lineY);
+            lineY += 4.8;
+          };
+          if (rm?.company?.name) line(`Company: ${String(rm.company.name)}`);
+          if (rm?.project?.name) line(`Project: ${String(rm.project.name)}`);
+          if (rm?.subProject?.name) line(`Sub project: ${String(rm.subProject.name)}`);
+          const sd = rm?.selectedDate;
+          if (sd?.from && sd?.to) line(`Period: ${sd.from} – ${sd.to}`);
+          else if (sd?.date) line(`Date: ${String(sd.date)}`);
+
+          const metaBottom = Math.max(bandTop + logoH, lineY + 1);
+          y = metaBottom + 5;
+
+          doc.setFontSize(10);
+
+          const tableHeaders = [headers];
+          const tableBody = filteredAndSorted.map((r) => [
+            String(r.srNo),
+            r.code,
+            r.materials,
+            r.specification,
+            r.unit,
+            formatNum(r.requiredQty),
+            r.requiredDate,
+            r.requiredForActivities,
+            r.remarks,
+            formatNum(r.currentStock),
+          ]);
+
+          autoTable(doc, {
+            head: tableHeaders,
+            body: tableBody,
+            startY: y,
+            styles: { fontSize: 8 },
+            headStyles: { fillColor: [0, 51, 102], textColor: [255, 255, 255] },
+          });
+
+          doc.save('indent-report.pdf');
+          toast.showSuccess('Downloaded');
+        } catch {
+          toast.showError('Could not generate PDF');
+        }
+      })();
     } else if (format === 'Print') {
+      const rm = mergedReportMeta;
+      const esc = (s: string) =>
+        String(s)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      const companyImg =
+        getSameOriginAssetPathForPdf(rm?.company?.logo ?? userCompany?.logo ?? null) || '';
+      const metaLines = [
+        rm?.company?.name ? `<p style="margin:0 0 4px 0"><strong>Company:</strong> ${esc(String(rm.company.name))}</p>` : '',
+        rm?.project?.name ? `<p style="margin:0 0 4px 0"><strong>Project:</strong> ${esc(String(rm.project.name))}</p>` : '',
+        rm?.subProject?.name ? `<p style="margin:0 0 4px 0"><strong>Sub project:</strong> ${esc(String(rm.subProject.name))}</p>` : '',
+        rm?.selectedDate?.from && rm?.selectedDate?.to
+          ? `<p style="margin:0 0 4px 0"><strong>Period:</strong> ${esc(`${rm.selectedDate.from} – ${rm.selectedDate.to}`)}</p>`
+          : rm?.selectedDate?.date
+            ? `<p style="margin:0 0 4px 0"><strong>Date:</strong> ${esc(String(rm.selectedDate.date))}</p>`
+            : '',
+      ]
+        .filter(Boolean)
+        .join('');
+      const headerRow = `<h1 style="margin:0 0 14px 0;font-size:20px;font-weight:bold">Indent (Purchase Request) Report</h1>
+<div style="display:flex;align-items:flex-start;gap:20px;margin-bottom:18px;flex-wrap:wrap">
+  ${companyImg ? `<div style="flex-shrink:0"><img src="${esc(companyImg.startsWith('/') ? `${typeof window !== 'undefined' ? window.location.origin : ''}${companyImg}` : companyImg)}" alt="" style="max-height:56px;max-width:200px;object-fit:contain" /></div>` : ''}
+  <div style="font-size:13px;line-height:1.55;min-width:200px">${metaLines}</div>
+</div>`;
       const printContent = `
 <!DOCTYPE html><html><head><title>Indent Report</title>
 <style>body{font-family:Arial;padding:20px} table{width:100%;border-collapse:collapse} th,td{border:1px solid #000;padding:8px;text-align:left} th{background:#f0f0f0}</style>
 </head><body>
-<h1>Indent (Purchase Request) Report</h1>
+${headerRow}
 <table><thead><tr>${headers.map((h) => `<th>${h}</th>`).join('')}</tr></thead>
 <tbody>${filteredAndSorted.map((r) => `<tr><td>${r.srNo}</td><td>${r.code}</td><td>${r.materials}</td><td>${r.specification}</td><td>${r.unit}</td><td>${formatNum(r.requiredQty)}</td><td>${r.requiredDate}</td><td>${r.requiredForActivities}</td><td>${r.remarks}</td><td>${formatNum(r.currentStock)}</td></tr>`).join('')}</tbody></table>
 </body></html>`;

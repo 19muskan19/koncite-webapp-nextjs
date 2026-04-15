@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import AppLayout from '@/components/AppLayout';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -21,8 +21,9 @@ import {
   Check,
   X,
   Eye,
+  Search,
 } from 'lucide-react';
-import { masterDataAPI, goodsIssueAPI } from '@/services/api';
+import { masterDataAPI, goodsIssueAPI, teamsAPI } from '@/services/api';
 import CreateWarehouseModal from '@/components/masters/Modals/CreateWarehouseModal';
 import { getTodayDateString } from '@/utils/dateUtils';
 import { getAuthToken } from '@/services/apiClient';
@@ -50,6 +51,68 @@ interface IssueType {
   id: string | number;
   name: string;
   slug?: string;
+}
+
+/** Maps Issue to selection to where tag options are loaded from (masters vs issue-type-tag-list API). */
+type IssueToTagCategory =
+  | 'same-project-other-store'
+  | 'other-project'
+  | 'machine-asset'
+  | 'contractor'
+  | 'staff'
+  | 'api-default';
+
+function getIssueToTagCategory(t: IssueType | undefined): IssueToTagCategory {
+  if (!t) return 'api-default';
+  const slug = String((t as { slug?: string }).slug ?? '')
+    .toLowerCase()
+    .replace(/\s+/g, '-');
+  const name = String(t.name ?? '').toLowerCase();
+
+  if (
+    slug.includes('same-project-other-store') ||
+    slug.includes('same-project-other-stores') ||
+    (name.includes('same project') && (name.includes('other store') || name.includes('other stores')))
+  ) {
+    return 'same-project-other-store';
+  }
+  if (slug.includes('other-project') || name.includes('other project')) {
+    return 'other-project';
+  }
+  if (
+    slug.includes('machine') ||
+    slug.includes('asset') ||
+    slug.includes('machinery') ||
+    name.includes('machine') ||
+    name.includes('asset') ||
+    name.includes('machinery')
+  ) {
+    return 'machine-asset';
+  }
+  if (slug.includes('contractor') || name.includes('contractor')) {
+    return 'contractor';
+  }
+  if (slug.includes('staff') || name.includes('staff')) {
+    return 'staff';
+  }
+  return 'api-default';
+}
+
+function tagSelectLabel(cat: IssueToTagCategory): string {
+  switch (cat) {
+    case 'same-project-other-store':
+      return 'Select store ';
+    case 'other-project':
+      return 'Select project ';
+    case 'machine-asset':
+      return 'Select machine / asset ';
+    case 'contractor':
+      return 'Select contractor ';
+    case 'staff':
+      return 'Select staff ';
+    default:
+      return 'Tag ';
+  }
 }
 
 interface MaterialItem {
@@ -119,8 +182,16 @@ export default function GoodsIssueFlow({
   const [issueToId, setIssueToId] = useState<string | number>('');
   const [tagId, setTagId] = useState<string | number>('');
   const [tagOptions, setTagOptions] = useState<any[]>([]);
+  const [tagPanelOpen, setTagPanelOpen] = useState(false);
+  const [tagSearchQuery, setTagSearchQuery] = useState('');
+  const [tagDropdownOpen, setTagDropdownOpen] = useState(false);
+  const [isLoadingTagOptions, setIsLoadingTagOptions] = useState(false);
+  const tagComboboxRef = useRef<HTMLDivElement>(null);
+  const tagSearchInputRef = useRef<HTMLInputElement>(null);
+  const editTagPreloadedRef = useRef(false);
   const [issueTypes, setIssueTypes] = useState<IssueType[]>([]);
   const [goodsType, setGoodsType] = useState<'materials' | 'machines'>('materials');
+  const [goodsSearchQuery, setGoodsSearchQuery] = useState('');
   const [materials, setMaterials] = useState<MaterialItem[]>([]);
   const [selectedMaterialIds, setSelectedMaterialIds] = useState<Set<string>>(new Set());
   const [issueGoodsList, setIssueGoodsList] = useState<any[]>([]);
@@ -140,6 +211,21 @@ export default function GoodsIssueFlow({
 
   const projectIdForApi = () => (editProject?.numericId ?? editProject?.id ?? pNumId) || (pid && /^\d+$/.test(String(pid)) ? pid : undefined);
   const projectNameForDisplay = () => editProject?.name ?? pName;
+
+  const filteredMaterials = useMemo(() => {
+    if (!goodsSearchQuery.trim()) return materials;
+    const q = goodsSearchQuery.toLowerCase().trim();
+    return materials.filter((m) => {
+      const stockStr = m.stock != null && m.stock !== '' ? String(m.stock) : '';
+      return (
+        (m.code ?? '').toLowerCase().includes(q) ||
+        (m.name ?? '').toLowerCase().includes(q) ||
+        (m.specification ?? '').toLowerCase().includes(q) ||
+        (m.unit ?? '').toLowerCase().includes(q) ||
+        stockStr.toLowerCase().includes(q)
+      );
+    });
+  }, [materials, goodsSearchQuery]);
 
   useEffect(() => {
     if (mode === 'create') {
@@ -261,46 +347,172 @@ export default function GoodsIssueFlow({
     }
   }, [mode, issueHeader, stores, editLoadedStoreIds]);
 
-  useEffect(() => {
-    if (issueToId && (step === 'goodsInv' || step === 'details')) {
-      const t = issueTypes.find((x) => String(x.id) === String(issueToId));
-      const typeSlug = ((t as any)?.slug ?? t?.name ?? '').toString().toLowerCase().replace(/\s+/g, '-');
-      const typeName = (t?.name ?? '').toString().toLowerCase();
-      const pId = projectIdForApi();
-      const storeNumericIds = Array.from(selectedStoreIds)
-        .map((sid) => stores.find((x) => String(x.id) === sid)?.numericId ?? stores.find((x) => String(x.id) === sid)?.id)
-        .filter((x): x is string | number => x != null);
+  const issueToCategory: IssueToTagCategory = useMemo(() => {
+    const t = issueTypes.find((x) => String(x.id) === String(issueToId));
+    return getIssueToTagCategory(t);
+  }, [issueTypes, issueToId]);
 
-      const isSameProjectOtherStores = typeSlug.includes('same-project-other-store') || typeName.includes('same project other store');
-      if (isSameProjectOtherStores && pId) {
-        masterDataAPI.getProjectWiseWarehouses(pId).then((res: any[]) => {
-          const list = Array.isArray(res) ? res : [];
-          const otherStores = list.filter((s: any) => !selectedStoreIds.has(String(s.uuid ?? s.id)));
-          setTagOptions(otherStores.map((s: any) => ({ id: s.uuid ?? s.id, name: s.name ?? s.store_name ?? '', tag_name: s.name ?? s.store_name, label: s.name ?? s.store_name })));
-        }).catch(() => setTagOptions([]));
-        return;
-      }
-      const isOtherProject = typeSlug.includes('other-project') || typeName.includes('other project');
-      if (isOtherProject) {
-        masterDataAPI.getProjects().then((res: any[]) => {
-          const list = Array.isArray(res) ? res : [];
-          const currentPId = String(pId ?? '');
-          const otherProjects = list.filter((p: any) => String(p.id ?? p.uuid ?? p.projects_id) !== currentPId);
-          setTagOptions(otherProjects.map((p: any) => ({ id: p.id ?? p.uuid ?? p.projects_id, name: p.project_name ?? p.name ?? '', tag_name: p.project_name ?? p.name, label: p.project_name ?? p.name })));
-        }).catch(() => setTagOptions([]));
-        return;
-      }
-      if (pId && storeNumericIds.length >= 0) {
-        goodsIssueAPI.getIssueTypeTagList(typeSlug || String(issueToId), pId, storeNumericIds)
-          .then((tags: any[]) => setTagOptions(Array.isArray(tags) ? tags : []))
-          .catch(() => setTagOptions([]));
-      } else {
-        setTagOptions([]);
-      }
-    } else {
-      setTagOptions([]);
+  const filteredTagOptions = useMemo(() => {
+    const q = tagSearchQuery.trim().toLowerCase();
+    const rowText = (opt: any) =>
+      `${opt?.name ?? ''} ${opt?.tag_name ?? ''} ${opt?.label ?? ''} ${opt?.id ?? ''}`.toLowerCase();
+    let list = !q
+      ? tagOptions
+      : tagOptions.filter((opt: any) => rowText(opt).includes(q));
+    const selected = tagId
+      ? tagOptions.find((o: any) => String(o.id) === String(tagId))
+      : undefined;
+    if (selected && !list.some((o: any) => String(o.id) === String(tagId))) {
+      list = [selected, ...list];
     }
-  }, [issueToId, step, selectedStoreIds, stores, issueTypes]);
+    return list;
+  }, [tagOptions, tagSearchQuery, tagId]);
+
+  const selectedTagLabel = useMemo(() => {
+    if (tagId === '' || tagId == null) return '';
+    const opt = tagOptions.find((o: any) => String(o.id) === String(tagId));
+    return opt ? String(opt.name ?? opt.tag_name ?? opt.label ?? '') : '';
+  }, [tagId, tagOptions]);
+
+  useEffect(() => {
+    if (!tagDropdownOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = tagComboboxRef.current;
+      if (el && !el.contains(e.target as Node)) setTagDropdownOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setTagDropdownOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [tagDropdownOpen]);
+
+  useEffect(() => {
+    if (tagDropdownOpen) {
+      tagSearchInputRef.current?.focus();
+    }
+  }, [tagDropdownOpen]);
+
+  const loadTagOptions = useCallback(async () => {
+    if (!issueToId) {
+      toast.showWarning('Select Issue to first.');
+      return;
+    }
+    const t = issueTypes.find((x) => String(x.id) === String(issueToId));
+    const cat = getIssueToTagCategory(t);
+    const pId = projectIdForApi();
+    const storeNumericIds = Array.from(selectedStoreIds)
+      .map((sid) => stores.find((x) => String(x.id) === sid)?.numericId ?? stores.find((x) => String(x.id) === sid)?.id)
+      .filter((x): x is string | number => x != null);
+
+    setIsLoadingTagOptions(true);
+    setTagPanelOpen(true);
+    setTagSearchQuery('');
+    setTagDropdownOpen(false);
+    try {
+      if (cat === 'same-project-other-store') {
+        if (!pId) {
+          setTagOptions([]);
+          toast.showWarning('Project is required.');
+          return;
+        }
+        const res = await masterDataAPI.getProjectWiseWarehouses(pId);
+        const list = Array.isArray(res) ? res : [];
+        const otherStores = list.filter((s: any) => !selectedStoreIds.has(String(s.uuid ?? s.id)));
+        setTagOptions(
+          otherStores.map((s: any) => ({
+            id: s.uuid ?? s.id,
+            name: s.name ?? s.store_name ?? '',
+            tag_name: s.name ?? s.store_name,
+            label: s.name ?? s.store_name,
+          }))
+        );
+        return;
+      }
+      if (cat === 'other-project') {
+        const res = await masterDataAPI.getProjects();
+        const list = Array.isArray(res) ? res : [];
+        const currentPId = String(pId ?? '');
+        const otherProjects = list.filter((proj: any) => String(proj.id ?? proj.uuid ?? proj.projects_id) !== currentPId);
+        setTagOptions(
+          otherProjects.map((proj: any) => ({
+            id: proj.id ?? proj.uuid ?? proj.projects_id,
+            name: proj.project_name ?? proj.name ?? '',
+            tag_name: proj.project_name ?? proj.name,
+            label: proj.project_name ?? proj.name,
+          }))
+        );
+        return;
+      }
+      if (cat === 'machine-asset') {
+        const res = await masterDataAPI.getAssetsEquipments();
+        const list = Array.isArray(res) ? res : [];
+        setTagOptions(
+          list.map((a: any) => ({
+            id: a.uuid ?? a.id,
+            name: a.assets ?? a.name ?? a.code ?? '—',
+            tag_name: a.assets ?? a.name,
+            label: a.assets ?? a.name,
+          }))
+        );
+        return;
+      }
+      if (cat === 'contractor') {
+        const res = await masterDataAPI.getSupplierContractorList('contractor');
+        const list = Array.isArray(res) ? res : [];
+        setTagOptions(
+          list.map((v: any) => ({
+            id: v.id ?? v.uuid,
+            name: v.vendor_name ?? v.name ?? v.company_name ?? '—',
+            tag_name: v.vendor_name ?? v.name,
+            label: v.vendor_name ?? v.name,
+          }))
+        );
+        return;
+      }
+      if (cat === 'staff') {
+        const res = await teamsAPI.getTeamsList();
+        const list = Array.isArray(res) ? res : [];
+        setTagOptions(
+          list.map((s: any) => ({
+            id: s.id ?? s.uuid,
+            name: s.name ?? s.user_name ?? s.email ?? '—',
+            tag_name: s.name ?? s.user_name,
+            label: s.name ?? s.user_name,
+          }))
+        );
+        return;
+      }
+      const typeSlug = ((t as any)?.slug ?? t?.name ?? '').toString().toLowerCase().replace(/\s+/g, '-');
+      if (!pId) {
+        setTagOptions([]);
+        toast.showWarning('Project is required to load tags.');
+        return;
+      }
+      const tags = await goodsIssueAPI.getIssueTypeTagList(typeSlug || String(issueToId), pId, storeNumericIds);
+      setTagOptions(Array.isArray(tags) ? tags : []);
+    } catch (e: any) {
+      setTagOptions([]);
+      toast.showError(e?.message ?? 'Failed to load tags.');
+    } finally {
+      setIsLoadingTagOptions(false);
+    }
+  }, [issueToId, issueTypes, projectIdForApi, selectedStoreIds, stores, toast]);
+
+  /** Edit mode: preload tag list once so saved entry_type can display in the dropdown. */
+  useEffect(() => {
+    if (step !== 'goodsInv' || mode !== 'edit' || !issueToId || !tagId) {
+      editTagPreloadedRef.current = false;
+      return;
+    }
+    if (editTagPreloadedRef.current) return;
+    editTagPreloadedRef.current = true;
+    void loadTagOptions();
+  }, [step, mode, issueToId, tagId, loadTagOptions]);
 
   useEffect(() => {
     const pId = projectIdForApi();
@@ -730,43 +942,221 @@ export default function GoodsIssueFlow({
                 <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>Date *</label>
                 <input type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`} />
               </div>
-              <div>
+              <div className="sm:col-span-2 lg:col-span-1">
                 <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>Issue to *</label>
-                <select value={issueToId} onChange={(e) => { const v = e.target.value; setIssueToId(v); setTagId(''); }} className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}>
-                  <option value="">Select...</option>
-                  {issueTypes.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <select
+                    value={issueToId}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setIssueToId(v);
+                      setTagId('');
+                      setTagOptions([]);
+                      setTagPanelOpen(false);
+                      setTagSearchQuery('');
+                      setTagDropdownOpen(false);
+                      editTagPreloadedRef.current = false;
+                    }}
+                    className={`w-full flex-1 min-w-0 px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}
+                  >
+                    <option value="">Select...</option>
+                    {issueTypes.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => void loadTagOptions()}
+                    disabled={!issueToId || isLoadingTagOptions}
+                    title="Load tag list from masters (stores, projects, machines, contractors, staff) or server list"
+                    className={`inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg text-sm font-bold shrink-0 border transition-colors ${
+                      !issueToId || isLoadingTagOptions
+                        ? `opacity-50 cursor-not-allowed ${isDark ? 'border-slate-600' : 'border-slate-300'}`
+                        : isDark
+                          ? 'border-[#6B8E23]/60 bg-[#6B8E23]/15 text-[#C2D642] hover:bg-[#6B8E23]/25'
+                          : 'border-[#6B8E23]/50 bg-[#6B8E23]/10 text-[#4a6518] hover:bg-[#6B8E23]/20'
+                    }`}
+                  >
+                    {isLoadingTagOptions ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                        <Plus className="w-4 h-4 shrink-0" aria-hidden />
+                        <span>Tag</span>
+                      </span>
+                    )}
+                  </button>
+                </div>
+                <p className={`text-xs mt-1.5 ${textSecondary}`}>
+                  After choosing Issue to, click <span className="font-semibold">Tag</span> to load options: same-project other stores, other project, machines/assets, contractor, or staff (from masters).
+                </p>
               </div>
-              {(() => {
-                const t = issueTypes.find((x) => String(x.id) === String(issueToId));
-                const slug = ((t as any)?.slug ?? t?.name ?? '').toString().toLowerCase();
-                const isSameProjectOtherStores = slug.includes('same-project-other-store') || slug.includes('other store');
-                const showTag = tagOptions.length > 0 || (issueToId && isSameProjectOtherStores);
-                if (!showTag) return null;
-                const label = isSameProjectOtherStores ? 'Select store (optional)' : slug.includes('other-project') || slug.includes('other project') ? 'Select project (optional)' : 'Tag (optional)';
-                return (
-                  <div className="sm:col-span-2 space-y-2">
-                    <label className={`block text-sm font-bold ${textSecondary}`}>{label}</label>
-                    <div className="flex gap-2">
-                      <select value={tagId} onChange={(e) => setTagId(e.target.value)} className={`flex-1 px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}>
-                        <option value="">{tagOptions.length === 0 && isSameProjectOtherStores ? 'No stores available' : 'Select...'}</option>
-                        {tagOptions.map((t: any) => <option key={t.id} value={t.id}>{t.name ?? t.tag_name ?? t.label}</option>)}
-                      </select>
-                      {isSameProjectOtherStores && (
-                        <button type="button" onClick={() => setShowCreateWarehouseModal(true)} className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold border shrink-0 ${isDark ? 'border-slate-600 hover:bg-slate-800/50' : 'border-slate-300 hover:bg-slate-50'} ${textPrimary}`} title="Add new store">
+              {tagPanelOpen && (
+                <div className="sm:col-span-2 space-y-2">
+                  <label className={`block text-sm font-bold ${textSecondary}`}>{tagSelectLabel(issueToCategory)}</label>
+                  {isLoadingTagOptions ? (
+                    <div className={`flex items-center gap-2 py-3 px-4 rounded-lg border ${isDark ? 'border-slate-600 bg-slate-800/40' : 'border-slate-200 bg-slate-50'}`}>
+                      <Loader2 className="w-5 h-5 animate-spin text-[#6B8E23]" />
+                      <span className={textSecondary}>Loading tags…</span>
+                    </div>
+                  ) : tagOptions.length === 0 ? (
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                      <p className={`text-sm py-2 flex-1 ${textSecondary}`}>
+                        {issueToCategory === 'same-project-other-store'
+                          ? 'No other stores in this project.'
+                          : 'No tags loaded. Click Tag to load from masters.'}
+                      </p>
+                      {issueToCategory === 'same-project-other-store' && (
+                        <button
+                          type="button"
+                          onClick={() => setShowCreateWarehouseModal(true)}
+                          className={`flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-bold border shrink-0 ${isDark ? 'border-slate-600 hover:bg-slate-800/50' : 'border-slate-300 hover:bg-slate-50'} ${textPrimary}`}
+                          title="Add new store"
+                        >
                           <Plus className="w-4 h-4" /> Add Store
                         </button>
                       )}
                     </div>
-                  </div>
-                );
-              })()}
+                  ) : (
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <div className="relative flex-1 min-w-0" ref={tagComboboxRef}>
+                        <button
+                          type="button"
+                          id="goods-issue-tag-combobox"
+                          aria-expanded={tagDropdownOpen}
+                          aria-haspopup="listbox"
+                          onClick={() => setTagDropdownOpen((o) => !o)}
+                          className={`w-full flex items-center justify-between gap-2 px-4 py-2 rounded-lg border text-left text-sm font-bold min-h-[42px] ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}
+                        >
+                          <span className={`truncate ${!selectedTagLabel ? textSecondary : ''}`}>
+                            {selectedTagLabel || 'Select...'}
+                          </span>
+                          <ChevronDown
+                            className={`w-4 h-4 shrink-0 transition-transform ${textSecondary} ${tagDropdownOpen ? 'rotate-180' : ''}`}
+                            aria-hidden
+                          />
+                        </button>
+                        {tagDropdownOpen && (
+                          <div
+                            role="listbox"
+                            aria-labelledby="goods-issue-tag-combobox"
+                            className={`absolute z-50 left-0 right-0 mt-1 rounded-lg border shadow-xl flex flex-col max-h-[min(55vh,280px)] overflow-hidden ${isDark ? 'bg-[#0f1419] border-slate-600' : 'bg-white border-slate-200'}`}
+                          >
+                            <div className={`p-2 border-b shrink-0 ${isDark ? 'border-slate-600 bg-slate-900/80' : 'border-slate-200 bg-slate-50'}`}>
+                              <div className="relative">
+                                <Search
+                                  className={`absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none ${textSecondary}`}
+                                  aria-hidden
+                                />
+                                <input
+                                  ref={tagSearchInputRef}
+                                  type="search"
+                                  autoComplete="off"
+                                  placeholder="Search…"
+                                  value={tagSearchQuery}
+                                  onChange={(e) => setTagSearchQuery(e.target.value)}
+                                  onKeyDown={(e) => e.stopPropagation()}
+                                  className={`w-full pl-9 pr-3 py-2 rounded-md border text-sm ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100 placeholder-slate-500' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'}`}
+                                />
+                              </div>
+                            </div>
+                            <ul className="overflow-y-auto min-h-0 py-1">
+                              <li>
+                                <button
+                                  type="button"
+                                  role="option"
+                                  aria-selected={tagId === ''}
+                                  className={`w-full text-left px-3 py-2 text-sm rounded-md mx-1 ${isDark ? 'hover:bg-slate-800 text-slate-400' : 'hover:bg-slate-100 text-slate-500'}`}
+                                  onClick={() => {
+                                    setTagId('');
+                                    setTagDropdownOpen(false);
+                                  }}
+                                >
+                                  — None —
+                                </button>
+                              </li>
+                              {filteredTagOptions.length === 0 ? (
+                                <li className={`px-3 py-4 text-sm text-center ${textSecondary}`}>No matches</li>
+                              ) : (
+                                filteredTagOptions.map((opt: any) => {
+                                  const label = opt.name ?? opt.tag_name ?? opt.label;
+                                  const selected = String(tagId) === String(opt.id);
+                                  return (
+                                    <li key={String(opt.id)}>
+                                      <button
+                                        type="button"
+                                        role="option"
+                                        aria-selected={selected}
+                                        className={`w-full text-left px-3 py-2 text-sm rounded-md mx-1 flex items-center gap-2 ${
+                                          selected
+                                            ? isDark
+                                              ? 'bg-[#6B8E23]/25 text-slate-100'
+                                              : 'bg-[#6B8E23]/15 text-slate-900'
+                                            : isDark
+                                              ? 'hover:bg-slate-800 text-slate-200'
+                                              : 'hover:bg-slate-100 text-slate-900'
+                                        }`}
+                                        onClick={() => {
+                                          setTagId(opt.id);
+                                          setTagDropdownOpen(false);
+                                        }}
+                                      >
+                                        <span className="flex items-center gap-2 min-w-0 w-full">
+                                          <span className="w-4 flex justify-center shrink-0">
+                                            {selected ? <Check className="w-4 h-4 text-[#6B8E23]" aria-hidden /> : null}
+                                          </span>
+                                          <span className="truncate">{label}</span>
+                                        </span>
+                                      </button>
+                                    </li>
+                                  );
+                                })
+                              )}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                      {issueToCategory === 'same-project-other-store' && (
+                        <button
+                          type="button"
+                          onClick={() => setShowCreateWarehouseModal(true)}
+                          className={`flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-bold border shrink-0 self-start sm:self-auto ${isDark ? 'border-slate-600 hover:bg-slate-800/50' : 'border-slate-300 hover:bg-slate-50'} ${textPrimary}`}
+                          title="Add new store"
+                        >
+                          <Plus className="w-4 h-4" /> Add Store
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <div className="mb-4">
               <p className={`text-sm font-bold mb-2 ${textSecondary}`}>Select goods</p>
-              <div className="flex gap-4 mb-3">
-                <label className="flex items-center gap-2 cursor-pointer"><input type="radio" name="goodsType" checked={goodsType === 'materials'} onChange={() => setGoodsType('materials')} className="rounded-full" /><span className={textPrimary}>Material</span></label>
-                <label className="flex items-center gap-2 cursor-pointer"><input type="radio" name="goodsType" checked={goodsType === 'machines'} onChange={() => setGoodsType('machines')} className="rounded-full" /><span className={textPrimary}>Machine</span></label>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 mb-3">
+                <div className="flex flex-wrap gap-4 shrink-0">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="goodsType" checked={goodsType === 'materials'} onChange={() => { setGoodsType('materials'); setGoodsSearchQuery(''); }} className="rounded-full" />
+                    <span className={textPrimary}>Material</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="goodsType" checked={goodsType === 'machines'} onChange={() => { setGoodsType('machines'); setGoodsSearchQuery(''); }} className="rounded-full" />
+                    <span className={textPrimary}>Machine</span>
+                  </label>
+                </div>
+                <div className="relative w-full sm:max-w-md sm:flex-1 sm:min-w-[12rem]">
+                  <Search className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none ${textSecondary}`} />
+                  <input
+                    type="search"
+                    autoComplete="off"
+                    placeholder={`Search ${goodsType === 'materials' ? 'materials' : 'machines'} by code, name, spec…`}
+                    value={goodsSearchQuery}
+                    onChange={(e) => setGoodsSearchQuery(e.target.value)}
+                    className={`w-full pl-10 pr-4 py-2 rounded-lg border text-sm ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100 placeholder-slate-500' : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'}`}
+                  />
+                </div>
               </div>
               <div className={`border rounded-lg overflow-hidden ${isDark ? 'border-slate-600' : 'border-slate-200'}`}>
                 <table className="w-full text-sm">
@@ -781,22 +1171,43 @@ export default function GoodsIssueFlow({
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-inherit">
-                    {materials.map((m) => {
-                      const mid = String(m.id);
-                      const checked = selectedMaterialIds.has(mid);
-                      return (
-                        <tr key={mid} className={`cursor-pointer ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'} ${checked ? 'bg-[#6B8E23]/10' : ''}`} onClick={() => toggleMaterial(mid)}>
-                          <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                            <input type="checkbox" checked={checked} onChange={() => toggleMaterial(mid)} className="rounded cursor-pointer" />
-                          </td>
-                          <td className={`px-4 py-3 font-mono ${textPrimary}`}>{m.code}</td>
-                          <td className={`px-4 py-3 ${textPrimary}`}>{m.name}</td>
-                          <td className={`px-4 py-3 ${textSecondary}`}>{m.stock ?? '-'}</td>
-                          <td className={`px-4 py-3 ${textSecondary}`}>{m.specification || '-'}</td>
-                          <td className={`px-4 py-3 ${textSecondary}`}>{m.unit || '-'}</td>
-                        </tr>
-                      );
-                    })}
+                    {isLoadingMaterials ? (
+                      <tr>
+                        <td colSpan={6} className={`px-4 py-10 text-center ${textSecondary}`}>
+                          <Loader2 className="w-6 h-6 animate-spin inline text-[#6B8E23] align-middle mr-2" />
+                          Loading…
+                        </td>
+                      </tr>
+                    ) : materials.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className={`px-4 py-8 text-center ${textSecondary}`}>
+                          No {goodsType === 'materials' ? 'materials' : 'machines'} available for this project.
+                        </td>
+                      </tr>
+                    ) : filteredMaterials.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className={`px-4 py-8 text-center ${textSecondary}`}>
+                          No rows match your search. Try another code or name.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredMaterials.map((m) => {
+                        const mid = String(m.id);
+                        const checked = selectedMaterialIds.has(mid);
+                        return (
+                          <tr key={mid} className={`cursor-pointer ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'} ${checked ? 'bg-[#6B8E23]/10' : ''}`} onClick={() => toggleMaterial(mid)}>
+                            <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                              <input type="checkbox" checked={checked} onChange={() => toggleMaterial(mid)} className="rounded cursor-pointer" />
+                            </td>
+                            <td className={`px-4 py-3 font-mono ${textPrimary}`}>{m.code}</td>
+                            <td className={`px-4 py-3 ${textPrimary}`}>{m.name}</td>
+                            <td className={`px-4 py-3 ${textSecondary}`}>{m.stock ?? '-'}</td>
+                            <td className={`px-4 py-3 ${textSecondary}`}>{m.specification || '-'}</td>
+                            <td className={`px-4 py-3 ${textSecondary}`}>{m.unit || '-'}</td>
+                          </tr>
+                        );
+                      })
+                    )}
                   </tbody>
                 </table>
               </div>

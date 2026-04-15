@@ -1039,6 +1039,7 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
         onClose={() => setShowBulkUploadModal(false)}
         onSuccess={() => {
           setShowBulkUploadModal(false);
+          setCurrentPage(1);
           fetchActivities();
         }}
         projects={projects}

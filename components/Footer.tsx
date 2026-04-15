@@ -190,7 +190,7 @@ const Footer: React.FC<FooterProps> = ({ scrollToSection, onContactClick, onNavi
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <p className="text-center text-sm text-slate-900">
               Koncite is owned and operated by <strong>SUSTRIX SOFTWARES PRIVATE LIMITED</strong>.
-              <br></br> All rights reserved © 2025 <strong>SUSTRIX SOFTWARES PRIVATE LIMITED</strong>
+              <br></br> All rights reserved © 2026 <strong>SUSTRIX SOFTWARES PRIVATE LIMITED</strong>
             </p>
           </div>
         </div>
