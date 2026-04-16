@@ -969,7 +969,7 @@ function parsePayUnpaidEntry(raw: Record<string, unknown>): PayApiUnpaidRow | nu
     overtimeQtyUnit = otQtyU === 'day' || otQtyU === 'days' ? 'day' : 'hour';
 
     if (!Number.isFinite(amount) || amount === 0) {
-      amount = cats.reduce((s, li) => {
+      amount = cats.reduce<number>((s, li) => {
         const line = li as Record<string, unknown>;
         const a = Number(line.line_total ?? line.amount ?? line.total ?? 0);
         return s + (Number.isFinite(a) ? a : 0);
