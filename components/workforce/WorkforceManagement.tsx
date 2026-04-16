@@ -24,7 +24,8 @@ import {
   Wallet,
   HardHat,
   Settings,
-  Trash2
+  Trash2,
+  SwitchCamera,
 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
 import {
@@ -62,6 +63,7 @@ import {
   workforceProfilesAPI,
   contractorLaborRatesAPI,
   labourEntriesAPI,
+  labourPaymentsAPI,
 } from '@/services/api';
 import { useToast } from '@/contexts/ToastContext';
 import { EMAIL_INVALID_MESSAGE, isValidEmailAddress } from '@/utils/emailValidation';
@@ -176,6 +178,9 @@ function unwrapArrayPayload(payload: unknown): any[] {
     'rates',
     'entries',
     'labour_entries',
+    'unpaid_entries',
+    'labour_payments',
+    'payments',
     'contractor_labor_rates',
     'contractor_labor_rates_list',
     'labour_entries_list',
@@ -865,6 +870,403 @@ function clearLabourRowRateFields(rows: LabourEntryRow[]): LabourEntryRow[] {
 const getTodayString = () => new Date().toDateString();
 const PAGINATION_PAGE_SIZE = 10;
 
+type PaymentFormMode = 'Cash' | 'Bank Transfer' | 'UPI' | 'Cheque' | 'Other';
+
+function mapPaymentModeToApi(mode: PaymentFormMode): import('@/services/api').LabourPaymentManualMethod {
+  switch (mode) {
+    case 'Cash':
+      return 'cash';
+    case 'Bank Transfer':
+      return 'bank_transfer';
+    case 'UPI':
+      return 'upi';
+    case 'Cheque':
+      return 'cheque';
+    case 'Other':
+    default:
+      return 'other';
+  }
+}
+
+function defaultPaidAtLocal(): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** `datetime-local` value → API `YYYY-MM-DD HH:mm:ss` */
+function localDatetimeToApiPaidAt(local: string): string {
+  if (!local || !local.trim()) {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:00`;
+  }
+  const [datePart, timePart] = local.split('T');
+  const t = (timePart || '00:00').slice(0, 5);
+  const [hh, mm] = t.split(':');
+  return `${datePart} ${hh || '00'}:${mm || '00'}:00`;
+}
+
+interface PayApiUnpaidRow {
+  uuid: string;
+  workDate: string;
+  projectName: string;
+  contractorName: string;
+  category: string;
+  headCount: number;
+  labourCountUnit: 'day' | 'hour';
+  otHours: number;
+  overtimeQtyUnit: 'day' | 'hour';
+  amount: number;
+  vendorsId: number | string | null;
+}
+
+function parsePayUnpaidEntry(raw: Record<string, unknown>): PayApiUnpaidRow | null {
+  const uuid = raw.uuid != null ? String(raw.uuid) : '';
+  if (!uuid) return null;
+  const workDate = String(raw.work_date ?? raw.date ?? '').slice(0, 10);
+  const projectName = String(
+    (raw.project as { project_name?: string; name?: string } | undefined)?.project_name ??
+      (raw.project as { name?: string } | undefined)?.name ??
+      raw.project_name ??
+      '—'
+  );
+  const contractorName = String(
+    (raw.vendor as { name?: string } | undefined)?.name ??
+      (raw.contractor as { name?: string } | undefined)?.name ??
+      raw.contractor_name ??
+      '—'
+  );
+  const vid = raw.vendors_id ?? raw.vendor_id ?? (raw.vendor as { id?: unknown } | undefined)?.id ?? null;
+  const vendorsId = vid != null && vid !== '' ? (typeof vid === 'number' ? vid : String(vid)) : null;
+
+  let amount = Number(
+    raw.remaining_amount ?? raw.amount_due ?? raw.outstanding ?? raw.unpaid_amount ?? raw.total_amount ?? 0
+  );
+  const cats =
+    (raw.labour_categories as unknown[]) ?? (raw.labourCategories as unknown[]) ?? (raw.categories as unknown[]) ?? [];
+  let category = '—';
+  let headCount = 0;
+  let labourCountUnit: 'day' | 'hour' = 'day';
+  let otHours = 0;
+  let overtimeQtyUnit: 'day' | 'hour' = 'hour';
+
+  if (Array.isArray(cats) && cats.length > 0) {
+    const line0 = cats[0] as Record<string, unknown>;
+    const labourObj = (line0.labour ?? line0.labours) as Record<string, unknown> | undefined;
+    category = String(
+      (typeof labourObj?.name === 'string' ? labourObj.name : null) ??
+        (typeof line0.labour_name === 'string' ? line0.labour_name : null) ??
+        '—'
+    );
+    const hc = Number(line0.head_count ?? line0.workers_count ?? line0.manpower_count ?? 0);
+    if (Number.isFinite(hc)) headCount = hc;
+    const qtyU = String(line0.day_labour_count_unit ?? line0.day_unit ?? 'day').toLowerCase();
+    labourCountUnit = qtyU === 'hour' || qtyU === 'hr' ? 'hour' : 'day';
+    otHours = Number(line0.overtime_hours ?? line0.overtimeHours ?? line0.ot_hours ?? 0);
+    if (!Number.isFinite(otHours)) otHours = 0;
+    const otQtyU = String(line0.overtime_quantity_unit ?? 'hour').toLowerCase();
+    overtimeQtyUnit = otQtyU === 'day' || otQtyU === 'days' ? 'day' : 'hour';
+
+    if (!Number.isFinite(amount) || amount === 0) {
+      amount = cats.reduce((s, li) => {
+        const line = li as Record<string, unknown>;
+        const a = Number(line.line_total ?? line.amount ?? line.total ?? 0);
+        return s + (Number.isFinite(a) ? a : 0);
+      }, 0);
+    }
+  }
+  if (!Number.isFinite(amount)) amount = 0;
+
+  return {
+    uuid,
+    workDate,
+    projectName,
+    contractorName,
+    category,
+    headCount,
+    labourCountUnit,
+    otHours,
+    overtimeQtyUnit,
+    amount,
+    vendorsId,
+  };
+}
+
+/** When paying the exact outstanding total, omit per-line amounts so the backend applies full remaining per entry. */
+function buildLabourEntriesManualPayload(
+  selected: PayApiUnpaidRow[],
+  userAmount: number
+): Array<{ uuid: string; amount?: number }> {
+  const sum = selected.reduce((s, r) => s + r.amount, 0);
+  if (selected.length === 0) return [];
+  if (!Number.isFinite(userAmount) || userAmount <= 0) return [];
+  if (Math.abs(userAmount - sum) < 0.02) {
+    return selected.map((r) => ({ uuid: r.uuid }));
+  }
+  let remaining = userAmount;
+  const out: Array<{ uuid: string; amount: number }> = [];
+  selected.forEach((r, i) => {
+    if (i === selected.length - 1) {
+      out.push({ uuid: r.uuid, amount: Math.round(remaining * 100) / 100 });
+    } else {
+      const share =
+        sum > 0
+          ? Math.round(((userAmount * r.amount) / sum) * 100) / 100
+          : Math.round((userAmount / selected.length) * 100) / 100;
+      out.push({ uuid: r.uuid, amount: share });
+      remaining -= share;
+    }
+  });
+  return out;
+}
+
+function pickPaySummaryNumbers(payload: unknown): {
+  totalBilled: number | null;
+  totalPaid: number | null;
+  outstanding: number | null;
+} {
+  if (payload == null || typeof payload !== 'object' || Array.isArray(payload)) {
+    return { totalBilled: null, totalPaid: null, outstanding: null };
+  }
+  const o = payload as Record<string, unknown>;
+  const num = (v: unknown): number | null => {
+    if (v == null || v === '') return null;
+    const x = typeof v === 'number' ? v : Number(v);
+    return Number.isFinite(x) ? x : null;
+  };
+  return {
+    totalBilled: num(o.total_billed ?? o.billed_amount ?? o.total_amount ?? o.sum_billed),
+    totalPaid: num(o.total_paid ?? o.paid_amount),
+    outstanding: num(o.outstanding ?? o.balance_due ?? o.amount_due ?? o.unpaid_total),
+  };
+}
+
+function formatInrLabourPayment(value: unknown): string {
+  if (value == null || value === '') return '—';
+  const n = typeof value === 'number' ? value : parseFloat(String(value));
+  if (!Number.isFinite(n)) return '—';
+  return `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 4 })}`;
+}
+
+function formatDateTimeDetail(value: unknown): string {
+  if (value == null || value === '') return '—';
+  const d = new Date(String(value));
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function unwrapLabourPaymentDetail(payload: unknown): Record<string, unknown> | null {
+  if (payload == null || typeof payload !== 'object') return null;
+  const p = payload as Record<string, unknown>;
+  const inner = p.data;
+  if (inner != null && typeof inner === 'object' && !Array.isArray(inner)) {
+    return inner as Record<string, unknown>;
+  }
+  return p;
+}
+
+function LabourPaymentDetailContent({
+  payload,
+  textPrimary,
+  textSecondary,
+  borderClass,
+  isDark,
+}: {
+  payload: unknown;
+  textPrimary: string;
+  textSecondary: string;
+  borderClass: string;
+  isDark: boolean;
+}) {
+  const d = unwrapLabourPaymentDetail(payload);
+  if (d === null) {
+    return <p className={textSecondary}>No data.</p>;
+  }
+  if (d.error != null && d.uuid == null) {
+    return <p className="text-sm text-red-500 dark:text-red-400">{String(d.error)}</p>;
+  }
+
+  const contractor = d.contractor as Record<string, unknown> | undefined;
+  const contractorName = contractor?.name != null ? String(contractor.name) : '—';
+  const items = Array.isArray(d.items) ? (d.items as Record<string, unknown>[]) : [];
+
+  const statusRaw = d.status != null ? String(d.status).toLowerCase() : '';
+  const statusClass =
+    statusRaw === 'completed'
+      ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
+      : statusRaw === 'pending' || statusRaw === 'processing'
+        ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30'
+        : statusRaw === 'failed' || statusRaw === 'cancelled'
+          ? 'bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30'
+          : `${isDark ? 'bg-slate-700/50' : 'bg-slate-100'} ${textSecondary} border-inherit`;
+
+  const hasCashfree =
+    d.cashfree_transfer_id != null ||
+    d.cashfree_beneficiary_id != null ||
+    d.cashfree_transfer_status != null ||
+    d.cashfree_status_code != null;
+
+  const subtleCard = isDark ? 'bg-slate-800/60' : 'bg-slate-50';
+
+  return (
+    <div className="space-y-5">
+      <div className={`rounded-xl border ${borderClass} p-4 ${subtleCard}`}>
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+          <div>
+            <p className={`text-xs font-bold uppercase tracking-wide ${textSecondary}`}>Total</p>
+            <p className={`text-2xl font-black tabular-nums ${textPrimary}`}>
+              {formatInrLabourPayment(d.amount_total)}
+              {d.currency_code != null ? (
+                <span className={`text-sm font-bold ml-2 ${textSecondary}`}>{String(d.currency_code)}</span>
+              ) : null}
+            </p>
+          </div>
+          {d.status != null ? (
+            <span className={`inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-bold border ${statusClass}`}>
+              {String(d.status)}
+            </span>
+          ) : null}
+        </div>
+        <dl className="space-y-0 divide-y divide-inherit/80">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 py-2.5 first:pt-0">
+            <dt className={`text-xs font-bold uppercase tracking-wide shrink-0 sm:w-36 ${textSecondary}`}>Payment UUID</dt>
+            <dd className={`text-xs font-mono break-all ${textPrimary}`}>{d.uuid != null ? String(d.uuid) : '—'}</dd>
+          </div>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 py-2.5">
+            <dt className={`text-xs font-bold uppercase tracking-wide shrink-0 sm:w-36 ${textSecondary}`}>Idempotency key</dt>
+            <dd className={`text-xs font-mono break-all ${textPrimary}`}>
+              {d.idempotency_key != null ? String(d.idempotency_key) : '—'}
+            </dd>
+          </div>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 py-2.5">
+            <dt className={`text-xs font-bold uppercase tracking-wide shrink-0 sm:w-36 ${textSecondary}`}>Mode</dt>
+            <dd className={`text-sm ${textPrimary}`}>
+              {d.payment_mode != null ? String(d.payment_mode) : '—'}
+              {d.manual_method != null ? (
+                <span className={`ml-2 ${textSecondary}`}>({String(d.manual_method)})</span>
+              ) : null}
+            </dd>
+          </div>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 py-2.5">
+            <dt className={`text-xs font-bold uppercase tracking-wide shrink-0 sm:w-36 ${textSecondary}`}>Paid at</dt>
+            <dd className={`text-sm ${textPrimary}`}>{formatDateTimeDetail(d.paid_at)}</dd>
+          </div>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 py-2.5">
+            <dt className={`text-xs font-bold uppercase tracking-wide shrink-0 sm:w-36 ${textSecondary}`}>Recorded</dt>
+            <dd className={`text-sm ${textPrimary}`}>{formatDateTimeDetail(d.created_at)}</dd>
+          </div>
+          {d.manual_reference != null && String(d.manual_reference).trim() !== '' ? (
+            <div className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-3 py-2.5">
+              <dt className={`text-xs font-bold uppercase tracking-wide shrink-0 sm:w-36 ${textSecondary}`}>Reference</dt>
+              <dd className={`text-sm break-all ${textPrimary}`}>{String(d.manual_reference)}</dd>
+            </div>
+          ) : null}
+          {d.notes != null && String(d.notes).trim() !== '' ? (
+            <div className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-3 py-2.5">
+              <dt className={`text-xs font-bold uppercase tracking-wide shrink-0 sm:w-36 ${textSecondary}`}>Notes</dt>
+              <dd className={`text-sm whitespace-pre-wrap ${textPrimary}`}>{String(d.notes)}</dd>
+            </div>
+          ) : null}
+        </dl>
+      </div>
+
+      <div className={`rounded-xl border ${borderClass} p-4 ${subtleCard}`}>
+        <p className={`text-xs font-bold uppercase tracking-wide ${textSecondary} mb-2`}>Contractor</p>
+        <p className={`text-base font-bold ${textPrimary}`}>{contractorName}</p>
+        {contractor?.uuid != null ? (
+          <p className={`text-xs font-mono mt-1 break-all ${textSecondary}`}>{String(contractor.uuid)}</p>
+        ) : null}
+      </div>
+
+      {hasCashfree ? (
+        <div className={`rounded-xl border ${borderClass} p-4 ${subtleCard}`}>
+          <p className={`text-xs font-bold uppercase tracking-wide ${textSecondary} mb-3`}>Cashfree (if applicable)</p>
+          <dl className="space-y-2 text-sm">
+            {d.cashfree_transfer_id != null ? (
+              <div className="flex justify-between gap-2">
+                <span className={textSecondary}>Transfer ID</span>
+                <span className={`font-mono text-xs break-all ${textPrimary}`}>{String(d.cashfree_transfer_id)}</span>
+              </div>
+            ) : null}
+            {d.cashfree_beneficiary_id != null ? (
+              <div className="flex justify-between gap-2">
+                <span className={textSecondary}>Beneficiary</span>
+                <span className={`font-mono text-xs break-all ${textPrimary}`}>{String(d.cashfree_beneficiary_id)}</span>
+              </div>
+            ) : null}
+            {d.cashfree_transfer_status != null ? (
+              <div className="flex justify-between gap-2">
+                <span className={textSecondary}>Transfer status</span>
+                <span className={textPrimary}>{String(d.cashfree_transfer_status)}</span>
+              </div>
+            ) : null}
+            {d.cashfree_status_code != null ? (
+              <div className="flex justify-between gap-2">
+                <span className={textSecondary}>Status code</span>
+                <span className={textPrimary}>{String(d.cashfree_status_code)}</span>
+              </div>
+            ) : null}
+          </dl>
+        </div>
+      ) : null}
+
+      <div>
+        <p className={`text-xs font-bold uppercase tracking-wide ${textSecondary} mb-2`}>Line items</p>
+        {items.length === 0 ? (
+          <p className={`text-sm ${textSecondary}`}>No line items.</p>
+        ) : (
+          <div className={`overflow-x-auto rounded-xl border ${borderClass}`}>
+            <table className="w-full min-w-[640px] text-sm">
+              <thead className={isDark ? 'bg-slate-800/80' : 'bg-slate-100'}>
+                <tr className={`border-b ${borderClass}`}>
+                  <th className={`text-left py-2.5 px-3 font-bold ${textSecondary}`}>Work date</th>
+                  <th className={`text-left py-2.5 px-3 font-bold ${textSecondary}`}>Project</th>
+                  <th className={`text-right py-2.5 px-3 font-bold ${textSecondary}`}>Entry total</th>
+                  <th className={`text-right py-2.5 px-3 font-bold ${textSecondary}`}>Allocated</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((row, i) => {
+                  const proj = row.project as Record<string, unknown> | undefined;
+                  const projectName =
+                    proj?.project_name != null
+                      ? String(proj.project_name)
+                      : proj?.name != null
+                        ? String(proj.name)
+                        : row.project_name != null
+                          ? String(row.project_name)
+                          : '—';
+                  const wid = row.labour_entry_uuid != null ? String(row.labour_entry_uuid) : '';
+                  return (
+                    <tr key={wid || `item-${i}`} className={`border-b ${borderClass} last:border-0`}>
+                      <td className={`py-2.5 px-3 whitespace-nowrap ${textPrimary}`}>
+                        {row.work_date != null ? String(row.work_date) : '—'}
+                      </td>
+                      <td className={`py-2.5 px-3 min-w-[140px] ${textPrimary}`}>
+                        <span className="font-medium">{projectName}</span>
+                        {wid ? (
+                          <span className={`block text-[10px] font-mono mt-0.5 break-all ${textSecondary}`}>{wid}</span>
+                        ) : null}
+                      </td>
+                      <td className={`py-2.5 px-3 text-right tabular-nums font-medium ${textPrimary}`}>
+                        {formatInrLabourPayment(row.entry_total_amount)}
+                      </td>
+                      <td className={`py-2.5 px-3 text-right tabular-nums ${textPrimary}`}>
+                        {formatInrLabourPayment(row.amount_allocated)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 interface WorkforceManagementProps {
   theme: ThemeType;
 }
@@ -897,6 +1299,8 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   const [showCameraModal, setShowCameraModal] = useState(false);
   /** Punch mode when the camera modal was opened (for copy + API while modal is open). */
   const [punchModalKind, setPunchModalKind] = useState<'punch_in' | 'punch_out'>('punch_in');
+  /** Punch modal: rear (environment) vs front/selfie (user). User can switch before capture. */
+  const [punchCameraFacing, setPunchCameraFacing] = useState<'user' | 'environment'>('environment');
   const [geoLocation, setGeoLocation] = useState<{
     latitude: number;
     longitude: number;
@@ -1222,14 +1626,60 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   const [payContractor, setPayContractor] = useState<string>('');
   const [payPeriodFilter, setPayPeriodFilter] = useState<'all' | 'weekly' | 'fortnight' | 'monthly'>('all');
   const [selectedPayEntryIds, setSelectedPayEntryIds] = useState<Set<string>>(new Set());
+  /** Server labour entry UUIDs (Pay tab when logged in). */
+  const [selectedPayUuids, setSelectedPayUuids] = useState<Set<string>>(new Set());
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentFormData, setPaymentFormData] = useState({
     amount: '',
-    mode: 'Cash' as 'Cash' | 'Bank Transfer' | 'UPI' | 'Cheque',
+    mode: 'Cash' as PaymentFormMode,
     reference: '',
+    notes: '',
+    paid_at: defaultPaidAtLocal(),
+    currency_code: 'INR',
   });
   const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
+  /** Regenerated when opening the payment modal and when the amount field changes (API manual payment idempotency). */
+  const paymentIdempotencyKeyRef = useRef<string | null>(null);
   const [dataVersion, setDataVersion] = useState(0);
+
+  const [payUnpaidRows, setPayUnpaidRows] = useState<PayApiUnpaidRow[]>([]);
+  const [payUnpaidLoading, setPayUnpaidLoading] = useState(false);
+  const [payUnpaidError, setPayUnpaidError] = useState<string | null>(null);
+  const [paySummaryPayload, setPaySummaryPayload] = useState<unknown>(null);
+  const [payRecentRows, setPayRecentRows] = useState<any[]>([]);
+  const [payRecentLoading, setPayRecentLoading] = useState(false);
+  const [payDetailModalUuid, setPayDetailModalUuid] = useState<string | null>(null);
+  const [payDetailLoading, setPayDetailLoading] = useState(false);
+  const [payDetailPayload, setPayDetailPayload] = useState<unknown>(null);
+
+  const payApiDateRange = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+    if (payPeriodFilter === 'all') {
+      return { from: undefined as string | undefined, to: undefined as string | undefined };
+    }
+    const days = payPeriodFilter === 'weekly' ? 7 : payPeriodFilter === 'fortnight' ? 14 : 30;
+    const start = new Date(today);
+    start.setDate(start.getDate() - days);
+    return { from: fmt(start), to: fmt(today) };
+  }, [payPeriodFilter]);
+
+  const payFilterProjectId = useMemo(() => {
+    if (!payProject) return undefined;
+    const p = contractorProjects.find((x) => x.name === payProject);
+    if (p?.id == null || p.id === '') return undefined;
+    const n = Number(p.id);
+    return Number.isFinite(n) ? n : p.id;
+  }, [payProject, contractorProjects]);
+
+  const payFilterVendorId = useMemo(() => {
+    if (!payContractor) return undefined;
+    const v = vendors.find((x) => x.name === payContractor);
+    if (v?.id == null || v.id === '') return undefined;
+    const n = Number(v.id);
+    return Number.isFinite(n) ? n : v.id;
+  }, [payContractor, vendors]);
 
   /** Dashboard: server attendance report */
   const [attReportFrom, setAttReportFrom] = useState(() => {
@@ -1676,6 +2126,105 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
     };
   }, [apiDetailModal]);
 
+  useEffect(() => {
+    setSelectedPayUuids(new Set());
+  }, [payProject, payContractor, payPeriodFilter]);
+
+  useEffect(() => {
+    if (activeTab !== 'pay' || !isAuthenticated) return;
+    let cancelled = false;
+    setPayUnpaidLoading(true);
+    setPayUnpaidError(null);
+    const params: {
+      project_id?: number | string;
+      vendors_id?: number | string;
+      work_date_from?: string;
+      work_date_to?: string;
+    } = {};
+    if (payFilterProjectId != null) params.project_id = payFilterProjectId;
+    if (payFilterVendorId != null) params.vendors_id = payFilterVendorId;
+    if (payApiDateRange.from) params.work_date_from = payApiDateRange.from;
+    if (payApiDateRange.to) params.work_date_to = payApiDateRange.to;
+
+    Promise.all([labourPaymentsAPI.unpaidEntries(params), labourPaymentsAPI.summary(params)])
+      .then(([unpaidRes, sumRes]) => {
+        if (cancelled) return;
+        const raw = unwrapArrayPayload((unpaidRes as Record<string, unknown>)?.data ?? unpaidRes);
+        const rows = raw
+          .map((r) => parsePayUnpaidEntry(r as Record<string, unknown>))
+          .filter((x): x is PayApiUnpaidRow => x != null);
+        setPayUnpaidRows(rows);
+        setPaySummaryPayload((sumRes as Record<string, unknown>)?.data ?? sumRes);
+      })
+      .catch((e: any) => {
+        if (!cancelled) {
+          setPayUnpaidRows([]);
+          setPaySummaryPayload(null);
+          setPayUnpaidError(e?.message || 'Failed to load pay data');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPayUnpaidLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeTab,
+    isAuthenticated,
+    payFilterProjectId,
+    payFilterVendorId,
+    payApiDateRange.from,
+    payApiDateRange.to,
+    dataVersion,
+  ]);
+
+  useEffect(() => {
+    if (activeTab !== 'pay' || !isAuthenticated) return;
+    let cancelled = false;
+    setPayRecentLoading(true);
+    labourPaymentsAPI
+      .recent({ vendors_id: payFilterVendorId, limit: 10 })
+      .then((res) => {
+        if (cancelled) return;
+        const list = unwrapArrayPayload((res as Record<string, unknown>)?.data ?? res);
+        setPayRecentRows(list);
+      })
+      .catch(() => {
+        if (!cancelled) setPayRecentRows([]);
+      })
+      .finally(() => {
+        if (!cancelled) setPayRecentLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, isAuthenticated, payFilterVendorId, dataVersion]);
+
+  useEffect(() => {
+    if (!payDetailModalUuid || !isAuthenticated) {
+      setPayDetailPayload(null);
+      return;
+    }
+    let cancelled = false;
+    setPayDetailLoading(true);
+    setPayDetailPayload(null);
+    labourPaymentsAPI
+      .get(payDetailModalUuid)
+      .then((res) => {
+        if (!cancelled) setPayDetailPayload((res as Record<string, unknown>)?.data ?? res);
+      })
+      .catch(() => {
+        if (!cancelled) setPayDetailPayload({ error: 'Failed to load payment' });
+      })
+      .finally(() => {
+        if (!cancelled) setPayDetailLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [payDetailModalUuid, isAuthenticated]);
+
   // Camera for Punch
   useEffect(() => {
     if (!showCameraModal) {
@@ -1687,7 +2236,10 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
     }
     let stream: MediaStream | null = null;
     navigator.mediaDevices
-      .getUserMedia({ video: { facingMode: 'environment' }, audio: false })
+      .getUserMedia({
+        audio: false,
+        video: { facingMode: { ideal: punchCameraFacing } },
+      })
       .then((s) => {
         stream = s;
         streamRef.current = s;
@@ -1697,7 +2249,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
     return () => {
       if (stream) stream.getTracks().forEach((t) => t.stop());
     };
-  }, [showCameraModal]);
+  }, [showCameraModal, punchCameraFacing, toast]);
 
   const performFacePunchSubmit = useCallback(
     async (photoBlob: Blob, kind: 'punch_in' | 'punch_out') => {
@@ -1949,7 +2501,10 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
 
       // 2. Check camera permission
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { facingMode: { ideal: punchCameraFacing } },
+        });
         stream.getTracks().forEach((t) => t.stop());
       } catch {
         toast.showWarning('Camera access is required. Please enable camera permission.');
@@ -2375,8 +2930,71 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
     }
   };
 
-  const handleConfirmPayment = () => {
+  const handleConfirmPayment = async () => {
     const amount = parseFloat(paymentFormData.amount);
+
+    if (isAuthenticated) {
+      const selected = payUnpaidRows.filter((e) => selectedPayUuids.has(e.uuid));
+      if (selected.length === 0) {
+        toast.showWarning('No entries selected');
+        return;
+      }
+      const vendorKeys = new Set(
+        selected.map((e) => (e.vendorsId != null ? String(e.vendorsId) : e.contractorName))
+      );
+      if (vendorKeys.size > 1) {
+        toast.showWarning('All selected labour entries must belong to the same contractor');
+        return;
+      }
+      if (isNaN(amount) || amount <= 0) {
+        toast.showWarning('Enter a valid amount');
+        return;
+      }
+      const idempotency_key =
+        paymentIdempotencyKeyRef.current ||
+        (typeof crypto !== 'undefined' && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `manual-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`);
+      paymentIdempotencyKeyRef.current = idempotency_key;
+
+      const labour_entries = buildLabourEntriesManualPayload(selected, amount);
+      if (labour_entries.length === 0) {
+        toast.showWarning('Could not build payment lines');
+        return;
+      }
+
+      setIsSubmittingPayment(true);
+      try {
+        await labourPaymentsAPI.manual({
+          idempotency_key,
+          labour_entries,
+          manual_method: mapPaymentModeToApi(paymentFormData.mode),
+          manual_reference: paymentFormData.reference.trim() || undefined,
+          paid_at: localDatetimeToApiPaidAt(paymentFormData.paid_at),
+          currency_code: paymentFormData.currency_code.trim().slice(0, 3).toUpperCase() || 'INR',
+          notes: paymentFormData.notes.trim() || undefined,
+        });
+        toast.showSuccess('Payment recorded successfully');
+        paymentIdempotencyKeyRef.current = null;
+        setShowPaymentModal(false);
+        setSelectedPayUuids(new Set());
+        setPaymentFormData({
+          amount: '',
+          mode: 'Cash',
+          reference: '',
+          notes: '',
+          paid_at: defaultPaidAtLocal(),
+          currency_code: 'INR',
+        });
+        setDataVersion((v) => v + 1);
+      } catch (e: any) {
+        toast.showError(e?.message || 'Failed to record payment');
+      } finally {
+        setIsSubmittingPayment(false);
+      }
+      return;
+    }
+
     const entryIds = Array.from(selectedPayEntryIds);
     const unpaid = getContractorEntries().filter((e) => !e.paid && entryIds.includes(e.id));
     if (entryIds.length === 0 || unpaid.length === 0) {
@@ -2402,7 +3020,14 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
       toast.showSuccess('Payment recorded successfully');
       setShowPaymentModal(false);
       setSelectedPayEntryIds(new Set());
-      setPaymentFormData({ amount: '', mode: 'Cash', reference: '' });
+      setPaymentFormData({
+        amount: '',
+        mode: 'Cash',
+        reference: '',
+        notes: '',
+        paid_at: defaultPaidAtLocal(),
+        currency_code: 'INR',
+      });
       setDataVersion((v) => v + 1);
     } catch (e: any) {
       toast.showError(e?.message || 'Failed to record payment');
@@ -3826,6 +4451,248 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                 </div>
               </div>
               {(() => {
+                const periodPills: { id: typeof payPeriodFilter; label: string; hint: string }[] = [
+                  { id: 'all', label: 'All', hint: 'All dates' },
+                  { id: 'weekly', label: 'Weekly', hint: 'Last 7 days' },
+                  { id: 'fortnight', label: 'Fortnight', hint: 'Last 14 days' },
+                  { id: 'monthly', label: 'Monthly', hint: 'Last 30 days' },
+                ];
+
+                if (isAuthenticated) {
+                  const s = pickPaySummaryNumbers(paySummaryPayload);
+                  const unpaid = payUnpaidRows;
+                  const unpaidOutstanding = unpaid.reduce((acc, e) => acc + e.amount, 0);
+                  const totalBilled =
+                    s.totalBilled ??
+                    (s.totalPaid != null ? s.totalPaid + (s.outstanding ?? unpaidOutstanding) : unpaidOutstanding);
+                  const totalPaid = s.totalPaid;
+                  const outstanding = s.outstanding ?? unpaidOutstanding;
+                  const selectedTotal = unpaid
+                    .filter((e) => selectedPayUuids.has(e.uuid))
+                    .reduce((sum, e) => sum + e.amount, 0);
+                  return (
+                    <>
+                      {payUnpaidError && (
+                        <p className="text-sm text-red-500 dark:text-red-400">{payUnpaidError}</p>
+                      )}
+                      {payUnpaidLoading && (
+                        <div className={`flex items-center gap-2 text-sm ${textSecondary}`}>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Loading unpaid entries…
+                        </div>
+                      )}
+                      <div
+                        className={`grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 rounded-xl border ${borderClass} ${isDark ? 'bg-slate-800/50' : 'bg-slate-100'}`}
+                      >
+                        <div>
+                          <p className={`text-xs font-bold uppercase tracking-wide ${textSecondary}`}>Total billed</p>
+                          <p className={`text-lg font-black ${textPrimary}`}>
+                            {totalBilled != null ? `₹${totalBilled.toLocaleString('en-IN')}` : '—'}
+                          </p>
+                        </div>
+                        <div>
+                          <p className={`text-xs font-bold uppercase tracking-wide ${textSecondary}`}>Total paid</p>
+                          <p className={`text-lg font-black ${textPrimary}`}>
+                            {totalPaid != null ? `₹${totalPaid.toLocaleString('en-IN')}` : '—'}
+                          </p>
+                        </div>
+                        <div>
+                          <p className={`text-xs font-bold uppercase tracking-wide ${textSecondary}`}>Outstanding</p>
+                          <p
+                            className={`text-lg font-black ${
+                              outstanding > 0
+                                ? 'text-red-500 dark:text-red-400'
+                                : 'text-emerald-600 dark:text-emerald-400'
+                            }`}
+                          >
+                            ₹{outstanding.toLocaleString('en-IN')}
+                          </p>
+                        </div>
+                      </div>
+                      <div>
+                        <p className={`text-xs font-bold uppercase tracking-wide ${textSecondary} mb-2`}>
+                          Period filter
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {periodPills.map((p) => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => setPayPeriodFilter(p.id)}
+                              className={`inline-flex flex-col items-start px-3 py-2 rounded-lg border text-left text-sm font-bold transition-colors ${
+                                payPeriodFilter === p.id
+                                  ? 'border-[#6B8E23] bg-[#6B8E23]/20 text-[#6B8E23]'
+                                  : `${borderClass} ${textPrimary} hover:bg-black/5 dark:hover:bg-white/5`
+                              }`}
+                            >
+                              <span>{p.label}</span>
+                              <span className={`text-[10px] font-normal ${textSecondary}`}>{p.hint}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className={`text-sm font-bold ${textPrimary} mb-3`}>Unpaid labour entries</h3>
+                        <div className="flex flex-wrap gap-2 mb-3 items-center">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const allSelected =
+                                unpaid.length > 0 && unpaid.every((e) => selectedPayUuids.has(e.uuid));
+                              setSelectedPayUuids(allSelected ? new Set() : new Set(unpaid.map((e) => e.uuid)));
+                            }}
+                            className="text-xs font-bold px-3 py-1.5 rounded-lg bg-[#6B8E23]/20 text-[#6B8E23]"
+                          >
+                            {unpaid.length > 0 && unpaid.every((e) => selectedPayUuids.has(e.uuid))
+                              ? 'Deselect All'
+                              : 'Select All'}
+                          </button>
+                          <span className={`text-sm ${textSecondary}`}>
+                            Selected: ₹{selectedTotal.toLocaleString('en-IN')}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const selected = unpaid.filter((e) => selectedPayUuids.has(e.uuid));
+                              paymentIdempotencyKeyRef.current =
+                                typeof crypto !== 'undefined' && crypto.randomUUID
+                                  ? crypto.randomUUID()
+                                  : `manual-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+                              setPaymentFormData((p) => ({
+                                ...p,
+                                amount: selected.reduce((acc, e) => acc + e.amount, 0).toFixed(2),
+                                paid_at: defaultPaidAtLocal(),
+                              }));
+                              setShowPaymentModal(true);
+                            }}
+                            disabled={selectedPayUuids.size === 0}
+                            className="ml-auto px-4 py-2 rounded-lg font-bold text-sm bg-[#6B8E23] text-white disabled:opacity-50"
+                          >
+                            Pay Selected
+                          </button>
+                        </div>
+                        <div className="overflow-x-auto rounded-lg border border-inherit max-h-[28rem] overflow-y-auto">
+                          <table className="w-full min-w-[860px]">
+                            <thead className={`sticky top-0 z-[1] ${isDark ? 'bg-slate-800' : 'bg-slate-100'}`}>
+                              <tr className={`border-b ${borderClass}`}>
+                                <th className="text-left py-2 px-2 text-xs font-bold w-8" />
+                                <th className={`text-left py-2 px-2 text-xs font-bold ${textSecondary}`}>Date</th>
+                                <th className={`text-left py-2 px-2 text-xs font-bold ${textSecondary}`}>Project</th>
+                                <th className={`text-left py-2 px-2 text-xs font-bold ${textSecondary}`}>Contractor</th>
+                                <th className={`text-left py-2 px-2 text-xs font-bold ${textSecondary}`}>Category</th>
+                                <th className={`text-left py-2 px-2 text-xs font-bold ${textSecondary}`}>Head count</th>
+                                <th className={`text-left py-2 px-2 text-xs font-bold ${textSecondary}`}>Unit</th>
+                                <th className={`text-left py-2 px-2 text-xs font-bold ${textSecondary}`}>OT</th>
+                                <th className={`text-left py-2 px-2 text-xs font-bold ${textSecondary}`}>OT unit</th>
+                                <th className={`text-right py-2 px-2 text-xs font-bold ${textSecondary}`}>Amount</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {unpaid.length === 0 ? (
+                                <tr>
+                                  <td colSpan={10} className={`py-6 text-center text-sm ${textSecondary}`}>
+                                    No unpaid labour entries
+                                  </td>
+                                </tr>
+                              ) : (
+                                unpaid.map((e) => (
+                                  <tr
+                                    key={e.uuid}
+                                    className="border-b border-inherit hover:bg-black/5 dark:hover:bg-white/5"
+                                  >
+                                    <td className="py-2 px-2">
+                                      <input
+                                        type="checkbox"
+                                        checked={selectedPayUuids.has(e.uuid)}
+                                        onChange={() =>
+                                          setSelectedPayUuids((prev) => {
+                                            const next = new Set(prev);
+                                            if (next.has(e.uuid)) next.delete(e.uuid);
+                                            else next.add(e.uuid);
+                                            return next;
+                                          })
+                                        }
+                                      />
+                                    </td>
+                                    <td className={`py-2 px-2 text-sm whitespace-nowrap ${textPrimary}`}>
+                                      {e.workDate ? new Date(e.workDate).toLocaleDateString() : '—'}
+                                    </td>
+                                    <td className={`py-2 px-2 text-sm ${textPrimary}`}>{e.projectName}</td>
+                                    <td className={`py-2 px-2 text-sm ${textPrimary}`}>{e.contractorName}</td>
+                                    <td className={`py-2 px-2 text-sm font-medium ${textPrimary}`}>{e.category}</td>
+                                    <td className={`py-2 px-2 text-sm tabular-nums ${textPrimary}`}>{e.headCount}</td>
+                                    <td className={`py-2 px-2 text-sm ${textSecondary}`}>
+                                      {e.labourCountUnit === 'hour' ? 'Hrs' : 'Days'}
+                                    </td>
+                                    <td className={`py-2 px-2 text-sm tabular-nums ${textPrimary}`}>{e.otHours}</td>
+                                    <td className={`py-2 px-2 text-sm ${textSecondary}`}>
+                                      {e.overtimeQtyUnit === 'hour' ? 'Hrs' : 'Days'}
+                                    </td>
+                                    <td className={`py-2 px-2 text-sm font-bold text-right ${textPrimary}`}>
+                                      ₹{e.amount.toLocaleString('en-IN')}
+                                    </td>
+                                  </tr>
+                                ))
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                      <div>
+                        <h3 className={`text-sm font-bold ${textPrimary} mb-3`}>Recent payments</h3>
+                        {payRecentLoading && (
+                          <div className={`flex items-center gap-2 text-sm ${textSecondary}`}>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Loading…
+                          </div>
+                        )}
+                        <div className="space-y-2 max-h-48 overflow-y-auto">
+                          {payRecentRows.map((raw, idx) => {
+                            const r = raw as Record<string, unknown>;
+                            const rowUuid = String(r.uuid ?? r.id ?? `idx-${idx}`);
+                            const amountRaw =
+                              r.amount_total ?? r.amount ?? r.total_amount ?? r.paid_amount ?? 0;
+                            const paidAt = r.paid_at ?? r.created_at ?? r.date;
+                            const contractor = String(
+                              (r.contractor as { name?: string } | undefined)?.name ??
+                                (r.vendor as { name?: string } | undefined)?.name ??
+                                r.contractor_name ??
+                                ''
+                            );
+                            const mode = r.manual_method != null ? String(r.manual_method) : '';
+                            return (
+                              <button
+                                key={rowUuid}
+                                type="button"
+                                onClick={() => setPayDetailModalUuid(rowUuid)}
+                                className={`group flex w-full items-center gap-2 p-3 rounded-lg border ${borderClass} text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5 hover:border-[#6B8E23]/40`}
+                              >
+                                <span className={`flex-1 min-w-0 text-sm ${textPrimary}`}>
+                                  <span className="block truncate">
+                                    {paidAt ? new Date(String(paidAt)).toLocaleString() : '—'}
+                                    {contractor ? ` · ${contractor}` : ''}
+                                  </span>
+                                  <span className={`block text-xs mt-0.5 ${textSecondary}`}>View breakdown</span>
+                                </span>
+                                <span className={`text-sm font-bold tabular-nums shrink-0 ${textPrimary}`}>
+                                  {formatInrLabourPayment(amountRaw)}
+                                  {mode ? (
+                                    <span className={`font-normal ${textSecondary}`}> · {mode}</span>
+                                  ) : null}
+                                </span>
+                                <ChevronRight className={`w-4 h-4 shrink-0 opacity-40 group-hover:opacity-80 ${textSecondary}`} />
+                              </button>
+                            );
+                          })}
+                          {!payRecentLoading && payRecentRows.length === 0 && (
+                            <p className={`text-sm ${textSecondary}`}>No recent payments</p>
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  );
+                }
+
                 const today = new Date();
                 today.setHours(0, 0, 0, 0);
                 const periodCutoff = (() => {
@@ -3860,12 +4727,6 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                 const selectedTotal = unpaid
                   .filter((e) => selectedPayEntryIds.has(e.id))
                   .reduce((s, e) => s + e.amount, 0);
-                const periodPills: { id: typeof payPeriodFilter; label: string; hint: string }[] = [
-                  { id: 'all', label: 'All', hint: 'All dates' },
-                  { id: 'weekly', label: 'Weekly', hint: 'Last 7 days' },
-                  { id: 'fortnight', label: 'Fortnight', hint: 'Last 14 days' },
-                  { id: 'monthly', label: 'Monthly', hint: 'Last 30 days' },
-                ];
                 return (
                   <>
                     <div className={`grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 rounded-xl border ${borderClass} ${isDark ? 'bg-slate-800/50' : 'bg-slate-100'}`}>
@@ -4060,6 +4921,21 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   </div>
                 )}
               </div>
+              <button
+                type="button"
+                onClick={() => setPunchCameraFacing((f) => (f === 'user' ? 'environment' : 'user'))}
+                disabled={
+                  isSubmittingPunch || punchHoldCountdown !== null || isCheckingPermissions
+                }
+                className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-bold border ${borderClass} ${
+                  isDark ? 'bg-slate-800/80 text-slate-100' : 'bg-slate-50 text-slate-800'
+                } hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                <SwitchCamera className="w-4 h-4 shrink-0" />
+                {punchCameraFacing === 'user'
+                  ? 'Using front camera — switch to rear'
+                  : 'Using rear camera — switch to selfie (front)'}
+              </button>
               {geoLocation && (
                 <div className={`flex items-center gap-2 text-xs ${textSecondary}`}>
                   <MapPin className="w-4 h-4 flex-shrink-0" />
@@ -4548,13 +5424,23 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
             <div className="p-4 border-b border-inherit flex items-center justify-between">
               <span className={`font-bold ${textPrimary}`}>Confirm Payment</span>
               <button
-                onClick={() => setShowPaymentModal(false)}
+                type="button"
+                onClick={() => {
+                  paymentIdempotencyKeyRef.current = null;
+                  setShowPaymentModal(false);
+                }}
                 className="p-1 hover:opacity-70"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
             <div className="p-4 space-y-4">
+              {isAuthenticated && (
+                <p className={`text-xs ${textSecondary}`}>
+                  Server payments use an idempotency key: it is set when you open this dialog and refreshed when you
+                  change the amount (retry the same request after a network error without changing the amount).
+                </p>
+              )}
               <div>
                 <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Amount (₹) *</label>
                 <input
@@ -4562,7 +5448,15 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   min="0"
                   step="0.01"
                   value={paymentFormData.amount}
-                  onChange={(e) => setPaymentFormData((p) => ({ ...p, amount: e.target.value }))}
+                  onChange={(e) => {
+                    if (isAuthenticated) {
+                      paymentIdempotencyKeyRef.current =
+                        typeof crypto !== 'undefined' && crypto.randomUUID
+                          ? crypto.randomUUID()
+                          : `manual-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+                    }
+                    setPaymentFormData((p) => ({ ...p, amount: e.target.value }));
+                  }}
                   placeholder="Enter amount"
                   className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
                 />
@@ -4571,17 +5465,20 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                 <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Mode</label>
                 <select
                   value={paymentFormData.mode}
-                  onChange={(e) => setPaymentFormData((p) => ({ ...p, mode: e.target.value as 'Cash' | 'Bank Transfer' | 'UPI' | 'Cheque' }))}
+                  onChange={(e) =>
+                    setPaymentFormData((p) => ({ ...p, mode: e.target.value as PaymentFormMode }))
+                  }
                   className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
                 >
                   <option value="Cash">Cash</option>
                   <option value="Bank Transfer">Bank Transfer</option>
                   <option value="UPI">UPI</option>
                   <option value="Cheque">Cheque</option>
+                  <option value="Other">Other</option>
                 </select>
               </div>
               <div>
-                <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Reference / Notes</label>
+                <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Reference (e.g. UTR)</label>
                 <input
                   type="text"
                   value={paymentFormData.reference}
@@ -4590,9 +5487,49 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
                 />
               </div>
+              {isAuthenticated && (
+                <>
+                  <div>
+                    <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Paid at</label>
+                    <input
+                      type="datetime-local"
+                      value={paymentFormData.paid_at}
+                      onChange={(e) => setPaymentFormData((p) => ({ ...p, paid_at: e.target.value }))}
+                      className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Currency</label>
+                    <input
+                      type="text"
+                      value={paymentFormData.currency_code}
+                      onChange={(e) =>
+                        setPaymentFormData((p) => ({
+                          ...p,
+                          currency_code: e.target.value.toUpperCase().slice(0, 3),
+                        }))
+                      }
+                      placeholder="INR"
+                      maxLength={3}
+                      className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Notes</label>
+                    <textarea
+                      value={paymentFormData.notes}
+                      onChange={(e) => setPaymentFormData((p) => ({ ...p, notes: e.target.value }))}
+                      placeholder="Internal notes (optional)"
+                      rows={2}
+                      className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                    />
+                  </div>
+                </>
+              )}
               <div className="flex gap-2 pt-2">
                 <button
-                  onClick={handleConfirmPayment}
+                  type="button"
+                  onClick={() => void handleConfirmPayment()}
                   disabled={isSubmittingPayment}
                   className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg font-bold bg-[#6B8E23] text-white disabled:opacity-50"
                 >
@@ -4600,12 +5537,53 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   Confirm & Settle
                 </button>
                 <button
-                  onClick={() => setShowPaymentModal(false)}
+                  type="button"
+                  onClick={() => {
+                    paymentIdempotencyKeyRef.current = null;
+                    setShowPaymentModal(false);
+                  }}
                   className="px-4 py-2.5 rounded-lg font-bold border border-inherit"
                 >
                   Cancel
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Labour payment detail — GET /labour-payments/{uuid} */}
+      {payDetailModalUuid && (
+        <div className="fixed inset-0 z-[55] flex items-center justify-center p-3 sm:p-4 bg-black/70 overflow-y-auto">
+          <div
+            className={`w-full max-w-2xl rounded-2xl overflow-hidden ${cardClass} border ${borderClass} max-h-[92vh] flex flex-col shadow-xl`}
+          >
+            <div className="p-4 border-b border-inherit flex items-center justify-between shrink-0">
+              <span className={`text-lg font-black ${textPrimary}`}>Payment detail</span>
+              <button
+                type="button"
+                onClick={() => setPayDetailModalUuid(null)}
+                className="p-1.5 rounded-lg hover:bg-black/10 dark:hover:bg-white/10 transition-colors"
+                aria-label="Close"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className={`p-4 sm:p-5 overflow-y-auto flex-1 min-h-0 text-sm ${textPrimary}`}>
+              {payDetailLoading ? (
+                <div className={`flex items-center justify-center gap-2 py-12 ${textSecondary}`}>
+                  <Loader2 className="w-6 h-6 animate-spin text-[#6B8E23]" />
+                  <span>Loading payment…</span>
+                </div>
+              ) : (
+                <LabourPaymentDetailContent
+                  payload={payDetailPayload}
+                  textPrimary={textPrimary}
+                  textSecondary={textSecondary}
+                  borderClass={borderClass}
+                  isDark={isDark}
+                />
+              )}
             </div>
           </div>
         </div>

@@ -69,7 +69,7 @@ export interface ContractorPayment {
   contractorId?: string;
   projectName: string;
   amount: number;
-  mode: 'Cash' | 'Bank Transfer' | 'UPI' | 'Cheque';
+  mode: 'Cash' | 'Bank Transfer' | 'UPI' | 'Cheque' | 'Other';
   reference?: string;
   entryIds: string[];
   date: string;

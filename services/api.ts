@@ -3695,6 +3695,99 @@ export const labourEntriesAPI = {
   },
 };
 
+/** Labour payments – unpaid lines, summary, manual settlement, recent, detail (`/labour-payments/*`). */
+export type LabourPaymentManualMethod = 'cash' | 'bank_transfer' | 'upi' | 'cheque' | 'other';
+
+export const labourPaymentsAPI = {
+  unpaidEntries: async (params?: {
+    project_id?: number | string;
+    vendors_id?: number | string;
+    work_date_from?: string;
+    work_date_to?: string;
+  }): Promise<any> => {
+    try {
+      const response = await apiClient.get('/labour-payments/unpaid-entries', { params: params ?? {} });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to load unpaid labour entries',
+        errors: error.response?.data?.errors || {},
+        status: error.response?.status,
+        responseData: error.response?.data,
+      } as ApiError;
+    }
+  },
+
+  summary: async (params?: {
+    project_id?: number | string;
+    vendors_id?: number | string;
+    work_date_from?: string;
+    work_date_to?: string;
+  }): Promise<any> => {
+    try {
+      const response = await apiClient.get('/labour-payments/summary', { params: params ?? {} });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to load payment summary',
+        errors: error.response?.data?.errors || {},
+        status: error.response?.status,
+        responseData: error.response?.data,
+      } as ApiError;
+    }
+  },
+
+  manual: async (body: {
+    idempotency_key: string;
+    labour_entries: Array<{ uuid: string; amount?: number }>;
+    manual_method: LabourPaymentManualMethod;
+    manual_reference?: string;
+    paid_at: string;
+    currency_code?: string;
+    notes?: string;
+  }): Promise<any> => {
+    try {
+      const response = await apiClient.post('/labour-payments/manual', body);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to record payment',
+        errors: error.response?.data?.errors || {},
+        status: error.response?.status,
+        responseData: error.response?.data,
+      } as ApiError;
+    }
+  },
+
+  recent: async (params?: { vendors_id?: number | string; limit?: number }): Promise<any> => {
+    try {
+      const response = await apiClient.get('/labour-payments/recent', { params: params ?? {} });
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to load recent payments',
+        errors: error.response?.data?.errors || {},
+        status: error.response?.status,
+        responseData: error.response?.data,
+      } as ApiError;
+    }
+  },
+
+  get: async (uuid: string): Promise<any> => {
+    try {
+      const response = await apiClient.get(`/labour-payments/${encodeURIComponent(uuid)}`);
+      return response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to load payment details',
+        errors: error.response?.data?.errors || {},
+        status: error.response?.status,
+        responseData: error.response?.data,
+      } as ApiError;
+    }
+  },
+};
+
 /** Azure Face attendance – proxied to Laravel (base URL already includes /api). */
 export const faceAttendanceAPI = {
   setup: async (body?: { company_id?: number }): Promise<any> => {
