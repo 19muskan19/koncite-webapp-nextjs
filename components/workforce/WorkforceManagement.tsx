@@ -1021,6 +1021,15 @@ function buildLabourEntriesManualPayload(
   return out;
 }
 
+/** Contractor rate table — API may return 4+ decimal places; display 2. */
+function formatContractorRateCell(amount: unknown, unit: unknown): string {
+  if (amount == null || amount === '') return '—';
+  const n = typeof amount === 'number' ? amount : Number(amount);
+  const u = unit != null && String(unit).trim() !== '' ? ` ${String(unit)}` : '';
+  if (!Number.isFinite(n)) return `${amount}${u}`;
+  return `${n.toFixed(2)}${u}`;
+}
+
 function pickPaySummaryNumbers(payload: unknown): {
   totalBilled: number | null;
   totalPaid: number | null;
@@ -4166,11 +4175,14 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                             <td className="py-2 px-2">
                               {r.labour?.name ?? r.labour_name ?? '—'}
                             </td>
-                            <td className="py-2 px-2">
-                              {r.daily_rate_amount ?? r.daily_rate ?? '—'} {r.daily_rate_unit ?? ''}
+                            <td className="py-2 px-2 tabular-nums">
+                              {formatContractorRateCell(r.daily_rate_amount ?? r.daily_rate, r.daily_rate_unit)}
                             </td>
-                            <td className="py-2 px-2">
-                              {r.overtime_rate_amount ?? r.ot_rate ?? '—'} {r.overtime_rate_unit ?? r.ot_unit ?? ''}
+                            <td className="py-2 px-2 tabular-nums">
+                              {formatContractorRateCell(
+                                r.overtime_rate_amount ?? r.ot_rate,
+                                r.overtime_rate_unit ?? r.ot_unit
+                              )}
                             </td>
                             <td className="py-2 px-2">{r.effective_from ?? '—'}</td>
                           </tr>
