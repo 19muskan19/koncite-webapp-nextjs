@@ -1327,7 +1327,9 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
     uuid?: string;
   } | null>(null);
   const [isCheckingPermissions, setIsCheckingPermissions] = useState(false);
-  /** 4…1 = hold countdown, 0 = capturing / verifying, null = modal closed */
+  /** User tapped "Start countdown" — only then does the 4s hold + capture run (allows switching camera first). */
+  const [punchCountdownStarted, setPunchCountdownStarted] = useState(false);
+  /** 4…1 = hold countdown, 0 = capturing / verifying, null = not in countdown / modal closed */
   const [punchHoldCountdown, setPunchHoldCountdown] = useState<number | null>(null);
   const performFacePunchSubmitRef = useRef<(photoBlob: Blob, kind: 'punch_in' | 'punch_out') => Promise<void>>(
     async () => {}
@@ -2438,6 +2440,11 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   useEffect(() => {
     if (!showCameraModal) {
       setPunchHoldCountdown(null);
+      setPunchCountdownStarted(false);
+      return;
+    }
+    if (!punchCountdownStarted) {
+      setPunchHoldCountdown(null);
       return;
     }
     setPunchHoldCountdown(4);
@@ -2476,7 +2483,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
       window.clearTimeout(run);
       window.clearInterval(tick);
     };
-  }, [showCameraModal, punchModalKind, toast]);
+  }, [showCameraModal, punchModalKind, punchCountdownStarted, toast]);
 
   const openPunchFlow = async () => {
     setPunchModalKind(punchType);
@@ -2520,6 +2527,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
         return;
       }
 
+      setPunchCountdownStarted(false);
       setShowCameraModal(true);
     } finally {
       setIsCheckingPermissions(false);
@@ -4901,7 +4909,8 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   {punchModalKind === 'punch_in' ? 'Punch IN' : 'Punch OUT'}
                 </span>
                 <p className={`text-xs mt-1 ${textSecondary}`}>
-                  Identity is verified from your enrolled face. Location is sent with the punch.
+                  Switch front/rear if needed, then tap <strong className="font-semibold">Start countdown</strong>. The
+                  photo is taken after a 4s hold.
                 </p>
               </div>
               <button
@@ -4933,12 +4942,15 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   </div>
                 )}
               </div>
+              {!punchCountdownStarted && !isSubmittingPunch && (
+                <p className={`text-xs ${textSecondary} text-center`}>
+                  Preview only — countdown has not started yet.
+                </p>
+              )}
               <button
                 type="button"
                 onClick={() => setPunchCameraFacing((f) => (f === 'user' ? 'environment' : 'user'))}
-                disabled={
-                  isSubmittingPunch || punchHoldCountdown !== null || isCheckingPermissions
-                }
+                disabled={isSubmittingPunch || punchCountdownStarted || isCheckingPermissions}
                 className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-bold border ${borderClass} ${
                   isDark ? 'bg-slate-800/80 text-slate-100' : 'bg-slate-50 text-slate-800'
                 } hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed`}
@@ -4948,6 +4960,15 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   ? 'Using front camera — switch to rear'
                   : 'Using rear camera — switch to selfie (front)'}
               </button>
+              {!punchCountdownStarted && !isSubmittingPunch && (
+                <button
+                  type="button"
+                  onClick={() => setPunchCountdownStarted(true)}
+                  className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-base font-bold bg-[#6B8E23] hover:bg-[#5a7a1e] text-white shadow-md"
+                >
+                  Start 4s countdown
+                </button>
+              )}
               {geoLocation && (
                 <div className={`flex items-center gap-2 text-xs ${textSecondary}`}>
                   <MapPin className="w-4 h-4 flex-shrink-0" />
