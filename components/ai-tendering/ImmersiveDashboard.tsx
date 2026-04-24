@@ -228,7 +228,8 @@ export default function ImmersiveDashboard({
               <input
                 type="file"
                 accept=".xlsx,.xls"
-                className="hidden"
+                className="sr-only"
+                tabIndex={-1}
                 onChange={(e) => {
                   const f = e.target.files?.[0];
                   setImFile(f ?? null);

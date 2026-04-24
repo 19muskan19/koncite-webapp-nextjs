@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useId } from 'react';
 import { ThemeType } from '@/types';
 import { X, FileSpreadsheet, Loader2, Upload, CheckCircle } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
@@ -25,6 +25,7 @@ const LabourBulkUploadModal: React.FC<LabourBulkUploadModalProps> = ({
 }) => {
   const toast = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const labourBulkFileInputId = useId();
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState<{
@@ -168,29 +169,32 @@ const LabourBulkUploadModal: React.FC<LabourBulkUploadModalProps> = ({
           <div
             onDrop={handleDrop}
             onDragOver={handleDragOver}
-            onClick={() => fileInputRef.current?.click()}
-            className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${
+            className={`border-2 border-dashed rounded-xl text-center transition-colors ${
               isDark ? 'border-slate-600 hover:border-[#C2D642]/50' : 'border-slate-300 hover:border-[#C2D642]/50'
             } ${isUploading ? 'pointer-events-none opacity-60' : ''}`}
           >
             <input
               ref={fileInputRef}
+              id={labourBulkFileInputId}
               type="file"
               accept={ACCEPTED_TYPES}
               onChange={handleFileChange}
-              className="hidden"
+              className="sr-only"
+              tabIndex={-1}
             />
-            {isUploading ? (
-              <Loader2 className="w-12 h-12 mx-auto mb-3 animate-spin text-[#C2D642]" />
-            ) : (
-              <FileSpreadsheet className={`w-12 h-12 mx-auto mb-3 ${textSecondary}`} />
-            )}
-            <p className={`text-sm font-bold ${textPrimary}`}>
-              {isUploading ? 'Uploading...' : selectedFile ? selectedFile.name : 'Click or drag file here'}
-            </p>
-            <p className={`text-xs mt-1 ${textSecondary}`}>
-              {selectedFile ? `Size: ${(selectedFile.size / 1024).toFixed(1)} KB` : 'Excel (.xlsx, .xls) or CSV'}
-            </p>
+            <label htmlFor={labourBulkFileInputId} className="block p-8 cursor-pointer">
+              {isUploading ? (
+                <Loader2 className="w-12 h-12 mx-auto mb-3 animate-spin text-[#C2D642]" />
+              ) : (
+                <FileSpreadsheet className={`w-12 h-12 mx-auto mb-3 ${textSecondary}`} />
+              )}
+              <p className={`text-sm font-bold ${textPrimary}`}>
+                {isUploading ? 'Uploading...' : selectedFile ? selectedFile.name : 'Click or drag file here'}
+              </p>
+              <p className={`text-xs mt-1 ${textSecondary}`}>
+                {selectedFile ? `Size: ${(selectedFile.size / 1024).toFixed(1)} KB` : 'Excel (.xlsx, .xls) or CSV'}
+              </p>
+            </label>
           </div>
 
           {/* Upload result */}

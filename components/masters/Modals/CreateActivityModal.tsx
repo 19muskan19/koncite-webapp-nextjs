@@ -1,14 +1,46 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ThemeType } from '@/types';
 import { useToast } from '@/contexts/ToastContext';
 import { X, Loader2 } from 'lucide-react';
 import DatePickerInput from '@/components/ui/DatePickerInput';
 import { masterDataAPI } from '@/services/api';
+import { resolveActivityUnitId } from '@/lib/activityUnitResolve';
+
+/** Map API / numeric id to the same value used in <option value={uuid || id}> */
+function normalizeMasterSelectValue<T extends { id: number; uuid?: string }>(
+  rows: T[],
+  raw: unknown
+): string {
+  if (raw === null || raw === undefined) return '';
+  const s = String(raw).trim();
+  if (!s) return '';
+  const row = rows.find((r) => String(r.id) === s || (r.uuid != null && String(r.uuid) === s));
+  if (row) return row.uuid || String(row.id);
+  return s;
+}
+
+function normalizeActivityType(raw: unknown): string {
+  const t = String(raw ?? '').trim().toLowerCase();
+  if (t === 'heading') return 'heading';
+  if (t === 'activites' || t === 'activities' || t === 'activity') return 'activites';
+  return t;
+}
+
+function pickScalar(...vals: unknown[]): string {
+  for (const v of vals) {
+    if (v === null || v === undefined) continue;
+    if (typeof v === 'object' && !Array.isArray(v)) continue;
+    const s = String(v).trim();
+    if (s !== '') return s;
+  }
+  return '';
+}
 
 interface ActivityItem {
   id: string;
+  numericId?: number;
   name?: string;
   project?: string;
   project_id?: number;
@@ -39,6 +71,28 @@ export interface CreatedActivityItem extends ActivityItem {
   subproject: string;
 }
 
+/** Grid row passed when opening edit — fills gaps if GET activities-edit shape differs from list rows. */
+export type EditingActivityRowSnapshot = Pick<
+  ActivityItem,
+  | 'id'
+  | 'numericId'
+  | 'uuid'
+  | 'project_id'
+  | 'subproject_id'
+  | 'parent_id'
+  | 'heading'
+  | 'type'
+  | 'activities'
+  | 'name'
+  | 'qty'
+  | 'quantity'
+  | 'rate'
+  | 'amount'
+  | 'start_date'
+  | 'end_date'
+  | 'unit_id'
+>;
+
 interface CreateActivityModalProps {
   theme: ThemeType;
   isOpen: boolean;
@@ -46,6 +100,8 @@ interface CreateActivityModalProps {
   onSuccess?: () => void;
   onActivityCreated?: (activity: CreatedActivityItem) => void;
   editingActivityId?: string | null;
+  /** Optional row from Masters > Activities table for reliable pre-fill. */
+  editingActivityRow?: EditingActivityRowSnapshot | null;
   activities?: ActivityItem[];
   projects?: Array<{ id: number; uuid: string; project_name: string }>;
   subprojects?: Array<{ id: number; uuid: string; name: string; project_id?: number }>;
@@ -63,6 +119,7 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
   onSuccess,
   onActivityCreated,
   editingActivityId = null,
+  editingActivityRow = null,
   activities = [],
   projects = [],
   subprojects = [],
@@ -93,6 +150,9 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
   const [isLoadingHeadings, setIsLoadingHeadings] = useState<boolean>(false);
   const [isLoadingSubprojects, setIsLoadingSubprojects] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  /** Raw parent heading id from API until activityHierarchy options are loaded (select uses uuid || id). */
+  const editHeadingParentRawRef = useRef<string | null>(null);
+  const editSubprojectRawRef = useRef<string | null>(null);
 
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -233,34 +293,88 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
     fetchHierarchy();
   }, [isOpen, formData.project, formData.subproject, formData.type, projects, modalSubprojects]);
 
-  // Load activity data when editing (preserve all fields; use ?? to keep 0 for quantity/rate/amount)
+  // Load activity data when editing — normalize ids to match <option value={uuid || id}>; merge grid row when API omits fields.
   useEffect(() => {
     if (isOpen && editingActivityId) {
       const loadActivityData = async () => {
         try {
           const d = await masterDataAPI.getActivity(editingActivityId);
-          // API returns project/heading/subproject/unit_id as nested objects; extract ids
-          const projectVal = d.project_id ?? d.project?.id ?? '';
-          const subprojectVal = d.subproject_id ?? d.subproject?.id ?? '';
-          const typeVal = d.type ?? d.activity_type ?? '';
-          const activitiesVal = d.activities ?? d.name ?? d.activity_name ?? '';
-          const headingVal = d.parent_id ?? d.heading?.id ?? (typeof d.heading === 'object' && d.heading != null ? d.heading.id : null) ?? '';
-          const unitIdVal = (typeof d.unit_id === 'object' && d.unit_id != null && d.unit_id.id != null) ? d.unit_id.id : (d.unit_id ?? d.unit?.id ?? d.units?.id ?? '');
-          const qtyVal = d.quantity ?? d.qty ?? d.estimate_qty ?? '';
-          const rateVal = d.rate ?? d.est_rate ?? '';
-          const amountVal = d.amount ?? d.est_amount ?? '';
+          const row = editingActivityRow;
+
+          const projectRaw =
+            pickScalar(
+              d.project_id,
+              d.projects_id,
+              d.tag_project,
+              d.project?.id,
+              row?.project_id,
+              typeof d.project === 'number' || typeof d.project === 'string' ? d.project : null
+            ) || defaultProjectId;
+          const projectForForm = normalizeMasterSelectValue(projects, projectRaw);
+
+          const subRaw = pickScalar(d.subproject_id, d.sub_projects_id, d.subproject?.id, row?.subproject_id);
+          editSubprojectRawRef.current = subRaw || null;
+          const subForForm = normalizeMasterSelectValue(subprojects, subRaw);
+
+          const typeVal = normalizeActivityType(d.type ?? d.activity_type ?? row?.type ?? '');
+
+          const activitiesVal = pickScalar(d.activities, d.name, d.activity_name, row?.activities, row?.name);
+
+          const headingRaw = pickScalar(
+            d.parent_id,
+            d.heading_id,
+            typeof d.heading === 'number' || typeof d.heading === 'string' ? d.heading : null,
+            d.heading?.id,
+            row?.parent_id,
+            row?.heading
+          );
+          editHeadingParentRawRef.current = headingRaw || null;
+
+          let headingForForm = '';
+          if (headingRaw) {
+            const parentRow = activities.find((a) => {
+              if ((a.type || '').toLowerCase() !== 'heading') return false;
+              const hr = String(headingRaw);
+              const nid = a.numericId != null ? String(a.numericId) : '';
+              const uid = a.uuid ? String(a.uuid) : '';
+              const aid = String(a.id);
+              return hr === nid || hr === uid || hr === aid;
+            });
+            headingForForm = parentRow
+              ? (parentRow.uuid || String(parentRow.numericId ?? parentRow.id))
+              : String(headingRaw);
+          }
+
+          const unitResolved = resolveActivityUnitId(d) ?? (row ? resolveActivityUnitId(row as any) : undefined);
+          const unitIdVal =
+            unitResolved != null && !Number.isNaN(unitResolved)
+              ? unitResolved
+              : pickScalar(
+                  typeof d.unit_id === 'object' && d.unit_id?.id != null ? d.unit_id.id : d.unit_id,
+                  d.unit?.id,
+                  d.units?.id,
+                  row?.unit_id
+                );
+
+          const qtyVal = d.quantity ?? d.qty ?? d.estimate_qty ?? d.est_qty ?? d.estimated_qty ?? row?.quantity ?? row?.qty;
+          const rateVal = d.rate ?? d.est_rate ?? d.unit_rate ?? row?.rate;
+          const amountVal = d.amount ?? d.est_amount ?? d.total_amount ?? row?.amount;
+
+          const startD = pickScalar(d.start_date, d.startDate, row?.start_date, (row as any)?.startDate);
+          const endD = pickScalar(d.end_date, d.endDate, row?.end_date, (row as any)?.endDate);
+
           setFormData({
-            project: String(projectVal),
-            subproject: subprojectVal ? String(subprojectVal) : '',
-            type: typeVal ? String(typeVal) : '',
-            activities: activitiesVal ? String(activitiesVal) : '',
-            heading: headingVal ? String(headingVal) : '',
-            unit_id: unitIdVal ? String(unitIdVal) : '',
+            project: projectForForm,
+            subproject: subForForm,
+            type: typeVal,
+            activities: activitiesVal,
+            heading: headingForForm,
+            unit_id: unitIdVal !== '' && unitIdVal != null ? String(unitIdVal) : '',
             quantity: qtyVal !== '' && qtyVal !== null && qtyVal !== undefined ? String(qtyVal) : '',
             rate: rateVal !== '' && rateVal !== null && rateVal !== undefined ? String(rateVal) : '',
             amount: amountVal !== '' && amountVal !== null && amountVal !== undefined ? String(amountVal) : '',
-            start_date: (d.start_date ?? d.startDate ?? '').toString().trim(),
-            end_date: (d.end_date ?? d.endDate ?? '').toString().trim()
+            start_date: startD ? String(startD).trim() : '',
+            end_date: endD ? String(endD).trim() : ''
           });
         } catch (error: any) {
           console.error('Failed to load activity data:', error);
@@ -269,6 +383,8 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
       };
       loadActivityData();
     } else if (isOpen && !editingActivityId) {
+      editHeadingParentRawRef.current = null;
+      editSubprojectRawRef.current = null;
       // Reset form for new activity (pre-fill heading when adding under a specific heading)
       setFormData({
         project: defaultProjectId || '',
@@ -284,11 +400,49 @@ const CreateActivityModal: React.FC<CreateActivityModalProps> = ({
         end_date: ''
       });
     }
-  }, [isOpen, editingActivityId, defaultProjectId, defaultSubprojectId, defaultHeadingId]);
+  }, [
+    isOpen,
+    editingActivityId,
+    editingActivityRow,
+    defaultProjectId,
+    defaultSubprojectId,
+    defaultHeadingId,
+    projects,
+    subprojects,
+    activities,
+  ]);
+
+  // After hierarchy fetch, align heading <select> value with option keys (uuid vs numeric id).
+  useEffect(() => {
+    if (!isOpen || !editingActivityId) return;
+    const raw = editHeadingParentRawRef.current;
+    if (!raw || formData.type !== 'activites') return;
+    const match = activityHierarchy.find(
+      (h) => h.type === 'heading' && (String(h.id) === String(raw) || h.uuid === String(raw))
+    );
+    if (!match) return;
+    const v = match.uuid || String(match.id);
+    setFormData((prev) => (prev.heading === v ? prev : { ...prev, heading: v }));
+  }, [activityHierarchy, isOpen, editingActivityId, formData.type]);
+
+  // After subprojects load inside the modal, align subproject <select> with option keys.
+  useEffect(() => {
+    if (!isOpen || !editingActivityId) return;
+    const raw = editSubprojectRawRef.current;
+    if (!raw) return;
+    const match = modalSubprojects.find(
+      (s) => String(s.id) === String(raw) || s.uuid === String(raw)
+    );
+    if (!match) return;
+    const v = match.uuid || String(match.id);
+    setFormData((prev) => (prev.subproject === v ? prev : { ...prev, subproject: v }));
+  }, [modalSubprojects, isOpen, editingActivityId]);
 
   // Reset form when modal closes
   useEffect(() => {
     if (!isOpen) {
+      editHeadingParentRawRef.current = null;
+      editSubprojectRawRef.current = null;
       setFormData({
         project: '',
         subproject: '',

@@ -1095,7 +1095,8 @@ const Materials: React.FC<MaterialsProps> = ({ theme }) => {
                           ref={openingStockFileInputRef}
                           type="file"
                           accept=".xlsx,.xls,.csv"
-                          className="hidden"
+                          className="sr-only"
+                          tabIndex={-1}
                           onChange={(e) => setOpeningStockForm({ ...openingStockForm, file: e.target.files?.[0] ?? null })}
                         />
                         {openingStockForm.file ? openingStockForm.file.name : 'Choose file...'}

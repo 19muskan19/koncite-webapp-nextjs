@@ -94,6 +94,8 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
   const [showBulkUploadModal, setShowBulkUploadModal] = useState<boolean>(false);
   const [editingActivityId, setEditingActivityId] = useState<string | null>(null);
+  /** Row from the grid while editing — pre-fills the modal when the edit API omits fields or uses ids that do not match select option values. */
+  const [editingActivityRow, setEditingActivityRow] = useState<ActivityItem | null>(null);
   const [addUnderHeadingId, setAddUnderHeadingId] = useState<string | null>(null);
   const [entriesPerPage, setEntriesPerPage] = useState<number>(25);
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -381,6 +383,7 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
     try {
       const idForApi = String(activity.numericId ?? activity.id);
       await masterDataAPI.getActivity(idForApi);
+      setEditingActivityRow(activity);
       setEditingActivityId(idForApi);
       setShowCreateModal(true);
     } catch (error: any) {
@@ -992,10 +995,12 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
         onClose={() => {
           setShowCreateModal(false);
           setEditingActivityId(null);
+          setEditingActivityRow(null);
           setAddUnderHeadingId(null);
         }}
         onSuccess={handleActivityCreated}
         editingActivityId={editingActivityId}
+        editingActivityRow={editingActivityRow}
         activities={activities}
         projects={projects}
         subprojects={subprojects}

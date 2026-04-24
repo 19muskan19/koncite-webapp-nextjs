@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, useId } from 'react';
 import { ThemeType } from '@/types';
 import Link from 'next/link';
 import { 
@@ -1443,6 +1443,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   });
   const [isSubmittingStaff, setIsSubmittingStaff] = useState(false);
   const staffFileInputRef = useRef<HTMLInputElement>(null);
+  const staffProfilePhotoInputId = useId();
   const staffCameraRef = useRef<HTMLVideoElement>(null);
   const staffStreamRef = useRef<MediaStream | null>(null);
   const staffFilterDropdownRef = useRef<HTMLDivElement>(null);
@@ -6205,23 +6206,24 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                 <div className="flex gap-2">
                   <input
                     ref={staffFileInputRef}
+                    id={staffProfilePhotoInputId}
                     type="file"
                     accept="image/*"
                     capture="user"
-                    className="hidden"
+                    className="sr-only"
+                    tabIndex={-1}
                     onChange={(e) => {
                       const f = e.target.files?.[0];
                       if (f) setStaffFormData((p) => ({ ...p, profile_images: f }));
                     }}
                   />
-                  <button
-                    type="button"
-                    onClick={() => staffFileInputRef.current?.click()}
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-inherit hover:bg-black/5 dark:hover:bg-white/5"
+                  <label
+                    htmlFor={staffProfilePhotoInputId}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-inherit hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer"
                   >
                     <Camera className="w-4 h-4" />
                     Camera or file
-                  </button>
+                  </label>
                   {staffFormData.profile_images && (
                     <span className={`text-sm ${textSecondary}`}>{staffFormData.profile_images.name}</span>
                   )}

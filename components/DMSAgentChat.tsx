@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useId } from 'react';
 import { useRouter } from 'next/navigation';
 import { ThemeType } from '../types';
 import ChatMarkdownViewer from './ChatMarkdownViewer';
@@ -92,6 +92,7 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const dmsChatFileInputId = useId();
   const chatMessagesEndRef = useRef<HTMLDivElement>(null);
   const chatMessagesRef = useRef<ChatMessage[]>(chatMessages);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -340,7 +341,7 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
     const idx = chatMessages.findIndex((m) => m.id === messageId);
     if (idx < 0 || chatMessages[idx].role !== 'user') return;
     const msg = chatMessages[idx];
-    const textOnly = msg.content.replace(/^Files attached:\s*\n?/i, '').replace(/\n?📎[^\n]+(\n|$)/g, '').trim() || msg.content;
+    const textOnly = msg.content.replace(/^File attached:\s*\n?/i, '').replace(/^Files attached:\s*\n?/i, '').replace(/\n?📎[^\n]+(\n|$)/g, '').trim() || msg.content;
     setChatInput(textOnly);
     setChatMessages((prev) => prev.slice(0, idx));
     setAttachedFiles([]);
@@ -357,7 +358,7 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
       const fileList = attachedFiles
         .map((f) => `📎 ${f.name} (${(f.size / 1024).toFixed(2)} KB)`)
         .join('\n');
-      fullContent = messageContent ? `${messageContent}\n\n${fileList}` : `Files attached:\n${fileList}`;
+      fullContent = messageContent ? `${messageContent}\n\n${fileList}` : `File attached:\n${fileList}`;
     }
 
     const userMessage: ChatMessage = {
@@ -396,7 +397,7 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
         setChatSessions((prev) => [newSession, ...prev]);
       }
 
-      const response = await sendDmsAiMessage(sessionId, messageContent || (hasFiles ? 'Files attached.' : ''), {
+      const response = await sendDmsAiMessage(sessionId, messageContent || (hasFiles ? 'File attached.' : ''), {
         projectId,
         files: filesToSend,
       });
@@ -486,13 +487,9 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
     }
   };
 
-  const handleAttachClick = () => fileInputRef.current?.click();
-
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-      setAttachedFiles((prev) => [...prev, ...Array.from(files)]);
-    }
+    const file = e.target.files?.[0];
+    if (file) setAttachedFiles([file]);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -776,20 +773,22 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
           >
             <input
               ref={fileInputRef}
+              id={dmsChatFileInputId}
               type="file"
-              multiple
               accept="*/*"
               onChange={handleFileChange}
-              className="hidden"
+              className="sr-only"
+              tabIndex={-1}
+              aria-label="Attach one file for document assistant"
             />
-            <button
-              onClick={handleAttachClick}
-              className={`p-1.5 sm:p-2 rounded-lg transition-colors flex-shrink-0 min-w-[36px] min-h-[36px] sm:min-w-[40px] sm:min-h-[40px] flex items-center justify-center touch-manipulation ${isDark ? 'hover:bg-[#404040]' : 'hover:bg-gray-100'}`}
-              title="Attach file"
-              aria-label="Attach file"
+            <label
+              htmlFor={dmsChatFileInputId}
+              className={`p-1.5 sm:p-2 rounded-lg transition-colors flex-shrink-0 min-w-[36px] min-h-[36px] sm:min-w-[40px] sm:min-h-[40px] flex items-center justify-center touch-manipulation cursor-pointer ${isDark ? 'hover:bg-[#404040]' : 'hover:bg-gray-100'}`}
+              title="Attach one file"
             >
-              <Paperclip className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${textSecondary}`} />
-            </button>
+              <Paperclip className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${textSecondary}`} aria-hidden />
+              <span className="sr-only">Attach one file</span>
+            </label>
             <input
               type="text"
               value={chatInput}

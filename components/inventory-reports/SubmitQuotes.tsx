@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useId } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import AppLayout from '@/components/AppLayout';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -95,6 +95,7 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
   /** PDF URL from generate-pdf API (doc step) */
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const quoteRfqImageInputId = useId();
 
   useEffect(() => {
     if (mode === 'create' && !pid) {
@@ -759,9 +760,11 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
               <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>Image</label>
               <input
                 ref={imageInputRef}
+                id={quoteRfqImageInputId}
                 type="file"
                 accept="image/jpeg,image/jpg,image/png,image/webp,image/gif"
-                className="hidden"
+                className="sr-only"
+                tabIndex={-1}
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (!file) return;
@@ -778,13 +781,12 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
                 <div className={`relative rounded-lg border overflow-hidden ${isDark ? 'border-slate-600' : 'border-slate-300'}`}>
                   <img src={quoteImage} alt="Quote" className="w-full max-h-64 object-contain bg-slate-900/30" />
                   <div className="absolute top-2 right-2 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => imageInputRef.current?.click()}
-                      className={`p-2 rounded-lg text-xs font-bold ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-white' : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'}`}
+                    <label
+                      htmlFor={quoteRfqImageInputId}
+                      className={`p-2 rounded-lg text-xs font-bold cursor-pointer ${isDark ? 'bg-slate-700 hover:bg-slate-600 text-white' : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'}`}
                     >
                       Change
-                    </button>
+                    </label>
                     <button
                       type="button"
                       onClick={() => { setQuoteImage(null); }}
@@ -796,17 +798,14 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
                   </div>
                 </div>
               ) : (
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => imageInputRef.current?.click()}
-                  onKeyDown={(e) => e.key === 'Enter' && imageInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${isDark ? 'border-slate-600 hover:border-slate-500 hover:bg-slate-800/30' : 'border-slate-300 hover:border-slate-400 hover:bg-slate-50'}`}
+                <label
+                  htmlFor={quoteRfqImageInputId}
+                  className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors block ${isDark ? 'border-slate-600 hover:border-slate-500 hover:bg-slate-800/30' : 'border-slate-300 hover:border-slate-400 hover:bg-slate-50'}`}
                 >
                   <ImageIcon className={`w-12 h-12 mx-auto mb-2 ${textSecondary} opacity-50`} />
                   <p className={`text-sm ${textSecondary}`}>Click to upload image for quote request</p>
                   <p className={`text-xs ${textSecondary} mt-1`}>JPEG, PNG, WebP, GIF</p>
-                </div>
+                </label>
               )}
             </div>
 

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useId } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import AppLayout from '@/components/AppLayout';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -153,6 +153,7 @@ export default function GoodsReceiptFlow({
   const [showCreateWarehouseModal, setShowCreateWarehouseModal] = useState(false);
   const [showCreateProjectModal, setShowCreateProjectModal] = useState(false);
   const imageInputRef = React.useRef<HTMLInputElement>(null);
+  const grDeliveryPhotoInputId = useId();
   const detailsSubmitInProgress = React.useRef(false);
 
   const projectIdForApi = () => (editProject?.numericId ?? editProject?.id ?? pNumId) || (pid && /^\d+$/.test(String(pid)) ? pid : undefined);
@@ -1012,25 +1013,36 @@ export default function GoodsReceiptFlow({
               </div>
               <div className="sm:col-span-2">
                 <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>Take Photo</label>
-                <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) {
-                    setImageFile(f);
-                    const r = new FileReader();
-                    r.onload = () => setImagePreview(r.result as string);
-                    r.readAsDataURL(f);
-                  }
-                  e.target.value = '';
-                }} />
+                <input
+                  ref={imageInputRef}
+                  id={grDeliveryPhotoInputId}
+                  type="file"
+                  accept="image/*"
+                  className="sr-only"
+                  tabIndex={-1}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) {
+                      setImageFile(f);
+                      const r = new FileReader();
+                      r.onload = () => setImagePreview(r.result as string);
+                      r.readAsDataURL(f);
+                    }
+                    e.target.value = '';
+                  }}
+                />
                 {imagePreview ? (
                   <div className={`relative rounded-lg border overflow-hidden ${isDark ? 'border-slate-600' : 'border-slate-200'}`}>
                     <img src={imagePreview} alt="Preview" className="w-full max-h-48 object-contain" />
                     <button type="button" onClick={() => { setImageFile(null); setImagePreview(null); }} className="absolute top-2 right-2 p-2 bg-red-500/80 rounded-lg text-white"><X className="w-4 h-4" /></button>
                   </div>
                 ) : (
-                  <button type="button" onClick={() => imageInputRef.current?.click()} className={`flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-dashed ${isDark ? 'border-slate-600 hover:bg-slate-800/50' : 'border-slate-300 hover:bg-slate-50'}`}>
+                  <label
+                    htmlFor={grDeliveryPhotoInputId}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg border-2 border-dashed cursor-pointer ${isDark ? 'border-slate-600 hover:bg-slate-800/50' : 'border-slate-300 hover:bg-slate-50'}`}
+                  >
                     <ImageIcon className="w-5 h-5" /> Click to upload
-                  </button>
+                  </label>
                 )}
               </div>
             </div>

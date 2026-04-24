@@ -53,7 +53,10 @@ interface ReportRow {
   currentStock: number;
   /** For client-side filtering by subproject */
   prSubProjectId?: string | number;
-  /** For client-side filtering by date */
+  /**
+   * PR document date (e.g. created_at / header date) for client date-range filter.
+   * May differ from `requiredDate` (line item required date).
+   */
   prDate?: string;
 }
 
@@ -66,12 +69,29 @@ const formatNum = (n: any) => {
   return isNaN(v) ? '-' : v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
-/** Only treat as comparable date when YYYY-MM-DD — avoids '-' / invalid strings breaking range filters */
-function rowDateForFilter(prDate: string | undefined): string | null {
-  if (prDate == null || prDate === '' || prDate === '-') return null;
-  const d = String(prDate).slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
-  return d;
+/**
+ * Normalize a row or filter value to YYYY-MM-DD for inclusive range compare.
+ * Accepts ISO date, short ISO, dd/mm/yyyy, datetime strings, and local Date-parsable text.
+ * Returns null when the value cannot be interpreted as a calendar day (e.g. '-').
+ */
+function toComparableYmd(value: string | null | undefined): string | null {
+  if (value == null) return null;
+  const s = String(value).trim();
+  if (s === '' || s === '-') return null;
+  if (s.startsWith('1899-12-30') || s.startsWith('1899-12-31')) return null;
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) {
+    return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  }
+  const dmy = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+  if (dmy) {
+    const dd = dmy[1].padStart(2, '0');
+    const mm = dmy[2].padStart(2, '0');
+    return `${dmy[3]}-${mm}-${dd}`;
+  }
+  const t = new Date(s);
+  if (Number.isNaN(t.getTime())) return null;
+  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
 }
 
 /** Drop opening-stock rows that clearly belong to another project or (when filtered) another subproject. */
@@ -201,6 +221,7 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
       let prReportApiCompleted = false;
       let metaFromApi: InventoryReportMeta | null = null;
       try {
+        /** Backend does not apply date range for PR report — fetch full set; filter in `filteredAndSorted`. */
         const { rows: arr, meta } = await materialRequestAPI.getReport({
           projectId: projId || undefined,
           indentNo: indentNo.trim() || undefined,
@@ -208,11 +229,26 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
         });
         metaFromApi = meta ?? null;
         prReportApiCompleted = true;
+        const slice10 = (v: unknown): string => {
+          if (v == null) return '';
+          const s = String(v).trim();
+          return s.length >= 10 ? s.slice(0, 10) : s;
+        };
         let srNo = 0;
         for (const item of arr) {
           srNo++;
           const reqDate = item?.totalRequiredDate ?? item?.required_date ?? '-';
           const dateStr = typeof reqDate === 'string' && reqDate.length >= 10 ? reqDate.slice(0, 10) : (reqDate || '-');
+          const prDocRaw =
+            item?.pr_date ??
+            item?.prDate ??
+            item?.indent_date ??
+            item?.mr_date ??
+            item?.request_date ??
+            item?.created_at ??
+            item?.material_request?.date ??
+            item?.material_request?.created_at;
+          const prForFilter = slice10(prDocRaw) || dateStr;
           const spId = item?.sub_projects_id?.id ?? item?.sub_projects_id ?? item?.subproject_id;
           rows.push({
             id: `api-${srNo}-${item?.sl_no ?? 'na'}-${item?.code ?? ''}-${item?.name ?? ''}`.replace(/\s+/g, '_'),
@@ -226,7 +262,7 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
             requiredForActivities: item?.requiredforActivities ?? item?.required_for_activities ?? '-',
             remarks: item?.remarks ?? '-',
             currentStock: Number(item?.currentStock ?? item?.current_stock ?? 0),
-            prDate: dateStr,
+            prDate: prForFilter,
             prSubProjectId: spId,
           });
         }
@@ -279,7 +315,7 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
           const editData = await materialRequestAPI.edit(pr.id ?? pr.material_requests_id, prProjId ?? undefined);
           const details = Array.isArray(editData) ? editData : (editData?.material_request_details ?? editData?.details ?? []);
           const list = Array.isArray(details) ? details : [];
-          const prDate = pr?.date ?? pr?.created_at ?? '';
+          const prDate = pr?.date ?? pr?.created_at ?? pr?.pr_date ?? '';
           const prDateStr = typeof prDate === 'string' && prDate.length >= 10 ? prDate.slice(0, 10) : '';
           const prSpId = pr?.sub_projects_id?.id ?? pr?.sub_projects_id ?? pr?.subproject_id;
           for (const item of list) {
@@ -309,7 +345,7 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
               requiredForActivities: activityName,
               remarks,
               currentStock,
-              prDate: dateStr || prDateStr,
+              prDate: prDateStr || dateStr,
               prSubProjectId: prSpId,
             });
           }
@@ -345,18 +381,20 @@ const IndentReport: React.FC<IndentReportProps> = ({ theme }) => {
   };
 
   const filteredAndSorted = useMemo(() => {
-    const fromStr = fromDate.length >= 10 ? fromDate.slice(0, 10) : '';
-    const toStr = toDate.length >= 10 ? toDate.slice(0, 10) : '';
+    const fromY = toComparableYmd(fromDate);
+    const toY = toComparableYmd(toDate);
 
     let out = tableData.filter((r) => {
       if (selectedSubProject && r.prSubProjectId != null && String(r.prSubProjectId) !== String(selectedSubProject)) return false;
-      if (fromStr) {
-        const d = rowDateForFilter(r.prDate);
-        if (d != null && d < fromStr) return false;
+      /** Inclusive: PR date in [fromY, toY]. Prefers `prDate` (PR document date), else required line date. */
+      const d = toComparableYmd(r.prDate || r.requiredDate);
+      if (fromY) {
+        if (d == null) return true;
+        if (d < fromY) return false;
       }
-      if (toStr) {
-        const d = rowDateForFilter(r.prDate);
-        if (d != null && d > toStr) return false;
+      if (toY) {
+        if (d == null) return true;
+        if (d > toY) return false;
       }
       if (searchQuery.trim() !== '') {
         const match = [r.code, r.materials, r.specification, r.unit, r.requiredForActivities, r.remarks].some((v) =>

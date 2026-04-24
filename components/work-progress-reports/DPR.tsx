@@ -4258,7 +4258,8 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                             handleImageUpload(activity.id, e.target.files);
                                             e.target.value = '';
                                           }}
-                                          className="hidden"
+                                          className="sr-only"
+                                          tabIndex={-1}
                                         />
                                       </label>
                                     )}
@@ -5244,7 +5245,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   </div>
                                 ) : (
                                   <label className="cursor-pointer flex-shrink-0">
-                                    <input type="file" accept="image/*" onChange={(e) => handleSafetyEntryImageUpload(entry.id, e)} className="hidden" />
+                                    <input type="file" accept="image/*" onChange={(e) => handleSafetyEntryImageUpload(entry.id, e)} className="sr-only" tabIndex={-1} />
                                     <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed w-fit ${isDark ? 'border-slate-600 hover:border-[#C2D642] text-slate-400' : 'border-slate-300 hover:border-[#C2D642] text-slate-600'}`}>
                                       <Upload className="w-4 h-4" /><span className="text-xs font-bold">Add</span>
                                     </div>
@@ -5416,7 +5417,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                                   </div>
                                 ) : (
                                   <label className="cursor-pointer flex-shrink-0">
-                                    <input type="file" accept="image/*" onChange={(e) => handleHindranceEntryImageUpload(entry.id, e)} className="hidden" />
+                                    <input type="file" accept="image/*" onChange={(e) => handleHindranceEntryImageUpload(entry.id, e)} className="sr-only" tabIndex={-1} />
                                     <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed w-fit ${isDark ? 'border-slate-600 hover:border-[#C2D642] text-slate-400' : 'border-slate-300 hover:border-[#C2D642] text-slate-600'}`}>
                                       <Upload className="w-4 h-4" /><span className="text-xs font-bold">Add</span>
                                     </div>
