@@ -19,6 +19,7 @@ import {
   Share2,
 } from 'lucide-react';
 import { masterDataAPI, materialRequestAPI, rfqAPI } from '@/services/api';
+import { isInventoryQuantityZeroish } from '@/utils/inventoryQuantityInput';
 
 type RfqStep = 'submit' | 'quotesDetails' | 'vendorList' | 'doc';
 
@@ -897,6 +898,12 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
                               type="text"
                               value={String(edits.qty ?? row.qty ?? row.quantity ?? row.Quantity ?? '')}
                               onChange={(e) => setMaterialsEdits(prev => ({ ...prev, [key]: { ...prev[key], qty: e.target.value } }))}
+                              onFocus={() => {
+                                const raw = edits.qty ?? row.qty ?? row.quantity ?? row.Quantity;
+                                if (isInventoryQuantityZeroish(raw)) {
+                                  setMaterialsEdits((prev) => ({ ...prev, [key]: { ...prev[key], qty: '' } }));
+                                }
+                              }}
                               placeholder="Qty"
                               className={`w-20 min-w-[4rem] rounded border px-2 py-1 text-sm ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}
                             />
@@ -906,6 +913,18 @@ export default function SubmitQuotes({ mode, projectId, projectName, rfqId }: Su
                               type="text"
                               value={String(edits.request_qty ?? row.request_qty ?? row.request_quantity ?? row.qty ?? row.quantity ?? row.Quantity ?? '')}
                               onChange={(e) => setMaterialsEdits(prev => ({ ...prev, [key]: { ...prev[key], request_qty: e.target.value } }))}
+                              onFocus={() => {
+                                const raw =
+                                  edits.request_qty ??
+                                  row.request_qty ??
+                                  row.request_quantity ??
+                                  row.qty ??
+                                  row.quantity ??
+                                  row.Quantity;
+                                if (isInventoryQuantityZeroish(raw)) {
+                                  setMaterialsEdits((prev) => ({ ...prev, [key]: { ...prev[key], request_qty: '' } }));
+                                }
+                              }}
                               placeholder="Request Qty"
                               className={`w-24 min-w-[5rem] rounded border px-2 py-1 text-sm ${isDark ? 'bg-slate-800 border-slate-600 text-slate-100' : 'bg-white border-slate-200 text-slate-900'}`}
                             />

@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
-import { masterDataAPI } from '../../services/api';
+import { masterDataAPI, projectAllocationAPI, prApprovalAPI } from '../../services/api';
 import { useUser } from '../../contexts/UserContext';
 import * as XLSX from 'xlsx';
 import { 
@@ -60,6 +60,35 @@ interface Project {
   azure_folder_path?: string; // Azure Blob Storage folder path for documents
 }
 
+function extractMemberRows(payload: unknown, keys: string[]): Record<string, unknown>[] {
+  if (payload == null || typeof payload !== 'object' || Array.isArray(payload)) return [];
+  const o = payload as Record<string, unknown>;
+  for (const k of keys) {
+    const v = o[k];
+    if (Array.isArray(v)) return v as Record<string, unknown>[];
+  }
+  return [];
+}
+
+function formatMemberListLabel(row: Record<string, unknown>): string {
+  const nested =
+    row.user && typeof row.user === 'object' && !Array.isArray(row.user)
+      ? (row.user as Record<string, unknown>)
+      : null;
+  const name = [row.name, row.user_name, row.full_name, nested?.name].find(
+    (x) => typeof x === 'string' && String(x).trim() !== ''
+  );
+  const email = [row.email, nested?.email].find(
+    (x) => typeof x === 'string' && String(x).trim() !== ''
+  );
+  const id = row.id ?? row.user_id ?? row.company_users_id ?? nested?.id;
+  if (typeof name === 'string' && name.trim()) {
+    return typeof email === 'string' && email.trim() ? `${name.trim()} · ${email.trim()}` : name.trim();
+  }
+  if (typeof email === 'string' && email.trim()) return email.trim();
+  return id != null ? `User #${id}` : '—';
+}
+
 interface ProjectsProps {
   theme: ThemeType;
 }
@@ -83,6 +112,13 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
   const [projectsError, setProjectsError] = useState<string | null>(null);
   const [allCompanies, setAllCompanies] = useState<any[]>([]);
   const [rawProjects, setRawProjects] = useState<any[]>([]);
+
+  /** Project details modal: GET project-allocation-edit + pr-approval-edit */
+  const [projectDetailMembersLoading, setProjectDetailMembersLoading] = useState(false);
+  const [projectAllocationEditPayload, setProjectAllocationEditPayload] = useState<unknown>(null);
+  const [prApprovalEditPayload, setPrApprovalEditPayload] = useState<unknown>(null);
+  const [projectMembersFetchError, setProjectMembersFetchError] = useState<string | null>(null);
+  const [prApprovalMembersFetchError, setPrApprovalMembersFetchError] = useState<string | null>(null);
   
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -367,6 +403,11 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
     setShowProjectModal(false);
     setViewingProjectId(null);
     setEditingProjectId(null);
+    setProjectAllocationEditPayload(null);
+    setPrApprovalEditPayload(null);
+    setProjectMembersFetchError(null);
+    setPrApprovalMembersFetchError(null);
+    setProjectDetailMembersLoading(false);
   };
 
   const handleEditProject = async (project: Project) => {
@@ -724,6 +765,68 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
     };
   }, []);
 
+  // When opening project details, load allocated users (by UUID) and PR approval members (by numeric project id)
+  useEffect(() => {
+    if (!showProjectModal || !viewingProjectId || !isAuthenticated) return;
+    const p = projects.find((x) => x.id === viewingProjectId);
+    if (!p) return;
+
+    const uuidForApi =
+      (p.uuid && String(p.uuid).trim()) ||
+      (typeof p.id === 'string' && p.id.includes('-') ? p.id : '');
+    const projectNumericId =
+      p.numericId != null
+        ? Number(p.numericId)
+        : typeof p.id === 'string' && /^\d+$/.test(p.id)
+          ? Number(p.id)
+          : NaN;
+
+    let cancelled = false;
+    setProjectDetailMembersLoading(true);
+    setProjectMembersFetchError(null);
+    setPrApprovalMembersFetchError(null);
+    setProjectAllocationEditPayload(null);
+    setPrApprovalEditPayload(null);
+
+    const run = async () => {
+      const tasks: Promise<void>[] = [];
+      if (uuidForApi) {
+        tasks.push(
+          projectAllocationAPI
+            .getEditFormData(uuidForApi)
+            .then((d) => {
+              if (!cancelled) setProjectAllocationEditPayload(d);
+            })
+            .catch((e: any) => {
+              if (!cancelled) setProjectMembersFetchError(e?.message || 'Failed to load project members');
+            })
+        );
+      } else {
+        if (!cancelled) setProjectMembersFetchError('Project UUID is missing; cannot load allocated members');
+      }
+      if (Number.isFinite(projectNumericId)) {
+        tasks.push(
+          prApprovalAPI
+            .getEditByProjectId(projectNumericId)
+            .then((d) => {
+              if (!cancelled) setPrApprovalEditPayload(d);
+            })
+            .catch((e: any) => {
+              if (!cancelled) setPrApprovalMembersFetchError(e?.message || 'Failed to load PR approval members');
+            })
+        );
+      } else {
+        if (!cancelled) setPrApprovalMembersFetchError('Numeric project id is missing; cannot load PR approval list');
+      }
+      await Promise.allSettled(tasks);
+      if (!cancelled) setProjectDetailMembersLoading(false);
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [showProjectModal, viewingProjectId, isAuthenticated, projects]);
+
   // Memoize filtered and sorted projects - recent (created/updated) appear on top
   const filteredAndSortedProjects = useMemo(() => {
     const parseDate = (val: string | undefined, fallback: number): number => {
@@ -790,11 +893,10 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
   }, [searchQuery, sortFilter, allProjects, isSearching]);
 
   const handleDownloadExcel = () => {
-    const headers = ['SR No', 'Project Name', 'Code', 'Company', 'Address', 'Is Contractor', 'Planned Start Date', 'Planned End Date', 'Project Manager', 'Status'];
+    const headers = ['SR No', 'Project Name', 'Company', 'Address', 'Is Contractor', 'Planned Start Date', 'Planned End Date', 'Project Manager', 'Status'];
     const rows = filteredAndSortedProjects.map((project, idx) => [
       idx + 1,
       project.name,
-      project.code,
       project.company,
       project.location || '-',
       project.isContractor ? 'Yes' : 'No',
@@ -1353,8 +1455,7 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                       />
                     </div>
                     <div className="flex-1">
-                      <h3 className={`text-2xl font-black ${textPrimary} mb-1`}>{viewingProject.name}</h3>
-                      <p className={`text-sm font-bold ${textSecondary} uppercase tracking-wider`}>Code: {viewingProject.code}</p>
+                      <h3 className={`text-2xl font-black ${textPrimary}`}>{viewingProject.name}</h3>
                     </div>
                   </div>
 
@@ -1431,6 +1532,89 @@ const Projects: React.FC<ProjectsProps> = ({ theme }) => {
                         <p className={`text-sm font-bold ${textPrimary}`}>{viewingProject.projectManager}</p>
                       </div>
                     )}
+
+                    <div className={`pt-4 mt-2 border-t ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
+                      <h4 className={`text-sm font-black uppercase tracking-wide mb-3 ${textPrimary}`}>
+                        Project members &amp; PR approval
+                      </h4>
+                      {projectDetailMembersLoading ? (
+                        <div className={`flex items-center gap-2 text-sm ${textSecondary}`}>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Loading member lists…
+                        </div>
+                      ) : (
+                        <div className="space-y-5">
+                          <div>
+                            <label
+                              className={`block text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}
+                            >
+                              Project allocated members
+                            </label>
+                            {projectMembersFetchError ? (
+                              <p className="text-sm text-amber-600 dark:text-amber-400">
+                                {projectMembersFetchError}
+                              </p>
+                            ) : null}
+                            {!projectMembersFetchError &&
+                            extractMemberRows(projectAllocationEditPayload, [
+                              'assigned_users',
+                              'assignedUsers',
+                              'users',
+                            ]).length === 0 ? (
+                              <p className={`text-sm ${textSecondary}`}>No members assigned to this project.</p>
+                            ) : null}
+                            <ul className="space-y-1.5">
+                              {extractMemberRows(projectAllocationEditPayload, [
+                                'assigned_users',
+                                'assignedUsers',
+                                'users',
+                              ]).map((row, i) => (
+                                <li
+                                  key={String(row.id ?? row.user_id ?? row.uuid ?? i)}
+                                  className={`text-sm ${textPrimary} pl-1 border-l-2 ${
+                                    isDark ? 'border-[#C2D642]/50' : 'border-[#6B8E23]/50'
+                                  } py-0.5`}
+                                >
+                                  {formatMemberListLabel(row)}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+
+                          <div>
+                            <label
+                              className={`block text-xs font-bold uppercase tracking-wider mb-2 ${textSecondary}`}
+                            >
+                              PR approval members
+                            </label>
+                            {prApprovalMembersFetchError ? (
+                              <p className="text-sm text-amber-600 dark:text-amber-400">
+                                {prApprovalMembersFetchError}
+                              </p>
+                            ) : null}
+                            {!prApprovalMembersFetchError &&
+                            extractMemberRows(prApprovalEditPayload, ['approval_members', 'approvalMembers'])
+                              .length === 0 ? (
+                              <p className={`text-sm ${textSecondary}`}>No PR approvers for this project.</p>
+                            ) : null}
+                            <ul className="space-y-1.5">
+                              {extractMemberRows(prApprovalEditPayload, ['approval_members', 'approvalMembers']).map(
+                                (row, i) => (
+                                  <li
+                                    key={String(row.id ?? row.user_id ?? row.uuid ?? i)}
+                                    className={`text-sm ${textPrimary} pl-1 border-l-2 ${
+                                      isDark ? 'border-[#C2D642]/50' : 'border-[#6B8E23]/50'
+                                    } py-0.5`}
+                                  >
+                                    {formatMemberListLabel(row)}
+                                  </li>
+                                )
+                              )}
+                            </ul>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               );

@@ -34,7 +34,7 @@ const routeTitles: Record<string, string> = {
   '/masters/units': 'Units - KONCITE',
   '/masters/subproject': 'Subproject - KONCITE',
   '/work-contractor': 'Work Contractor - KONCITE',
-  '/pr-management/pr': 'PR Management - KONCITE',
+  '/pr-management/pr': 'PR - KONCITE',
   '/pr-approval': 'PR Approvals - KONCITE',
   '/pr-approval-manage': 'PR Approval — Manage allocation - KONCITE',
   '/pr-management/pr-approval-manage': 'PR Approval — Project & User Allocation - KONCITE',

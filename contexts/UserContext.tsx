@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useRef, ReactNode } from 'react';
 import { userAPI, masterDataAPI } from '../services/api';
 import { extractCompanyLogoFromApi, getCompanyLogoImageSrc } from '../utils/imageUtils';
+import { normalizeAccessibleMenusPayload } from '../utils/normalizeAccessibleMenusPayload';
 
 function firstCompanyRecord(userData: Record<string, any>): Record<string, unknown> | null {
   const raw = userData.company || userData.company_data || userData.companies;
@@ -143,18 +144,7 @@ const UserContext = createContext<UserContextType | undefined>(undefined);
 export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [company, setCompany] = useState<CompanyInfo | null>(null);
-  const [accessibleMenus, setAccessibleMenus] = useState<AccessibleMenusData | null>(() => {
-    if (typeof window === 'undefined') return null;
-    try {
-      const raw = localStorage.getItem('koncite_accessible_menus');
-      if (!raw) return null;
-      const parsed = JSON.parse(raw) as AccessibleMenusData;
-      if (parsed && typeof parsed === 'object') return parsed;
-    } catch {
-      /* ignore */
-    }
-    return null;
-  });
+  const [accessibleMenus, setAccessibleMenus] = useState<AccessibleMenusData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -170,9 +160,11 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       const data = await userAPI.getMyAccessibleMenus();
       if (data && typeof data === 'object') {
-        setAccessibleMenus(data as AccessibleMenusData);
+        const n = (normalizeAccessibleMenusPayload(data) ?? data) as AccessibleMenusData;
+        setAccessibleMenus(n);
         try {
-          localStorage.setItem('koncite_accessible_menus', JSON.stringify(data));
+          localStorage.removeItem('koncite_accessible_menus');
+          localStorage.removeItem('koncite_accessible_menus_v2');
         } catch {
           /* ignore */
         }
@@ -298,7 +290,12 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     if (typeof window !== 'undefined') {
       localStorage.removeItem('auth_token');
       localStorage.removeItem('isAuthenticated');
-      localStorage.removeItem('koncite_accessible_menus');
+      try {
+        localStorage.removeItem('koncite_accessible_menus');
+        localStorage.removeItem('koncite_accessible_menus_v2');
+      } catch {
+        /* ignore */
+      }
     }
   };
 

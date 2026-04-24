@@ -87,20 +87,18 @@ export function extractReplyFromResponse(response: ChatResponse | unknown): stri
   return '';
 }
 
-export function getSessionIdFromResponse(response: AiSession | unknown): string {
-  if (!response || typeof response !== 'object') return '';
-  const r = response as Record<string, unknown>;
-  return String(r.session_id ?? r.id ?? '');
-}
+export { getSessionIdFromResponse } from './dmsAiService';
 
 export async function createAgentSession(
   agent: AiAgentType,
   name?: string
 ): Promise<AiSession> {
+  const trimmed = (name ?? '').trim();
+  const nameFields = trimmed ? { name: trimmed } : {};
   const payload =
     agent === 'inventory_agent'
-      ? { agent: 'inventory_agent', name: name ?? 'Inventory Chat' }
-      : { agent, name: name ?? `${agent} Chat - ${new Date().toLocaleDateString()}` };
+      ? { agent: 'inventory_agent', ...nameFields }
+      : { agent, ...nameFields };
   const { data } = await apiClient.post<AiSession>('/ai-agent/sessions', payload);
   return data;
 }

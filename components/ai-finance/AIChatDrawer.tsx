@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Bot, Send, Paperclip, X, Loader2 } from 'lucide-react';
+import { Bot, Send, Paperclip, X, Loader2, Menu } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { useUser } from '@/contexts/UserContext';
 import { getProfileImageUrl } from '@/utils/imageUtils';
@@ -20,7 +20,6 @@ import {
   sendMessage,
   getSession,
   getSessionIdFromResponse,
-  renameSession,
   AGENT_AI_FINANCE,
   extractReplyFromResponse,
   extractChatTurnsFromSession,
@@ -35,6 +34,9 @@ import {
 } from '@/services/financeAgentParse';
 import FinanceChatMarkdown from './FinanceChatMarkdown';
 import AIFinanceChatSessionsSidebar, { type FinanceSessionListItem } from './AIFinanceChatSessionsSidebar';
+import { runSessionMetaIfNeeded, toMetaMessages, shouldApplySessionRenameTitle } from '@/lib/chat/sessionMetaClient';
+import SessionSummaryBanner from '@/components/chat/SessionSummaryBanner';
+import { getStoredSessionMetaTitle, setStoredSessionMetaTitle, setStoredSessionSummary } from '@/lib/chat/sessionSummaryStorage';
 
 function getUserInitial(user: { name?: string; email?: string } | null): string {
   if (!user) return 'U';
@@ -116,7 +118,7 @@ interface AIChatDrawerProps {
 }
 
 export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerProps) {
-  const toast = useToast();
+  const { showError, showSuccess, showWarning } = useToast();
   const { user } = useUser();
   const userInitial = getUserInitial(user);
   const profileUrl = getProfileImageUrl((user as any)?.profile_image ?? (user as any)?.profile_images, user?.name || 'User');
@@ -129,9 +131,12 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [creatingSession, setCreatingSession] = useState(false);
+  /** On small screens the sessions list is a slide-over; chat stays full width until the user opens it. */
+  const [sessionsPanelOpen, setSessionsPanelOpen] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<ChatMessage[]>(messages);
   /** Proposal cards already persisted via Book or chat "confirm", to avoid double posts. */
   const consumedProposalIdsRef = useRef<Set<string>>(new Set());
 
@@ -144,9 +149,10 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
       for (const s of filtered) {
         const id = getSessionIdFromResponse(s);
         if (!id) continue;
+        const storedTitle = getStoredSessionMetaTitle(id, 'ai');
         mapped.push({
           id,
-          name: String(s.name ?? 'Session'),
+          name: (storedTitle && storedTitle.trim()) || String(s.name ?? '').trim(),
           ...(typeof s.created_at === 'string' ? { created_at: s.created_at } : {}),
         });
       }
@@ -163,13 +169,13 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
       });
     } catch (e: unknown) {
       const msg = e && typeof e === 'object' && 'message' in e ? String((e as Error).message) : 'Failed to load sessions';
-      toast.showError(msg);
+      showError(msg);
       setSessions([]);
       setActiveSessionId(null);
     } finally {
       setLoadingSessions(false);
     }
-  }, [toast]);
+  }, [showError]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -177,6 +183,7 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
       setActiveSessionId(null);
       setSessions([]);
       setMessages([]);
+      setSessionsPanelOpen(false);
       return;
     }
     void loadFinanceSessions();
@@ -215,6 +222,10 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
   }, [isOpen, activeSessionId]);
 
   useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
@@ -222,38 +233,32 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
     setMessages((m) => [...m, { id: String(Date.now()), role, content, parsedTransaction }]);
   };
 
-  const handleCreateSession = async (name: string) => {
+  const handleCreateSession = async () => {
     setMessages([]);
     setCreatingSession(true);
     try {
-      const res = await createSession(name, AGENT_AI_FINANCE);
+      const res = await createSession(undefined, AGENT_AI_FINANCE);
       const id = getSessionIdFromResponse(res);
       if (!id) throw new Error('No session id returned from POST /ai-agent/sessions');
       await loadFinanceSessions({ selectId: id });
-      toast.showSuccess('Session created');
+      showSuccess('Session created');
     } catch (e: unknown) {
       const msg = e && typeof e === 'object' && 'message' in e ? String((e as Error).message) : 'Failed to create session';
-      toast.showError(msg);
+      showError(msg);
     } finally {
       setCreatingSession(false);
+      setSessionsPanelOpen(false);
     }
   };
 
   const handleSelectSession = (sessionId: string) => {
-    if (sessionId === activeSessionId) return;
+    if (sessionId === activeSessionId) {
+      setSessionsPanelOpen(false);
+      return;
+    }
     setMessages([]);
     setActiveSessionId(sessionId);
-  };
-
-  const handleRenameSession = async (sessionId: string, name: string) => {
-    try {
-      await renameSession(sessionId, name);
-      await loadFinanceSessions();
-      toast.showSuccess('Session renamed');
-    } catch (e: unknown) {
-      const msg = e && typeof e === 'object' && 'message' in e ? String((e as Error).message) : 'Rename failed';
-      toast.showError(msg);
-    }
+    setSessionsPanelOpen(false);
   };
 
   const persistParsedProposal = async (msg: ChatMessage, remarksOverride: string | undefined) => {
@@ -287,9 +292,9 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
       await persistParsedProposal(msg, remarks || undefined);
       addMessage('assistant', 'Transaction saved successfully.');
       setRemarks('');
-      toast.showSuccess('Transaction saved');
+      showSuccess('Transaction saved');
     } catch (e: any) {
-      toast.showError(e?.message || 'Failed to save');
+      showError(e?.message || 'Failed to save');
     } finally {
       setProcessing(false);
     }
@@ -300,7 +305,7 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
     if (!text) return;
     if (processing) return;
     if (!activeSessionId) {
-      toast.showWarning('Create or select a chat session first');
+      showWarning('Create or select a chat session first');
       return;
     }
 
@@ -316,9 +321,9 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
           'Saved to your finance ledger. It will show on the dashboard and under Transactions.'
         );
         setRemarks('');
-        toast.showSuccess('Transaction saved');
+        showSuccess('Transaction saved');
       } catch (e: any) {
-        toast.showError(e?.message || 'Failed to save');
+        showError(e?.message || 'Failed to save');
       } finally {
         setProcessing(false);
       }
@@ -340,6 +345,27 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
         extractFinanceTransactionFromAgentResponse(raw) ?? extractFinanceTransactionFromAgentResponse(inner);
       const fromText = fromApi ? undefined : extractTransactionFromAssistText(replyTrim);
       addMessage('assistant', replyTrim, fromApi ?? fromText ?? undefined);
+
+      const sidMeta = activeSessionId;
+      setTimeout(() => {
+        const lines = messagesRef.current.filter((m) => m.role === 'user' || m.role === 'assistant');
+        const uCount = lines.filter((m) => m.role === 'user').length;
+        if (!sidMeta) return;
+        runSessionMetaIfNeeded({
+          sessionId: sidMeta,
+          userMessageCount: uCount,
+          messages: toMetaMessages(lines.map((m) => ({ role: m.role, content: m.content }))),
+          apply: async (meta) => {
+            if (shouldApplySessionRenameTitle(meta.title)) {
+              setSessions((p) => p.map((s) => (s.id === sidMeta ? { ...s, name: meta.title } : s)));
+              setStoredSessionMetaTitle(sidMeta, meta.title, 'ai');
+            }
+            if (meta.summary) {
+              setStoredSessionSummary(sidMeta, meta.summary, 'ai');
+            }
+          },
+        });
+      }, 0);
     } catch (e: unknown) {
       const errMsg = e && typeof e === 'object' && 'message' in e && typeof (e as Error).message === 'string' ? (e as Error).message.trim() : '';
       addMessage('assistant', errMsg || AI_FINANCE_ASSISTANT_UNAVAILABLE);
@@ -352,7 +378,7 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
     const file = e.target.files?.[0];
     if (!file) return;
     if (!activeSessionId) {
-      toast.showWarning('Create or select a chat session first');
+      showWarning('Create or select a chat session first');
       e.target.value = '';
       return;
     }
@@ -369,6 +395,27 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
         extractFinanceTransactionFromAgentResponse(raw) ?? extractFinanceTransactionFromAgentResponse(inner);
       const fromText = fromApi ? undefined : extractTransactionFromAssistText(replyTrim);
       addMessage('assistant', replyTrim, fromApi ?? fromText ?? undefined);
+
+      const sidFileMeta = activeSessionId;
+      setTimeout(() => {
+        const lines = messagesRef.current.filter((m) => m.role === 'user' || m.role === 'assistant');
+        const uCount = lines.filter((m) => m.role === 'user').length;
+        if (!sidFileMeta) return;
+        runSessionMetaIfNeeded({
+          sessionId: sidFileMeta,
+          userMessageCount: uCount,
+          messages: toMetaMessages(lines.map((m) => ({ role: m.role, content: m.content }))),
+          apply: async (meta) => {
+            if (shouldApplySessionRenameTitle(meta.title)) {
+              setSessions((p) => p.map((s) => (s.id === sidFileMeta ? { ...s, name: meta.title } : s)));
+              setStoredSessionMetaTitle(sidFileMeta, meta.title, 'ai');
+            }
+            if (meta.summary) {
+              setStoredSessionSummary(sidFileMeta, meta.summary, 'ai');
+            }
+          },
+        });
+      }, 0);
     } catch (err: unknown) {
       const errMsg = err && typeof err === 'object' && 'message' in err && typeof (err as Error).message === 'string' ? (err as Error).message.trim() : '';
       addMessage('assistant', errMsg || AI_FINANCE_INVOICE_UNAVAILABLE);
@@ -390,41 +437,80 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
         <div className="absolute inset-0 bg-black/50" onClick={onClose} />
         <div
           className={cn(
-            'absolute right-0 top-0 h-full w-full max-w-[min(100vw,56rem)] shadow-xl transition-transform duration-300 flex',
+            'absolute right-0 top-0 h-full w-full max-w-[min(100dvw,56rem)] shadow-xl transition-transform duration-300 flex flex-col min-h-0',
             bgSecondary,
             isOpen ? 'translate-x-0' : 'translate-x-full'
           )}
         >
-          <AIFinanceChatSessionsSidebar
-            isDark={isDark}
-            sessions={sessions}
-            activeSessionId={activeSessionId}
-            loading={loadingSessions}
-            creating={creatingSession}
-            onSelect={handleSelectSession}
-            onRefresh={() => void loadFinanceSessions()}
-            onCreate={handleCreateSession}
-            onRename={handleRenameSession}
-          />
-          <div className="flex flex-col flex-1 min-w-0 min-h-0">
-            <div className={cn('flex items-center justify-between p-3 sm:p-4 border-b flex-shrink-0', isDark ? 'border-[#404040]' : 'border-slate-200')}>
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="w-8 h-8 bg-[#C2D642] rounded-lg flex items-center justify-center flex-shrink-0">
-                  <Bot className="w-4 h-4 text-slate-900" />
+          <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden relative">
+            <div
+              className={cn(
+                'flex h-full min-h-0 flex-shrink-0 border-r',
+                isDark ? 'border-[#2d2d2d]' : 'border-slate-200',
+                'fixed z-[60] md:static md:z-auto',
+                'inset-y-0 left-0',
+                'w-[min(20rem,90vw)] md:w-56',
+                'transition-transform duration-300 ease-in-out',
+                'md:translate-x-0',
+                sessionsPanelOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
+                isDark ? 'bg-[#0f0f0f]' : 'bg-slate-50',
+                'shadow-[4px_0_24px_rgba(0,0,0,0.2)] md:shadow-none'
+              )}
+            >
+              <AIFinanceChatSessionsSidebar
+                isDark={isDark}
+                sessions={sessions}
+                activeSessionId={activeSessionId}
+                loading={loadingSessions}
+                creating={creatingSession}
+                onSelect={handleSelectSession}
+                onRefresh={() => void loadFinanceSessions()}
+                onCreate={handleCreateSession}
+                onClosePanel={() => setSessionsPanelOpen(false)}
+              />
+            </div>
+            <div className="flex flex-col flex-1 min-w-0 min-h-0">
+            <div
+              className={cn(
+                'flex items-center justify-between gap-2 p-2.5 sm:p-4 border-b flex-shrink-0',
+                isDark ? 'border-[#404040] bg-[#0a0a0a]' : 'border-slate-200 bg-white'
+              )}
+            >
+              <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1">
+                <button
+                  type="button"
+                  onClick={() => setSessionsPanelOpen((o) => !o)}
+                  className={cn(
+                    'md:hidden p-2 rounded-lg flex-shrink-0 min-w-[40px] min-h-[40px] flex items-center justify-center',
+                    isDark ? 'hover:bg-[#2a2a2a]' : 'hover:bg-slate-100'
+                  )}
+                  aria-expanded={sessionsPanelOpen}
+                  aria-label={sessionsPanelOpen ? 'Close sessions' : 'Open sessions'}
+                >
+                  <Menu className={cn('w-5 h-5', textSecondary)} />
+                </button>
+                <div className="w-7 h-7 sm:w-8 sm:h-8 bg-[#C2D642] rounded-lg flex items-center justify-center flex-shrink-0">
+                  <Bot className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-900" />
                 </div>
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <h2 className={cn('text-xs sm:text-sm font-black truncate', textPrimary)}>{AI_FINANCE_APP_LABEL}</h2>
-                  <p className={cn('text-[9px] sm:text-[10px] font-bold uppercase tracking-wider truncate', textSecondary)}>{AI_FINANCE_ASSISTANT_BRAND_LABEL}</p>
+                  <p className={cn('text-[8px] sm:text-[10px] font-bold uppercase tracking-wider truncate', textSecondary)}>{AI_FINANCE_ASSISTANT_BRAND_LABEL}</p>
                 </div>
               </div>
-              <button type="button" onClick={onClose} className={cn('p-2 rounded-lg transition-colors flex-shrink-0', isDark ? 'hover:bg-[#404040]' : 'hover:bg-slate-100')}>
+              <button type="button" onClick={onClose} className={cn('p-2 rounded-lg transition-colors flex-shrink-0 min-w-[40px] min-h-[40px] flex items-center justify-center', isDark ? 'hover:bg-[#404040]' : 'hover:bg-slate-100')}>
                 <X className={cn('w-5 h-5', textSecondary)} />
               </button>
             </div>
-            <div className={cn('flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 space-y-1.5 sm:space-y-2 custom-scrollbar', isDark ? 'bg-[#1e1e1e]' : 'bg-slate-50')}>
+            <SessionSummaryBanner
+              sessionId={activeSessionId}
+              kind="ai"
+              isDark={isDark}
+              className="mx-2 sm:mx-4 mt-2 shrink-0"
+            />
+            <div className={cn('flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-2.5 sm:p-4 space-y-1.5 sm:space-y-2 custom-scrollbar', isDark ? 'bg-[#1e1e1e]' : 'bg-slate-50')}>
               {!activeSessionId && !loadingSessions && (
-                <div className={cn('rounded-lg border px-3 py-2 text-center text-xs font-semibold mb-2', isDark ? 'border-amber-500/40 text-amber-200' : 'border-amber-300 text-amber-900')}>
-                  Select an existing session or create a new one (POST /ai-agent/sessions) to start chatting.
+                <div className={cn('rounded-lg border px-2.5 sm:px-3 py-2 text-center text-[11px] sm:text-xs font-semibold mb-2', isDark ? 'border-amber-500/40 text-amber-200' : 'border-amber-300 text-amber-900')}>
+                  Create a session with + in the list or pick a session to start. API: POST /ai-agent/sessions
                 </div>
               )}
               {messages.length === 0 && activeSessionId && (
@@ -441,13 +527,13 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
                 </div>
               )}
               {messages.map((m) => (
-                <div key={m.id} className={cn('flex gap-2 sm:gap-3', m.role === 'user' ? 'justify-end' : 'justify-start')}>
+                <div key={m.id} className={cn('flex gap-1.5 sm:gap-3', m.role === 'user' ? 'justify-end' : 'justify-start')}>
                   {m.role === 'assistant' && (
-                    <div className="w-7 h-7 sm:w-8 sm:h-8 bg-[#C2D642] rounded-lg flex items-center justify-center flex-shrink-0">
-                      <Bot className="w-4 h-4 sm:w-5 sm:h-5 text-slate-900" />
+                    <div className="w-6 h-6 sm:w-8 sm:h-8 bg-[#C2D642] rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <Bot className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-slate-900" />
                     </div>
                   )}
-                  <div className={cn('max-w-[90%] sm:max-w-[75%]', m.role === 'user' ? 'order-2' : '')}>
+                  <div className={cn('min-w-0 max-w-[min(92dvw,100%)] sm:max-w-[75%]', m.role === 'user' ? 'order-2 max-w-[min(88dvw,520px)]' : '')}>
                     {m.role === 'user' && (
                       <p className={cn('text-[9px] sm:text-[10px] font-bold mb-0.5 text-right', textSecondary)}>{user?.name || user?.email || 'You'}</p>
                     )}
@@ -456,14 +542,16 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
                         {m.content}
                       </div>
                     ) : (
-                      <div className="space-y-3">
+                      <div className="space-y-2 sm:space-y-3 min-w-0">
                         <div
                           className={cn(
-                            'rounded-2xl px-4 py-3.5 break-words shadow-sm border',
+                            'rounded-2xl px-3 py-3 sm:px-4 sm:py-3.5 break-words shadow-sm border min-w-0',
                             isDark ? 'bg-[#2d2d2d] border-white/[0.06]' : 'bg-white border-slate-200/90'
                           )}
                         >
-                          <FinanceChatMarkdown content={m.content} isDark={isDark} />
+                          <div className="min-w-0 max-w-full overflow-x-auto [overflow-y:visible]">
+                            <FinanceChatMarkdown content={m.content} isDark={isDark} />
+                          </div>
                         </div>
                         {m.parsedTransaction && (
                           <div
@@ -577,22 +665,31 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
                 </div>
               ))}
               {processing && (
-                <div className={cn('flex gap-2 sm:gap-3 justify-start')}>
-                  <div className="w-7 h-7 sm:w-8 sm:h-8 bg-[#C2D642] rounded-lg flex items-center justify-center flex-shrink-0">
-                    <Bot className="w-4 h-4 sm:w-5 sm:h-5 text-slate-900" />
+                <div className={cn('flex gap-1.5 sm:gap-3 justify-start')}>
+                  <div className="w-6 h-6 sm:w-8 sm:h-8 bg-[#C2D642] rounded-lg flex items-center justify-center flex-shrink-0">
+                    <Bot className="w-3.5 h-3.5 sm:w-5 sm:h-5 text-slate-900" />
                   </div>
-                  <div className={cn('rounded-lg sm:rounded-xl px-3 py-2.5 border flex items-center', bubbleAssistant)}>
-                    <Loader2 className="w-4 h-4 animate-spin text-slate-500" aria-hidden />
-                    <span className="sr-only">Processing</span>
+                  <div
+                    className={cn('rounded-lg sm:rounded-xl px-3 py-2.5 border flex items-center gap-2 min-w-0', bubbleAssistant)}
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <Loader2 className="w-4 h-4 flex-shrink-0 animate-spin text-[#C2D642]" aria-hidden />
+                    <span className={cn('text-xs sm:text-sm font-medium', textSecondary)}>Thinking…</span>
                   </div>
                 </div>
               )}
               <div ref={messagesEndRef} />
             </div>
-            <div className={cn('p-3 sm:p-4 border-t flex-shrink-0', isDark ? 'border-[#404040]' : 'border-slate-200', bgSecondary)}>
+            <div
+              className={cn(
+                'p-2.5 sm:p-4 border-t flex-shrink-0 pb-[max(0.625rem,env(safe-area-inset-bottom))]',
+                isDark ? 'border-[#404040] bg-[#0a0a0a]' : 'border-slate-200 bg-white'
+              )}
+            >
               <div
                 className={cn(
-                  'flex items-center gap-1.5 sm:gap-2 p-2 sm:p-2.5 rounded-lg sm:rounded-xl border-2',
+                  'flex items-center justify-start gap-1 sm:gap-2 p-1.5 sm:p-2.5 rounded-xl sm:rounded-xl border-2',
                   isDark ? 'bg-[#2d2d2d] border-[#C2D642]/30' : 'bg-white border-[#C2D642]/30',
                   !activeSessionId && 'opacity-60'
                 )}
@@ -638,6 +735,7 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
             </div>
           </div>
         </div>
+      </div>
       </div>
     </>
   );

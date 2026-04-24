@@ -28,6 +28,7 @@ import CreateWarehouseModal from '@/components/masters/Modals/CreateWarehouseMod
 import { getTodayDateString } from '@/utils/dateUtils';
 import { getAuthToken } from '@/services/apiClient';
 import { openPdfInNewTab, copyPdfUrl } from '@/utils/pdfUtils';
+import { isInventoryQuantityZeroish } from '@/utils/inventoryQuantityInput';
 
 type GoodsIssueStep = 'stores' | 'goodsInv' | 'details' | 'success';
 
@@ -1257,7 +1258,7 @@ export default function GoodsIssueFlow({
                               value={d.issue_qty}
                               onChange={(e) => updateDetailQty(i, e.target.value)}
                               onFocus={() => {
-                                if (d.issue_qty === 0 || d.issue_qty === '0' || d.issue_qty === '') {
+                                if (isInventoryQuantityZeroish(d.issue_qty)) {
                                   updateDetailQty(i, '');
                                 }
                               }}

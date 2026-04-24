@@ -1,171 +1,169 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { ThemeType } from '../types';
-import { 
+import {
   ClipboardCheck,
   Search,
   Download,
   ChevronUp,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Loader2,
 } from 'lucide-react';
 import { useToast } from '../contexts/ToastContext';
+import { prApprovalAPI } from '@/services/api';
+import type { PrListRow } from '@/components/pr-approval/prApprovalTypes';
+import {
+  normalizePrListPayload,
+  rowRequestNo,
+  rowStatusLabel,
+  rowProjectLabel,
+  rowUuid,
+  listRowMatchesSearch,
+} from '@/components/pr-approval/prApprovalHelpers';
+
+function rowDateDisplay(row: PrListRow): string {
+  const raw = row.date ?? row.created_at ?? row.request_date ?? row.updated_at;
+  if (raw == null || raw === '') return '—';
+  const s = String(raw);
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (m) return m[1];
+  return s.length > 16 ? s.slice(0, 16) : s;
+}
+
+function rowSubProjectLabel(row: PrListRow): string {
+  const v = row.sub_project_name;
+  if (v != null && String(v).trim()) return String(v).trim();
+  return '—';
+}
+
+function rowUserName(row: PrListRow): string {
+  const v = row.user_name;
+  if (typeof v === 'string' && v.trim()) return v.trim();
+  return '—';
+}
 
 interface PurchaseRequest {
-  id: string;
+  key: string;
+  numericId: number;
   requestNo: string;
   userName: string;
   project: string;
   subProject: string;
   date: string;
-  status: 'Approved' | 'Pending' | 'Rejected';
+  statusLabel: string;
+  raw: PrListRow;
+}
+
+function sortDateMs(pr: PurchaseRequest): number {
+  const raw = pr.raw.date ?? pr.raw.created_at ?? pr.raw.request_date;
+  if (raw == null || raw === '') return 0;
+  const t = new Date(String(raw)).getTime();
+  return Number.isFinite(t) ? t : 0;
 }
 
 interface PRManagementProps {
   theme: ThemeType;
 }
 
+function prRowToTable(row: PrListRow, index: number): PurchaseRequest {
+  const idRaw = row.id;
+  const numericId =
+    typeof idRaw === 'number' && Number.isFinite(idRaw)
+      ? idRaw
+      : idRaw != null
+        ? Number(idRaw)
+        : index;
+  const u = rowUuid(row);
+  const key = u ?? (Number.isFinite(numericId) && numericId > 0 ? `mr-${numericId}` : `idx-${index}`);
+
+  return {
+    key,
+    numericId: Number.isFinite(numericId) ? numericId : 0,
+    requestNo: rowRequestNo(row),
+    userName: rowUserName(row),
+    project: rowProjectLabel(row),
+    subProject: rowSubProjectLabel(row),
+    date: rowDateDisplay(row),
+    statusLabel: rowStatusLabel(row),
+    raw: row,
+  };
+}
+
+function statusTextClass(statusLabel: string, isDark: boolean): string {
+  const l = statusLabel.toLowerCase();
+  if (l === 'approved')
+    return isDark ? 'text-emerald-400' : 'text-[#6B8E23]';
+  if (l === 'rejected') return isDark ? 'text-rose-400' : 'text-red-600';
+  if (l === 'pending') return isDark ? 'text-amber-300' : 'text-yellow-600';
+  return '';
+}
+
 const PRManagement: React.FC<PRManagementProps> = ({ theme }) => {
+  const router = useRouter();
   const toast = useToast();
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
   const [entriesPerPage, setEntriesPerPage] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [availableProjects, setAvailableProjects] = useState<string[]>([]);
-  const [availableSubProjects, setAvailableSubProjects] = useState<Array<{ name: string; project: string }>>([]);
-  
+  const [apiRows, setApiRows] = useState<PrListRow[]>([]);
+  const [loading, setLoading] = useState(true);
+
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
-  const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
-  const bgSecondary = isDark ? 'bg-slate-800' : 'bg-slate-50';
 
-  // Empty default purchase request data - will be populated from API
-  const defaultPRs: PurchaseRequest[] = [];
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const raw = await prApprovalAPI.list();
+      setApiRows(normalizePrListPayload(raw));
+    } catch (e: unknown) {
+      const msg =
+        e && typeof e === 'object' && 'message' in e ? String((e as { message: string }).message) : 'Failed to load PR list';
+      toast.showError(msg);
+      setApiRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
 
-  // Load projects from localStorage
   useEffect(() => {
-    const loadProjects = () => {
-      const defaultProjectNames = [
-        'Lakeshire',
-        'Residential Complex A',
-        'Commercial Tower B',
-        'Infrastructure Project C',
-        'Urban Development D',
-        'Demo Data',
-        'Lotus Rise'
-      ];
+    void load();
+  }, [load]);
 
-      const savedProjects = localStorage.getItem('projects');
-      let userProjectNames: string[] = [];
-      
-      if (savedProjects) {
-        try {
-          const parsed = JSON.parse(savedProjects);
-          userProjectNames = parsed.map((project: { name: string }) => project.name);
-        } catch (e) {
-          console.error('Error parsing projects:', e);
-        }
-      }
-
-      const allProjects = [...new Set([...defaultProjectNames, ...userProjectNames])];
-      setAvailableProjects(allProjects);
-    };
-
-    loadProjects();
-
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'projects') {
-        loadProjects();
-      }
-    };
-
-    window.addEventListener('storage', handleStorageChange);
-    window.addEventListener('projectsUpdated', loadProjects);
-    const interval = setInterval(loadProjects, 500);
-
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('projectsUpdated', loadProjects);
-      clearInterval(interval);
-    };
-  }, []);
-
-  // Load subprojects from localStorage
-  useEffect(() => {
-    const loadSubProjects = () => {
-      const defaultSubProjects = [
-        { name: 'A wing', project: 'Lakeshire' },
-        { name: 'B wing', project: 'Lakeshire' },
-        { name: 'A wing', project: 'Lotus Rise' },
-        { name: 'Foundation Work', project: 'Residential Complex A' },
-        { name: 'Structural Framework', project: 'Residential Complex A' },
-        { name: 'Electrical Installation', project: 'Commercial Tower B' },
-        { name: 'HVAC System', project: 'Commercial Tower B' },
-      ];
-
-      const savedSubProjects = localStorage.getItem('subprojects');
-      let userSubProjects: Array<{ name: string; project: string }> = [];
-      
-      if (savedSubProjects) {
-        try {
-          const parsed = JSON.parse(savedSubProjects);
-          userSubProjects = parsed.map((sub: { name: string; project: string }) => ({
-            name: sub.name,
-            project: sub.project
-          }));
-        } catch (e) {
-          console.error('Error parsing subprojects:', e);
-        }
-      }
-
-      const allSubProjects = [...defaultSubProjects, ...userSubProjects];
-      setAvailableSubProjects(allSubProjects);
-    };
-
-    loadSubProjects();
-
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'subprojects') {
-        loadSubProjects();
-      }
-    };
-
-    window.addEventListener('storage', handleStorageChange);
-    window.addEventListener('subprojectsUpdated', loadSubProjects);
-    const interval = setInterval(loadSubProjects, 500);
-
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-      window.removeEventListener('subprojectsUpdated', loadSubProjects);
-      clearInterval(interval);
-    };
-  }, []);
+  const tableRows = useMemo(
+    () => apiRows.map((row, i) => prRowToTable(row, i)),
+    [apiRows]
+  );
 
   // Filter and sort PRs
   const filteredAndSortedPRs = useMemo(() => {
-    let filtered = defaultPRs.filter(pr =>
-      pr.requestNo.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      pr.userName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      pr.project.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      pr.subProject.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      pr.date.includes(searchQuery)
-    );
+    const q = searchQuery.trim();
+    let filtered = tableRows.filter((pr) => {
+      if (!q) return true;
+      if (listRowMatchesSearch(pr.raw, q)) return true;
+      const n = q.toLowerCase();
+      return pr.userName.toLowerCase().includes(n) || pr.subProject.toLowerCase().includes(n);
+    });
 
     if (sortConfig) {
       filtered = [...filtered].sort((a, b) => {
-        let aValue: any = a[sortConfig.key as keyof PurchaseRequest];
-        let bValue: any = b[sortConfig.key as keyof PurchaseRequest];
+        let aValue: string | number = a[sortConfig.key as keyof PurchaseRequest] as string | number;
+        let bValue: string | number = b[sortConfig.key as keyof PurchaseRequest] as string | number;
 
-        if (sortConfig.key === 'date') {
-          aValue = new Date(aValue).getTime();
-          bValue = new Date(bValue).getTime();
+        if (sortConfig.key === 'numericId') {
+          aValue = a.numericId;
+          bValue = b.numericId;
+        } else if (sortConfig.key === 'date') {
+          aValue = sortDateMs(a);
+          bValue = sortDateMs(b);
         } else if (typeof aValue === 'string') {
           aValue = aValue.toLowerCase();
-          bValue = bValue.toLowerCase();
+          bValue = (bValue as string).toLowerCase();
         }
 
         if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
@@ -175,7 +173,7 @@ const PRManagement: React.FC<PRManagementProps> = ({ theme }) => {
     }
 
     return filtered;
-  }, [defaultPRs, searchQuery, sortConfig]);
+  }, [tableRows, searchQuery, sortConfig]);
 
   // Pagination
   const totalPages = Math.ceil(filteredAndSortedPRs.length / entriesPerPage);
@@ -219,9 +217,9 @@ const PRManagement: React.FC<PRManagementProps> = ({ theme }) => {
       pr.requestNo,
       pr.userName,
       pr.project,
-      pr.subProject || '',
+      pr.subProject === '—' ? '' : pr.subProject,
       pr.date,
-      pr.status
+      pr.statusLabel
     ]);
 
     const csvContent = [
@@ -242,10 +240,13 @@ const PRManagement: React.FC<PRManagementProps> = ({ theme }) => {
     toast.showSuccess('Excel file downloaded successfully');
   };
 
-  const handleRequestNoClick = (requestNo: string) => {
-    // Navigate to PR details page or open modal
-    toast.showInfo(`Opening details for ${requestNo}`);
-    // You can add navigation logic here
+  const handleRequestNoClick = (pr: PurchaseRequest) => {
+    const u = rowUuid(pr.raw);
+    if (u) {
+      router.push(`/pr-approval/${encodeURIComponent(u)}`);
+      return;
+    }
+    toast.showInfo(`No detail link for ${pr.requestNo}`);
   };
 
   return (
@@ -313,11 +314,11 @@ const PRManagement: React.FC<PRManagementProps> = ({ theme }) => {
               <tr>
                 <th 
                   className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary} cursor-pointer`}
-                  onClick={() => handleSort('id')}
+                  onClick={() => handleSort('numericId')}
                 >
                   <div className="flex items-center gap-2">
                     #
-                    {getSortIcon('id')}
+                    {getSortIcon('numericId')}
                   </div>
                 </th>
                 <th 
@@ -367,25 +368,33 @@ const PRManagement: React.FC<PRManagementProps> = ({ theme }) => {
                 </th>
                 <th 
                   className={`px-6 py-4 text-left text-xs font-black uppercase tracking-wider ${textSecondary} cursor-pointer`}
-                  onClick={() => handleSort('status')}
+                  onClick={() => handleSort('statusLabel')}
                 >
                   <div className="flex items-center gap-2">
                     Status
-                    {getSortIcon('status')}
+                    {getSortIcon('statusLabel')}
                   </div>
                 </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-inherit">
-              {paginatedPRs.length > 0 ? (
+              {loading ? (
+                <tr>
+                  <td colSpan={7} className={`px-6 py-12 text-center ${textSecondary}`}>
+                    <Loader2 className="w-8 h-8 animate-spin inline text-[#6B8E23]" aria-hidden />
+                    <span className="sr-only">Loading purchase requests</span>
+                  </td>
+                </tr>
+              ) : paginatedPRs.length > 0 ? (
                 paginatedPRs.map((pr, index) => (
-                  <tr key={pr.id} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
+                  <tr key={pr.key} className={`${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50/50'} transition-colors`}>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
                       {startIndex + index + 1}
                     </td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
                       <button
-                        onClick={() => handleRequestNoClick(pr.requestNo)}
+                        type="button"
+                        onClick={() => handleRequestNoClick(pr)}
                         className="text-blue-600 hover:text-blue-800 hover:underline transition-colors"
                       >
                         {pr.requestNo}
@@ -398,20 +407,14 @@ const PRManagement: React.FC<PRManagementProps> = ({ theme }) => {
                       {pr.project}
                     </td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
-                      {pr.subProject || '-'}
+                      {pr.subProject === '—' ? '-' : pr.subProject}
                     </td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
                       {pr.date}
                     </td>
                     <td className={`px-6 py-4 text-sm font-bold ${textPrimary}`}>
-                      <span className={`${
-                        pr.status === 'Approved' 
-                          ? 'text-[#6B8E23]' 
-                          : pr.status === 'Pending'
-                          ? 'text-yellow-600'
-                          : 'text-red-600'
-                      }`}>
-                        {pr.status}
+                      <span className={statusTextClass(pr.statusLabel, isDark)}>
+                        {pr.statusLabel}
                       </span>
                     </td>
                   </tr>
@@ -419,7 +422,7 @@ const PRManagement: React.FC<PRManagementProps> = ({ theme }) => {
               ) : (
                 <tr>
                   <td colSpan={7} className={`px-6 py-12 text-center ${textSecondary}`}>
-                    No data available in table
+                    No purchase requests found.
                   </td>
                 </tr>
               )}

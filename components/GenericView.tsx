@@ -38,6 +38,7 @@ import { getLogoUrl } from '@/utils/imageUtils';
 import { copyPdfUrl } from '@/utils/pdfUtils';
 import { useRouter } from 'next/navigation';
 import { useToast } from '../contexts/ToastContext';
+import { isInventoryQuantityZeroish } from '@/utils/inventoryQuantityInput';
 import CreateProjectModal from './masters/Modals/CreateProjectModal';
 import CreateSubprojectModal from './masters/Modals/CreateSubprojectModal';
 import CreateMaterialModal from './masters/Modals/CreateMaterialModal';
@@ -87,7 +88,8 @@ interface PRSelectedMaterial {
   materialId: string;
   materialNumericId?: number;
   materialName: string;
-  quantity: number;
+  /** `''` while the user cleared a zero to type a new value */
+  quantity: number | '';
   requiredDate: string;
   activityId: string;
   activityName: string;
@@ -696,11 +698,16 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
     });
   };
 
-  const handlePRMaterialQuantityChange = (materialId: string, quantity: number) => {
-    setPrSelectedMaterials(prev => {
+  const handlePRMaterialQuantityChange = (materialId: string, quantity: number | '') => {
+    setPrSelectedMaterials((prev) => {
       const newMap = new Map(prev);
       const m = newMap.get(materialId);
-      if (m) newMap.set(materialId, { ...m, quantity });
+      if (m) {
+        newMap.set(materialId, {
+          ...m,
+          quantity: quantity === '' ? '' : typeof quantity === 'number' && !Number.isNaN(quantity) ? quantity : 0,
+        });
+      }
       return newMap;
     });
   };
@@ -733,9 +740,10 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
   };
 
   const handlePRMaterialsStepNext = async () => {
-    const withoutQuantity = Array.from(prSelectedMaterials.values()).filter(
-      (m) => m.quantity == null || m.quantity <= 0
-    );
+    const withoutQuantity = Array.from(prSelectedMaterials.values()).filter((m) => {
+      if (m.quantity === '' || m.quantity == null) return true;
+      return Number(m.quantity) <= 0;
+    });
     if (withoutQuantity.length > 0) {
       const names = withoutQuantity.map((m) => m.materialName).join(', ');
       toast.showWarning(`Quantity is required for all selected materials. Please enter quantity for: ${names}`);
@@ -766,7 +774,7 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
         inventoryId: prEditingId,
         material_id: m.materialNumericId ?? m.materialId,
         projects_id: projectId,
-        qty: m.quantity,
+        qty: typeof m.quantity === 'number' ? m.quantity : Number(m.quantity) || 0,
         ...(subprojectId ? { sub_projects_id: subprojectId } : {}),
         ...(m.activityId ? { activities_id: m.activityId } : {}),
         ...(m.requiredDate ? { date: String(m.requiredDate).replace(/-/g, '/') } : {}), // YYYY/MM/DD per requirements
@@ -1309,10 +1317,9 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
           emptyStateTitle: 'No Project Permissions',
           emptyStateMessage: 'Project permission data will appear here once configured'
         };
-      case ViewType.PR_MANAGEMENT:
       case ViewType.PR_APPROVAL_MANAGE:
         return {
-          title: currentView === ViewType.PR_MANAGEMENT ? 'PR Management' : 'PR Approval Manage',
+          title: 'PR Approval Manage',
           icon: ClipboardCheck,
           description: 'Manage purchase requisitions and approvals',
           columns: ['PR Number', 'Requested By', 'Department', 'Amount', 'Status'],
@@ -2477,9 +2484,17 @@ const GenericView: React.FC<GenericViewProps> = ({ theme, currentView }) => {
                                           type="number"
                                           min="0"
                                           step="0.01"
-                                          value={sel?.quantity ?? ''}
-                                          onChange={(e) => handlePRMaterialQuantityChange(mat.id, parseFloat(e.target.value) || 0)}
-                                          onFocus={(e) => e.target.select()}
+                                          value={sel?.quantity === '' ? '' : sel?.quantity ?? ''}
+                                          onChange={(e) => {
+                                            const v = e.target.value;
+                                            if (v === '') handlePRMaterialQuantityChange(mat.id, '');
+                                            else handlePRMaterialQuantityChange(mat.id, parseFloat(v) || 0);
+                                          }}
+                                          onFocus={() => {
+                                            if (sel && isInventoryQuantityZeroish(sel.quantity)) {
+                                              handlePRMaterialQuantityChange(mat.id, '');
+                                            }
+                                          }}
                                           placeholder="Qty"
                                           className={`w-20 px-2 py-1.5 rounded text-sm font-bold border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
                                         />

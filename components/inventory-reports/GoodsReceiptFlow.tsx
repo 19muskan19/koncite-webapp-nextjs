@@ -31,6 +31,7 @@ import CreateVendorModal from '@/components/masters/Modals/CreateVendorModal';
 import CreateWarehouseModal from '@/components/masters/Modals/CreateWarehouseModal';
 import CreateProjectModal from '@/components/masters/Modals/CreateProjectModal';
 import { openPdfInNewTab, copyPdfUrl } from '@/utils/pdfUtils';
+import { isInventoryQuantityZeroish } from '@/utils/inventoryQuantityInput';
 
 type GoodsReceiptStep = 'stores' | 'inwardsList' | 'details' | 'success';
 
@@ -1164,11 +1165,33 @@ export default function GoodsReceiptFlow({
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div>
                             <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>Receipt In Qty *</label>
-                            <input type="number" min={0} value={d.recipt_qty} onChange={(e) => updateDetail(index, 'recipt_qty', e.target.value)} className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`} />
+                            <input
+                              type="number"
+                              min={0}
+                              value={d.recipt_qty}
+                              onChange={(e) => updateDetail(index, 'recipt_qty', e.target.value)}
+                              onFocus={() => {
+                                if (isInventoryQuantityZeroish(d.recipt_qty)) {
+                                  updateDetail(index, 'recipt_qty', '');
+                                }
+                              }}
+                              className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}
+                            />
                           </div>
                           <div>
                             <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>Reject Qty</label>
-                            <input type="number" min={0} value={d.reject_qty} onChange={(e) => updateDetail(index, 'reject_qty', e.target.value)} className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`} />
+                            <input
+                              type="number"
+                              min={0}
+                              value={d.reject_qty}
+                              onChange={(e) => updateDetail(index, 'reject_qty', e.target.value)}
+                              onFocus={() => {
+                                if (isInventoryQuantityZeroish(d.reject_qty)) {
+                                  updateDetail(index, 'reject_qty', '');
+                                }
+                              }}
+                              className={`w-full px-4 py-2 rounded-lg border ${isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-slate-200'}`}
+                            />
                           </div>
                           <div>
                             <label className={`block text-sm font-bold mb-2 ${textSecondary}`}>Accepted Qty</label>

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { ThemeType } from '../../types';
 import { 
   ClipboardCheck,
@@ -20,7 +20,7 @@ import {
 import DatePickerInput from '../ui/DatePickerInput';
 import { useProjectsFromMasters, useSubprojectsFromMasters } from '../../hooks/useProjectsFromMasters';
 import { masterDataAPI } from '../../services/api';
-import { computeWorkProgressBalanceQty } from '../../utils/workProgress';
+import { computeWorkProgressBalanceQty, parseLocaleNumericInput } from '../../utils/workProgress';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -43,7 +43,10 @@ interface WorkProgressDetailsProps {
 }
 
 function mapApiRowToActivity(row: any, index: number): WorkProgressActivity {
-  const n = (v: any) => (v != null && v !== '' ? Number(v) : 0);
+  const n = (v: any) => {
+    const x = parseLocaleNumericInput(v);
+    return Number.isFinite(x) ? x : 0;
+  };
   const s = (v: any) => String(v ?? '');
   const estimateQty = n(row.est_qty ?? row.estimate_qty ?? row.estimateQty);
   const completedQty = n(row.completed_qty ?? row.completedQty);
@@ -74,6 +77,14 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
   const [activities, setActivities] = useState<WorkProgressActivity[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [projectSearch, setProjectSearch] = useState('');
+  const projectMenuRef = useRef<HTMLDivElement>(null);
+  const projectSearchInputRef = useRef<HTMLInputElement>(null);
+  const [subprojectMenuOpen, setSubprojectMenuOpen] = useState(false);
+  const [subprojectSearch, setSubprojectSearch] = useState('');
+  const subprojectMenuRef = useRef<HTMLDivElement>(null);
+  const subprojectSearchInputRef = useRef<HTMLInputElement>(null);
 
   const projects = useProjectsFromMasters();
   const projIdForSub = projects.find((p) => String(p.id) === String(selectedProject))?.id ?? selectedProject;
@@ -85,6 +96,70 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
   const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
   const bgSecondary = isDark ? 'bg-slate-800' : 'bg-slate-50';
+
+  const filteredProjects = useMemo(() => {
+    const q = projectSearch.trim().toLowerCase();
+    const sorted = [...projects].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    if (!q) return sorted;
+    return sorted.filter((p) => String(p.name).toLowerCase().includes(q));
+  }, [projects, projectSearch]);
+
+  const filteredSubprojects = useMemo(() => {
+    const q = subprojectSearch.trim().toLowerCase();
+    const sorted = [...subprojects].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    if (!q) return sorted;
+    return sorted.filter((s) => String(s.name).toLowerCase().includes(q));
+  }, [subprojects, subprojectSearch]);
+
+  const selectedProjectLabel = useMemo(() => {
+    if (!selectedProject) return 'Select Project';
+    const p = projects.find((x) => String(x.id) === String(selectedProject));
+    return p?.name?.trim() || 'Select Project';
+  }, [projects, selectedProject]);
+
+  const selectedSubProjectLabel = useMemo(() => {
+    if (!selectedSubProject) return 'Select Sub Project';
+    const s = subprojects.find((x) => String(x.id) === String(selectedSubProject));
+    return s?.name?.trim() || 'Select Sub Project';
+  }, [subprojects, selectedSubProject]);
+
+  useEffect(() => {
+    if (!projectMenuOpen) {
+      setProjectSearch('');
+      return;
+    }
+    const t = window.setTimeout(() => projectSearchInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [projectMenuOpen]);
+
+  useEffect(() => {
+    if (!projectMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = projectMenuRef.current;
+      if (el && !el.contains(e.target as Node)) setProjectMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [projectMenuOpen]);
+
+  useEffect(() => {
+    if (!subprojectMenuOpen) {
+      setSubprojectSearch('');
+      return;
+    }
+    const t = window.setTimeout(() => subprojectSearchInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [subprojectMenuOpen]);
+
+  useEffect(() => {
+    if (!subprojectMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = subprojectMenuRef.current;
+      if (el && !el.contains(e.target as Node)) setSubprojectMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [subprojectMenuOpen]);
 
   // Load projects from Projects component (localStorage)
   useEffect(() => {
@@ -186,6 +261,7 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
   };
 
   const formatNumber = (num: number) => {
+    if (!Number.isFinite(num)) return '0.00';
     return num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
 
@@ -196,8 +272,8 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
       activity.slNo,
       activity.activities,
       activity.unit,
-      activity.estimateQty,
-      activity.estRate,
+      formatNumber(activity.estimateQty),
+      formatNumber(activity.estRate),
       formatNumber(activity.estAmount),
       formatNumber(activity.completedQty),
       formatNumber(activity.estAmountForCompletion),
@@ -331,7 +407,7 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
                   <td>${activity.slNo}</td>
                   <td>${activity.activities}</td>
                   <td>${activity.unit}</td>
-                  <td class="text-right">${activity.estimateQty}</td>
+                  <td class="text-right">${formatNumber(activity.estimateQty)}</td>
                   <td class="text-right">${formatNumber(activity.estRate)}</td>
                   <td class="text-right">${formatNumber(activity.estAmount)}</td>
                   <td class="text-right">${formatNumber(activity.completedQty)}</td>
@@ -365,7 +441,7 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
       String(a.slNo),
       a.activities,
       a.unit,
-      String(a.estimateQty),
+      formatNumber(a.estimateQty),
       formatNumber(a.estRate),
       formatNumber(a.estAmount),
       formatNumber(a.completedQty),
@@ -421,35 +497,243 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
       {/* Filter Section */}
       <div className={`rounded-xl border ${cardClass} p-3 sm:p-4`}>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-          <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+          <div className="min-w-0 sm:col-span-2 lg:col-span-1">
+            <label htmlFor="work-progress-project-button" className={`block text-sm font-bold mb-2 ${textPrimary}`}>
               Project <span className="text-red-500">*</span>
             </label>
-            <select
-              value={selectedProject}
-              onChange={(e) => setSelectedProject(e.target.value)}
-              className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-            >
-              <option value="">Select Project</option>
-              {projects.map((p) => (
-                <option key={String(p.id)} value={String(p.id)}>{p.name}</option>
-              ))}
-            </select>
+            <div className="relative" ref={projectMenuRef}>
+              <button
+                id="work-progress-project-button"
+                type="button"
+                onClick={() => setProjectMenuOpen((o) => !o)}
+                className={`w-full flex items-center justify-between gap-2 px-4 py-2 rounded-lg text-sm border text-left ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
+                aria-expanded={projectMenuOpen}
+                aria-haspopup="listbox"
+                aria-label="Select project"
+              >
+                <span className="truncate">{selectedProjectLabel}</span>
+                <ChevronDown
+                  className={`w-4 h-4 shrink-0 opacity-70 transition-transform ${projectMenuOpen ? 'rotate-180' : ''}`}
+                  aria-hidden
+                />
+              </button>
+              {projectMenuOpen ? (
+                <div
+                  role="listbox"
+                  aria-label="Projects"
+                  className={`absolute left-0 right-0 z-50 mt-1 rounded-lg border shadow-xl overflow-hidden flex flex-col ${
+                    isDark ? 'bg-slate-900 border-slate-600' : 'bg-white border-slate-200'
+                  }`}
+                >
+                  <div
+                    className={`p-2 border-b shrink-0 ${isDark ? 'border-slate-600 bg-slate-900/95' : 'border-slate-200 bg-slate-50'}`}
+                  >
+                    <div className="relative">
+                      <Search
+                        className={`absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none ${textSecondary}`}
+                        aria-hidden
+                      />
+                      <input
+                        ref={projectSearchInputRef}
+                        type="search"
+                        autoComplete="off"
+                        placeholder="Search projects…"
+                        value={projectSearch}
+                        onChange={(e) => setProjectSearch(e.target.value)}
+                        onKeyDown={(e) => e.stopPropagation()}
+                        className={`w-full pl-9 pr-3 py-2 rounded-md border text-sm ${
+                          isDark
+                            ? 'bg-slate-800 border-slate-600 text-slate-100 placeholder-slate-500'
+                            : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+                        }`}
+                        aria-label="Search project list"
+                      />
+                    </div>
+                  </div>
+                  <ul className="overflow-y-auto max-h-56 py-1">
+                    <li>
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={selectedProject === ''}
+                        onClick={() => {
+                          setSelectedProject('');
+                          setProjectMenuOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
+                          selectedProject === ''
+                            ? isDark
+                              ? 'bg-[#6B8E23]/25 text-[#C2D642]'
+                              : 'bg-[#6B8E23]/15 text-[#6B8E23]'
+                            : isDark
+                              ? 'text-slate-200 hover:bg-slate-800'
+                              : 'text-slate-800 hover:bg-slate-100'
+                        }`}
+                      >
+                        Select Project
+                      </button>
+                    </li>
+                    {filteredProjects.map((p) => {
+                      const idStr = String(p.id);
+                      const selected = selectedProject === idStr;
+                      return (
+                        <li key={idStr}>
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={selected}
+                            onClick={() => {
+                              setSelectedProject(idStr);
+                              setProjectMenuOpen(false);
+                            }}
+                            className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors truncate ${
+                              selected
+                                ? isDark
+                                  ? 'bg-[#6B8E23]/25 text-[#C2D642]'
+                                  : 'bg-[#6B8E23]/15 text-[#6B8E23]'
+                                : isDark
+                                  ? 'text-slate-200 hover:bg-slate-800'
+                                  : 'text-slate-800 hover:bg-slate-100'
+                            }`}
+                            title={p.name}
+                          >
+                            {p.name}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {filteredProjects.length === 0 && projectSearch.trim() ? (
+                    <p className={`px-3 py-2 text-sm border-t ${isDark ? 'border-slate-600 text-slate-400' : 'border-slate-200 text-slate-600'}`}>
+                      No matching projects
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
           </div>
-          <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+          <div className="min-w-0 sm:col-span-2 lg:col-span-1">
+            <label htmlFor="work-progress-subproject-button" className={`block text-sm font-bold mb-2 ${textPrimary}`}>
               Sub Project
             </label>
-            <select
-              value={selectedSubProject}
-              onChange={(e) => setSelectedSubProject(e.target.value)}
-              className={`w-full px-4 py-2 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#6B8E23]/20 outline-none`}
-            >
-              <option value="">Select Sub Project</option>
-              {subprojects.map((s) => (
-                <option key={String(s.id)} value={String(s.id)}>{s.name}</option>
-              ))}
-            </select>
+            <div className="relative" ref={subprojectMenuRef}>
+              <button
+                id="work-progress-subproject-button"
+                type="button"
+                onClick={() => selectedProject && setSubprojectMenuOpen((o) => !o)}
+                disabled={!selectedProject}
+                className={`w-full flex items-center justify-between gap-2 px-4 py-2 rounded-lg text-sm border text-left ${
+                  isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
+                } focus:ring-2 focus:ring-[#6B8E23]/20 outline-none disabled:opacity-50 disabled:cursor-not-allowed`}
+                aria-expanded={subprojectMenuOpen}
+                aria-haspopup="listbox"
+                aria-label="Select sub project"
+              >
+                <span className="truncate">{selectedProject ? selectedSubProjectLabel : 'Select a project first'}</span>
+                <ChevronDown
+                  className={`w-4 h-4 shrink-0 opacity-70 transition-transform ${subprojectMenuOpen ? 'rotate-180' : ''}`}
+                  aria-hidden
+                />
+              </button>
+              {subprojectMenuOpen && selectedProject ? (
+                <div
+                  role="listbox"
+                  aria-label="Sub projects"
+                  className={`absolute left-0 right-0 z-50 mt-1 rounded-lg border shadow-xl overflow-hidden flex flex-col ${
+                    isDark ? 'bg-slate-900 border-slate-600' : 'bg-white border-slate-200'
+                  }`}
+                >
+                  <div
+                    className={`p-2 border-b shrink-0 ${isDark ? 'border-slate-600 bg-slate-900/95' : 'border-slate-200 bg-slate-50'}`}
+                  >
+                    <div className="relative">
+                      <Search
+                        className={`absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none ${textSecondary}`}
+                        aria-hidden
+                      />
+                      <input
+                        ref={subprojectSearchInputRef}
+                        type="search"
+                        autoComplete="off"
+                        placeholder="Search sub projects…"
+                        value={subprojectSearch}
+                        onChange={(e) => setSubprojectSearch(e.target.value)}
+                        onKeyDown={(e) => e.stopPropagation()}
+                        className={`w-full pl-9 pr-3 py-2 rounded-md border text-sm ${
+                          isDark
+                            ? 'bg-slate-800 border-slate-600 text-slate-100 placeholder-slate-500'
+                            : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+                        }`}
+                        aria-label="Search sub project list"
+                      />
+                    </div>
+                  </div>
+                  <ul className="overflow-y-auto max-h-56 py-1">
+                    <li>
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={selectedSubProject === ''}
+                        onClick={() => {
+                          setSelectedSubProject('');
+                          setSubprojectMenuOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
+                          selectedSubProject === ''
+                            ? isDark
+                              ? 'bg-[#6B8E23]/25 text-[#C2D642]'
+                              : 'bg-[#6B8E23]/15 text-[#6B8E23]'
+                            : isDark
+                              ? 'text-slate-200 hover:bg-slate-800'
+                              : 'text-slate-800 hover:bg-slate-100'
+                        }`}
+                      >
+                        Select Sub Project
+                      </button>
+                    </li>
+                    {filteredSubprojects.map((s) => {
+                      const idStr = String(s.id);
+                      const selected = selectedSubProject === idStr;
+                      return (
+                        <li key={idStr}>
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={selected}
+                            onClick={() => {
+                              setSelectedSubProject(idStr);
+                              setSubprojectMenuOpen(false);
+                            }}
+                            className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors truncate ${
+                              selected
+                                ? isDark
+                                  ? 'bg-[#6B8E23]/25 text-[#C2D642]'
+                                  : 'bg-[#6B8E23]/15 text-[#6B8E23]'
+                                : isDark
+                                  ? 'text-slate-200 hover:bg-slate-800'
+                                  : 'text-slate-800 hover:bg-slate-100'
+                            }`}
+                            title={s.name}
+                          >
+                            {s.name}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {filteredSubprojects.length === 0 && subprojectSearch.trim() ? (
+                    <p className={`px-3 py-2 text-sm border-t ${isDark ? 'border-slate-600 text-slate-400' : 'border-slate-200 text-slate-600'}`}>
+                      No matching sub projects
+                    </p>
+                  ) : null}
+                  {subprojects.length === 0 && !subprojectSearch.trim() ? (
+                    <p className={`px-3 py-2 text-sm border-t ${isDark ? 'border-slate-600 text-slate-400' : 'border-slate-200 text-slate-600'}`}>
+                      No sub projects for this project
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
           </div>
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
@@ -588,7 +872,7 @@ const WorkProgressDetails: React.FC<WorkProgressDetailsProps> = ({ theme }) => {
                     {activity.unit}
                   </td>
                   <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${textPrimary}`}>
-                    {activity.estimateQty}
+                    {formatNumber(activity.estimateQty)}
                   </td>
                   <td className={`px-3 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm font-bold ${textPrimary}`}>
                     {formatNumber(activity.estRate)}

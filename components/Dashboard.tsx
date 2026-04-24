@@ -46,7 +46,8 @@ import {
 } from 'lucide-react';
 import DatePickerInput from './ui/DatePickerInput';
 import { useProjectsFromMasters, useSubprojectsFromMasters } from '@/hooks/useProjectsFromMasters';
-import { dashboardAPI, materialRequestAPI, masterDataAPI } from '@/services/api';
+import { dashboardAPI, prApprovalAPI, masterDataAPI } from '@/services/api';
+import { isRequestCanceled } from '@/services/apiClient';
 import { useToast } from '@/contexts/ToastContext';
 import Link from 'next/link';
 
@@ -404,25 +405,33 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
     }
   };
 
+  /** Pending PRs for the current user — Laravel `pending-approval-list` (not project-scoped). */
   useEffect(() => {
-    let cancelled = false;
+    if (activeTab !== 'overview') return;
+    const ac = new AbortController();
     setPrPendingLoading(true);
-    const projectId = selectedProject ? (projects.find((p) => String(p.id) === String(selectedProject))?.id ?? selectedProject) : undefined;
-    materialRequestAPI
-      .list({ status: 0, projectId, subprojectId: selectedSubProject || undefined })
-      .then((list) => {
-        if (cancelled) return;
-        const arr = Array.isArray(list) ? list : [];
-        setPrPendingList(arr.filter((r: any) => Number(r.status) === 0));
+    prApprovalAPI
+      .pendingApprovalList({ signal: ac.signal })
+      .then((raw) => {
+        const arr = Array.isArray(raw) ? raw : [];
+        const normalized = arr.map((pr: any) => ({
+          ...pr,
+          project_name: pr.project_name ?? pr.project?.project_name ?? pr.projects?.name ?? pr.projects?.project_name,
+          sub_project_name: pr.sub_project_name ?? pr.sub_project?.name ?? pr.subprojects?.name ?? pr.sub_projects?.name,
+          request_no: pr.request_no ?? pr.request_id ?? pr.name,
+        }));
+        setPrPendingList(normalized);
       })
-      .catch(() => {
-        if (!cancelled) setPrPendingList([]);
+      .catch((e) => {
+        if (isRequestCanceled(e)) return;
+        setPrPendingList([]);
+        toastRef.current.showWarning((e as Error)?.message || 'Failed to load pending PR approvals');
       })
       .finally(() => {
-        if (!cancelled) setPrPendingLoading(false);
+        if (!ac.signal.aborted) setPrPendingLoading(false);
       });
-    return () => { cancelled = true; };
-  }, [selectedProject, selectedSubProject, projects]);
+    return () => ac.abort();
+  }, [activeTab]);
 
   // Work status: API returns inProgress, completed, notStart, totalActivites at root, or workStatusData [{y, legendText}]
   const workStatus = overviewData?.work_status ?? overviewData?.workStatus ?? {};
@@ -582,6 +591,52 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
             </div>
           </div>
 
+          <div className={`p-4 rounded-xl border ${cardClass}`}>
+            <h3 className={`text-xs font-black uppercase tracking-widest ${textSecondary} mb-4`}>1. PR Pending Approvals List</h3>
+            {prPendingLoading ? (
+              <div className="flex items-center gap-2 text-sm">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Loading...
+              </div>
+            ) : prPendingList.length === 0 ? (
+              <p className={`text-sm ${textSecondary}`}>No pending PRs</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className={`border-b ${isDark ? 'border-slate-600' : 'border-slate-200'}`}>
+                      <th className="text-left py-2 font-bold">PR No</th>
+                      <th className="text-left py-2 font-bold">Project</th>
+                      <th className="text-left py-2 font-bold">Sub-Project</th>
+                      <th className="text-left py-2 font-bold">Date</th>
+                      <th className="text-left py-2 font-bold">User</th>
+                      <th className="text-left py-2 font-bold"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {prPendingList.slice(0, 10).map((pr: any) => (
+                      <tr
+                        key={pr.uuid ?? pr.id ?? pr.request_no}
+                        className={`border-b ${isDark ? 'border-slate-700' : 'border-slate-100'}`}
+                      >
+                        <td className="py-2">{pr.request_no ?? pr.name ?? pr.id ?? '-'}</td>
+                        <td className="py-2">{pr.project_name ?? pr.project?.project_name ?? pr.projects?.name ?? '-'}</td>
+                        <td className="py-2">{pr.sub_project_name ?? pr.sub_project?.name ?? pr.sub_projects?.name ?? '-'}</td>
+                        <td className="py-2">{pr.date ? String(pr.date).slice(0, 10) : '-'}</td>
+                        <td className="py-2">{pr.user?.name ?? pr.created_by ?? '-'}</td>
+                        <td className="py-2">
+                          <Link href={`/pr-management/pr?edit=${pr.id}`} className="text-[#C2D642] font-bold flex items-center gap-1">
+                            View Details <ExternalLink className="w-3 h-3" />
+                          </Link>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
           {!selectedProject && (
             <div className={`p-8 rounded-xl border ${cardClass} text-center`}>
               <Building2 className={`w-12 h-12 mx-auto mb-3 opacity-40 ${textSecondary}`} />
@@ -591,48 +646,6 @@ const Dashboard: React.FC<DashboardProps> = ({ theme }) => {
 
           {selectedProject && (
             <>
-              <div className={`p-4 rounded-xl border ${cardClass}`}>
-                <h3 className={`text-xs font-black uppercase tracking-widest ${textSecondary} mb-4`}>1. PR Pending Approvals List</h3>
-                {prPendingLoading ? (
-                  <div className="flex items-center gap-2 text-sm">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Loading...
-                  </div>
-                ) : prPendingList.length === 0 ? (
-                  <p className={`text-sm ${textSecondary}`}>No pending PRs</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className={`border-b ${isDark ? 'border-slate-600' : 'border-slate-200'}`}>
-                          <th className="text-left py-2 font-bold">PR No</th>
-                          <th className="text-left py-2 font-bold">Project</th>
-                          <th className="text-left py-2 font-bold">Sub-Project</th>
-                          <th className="text-left py-2 font-bold">Date</th>
-                          <th className="text-left py-2 font-bold">User</th>
-                          <th className="text-left py-2 font-bold"></th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {prPendingList.slice(0, 10).map((pr: any) => (
-                          <tr key={pr.id} className={`border-b ${isDark ? 'border-slate-700' : 'border-slate-100'}`}>
-                            <td className="py-2">{pr.request_no ?? pr.name ?? pr.id ?? '-'}</td>
-                            <td className="py-2">{pr.project_name ?? pr.projects?.name ?? '-'}</td>
-                            <td className="py-2">{pr.sub_project_name ?? pr.sub_projects?.name ?? '-'}</td>
-                            <td className="py-2">{pr.date ? String(pr.date).slice(0, 10) : '-'}</td>
-                            <td className="py-2">{pr.user?.name ?? pr.created_by ?? '-'}</td>
-                            <td className="py-2">
-                              <Link href={`/pr-management/pr?edit=${pr.id}`} className="text-[#C2D642] font-bold flex items-center gap-1">
-                                View Details <ExternalLink className="w-3 h-3" />
-                              </Link>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
 
               {isLoading ? (
                 <div className={`p-8 rounded-xl border ${cardClass} flex items-center justify-center gap-2`}>

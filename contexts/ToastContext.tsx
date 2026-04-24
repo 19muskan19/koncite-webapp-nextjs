@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
 import { Toast, ToastType, ToastContainer } from '../components/Toast';
 
 interface ToastContextType {
@@ -68,18 +68,21 @@ export const ToastProvider: React.FC<{ children: React.ReactNode; isDark?: boole
     [showToast]
   );
 
+  const contextValue = useMemo(
+    () => ({
+      toasts,
+      showToast,
+      showSuccess,
+      showError,
+      showInfo,
+      showWarning,
+      removeToast,
+    }),
+    [toasts, showToast, showSuccess, showError, showInfo, showWarning, removeToast]
+  );
+
   return (
-    <ToastContext.Provider
-      value={{
-        toasts,
-        showToast,
-        showSuccess,
-        showError,
-        showInfo,
-        showWarning,
-        removeToast,
-      }}
-    >
+    <ToastContext.Provider value={contextValue}>
       {children}
       <ToastContainer toasts={toasts} onClose={removeToast} isDark={isDark} />
     </ToastContext.Provider>

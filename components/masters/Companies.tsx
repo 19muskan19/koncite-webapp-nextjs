@@ -846,11 +846,10 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
   }, [viewingCompany, allProjects, isLoadingProjects]);
 
   const handleDownloadExcel = () => {
-    const headers = ['SR No', 'Company Name', 'Code', 'Address', 'Registration No', 'Contact', 'Email', 'Status', 'Projects', 'Employees'];
+    const headers = ['SR No', 'Company Name', 'Address', 'Registration No', 'Contact', 'Email', 'Status', 'Projects', 'Employees'];
     const rows = sortedCompanies.map((company, idx) => [
       idx + 1,
       company.name,
-      company.code,
       company.address,
       company.registrationNo,
       company.contact || '-',
@@ -1238,8 +1237,7 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                     />
                   </div>
                   <div className="flex-1">
-                    <h3 className={`text-2xl font-black ${textPrimary} mb-1`}>{viewingCompany.name}</h3>
-                    <p className={`text-sm font-bold ${textSecondary} uppercase tracking-wider`}>Code: {viewingCompany.code}</p>
+                    <h3 className={`text-2xl font-black ${textPrimary}`}>{viewingCompany.name}</h3>
                   </div>
                 </div>
 

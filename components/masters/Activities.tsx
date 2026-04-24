@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { ThemeType } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
 import { Activity, Download, Plus, Trash2, Loader2, Edit, Search, RefreshCw, Upload, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
@@ -8,7 +8,18 @@ import CreateActivityModal from './Modals/CreateActivityModal';
 import ActivityBulkUploadModal from './Modals/ActivityBulkUploadModal';
 import { masterDataAPI } from '../../services/api';
 import { useUser } from '../../contexts/UserContext';
-import * as XLSX from 'xlsx';
+import {
+  buildActivitiesWorkbook,
+  collectUnitLabelsFromMasters,
+  formatActivitySheetDate,
+  formatActivityDateMonthYear,
+} from '@/lib/exportActivitiesXlsx';
+import { resolveActivityUnitName, resolveActivityUnitId } from '@/lib/activityUnitResolve';
+import {
+  buildActivityTreeNodes,
+  buildActivityExportRowsWithSrNo,
+  type ActivityTreeNode,
+} from '@/lib/activitiesTree';
 
 interface ActivityItem {
   id: string;
@@ -34,47 +45,6 @@ interface ActivityItem {
   heading?: number; // Parent activity ID
   parent_id?: number;
   createdAt?: string;
-}
-
-type UnitListEntry = { id: number; unit: string };
-
-/** API returns `unit_id` as nested object `{ id, unit }` or empty `{}`; resolve display name. */
-function resolveActivityUnitName(activity: any, unitsList: UnitListEntry[]): string {
-  const raw = activity?.unit_id;
-  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-    const direct = (raw.unit || raw.name || '').toString().trim();
-    if (direct) return direct;
-  }
-  const fromApi =
-    activity?.units?.unit ||
-    activity?.units?.name ||
-    activity?.unit?.unit ||
-    activity?.unit?.name ||
-    (typeof activity?.unit === 'string' ? activity.unit : '');
-  if (fromApi) return String(fromApi).trim();
-  const uid =
-    typeof raw === 'number' || typeof raw === 'string'
-      ? raw
-      : raw?.id ?? activity?.unit?.id ?? activity?.units?.id;
-  if (uid != null && uid !== '') {
-    const u = unitsList.find((x) => x.id === Number(uid) || String(x.id) === String(uid));
-    return (u?.unit || '').trim();
-  }
-  return '';
-}
-
-function resolveActivityUnitId(activity: any): number | undefined {
-  const raw = activity?.unit_id;
-  if (raw && typeof raw === 'object' && !Array.isArray(raw) && raw.id != null) {
-    return Number(raw.id);
-  }
-  if (typeof raw === 'number' && !Number.isNaN(raw)) return raw;
-  if (typeof raw === 'string' && raw.trim() !== '') {
-    const n = Number(raw);
-    return Number.isNaN(n) ? undefined : n;
-  }
-  const n = activity?.unit?.id ?? activity?.units?.id;
-  return n != null ? Number(n) : undefined;
 }
 
 interface ActivitiesProps {
@@ -139,7 +109,11 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteAllConfirm, setDeleteAllConfirm] = useState<boolean>(false);
   const [isDeletingAll, setIsDeletingAll] = useState<boolean>(false);
-  
+
+  /** Latest search text for scope changes (project/subproject) without putting searchQuery in effect deps */
+  const searchQueryRef = useRef(searchQuery);
+  searchQueryRef.current = searchQuery;
+
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
@@ -285,13 +259,6 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
     }
   };
 
-  // Load activities when project/subproject changes
-  useEffect(() => {
-    if (selectedProjectId && !searchQuery.trim()) {
-      fetchActivities();
-    }
-  }, [selectedProjectId, selectedSubprojectId]);
-
   // Search activities using API
   const handleSearch = async (query: string) => {
     if (!query.trim() || !selectedProjectId) {
@@ -347,6 +314,17 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
     }
   };
 
+  // Load activities when project/subproject changes (must run after state updates — do not call fetch from onChange)
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    const q = searchQueryRef.current.trim();
+    if (q) {
+      void handleSearch(q);
+    } else {
+      void fetchActivities();
+    }
+  }, [selectedProjectId, selectedSubprojectId]);
+
   // Debounced search
   useEffect(() => {
     const timeoutId = setTimeout(() => {
@@ -360,61 +338,9 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
     return () => clearTimeout(timeoutId);
   }, [searchQuery]);
 
-  // Build tree/hierarchy: recursive - headings first, then their descendants (activities under headings, activities under activities)
-  type TreeNode =
-    | { type: 'row'; item: ActivityItem; depth: number; srNo: string; groupIndex: number; isNewGroup: boolean; childIds?: string[] }
-    | { type: 'add'; parentHeading: ActivityItem; groupIndex: number };
-  const treeNodes = useMemo(() => {
-    const isHeading = (a: ActivityItem) => (a.type || '').toLowerCase() === 'heading';
-    const headings = activities.filter(isHeading);
-    const allActivities = activities.filter((a) => !isHeading(a));
-    const getParentId = (a: ActivityItem) => a.parent_id ?? a.heading;
-    const getNodeId = (a: ActivityItem) => a.numericId ?? (typeof a.id === 'string' && !isNaN(Number(a.id)) ? Number(a.id) : null);
-    const matchesParent = (child: ActivityItem, parent: ActivityItem) => {
-      const pid = getParentId(child);
-      if (pid == null) return false;
-      const parentNodeId = getNodeId(parent);
-      return pid === parentNodeId || String(pid) === String(parent.id) || String(pid) === String(parent.uuid);
-    };
-
-    const result: TreeNode[] = [];
-    let headingNo = 0;
-    let groupIdx = 0;
-    const allPlacedIds = new Set<string>();
-
-    const addChildrenRecursive = (parent: ActivityItem, parentSrNo: string, depth: number, groupIdxVal: number): { ids: string[]; nodes: Extract<TreeNode, { type: 'row' }>[] } => {
-      const kids = allActivities.filter((c) => matchesParent(c, parent));
-      const allDescendantIds: string[] = [];
-      const nodes: Extract<TreeNode, { type: 'row' }>[] = [];
-      kids.forEach((k, idx) => {
-        allPlacedIds.add(k.id);
-        allDescendantIds.push(k.id);
-        const srNo = `${parentSrNo}.${idx + 1}`;
-        const nested = addChildrenRecursive(k, srNo, depth + 1, groupIdxVal);
-        allDescendantIds.push(...nested.ids);
-        nodes.push({ type: 'row', item: k, depth, srNo, groupIndex: groupIdxVal, isNewGroup: false, childIds: nested.ids.length ? nested.ids : undefined });
-        nodes.push(...nested.nodes);
-      });
-      return { ids: allDescendantIds, nodes };
-    };
-
-    for (const h of headings) {
-      headingNo++;
-      const { ids: allChildIds, nodes: childRows } = addChildrenRecursive(h, String(headingNo), 1, groupIdx);
-      result.push({ type: 'row', item: h, depth: 0, srNo: String(headingNo), groupIndex: groupIdx, isNewGroup: true, childIds: allChildIds.length ? allChildIds : undefined });
-      result.push({ type: 'add', parentHeading: h, groupIndex: groupIdx });
-      result.push(...childRows);
-      groupIdx++;
-    }
-    // Orphan activities (no matching parent in our set) - list at end with own SR
-    const orphans = allActivities.filter((c) => !allPlacedIds.has(c.id));
-    orphans.forEach((o) => {
-      headingNo++;
-      result.push({ type: 'row', item: o, depth: 1, srNo: String(headingNo), groupIndex: groupIdx, isNewGroup: true });
-      groupIdx++;
-    });
-    return result;
-  }, [activities]);
+  // Build tree/hierarchy: SL No 1,2 / 1.1, 1.2 — see lib/activitiesTree
+  type TreeNode = ActivityTreeNode<ActivityItem>;
+  const treeNodes = useMemo(() => buildActivityTreeNodes(activities), [activities]);
 
   const filteredActivities: TreeNode[] = treeNodes;
   const totalPages = Math.max(1, Math.ceil(filteredActivities.length / entriesPerPage));
@@ -515,39 +441,49 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
     await fetchActivities();
   };
 
-  const handleDownloadExcel = () => {
-    const headers = ['Type', 'SL No', 'Activities', 'Units', 'Qty', 'Rate', 'Amount', 'Start Date (dd-mm-yyyy)', 'End Date (dd-mm-yyyy)'];
-    const rows = treeNodes
-      .filter((n): n is Extract<typeof n, { type: 'row' }> => n.type === 'row')
-      .map(({ item, srNo }) => {
-        const type = (item.type || '').toLowerCase() === 'heading' ? 'heading' : 'activity';
-        return [
-          type,
-          srNo,
-          item.name || item.activities || '',
-          item.unit || '',
-          item.qty ?? '',
-          item.rate ?? '',
-          item.amount ?? '',
-          item.startDate || item.start_date || '',
-          item.endDate || item.end_date || ''
-        ];
-      });
+  const handleDownloadExcel = async () => {
+    let unitLabels = collectUnitLabelsFromMasters(units);
+    if (unitLabels.length === 0) {
+      try {
+        const fetched = await masterDataAPI.getUnits();
+        unitLabels = collectUnitLabelsFromMasters(fetched || []);
+      } catch {
+        unitLabels = [];
+      }
+    }
 
-    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Activities');
-    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-    const link = document.createElement('a');
-    const url = URL.createObjectURL(blob);
-    link.setAttribute('href', url);
-    link.setAttribute('download', `activities_${new Date().toISOString().split('T')[0]}.xlsx`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    const headers = ['Type', 'SL No', 'Activities', 'Units', 'Qty', 'Rate', 'Amount', 'Start Date (yyyy-mm-dd)', 'End Date (yyyy-mm-dd)'];
+    const rows = buildActivityExportRowsWithSrNo(activities).map(({ item, srNo }) => {
+      const type = (item.type || '').toLowerCase() === 'heading' ? 'heading' : 'activity';
+      return [
+        type,
+        srNo,
+        item.name || item.activities || '',
+        item.unit || '',
+        item.qty ?? '',
+        item.rate ?? '',
+        item.amount ?? '',
+        formatActivitySheetDate(item.startDate || item.start_date),
+        formatActivitySheetDate(item.endDate || item.end_date),
+      ];
+    });
+
+    try {
+      const excelBuffer = await buildActivitiesWorkbook(headers, rows, unitLabels);
+      const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.setAttribute('href', url);
+      link.setAttribute('download', `activities_${new Date().toISOString().split('T')[0]}.xlsx`);
+      link.style.visibility = 'hidden';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error(e);
+      toast.showError('Failed to build Excel file.');
+    }
   };
 
   return (
@@ -675,10 +611,6 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
                 value={selectedSubprojectId}
                 onChange={(e) => {
                   setSelectedSubprojectId(e.target.value);
-                  // Refetch activities when subproject changes
-                  if (selectedProjectId) {
-                    fetchActivities();
-                  }
                 }}
                 disabled={!selectedProjectId}
                 className={`w-full px-4 py-3 rounded-lg text-sm font-bold transition-all appearance-none cursor-pointer ${
@@ -870,8 +802,16 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
                     <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary} ${!isHeading ? 'text-xs' : ''}`}>{(row.type || '').toLowerCase() === 'heading' ? '' : (row.qty ?? '-')}</td>
                     <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary} ${!isHeading ? 'text-xs' : ''}`}>{(row.type || '').toLowerCase() === 'heading' ? '' : (row.rate ?? '-')}</td>
                     <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary} ${!isHeading ? 'text-xs' : ''}`}>{(row.type || '').toLowerCase() === 'heading' ? '' : (row.amount ?? '-')}</td>
-                    <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary} ${!isHeading ? 'text-xs' : ''}`}>{(row.type || '').toLowerCase() === 'heading' ? '' : (row.startDate || '-')}</td>
-                    <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary} ${!isHeading ? 'text-xs' : ''}`}>{(row.type || '').toLowerCase() === 'heading' ? '' : (row.endDate || '-')}</td>
+                    <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary} ${!isHeading ? 'text-xs' : ''}`}>
+                      {(row.type || '').toLowerCase() === 'heading'
+                        ? ''
+                        : formatActivityDateMonthYear(row.startDate || row.start_date)}
+                    </td>
+                    <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary} ${!isHeading ? 'text-xs' : ''}`}>
+                      {(row.type || '').toLowerCase() === 'heading'
+                        ? ''
+                        : formatActivityDateMonthYear(row.endDate || row.end_date)}
+                    </td>
                     <td className="px-4 py-4 text-right align-middle">
                       <div className="flex items-center justify-end gap-2">
                         <button 

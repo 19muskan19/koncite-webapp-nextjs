@@ -14,6 +14,26 @@ export function rowUuid(row: PrListRow): string | null {
   return null;
 }
 
+/** Numeric id for POST /inventory/pending-approval-update-status — prefer explicit field, then common fallbacks. */
+export function rowMaterialRequestId(row: PrListRow): number | null {
+  const candidates = [row.material_request_id, row.id, row.request_id, row.request_no, row.indent_no];
+  for (const c of candidates) {
+    if (c == null || c === '') continue;
+    const n = Number(c);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+/** Row can be listed / acted on if we have a material request id and/or uuid for details. */
+export function rowListKey(row: PrListRow): string | null {
+  const u = rowUuid(row);
+  if (u) return u;
+  const mid = rowMaterialRequestId(row);
+  if (mid != null) return `mr-${mid}`;
+  return null;
+}
+
 export function rowRequestNo(row: PrListRow): string {
   const v = row.request_id ?? row.request_no ?? row.indent_no;
   if (v == null || v === '') return '—';
@@ -37,7 +57,12 @@ export function isPrListRowPending(row: PrListRow): boolean {
     if (t === 'approved' || t === 'rejected') return false;
   }
   const s = row.status;
+  if (typeof s === 'number') {
+    if (s === 1 || s === 2) return false;
+    if (s === 0) return true;
+  }
   if (s === 0 || s === '0') return true;
+  if (s === 1 || s === '1' || s === 2 || s === '2') return false;
   return false;
 }
 

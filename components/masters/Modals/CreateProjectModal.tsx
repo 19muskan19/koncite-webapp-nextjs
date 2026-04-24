@@ -39,6 +39,45 @@ interface CountryCode {
 const getFlagUrl = (countryCode: string) =>
   `https://flagcdn.com/w20/${countryCode.toLowerCase()}.png`;
 
+/** GET /project-edit may return incharge as id, uuid, or nested user — align with teams dropdown values. */
+function extractTagProjectInchargeId(ep: Record<string, unknown>): string {
+  const tryVal = (v: unknown): string => {
+    if (v == null || v === '') return '';
+    if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
+      const o = v as Record<string, unknown>;
+      const id = o.id ?? o.user_id ?? o.company_user_id ?? o.company_users_id;
+      if (id != null && id !== '') return String(id).trim();
+      if (o.uuid != null && o.uuid !== '') return String(o.uuid).trim();
+      return '';
+    }
+    const s = String(v).trim();
+    return s === '[object Object]' ? '' : s;
+  };
+  for (const key of [
+    'tag_project_incharge',
+    'project_incharge',
+    'tag_project_incharge_id',
+    'project_incharge_id',
+    'tag_project_incharge_user_id',
+  ] as const) {
+    const out = tryVal(ep[key as keyof typeof ep]);
+    if (out) return out;
+  }
+  return tryVal(ep.tag_project_incharge_user);
+}
+
+function resolveStaffSelectValue(
+  raw: string,
+  staff: Array<{ id: string; uuid?: string }>
+): string | null {
+  if (!raw.trim()) return null;
+  if (staff.some((s) => s.id === raw)) return raw;
+  const byUuid = staff.find((s) => s.uuid === raw);
+  if (byUuid) return byUuid.id;
+  const loose = staff.find((s) => String(s.id) === String(raw));
+  return loose ? loose.id : null;
+}
+
 interface CreateProjectModalProps {
   theme: ThemeType;
   isOpen: boolean;
@@ -69,7 +108,9 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [companies, setCompanies] = useState<any[]>([]);
   const [isLoadingCompanies, setIsLoadingCompanies] = useState(false);
-  const [staff, setStaff] = useState<Array<{ id: string; name: string; email?: string; roleType?: string }>>([]);
+  const [staff, setStaff] = useState<
+    Array<{ id: string; uuid?: string; name: string; email?: string; roleType?: string }>
+  >([]);
   const [isLoadingStaff, setIsLoadingStaff] = useState(false);
   const [countryCodes, setCountryCodes] = useState<CountryCode[]>([]);
   const [isLoadingCountryCodes, setIsLoadingCountryCodes] = useState(false);
@@ -262,24 +303,32 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     teamsAPI.getTeamsList()
       .then((apiData) => {
         const list = Array.isArray(apiData) ? apiData : [];
-        setStaff(list.map((u: any) => ({
-          id: String(u.id ?? u.uuid),
-          name: u.name || '',
-          email: u.email,
-          roleType: getRoleType(u),
-        })));
+        setStaff(list.map((u: any) => {
+          const id = String(u.id ?? u.uuid);
+          return {
+            id,
+            uuid: u.uuid != null && String(u.uuid) !== id ? String(u.uuid) : undefined,
+            name: u.name || '',
+            email: u.email,
+            roleType: getRoleType(u),
+          };
+        }));
       })
       .catch(() => {
         try {
           const saved = localStorage.getItem('manageTeamsUsers');
           const parsed = saved ? JSON.parse(saved) : [];
           const list = Array.isArray(parsed) ? parsed : [];
-          setStaff(list.map((u: any) => ({
-            id: String(u.id ?? u.uuid),
-            name: u.name || '',
-            email: u.email,
-            roleType: u.roleType || '',
-          })));
+          setStaff(list.map((u: any) => {
+            const id = String(u.id ?? u.uuid);
+            return {
+              id,
+              uuid: u.uuid != null && String(u.uuid) !== id ? String(u.uuid) : undefined,
+              name: u.name || '',
+              email: u.email,
+              roleType: u.roleType || '',
+            };
+          }));
         } catch (e) {
           setStaff([]);
         }
@@ -350,7 +399,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         planned_start_date: startDate,
         planned_end_date: endDate,
         companies_id: companyId,
-        project_incharge: String(ep.tag_project_incharge ?? ep.project_incharge ?? '') || '',
+        project_incharge: extractTagProjectInchargeId(ep as Record<string, unknown>) || '',
         logo: null,
         // Only real uploaded logo from API — not list-row placeholder (ui-avatars)
         logoPreview: (() => {
@@ -416,6 +465,18 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     const normalized = String(matchedCompany.numericId ?? matchedCompany.id ?? companyId);
     setFormData((prev) => (prev.companies_id === normalized ? prev : { ...prev, companies_id: normalized }));
   }, [isOpen, editingProject, companies]);
+
+  // After staff loads, normalize incharge id to match <option value> (id vs uuid from API)
+  useEffect(() => {
+    if (!isOpen || !editingProject || staff.length === 0 || isLoadingStaff) return;
+    const raw = extractTagProjectInchargeId(editingProject as unknown as Record<string, unknown>);
+    if (!raw) return;
+    const normalized = resolveStaffSelectValue(raw, staff);
+    if (!normalized) return;
+    setFormData((prev) =>
+      prev.project_incharge === normalized ? prev : { ...prev, project_incharge: normalized }
+    );
+  }, [isOpen, editingProject, staff, isLoadingStaff]);
 
   // When RestCountries list loads, fill dial code from ISO if API only returned ISO (common for +1 / IN)
   useEffect(() => {

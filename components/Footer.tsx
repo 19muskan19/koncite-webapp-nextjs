@@ -32,18 +32,18 @@ const Footer: React.FC<FooterProps> = ({ scrollToSection, onContactClick, onNavi
   return (
     <>
       <footer id="resources" className={`${isDark ? 'bg-[#0a0a0a]' : 'bg-slate-800'} text-white mt-auto`}>
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-          <div className="grid md:grid-cols-4 gap-8 mb-8">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 sm:py-12">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-8 md:gap-8 mb-8 text-center md:text-left">
             {/* Brand Section */}
-            <div>
-              <div className="flex items-center gap-2 mb-4">
-                <img src="/logo.png" alt="Koncite Logo" className="w-14 h-14 object-contain" />
+            <div className="flex flex-col items-center md:items-start">
+              <div className="flex flex-col items-center gap-2 sm:flex-row sm:gap-2 mb-4 md:flex-row md:items-center">
+                <img src="/logo.png" alt="Koncite Logo" className="w-14 h-14 object-contain shrink-0" />
                 <span className="text-xl font-black tracking-tight text-[#C2D642]">KONCITE</span>
               </div>
-              <p className="text-sm text-slate-300 mb-6">
+              <p className="text-sm text-slate-300 mb-6 max-w-md md:max-w-none">
                 Koncite connects businesses and users through seamless digital experiences built on trust, transparency, and innovation.
               </p>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center justify-center md:justify-start gap-3">
                 <a
                   href="https://facebook.com"
                   target="_blank"
@@ -75,13 +75,13 @@ const Footer: React.FC<FooterProps> = ({ scrollToSection, onContactClick, onNavi
             </div>
 
             {/* Links Section */}
-            <div>
+            <div className="flex flex-col items-center md:items-start">
               <h4 className="font-bold mb-4 text-white uppercase tracking-wide">LINK</h4>
-              <ul className="space-y-2 text-sm">
+              <ul className="space-y-2 text-sm flex flex-col items-center md:items-start">
                 <li>
                   <button 
                     onClick={() => scrollToSection('home')} 
-                    className="text-slate-300 hover:text-[#C2D642] transition-colors text-left"
+                    className="text-slate-300 hover:text-[#C2D642] transition-colors text-center md:text-left"
                   >
                     Home
                   </button>
@@ -89,7 +89,7 @@ const Footer: React.FC<FooterProps> = ({ scrollToSection, onContactClick, onNavi
                 <li>
                   <button 
                     onClick={handleAboutClick} 
-                    className="text-slate-300 hover:text-[#C2D642] transition-colors text-left"
+                    className="text-slate-300 hover:text-[#C2D642] transition-colors text-center md:text-left"
                   >
                     About
                   </button>
@@ -97,7 +97,7 @@ const Footer: React.FC<FooterProps> = ({ scrollToSection, onContactClick, onNavi
                 <li>
                   <button 
                     onClick={handleContactClick} 
-                    className="text-slate-300 hover:text-[#C2D642] transition-colors text-left"
+                    className="text-slate-300 hover:text-[#C2D642] transition-colors text-center md:text-left"
                   >
                     Contact Us
                   </button>
@@ -105,7 +105,7 @@ const Footer: React.FC<FooterProps> = ({ scrollToSection, onContactClick, onNavi
                 <li>
                   <button 
                     onClick={() => setShowTermsModal(true)} 
-                    className="text-slate-300 hover:text-[#C2D642] transition-colors text-left"
+                    className="text-slate-300 hover:text-[#C2D642] transition-colors text-center md:text-left"
                   >
                     Privacy Policy
                   </button>
@@ -114,13 +114,13 @@ const Footer: React.FC<FooterProps> = ({ scrollToSection, onContactClick, onNavi
             </div>
 
             {/* Features Section */}
-            <div>
+            <div className="flex flex-col items-center md:items-start">
               <h4 className="font-bold mb-4 text-white uppercase tracking-wide">FEATURES</h4>
-              <ul className="space-y-2 text-sm">
+              <ul className="space-y-2 text-sm flex flex-col items-center md:items-start">
                 <li>
                   <button 
                     onClick={() => scrollToSection('daily-work-progress')} 
-                    className="text-slate-300 hover:text-[#C2D642] transition-colors text-left"
+                    className="text-slate-300 hover:text-[#C2D642] transition-colors text-center md:text-left"
                   >
                     Daily Work Progress
                   </button>
@@ -128,7 +128,7 @@ const Footer: React.FC<FooterProps> = ({ scrollToSection, onContactClick, onNavi
                 <li>
                   <button 
                     onClick={() => scrollToSection('inventory-management')} 
-                    className="text-slate-300 hover:text-[#C2D642] transition-colors text-left"
+                    className="text-slate-300 hover:text-[#C2D642] transition-colors text-center md:text-left"
                   >
                     Inventory & Materials
                   </button>
@@ -136,7 +136,7 @@ const Footer: React.FC<FooterProps> = ({ scrollToSection, onContactClick, onNavi
                 <li>
                   <button 
                     onClick={() => scrollToSection('document-management')} 
-                    className="text-slate-300 hover:text-[#C2D642] transition-colors text-left"
+                    className="text-slate-300 hover:text-[#C2D642] transition-colors text-center md:text-left"
                   >
                     Document Management
                   </button>
@@ -144,7 +144,7 @@ const Footer: React.FC<FooterProps> = ({ scrollToSection, onContactClick, onNavi
                 <li>
                   <button 
                     onClick={() => scrollToSection('labour-management')} 
-                    className="text-slate-300 hover:text-[#C2D642] transition-colors text-left"
+                    className="text-slate-300 hover:text-[#C2D642] transition-colors text-center md:text-left"
                   >
                     Labour Management
                   </button>
@@ -152,7 +152,7 @@ const Footer: React.FC<FooterProps> = ({ scrollToSection, onContactClick, onNavi
                 <li>
                   <button 
                     onClick={() => scrollToSection('reports-dashboards')} 
-                    className="text-slate-300 hover:text-[#C2D642] transition-colors text-left"
+                    className="text-slate-300 hover:text-[#C2D642] transition-colors text-center md:text-left"
                   >
                     Reports & Dashboards
                   </button>
@@ -161,13 +161,13 @@ const Footer: React.FC<FooterProps> = ({ scrollToSection, onContactClick, onNavi
             </div>
 
             {/* Contact Section */}
-            <div>
+            <div className="flex flex-col items-center md:items-start">
               <h4 className="font-bold mb-4 text-white uppercase tracking-wide">CONTACT</h4>
-              <ul className="space-y-2 text-sm">
+              <ul className="space-y-2 text-sm flex flex-col items-center md:items-start">
                 <li>
                   <button 
                     onClick={handleContactClick} 
-                    className="text-slate-300 hover:text-[#C2D642] transition-colors text-left"
+                    className="text-slate-300 hover:text-[#C2D642] transition-colors text-center md:text-left"
                   >
                     Contact Form
                   </button>
@@ -175,7 +175,7 @@ const Footer: React.FC<FooterProps> = ({ scrollToSection, onContactClick, onNavi
                 <li>
                   <a 
                     href="mailto:info@koncite.com" 
-                    className="text-slate-300 hover:text-[#C2D642] transition-colors"
+                    className="text-slate-300 hover:text-[#C2D642] transition-colors text-center md:text-left inline-block"
                   >
                     info@koncite.com
                   </a>
@@ -185,13 +185,19 @@ const Footer: React.FC<FooterProps> = ({ scrollToSection, onContactClick, onNavi
           </div>
         </div>
         
-        {/* Copyright Section with Lime Green Background */}
-        <div className="bg-[#C2D642] py-4">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <p className="text-center text-sm text-slate-900">
-              Koncite is owned and operated by <strong>SUSTRIX SOFTWARES PRIVATE LIMITED</strong>.
-              <br></br> All rights reserved © 2026 <strong>SUSTRIX SOFTWARES PRIVATE LIMITED</strong>
-            </p>
+        {/* Copyright — extra bottom padding on small screens clears fixed corner controls (e.g. dev tooling) */}
+        <div className="bg-[#C2D642] pt-4 pb-14 sm:pb-4 relative z-10">
+          <div className="max-w-7xl mx-auto px-5 sm:px-6 lg:px-8">
+            <div className="mx-auto max-w-xl text-center text-xs leading-relaxed text-slate-900 sm:text-sm sm:leading-relaxed [text-wrap:balance] space-y-2">
+              <p>
+                Koncite is owned and operated by{' '}
+                <strong className="font-semibold text-slate-950">SUSTRIX SOFTWARES PRIVATE LIMITED</strong>.
+              </p>
+              <p>
+                All rights reserved © 2026{' '}
+                <strong className="font-semibold text-slate-950">SUSTRIX SOFTWARES PRIVATE LIMITED</strong>
+              </p>
+            </div>
           </div>
         </div>
       </footer>

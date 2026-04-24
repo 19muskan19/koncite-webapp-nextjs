@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { ChevronDown, Loader2, Trash2 } from 'lucide-react';
 import { ThemeType } from '@/types';
 import { projectAllocationAPI, prApprovalAPI } from '@/services/api';
@@ -170,10 +170,24 @@ const PRProjectUserAllocation: React.FC<PRProjectUserAllocationProps> = ({ theme
     value: String(p.id),
     label: p.project_name,
   }));
-  const userOptions: ScrollSelectOption[] = users.map((u) => ({
-    value: String(u.id),
-    label: u.name,
-  }));
+  const userOptions: ScrollSelectOption[] = useMemo(
+    () =>
+      users.map((u) => ({
+        value: String(u.id),
+        label: u.name,
+      })),
+    [users]
+  );
+
+  /** Users already picked in other rows are hidden; this row always keeps its own selection visible. */
+  const userOptionsForSlot = (slotId: string): ScrollSelectOption[] => {
+    const slot = userSlots.find((s) => s.id === slotId);
+    const currentValue = slot?.userId?.trim() ?? '';
+    const takenElsewhere = new Set(
+      userSlots.filter((s) => s.id !== slotId && s.userId.trim() !== '').map((s) => s.userId)
+    );
+    return userOptions.filter((o) => !takenElsewhere.has(o.value) || o.value === currentValue);
+  };
 
   const loadForm = useCallback(async () => {
     setLoadingForm(true);
@@ -276,7 +290,7 @@ const PRProjectUserAllocation: React.FC<PRProjectUserAllocationProps> = ({ theme
                           <ScrollableSelect
                             value={slot.userId}
                             onChange={(v) => updateUser(slot.id, v)}
-                            options={userOptions}
+                            options={userOptionsForSlot(slot.id)}
                             placeholder="Select User"
                             isDark={isDark}
                             className="flex-1 min-w-0"

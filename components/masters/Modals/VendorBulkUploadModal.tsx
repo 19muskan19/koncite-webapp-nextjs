@@ -5,6 +5,7 @@ import { ThemeType } from '@/types';
 import { X, FileSpreadsheet, Loader2, Upload, CheckCircle } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { masterDataAPI } from '@/services/api';
+import { runVendorImportWithFullRowMatch } from '@/lib/vendorBulkImportClient';
 
 const ACCEPTED_TYPES = '.xlsx,.xls,.csv';
 const MAX_SIZE_MB = 10;
@@ -31,7 +32,9 @@ const VendorBulkUploadModal: React.FC<VendorBulkUploadModalProps> = ({
     total_rows: number;
     created: number;
     updated: number;
+    skipped: number;
     message: string;
+    errors: string[];
   } | null>(null);
 
   const isDark = theme === 'dark';
@@ -109,15 +112,35 @@ const VendorBulkUploadModal: React.FC<VendorBulkUploadModalProps> = ({
     setIsUploading(true);
     setUploadResult(null);
     try {
-      const response = await masterDataAPI.importVendor(selectedFile);
-      const data = response?.data ?? response;
-      const totalRows = data?.total_rows ?? 0;
-      const created = data?.created ?? 0;
-      const updated = data?.updated ?? 0;
-      const msg = data?.message ?? `${created} created, ${updated} updated.`;
-      setUploadResult({ total_rows: totalRows, created, updated, message: msg });
-      toast.showSuccess(msg);
+      const result = await runVendorImportWithFullRowMatch(selectedFile, {
+        getVendors: () => masterDataAPI.getVendors(),
+        createVendor: (d) => masterDataAPI.createVendor(d),
+        updateVendor: (uuid, d) => masterDataAPI.updateVendor(uuid, d),
+      });
+      const errList = Array.isArray(result.errors) ? result.errors : [];
+      setUploadResult({
+        total_rows: result.total_rows,
+        created: result.created,
+        updated: result.updated,
+        skipped: result.skipped ?? 0,
+        message: result.message ?? '',
+        errors: errList,
+      });
+      if (errList.length > 0) {
+        const detailsSuffix =
+          errList.length > 3
+            ? ' See details below.'
+            : errList.length > 0
+              ? ' ' + errList.slice(0, 2).join(' ')
+              : '';
+        toast.showWarning((result.message ?? '') + detailsSuffix);
+      } else {
+        toast.showSuccess(result.message ?? 'Import finished.');
+      }
       onSuccess?.();
+      // Clear selection + reset input so another file (or same name) can be chosen
+      setSelectedFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (error: any) {
       const message = error?.message || 'Failed to import vendors.';
       toast.showError(message);
@@ -155,13 +178,16 @@ const VendorBulkUploadModal: React.FC<VendorBulkUploadModalProps> = ({
             <div className={`text-xs ${textSecondary} space-y-1 font-mono`}>
               <p><strong>Name</strong> (required) – Vendor name</p>
               <p><strong>Type</strong> (required) – supplier, contractor, or both</p>
-              <p><strong>Gst No</strong> (optional) – GST number</p>
               <p><strong>Address</strong> (optional)</p>
               <p><strong>Contact Person Name</strong> (optional)</p>
               <p><strong>Contact Person Phone</strong> (optional)</p>
               <p><strong>Contact Person Email</strong> (optional)</p>
-              <p className="mt-2 opacity-80">For updates: <strong>UUID</strong> – Include vendor uuid to update existing</p>
+              <p><strong>Gst No</strong> (optional) – used for matching</p>
             </div>
+            <p className={`text-xs ${textPrimary} mt-2 font-bold`}>
+              A row updates an existing vendor only when <strong>all</strong> of the above (including name) match. Same name
+              with any other field different creates a <strong>new</strong> vendor.
+            </p>
           </div>
 
           <div
@@ -203,7 +229,17 @@ const VendorBulkUploadModal: React.FC<VendorBulkUploadModalProps> = ({
                 <span>Total rows: <strong>{uploadResult.total_rows}</strong></span>
                 <span>Created: <strong className="text-green-500">{uploadResult.created}</strong></span>
                 <span>Updated: <strong className="text-blue-500">{uploadResult.updated}</strong></span>
+                {(uploadResult.skipped ?? 0) > 0 ? (
+                  <span>Skipped: <strong className="text-amber-500">{uploadResult.skipped}</strong></span>
+                ) : null}
               </div>
+              {(uploadResult.errors ?? []).length > 0 ? (
+                <ul className="mt-2 max-h-32 overflow-y-auto text-xs list-disc pl-4 space-y-0.5 text-amber-700 dark:text-amber-400">
+                  {(uploadResult.errors ?? []).map((e, i) => (
+                    <li key={i}>{e}</li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
           )}
         </div>
@@ -218,25 +254,23 @@ const VendorBulkUploadModal: React.FC<VendorBulkUploadModalProps> = ({
           >
             {uploadResult ? 'Close' : 'Cancel'}
           </button>
-          {!uploadResult && (
-            <button
-              onClick={handleUpload}
-              disabled={!selectedFile || isUploading}
-              className="px-4 py-2 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#A8B838] text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-            >
-              {isUploading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Uploading...
-                </>
-              ) : (
-                <>
-                  <Upload className="w-4 h-4" />
-                  Upload
-                </>
-              )}
-            </button>
-          )}
+          <button
+            onClick={handleUpload}
+            disabled={!selectedFile || isUploading}
+            className="px-4 py-2 rounded-lg text-sm font-bold bg-[#C2D642] hover:bg-[#A8B838] text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            {isUploading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Uploading...
+              </>
+            ) : (
+              <>
+                <Upload className="w-4 h-4" />
+                Upload
+              </>
+            )}
+          </button>
         </div>
         </div>
       </div>

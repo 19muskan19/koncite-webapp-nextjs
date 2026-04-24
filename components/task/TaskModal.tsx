@@ -4,7 +4,6 @@ import React from 'react';
 import { Loader2 } from 'lucide-react';
 import { ThemeType } from '@/types';
 import type { TaskFormDataUser } from '@/services/api';
-import { TaskCommentsBlock } from './TaskCommentsBlock';
 
 export interface TaskFormData {
   title: string;

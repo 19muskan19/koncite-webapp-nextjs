@@ -156,12 +156,12 @@ const LabourBulkUploadModal: React.FC<LabourBulkUploadModalProps> = ({
           <div className={`rounded-lg border p-4 ${isDark ? 'bg-slate-800/50 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
             <h3 className={`text-sm font-bold ${textPrimary} mb-2`}>Column format (row 1 = headers):</h3>
             <div className={`text-xs ${textSecondary} space-y-1 font-mono`}>
-              <p><strong>#</strong> – Serial number (optional)</p>
+              <p><strong>Sr.no</strong> – Serial number (optional)</p>
               <p><strong>Code</strong> – Labour code (e.g. L464807)</p>
               <p><strong>Name</strong> (required) – Labour role (e.g. Supervisor, Masons, Carpenters)</p>
               <p><strong>Category</strong> – skilled, semiskilled, or unskilled</p>
               <p><strong>Unit</strong> – Unit of measurement (e.g. Nos)</p>
-              <p><strong>uuid</strong> – Required column; leave empty for new labours, add UUID to update existing</p>
+              <p className="mt-2 opacity-80">The Download List template does not include a uuid column.</p>
             </div>
           </div>
           {/* Drop zone */}

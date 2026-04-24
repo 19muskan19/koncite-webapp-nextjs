@@ -226,33 +226,27 @@ export async function searchDocumentsAi(body: Record<string, unknown>): Promise<
 /**
  * Create a chat session. Laravel adds user_id from auth, forwards to Python.
  * POST /api/ai-agent/sessions
- * Payload: { agent, name } — matches Laravel controller validation
+ * Payload: { agent, name } — name is optional; backend assigns when omitted or empty.
  */
-/** Default session name for DPR: DPR-YYYY-MM-DD */
-export function getDefaultDprSessionName(): string {
-  const today = new Date();
-  const y = today.getFullYear();
-  const m = String(today.getMonth() + 1).padStart(2, '0');
-  const d = String(today.getDate()).padStart(2, '0');
-  return `DPR-${y}-${m}-${d}`;
-}
-
 export async function createSession(
   name?: string,
   agent: string = AGENT_DOC_MGMT
 ): Promise<CreateSessionResponse> {
+  const trimmed = (name ?? '').trim();
+  /** Omit `name` when empty so Laravel/Python can assign default; some stacks reject `name: ""`. */
+  const nameFields = trimmed ? { name: trimmed } : {};
   const payload =
     agent === 'inventory_agent'
-      ? { agent: 'inventory_agent', name: name ?? 'Inventory Chat' }
+      ? { agent: 'inventory_agent', ...nameFields }
       : agent === 'dpr_inventory'
-        ? { agent: 'dpr_inventory', name: name ?? getDefaultDprSessionName() }
+        ? { agent: 'dpr_inventory', ...nameFields }
         : agent === 'doc_mgmt'
-          ? { agent: 'doc_mgmt', name: name ?? 'Document Chat' }
+          ? { agent: 'doc_mgmt', ...nameFields }
           : agent === AGENT_AI_FINANCE || agent === 'ai-finance'
-            ? { agent: AGENT_AI_FINANCE, name: name ?? 'Finance chat' }
+            ? { agent: AGENT_AI_FINANCE, ...nameFields }
             : {
                 agent,
-                name: name ?? `DMS Chat - ${new Date().toLocaleDateString()}`,
+                ...nameFields,
               };
   const { data } = await apiClient.post<CreateSessionResponse>('/ai-agent/sessions', payload);
   return data;
@@ -379,17 +373,17 @@ export async function getBlobStructure(): Promise<BlobStructureResponse> {
 }
 
 /**
- * Resolve session ID from create response. Python/Laravel may return id, session_id, or nested data.
+ * Resolve session ID from create/list/detail response.
+ * Unwraps Laravel `{ data: ... }` chains and optional `{ session: { id } }` shapes.
  */
 export function getSessionIdFromResponse(response: CreateSessionResponse | unknown): string {
-  if (!response || typeof response !== 'object') return '';
-  const r = response as Record<string, unknown>;
-  const direct = r.session_id ?? r.id;
-  if (direct != null) return String(direct);
-  const nested = r.data as Record<string, unknown> | undefined;
-  if (nested && typeof nested === 'object') {
-    const n = nested.session_id ?? nested.id;
-    if (n != null) return String(n);
-  }
+  const normalized = normalizeAgentSessionDetail(response) as Record<string, unknown>;
+  const fromSessionObj =
+    normalized.session != null && typeof normalized.session === 'object' && !Array.isArray(normalized.session)
+      ? (normalized.session as Record<string, unknown>).session_id ??
+        (normalized.session as Record<string, unknown>).id
+      : undefined;
+  const id = normalized.session_id ?? normalized.id ?? fromSessionObj;
+  if (id != null && String(id).trim()) return String(id);
   return '';
 }

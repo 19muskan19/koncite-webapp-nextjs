@@ -201,7 +201,14 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
   const borderClass = isDark ? 'border-slate-800' : 'border-slate-200';
   const sectionBg = isDark ? 'bg-[#0a0a0a]/70' : 'bg-white/70';
   const sectionBgAlt = isDark ? 'bg-[#0a0a0a]/70' : 'bg-[#faf9f6]/70'; // Cream/off-white for light theme with transparency
-  const sectionBgCream = isDark ? 'bg-[#0a0a0a]/70' : 'bg-[#fefcf8]/70'; // Warm off-white for light theme with transparency
+  // Nearly opaque so fixed ConstructionBackground icons do not show through sections/cards
+  const sectionBgCream = isDark ? 'bg-[#0a0a0a]/95' : 'bg-[#fefcf8]/95';
+  /** Solid pricing section — hides animated background in this block only */
+  const pricingSectionBg = isDark ? 'bg-[#0a0a0a]' : 'bg-[#fefcf8]';
+  /** Same hue as bg-[#C2D642]/10 (dark) and /5 (light), but opaque — no icon bleed */
+  const popularPlanCardBg = isDark
+    ? 'bg-[color-mix(in_srgb,#C2D642_10%,#0a0a0a)]'
+    : 'bg-[color-mix(in_srgb,#C2D642_5%,#fefcf8)]';
 
   return (
     <>
@@ -323,9 +330,9 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
           }
         }
       `}</style>
-      <div className={`min-h-screen flex flex-col transition-colors duration-500 ${bgClass} relative`}>
+      <div className={`min-h-screen flex flex-col transition-colors duration-500 ${bgClass} relative isolation-isolate`}>
         <ConstructionBackground />
-        <div className="relative z-20">
+        <div className="relative z-0">
         <Navbar
         onNavigateToAbout={onNavigateToAbout}
         scrollToSection={scrollToSection}
@@ -999,7 +1006,7 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
 
 
         {/* Pricing */}
-        <section id="pricing" className={`py-16 md:py-24 px-4 sm:px-6 lg:px-8 ${sectionBgCream}`}>
+        <section id="pricing" className={`py-16 md:py-24 px-4 sm:px-6 lg:px-8 ${pricingSectionBg}`}>
           <div className="max-w-7xl mx-auto">
             <div className="text-center mb-12 md:mb-16">
               <h2 className={`text-3xl md:text-4xl font-black ${textPrimary} mb-4`}>
@@ -1080,7 +1087,7 @@ const HomePage: React.FC<HomePageProps> = ({ onLoginClick, onBookDemo, onNavigat
               ].map((plan, idx) => (
                 <div 
                   key={idx} 
-                  className={`p-8 rounded-xl border ${plan.popular ? 'border-2 border-[#C2D642]' : borderClass} ${plan.popular ? (isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5') : cardClass} hover:shadow-2xl hover:scale-105 hover:-translate-y-2 transition-all duration-300 cursor-pointer group relative opacity-0 animate-[scaleIn_0.6s_ease-out_forwards] ${plan.popular ? 'hover:border-[#C2D642] hover:ring-2 hover:ring-[#C2D642]/20' : 'hover:border-[#C2D642]'}`}
+                  className={`p-8 rounded-xl border ${plan.popular ? 'border-2 border-[#C2D642]' : borderClass} ${plan.popular ? popularPlanCardBg : cardClass} hover:shadow-2xl hover:scale-105 hover:-translate-y-2 transition-all duration-300 cursor-pointer group relative opacity-0 animate-[scaleIn_0.6s_ease-out_forwards] ${plan.popular ? 'hover:border-[#C2D642] hover:ring-2 hover:ring-[#C2D642]/20' : 'hover:border-[#C2D642]'}`}
                   style={{ animationDelay: `${idx * 100}ms` }}
                 >
                   <h3 className={`text-2xl font-bold mb-4 ${textPrimary} group-hover:text-[#C2D642] transition-colors duration-300`}>{plan.name}</h3>

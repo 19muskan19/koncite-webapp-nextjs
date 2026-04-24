@@ -2,6 +2,7 @@ import apiClient, { API_BASE_URL, getAuthToken, companyAjaxClient, getLaravelCsr
 import { setCookie, removeCookie } from '../utils/cookies';
 import type { InventoryReportMeta, InventoryReportResult } from '../types/inventoryReportMeta';
 import { parseInventoryReportResponse } from '../utils/inventoryReportResponse';
+import { normalizeAccessibleMenusPayload } from '../utils/normalizeAccessibleMenusPayload';
 
 // Types
 export type CountryCode = '91' | '971';
@@ -703,7 +704,8 @@ export const userAPI = {
       if (response.data?.status === false || response.data?.success === false) {
         throw new Error(response.data?.message || 'Failed to load accessible menus');
       }
-      return response.data?.data ?? response.data;
+      const raw = response.data?.data ?? response.data;
+      return normalizeAccessibleMenusPayload(raw) ?? raw;
     } catch (error: any) {
       throw {
         message: error.response?.data?.message || error.message || 'Failed to fetch accessible menus',
@@ -2688,7 +2690,7 @@ export const masterDataAPI = {
    * Project Stock Statement - POST /inventory/inventory-report
    * Backend type: 'project-stock'
    * Request: { type: 'project-stock', project, store, item_type: 'materials'|'machines' }
-   * Response: data.material or data.assets - class (materials only), code, name, specification, unit, total_inward, total_issue, available_stock
+   * Response: data.material or data.assets - class (materials only), code, name, specification, unit, opening_stock, total_inward, total_issue, available_stock
    */
   getProjectStockStatement: async (params: {
     projectId: string | number;
@@ -3000,10 +3002,17 @@ export const projectAllocationAPI = {
     }
   },
 
-  /** GET /project-allocation-add-form - Projects and users for add form */
+  /**
+   * GET /pr-approval-add-form — Laravel `approvalAddFormData`: projects + company users (role) for the add form.
+   * Override with `NEXT_PUBLIC_PR_APPROVAL_ADD_FORM_PATH` if your route name differs.
+   */
   getAddFormData: async (): Promise<{ projects: any[]; users: any[] }> => {
     try {
-      const response = await apiClient.get('/project-allocation-add-form');
+      const path =
+        (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_PR_APPROVAL_ADD_FORM_PATH
+          ? String(process.env.NEXT_PUBLIC_PR_APPROVAL_ADD_FORM_PATH).replace(/^\/+/, '')
+          : '') || 'pr-approval-add-form';
+      const response = await apiClient.get(`/${path}`);
       const data = response.data?.data ?? response.data ?? {};
       return {
         projects: Array.isArray(data.projects) ? data.projects : [],
@@ -3012,6 +3021,33 @@ export const projectAllocationAPI = {
     } catch (error: any) {
       throw {
         message: error.response?.data?.message || 'Failed to fetch add form data',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * GET /project-allocation-add-form — projects + users for Project Permissions add modal.
+   * Override with `NEXT_PUBLIC_PROJECT_ALLOCATION_ADD_FORM_PATH` if your route name differs.
+   * Do not use GET /teams-list; user list comes from this response.
+   */
+  getProjectAllocationAddForm: async (): Promise<{ projects: any[]; users: any[] }> => {
+    try {
+      const path =
+        (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_PROJECT_ALLOCATION_ADD_FORM_PATH
+          ? String(process.env.NEXT_PUBLIC_PROJECT_ALLOCATION_ADD_FORM_PATH).replace(/^\/+/, '')
+          : '') || 'project-allocation-add-form';
+      const response = await apiClient.get(`/${path}`);
+      const data = response.data?.data ?? response.data ?? {};
+      const usersRaw = data.users ?? data.company_users ?? [];
+      const projectsRaw = data.projects ?? [];
+      return {
+        projects: Array.isArray(projectsRaw) ? projectsRaw : [],
+        users: Array.isArray(usersRaw) ? usersRaw : [],
+      };
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || 'Failed to fetch project allocation add form data',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
@@ -3096,6 +3132,15 @@ const PR_APPROVE_PATH =
 const PR_REJECT_PATH =
   process.env.NEXT_PUBLIC_PR_REJECT_PATH?.replace(/^\/+/, '') ?? 'pr-reject';
 
+/** POST /api/inventory/pending-approval-update-status — body { material_request_id, status: 0|1|2 } */
+const PENDING_APPROVAL_UPDATE_STATUS_PATH =
+  process.env.NEXT_PUBLIC_PENDING_APPROVAL_UPDATE_STATUS_PATH?.replace(/^\/+/, '') ??
+  'inventory/pending-approval-update-status';
+
+/** GET/POST — Material requests pending approval for the current user (Laravel: pendingApprovalList). */
+const PENDING_APPROVAL_LIST_PATH =
+  process.env.NEXT_PUBLIC_PENDING_APPROVAL_LIST_PATH?.replace(/^\/+/, '') ?? 'inventory/pending-approval-list';
+
 /**
  * Company web ajax: `POST|PUT /company/ajax/company-custome-update-status`
  * Body: uuid, find=material_requests, getUrl=company, title=pr_status, status=1|2, CSRF.
@@ -3104,6 +3149,25 @@ const COMPANY_PR_STATUS_PATH =
   process.env.NEXT_PUBLIC_COMPANY_PR_STATUS_PATH?.replace(/^\/+/, '') ?? 'ajax/company-custome-update-status';
 
 export const prApprovalAPI = {
+  /**
+   * GET/POST /api/pending-approval-list (or path from `NEXT_PUBLIC_PENDING_APPROVAL_LIST_PATH`).
+   * Laravel `pendingApprovalList`: MRs pending per eligible IDs for the authenticated company user.
+   */
+  pendingApprovalList: async (config?: { signal?: AbortSignal }): Promise<unknown> => {
+    try {
+      const response = await apiClient.get(`/${PENDING_APPROVAL_LIST_PATH}`, { signal: config?.signal });
+      if (response.data?.status === false || response.data?.success === false) {
+        throw new Error(response.data?.message || 'Failed to load pending approval list');
+      }
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to load pending approval list',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
   /**
    * GET /api/pr-list (or /api/v1/pr-list if `NEXT_PUBLIC_PR_LIST_PATH` is set).
    * Response: array of PR summaries (uuid, request_id, status, status_label, project fields, dates, …).
@@ -3176,6 +3240,27 @@ export const prApprovalAPI = {
   },
 
   /**
+   * POST /api/inventory/pending-approval-update-status
+   * Body: `{ material_request_id, status }` — status: 1 = approve, 2 = reject, 0 = pending (per backend validator).
+   */
+  updatePendingStatus: async (materialRequestId: number, status: 0 | 1 | 2): Promise<unknown> => {
+    try {
+      const response = await apiClient.post(
+        `/${PENDING_APPROVAL_UPDATE_STATUS_PATH}`,
+        { material_request_id: materialRequestId, status },
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message:
+          error.response?.data?.message || error.message || 'Failed to update purchase request status',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
    * POST /api/pr-approval-add (or /api/v1/pr-approval-add if `NEXT_PUBLIC_PR_APPROVAL_ADD_PATH` is set).
    * Body: `{ project_id, user_allocation: number[] }` — Bearer via apiClient.
    */
@@ -3201,6 +3286,25 @@ export const prApprovalAPI = {
     } catch (error: any) {
       throw {
         message: error.response?.data?.message || 'Failed to save PR approval allocation',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * GET /api/pr-approval-edit/{project_id} — one project + `approval_members` for PR approval (project-wise).
+   */
+  getEditByProjectId: async (projectId: number | string): Promise<unknown> => {
+    try {
+      const id = String(projectId).trim();
+      if (!id) {
+        throw { message: 'Missing project id', errors: {} } as ApiError;
+      }
+      const response = await apiClient.get(`/pr-approval-edit/${encodeURIComponent(id)}`);
+      return response.data?.data ?? response.data ?? {};
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to fetch PR approval members',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
@@ -3533,6 +3637,28 @@ export const workforceAPI = {
     } catch (error: any) {
       throw {
         message: error.response?.data?.message || 'Failed to store rate',
+        errors: error.response?.data?.errors || {},
+      } as ApiError;
+    }
+  },
+
+  /**
+   * GET /workforce/dashboard?company_id=…&project_id=… (project_id omitted = all projects)
+   */
+  getDashboard: async (params: {
+    company_id: number | string;
+    project_id?: number | string;
+  }): Promise<any> => {
+    try {
+      const q: Record<string, string | number> = { company_id: params.company_id };
+      if (params.project_id != null && String(params.project_id).trim() !== '') {
+        q.project_id = params.project_id;
+      }
+      const response = await apiClient.get('/workforce/dashboard', { params: q });
+      return response.data?.data ?? response.data;
+    } catch (error: any) {
+      throw {
+        message: error.response?.data?.message || error.message || 'Failed to load workforce dashboard',
         errors: error.response?.data?.errors || {},
       } as ApiError;
     }
@@ -6043,7 +6169,8 @@ export const goodsReturnAPI = {
   },
   /**
    * POST /inventory/return-goods-details-add
-   * Request body: array of objects with inv_return_goods_id, type, materials_id, return_qty, stock_qty, projects_id, store_warehouses_id.
+   * Request body: array of objects with inv_return_goods_id, type, materials_id (or machine id), return_qty,
+   * projects_id, store_warehouses_id, inv_issues_details_id (issue line id per row).
    * Optional per item: id (to update), price, remarkes, activities_id.
    * Response: status, response_code, message, data with saved details.
    */
@@ -6059,9 +6186,15 @@ export const goodsReturnAPI = {
     price?: number | string;
     remarkes?: string;
     activities_id?: number | string | null;
+    /** Links each return line to the source issue line (GET issue-material-list / edit payload). */
+    inv_issues_details_id?: number | string | null;
   }>): Promise<any> => {
     try {
-      const response = await apiClient.post('/inventory/return-goods-details-add', items);
+      const body = items.map((row) => ({
+        ...row,
+        inv_issues_details_id: row.inv_issues_details_id ?? null,
+      }));
+      const response = await apiClient.post('/inventory/return-goods-details-add', body);
       return response.data?.data ?? response.data;
     } catch (error: any) {
       throw { message: error.response?.data?.message || 'Failed to update return details', errors: error.response?.data?.errors || {} } as ApiError;

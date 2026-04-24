@@ -18,6 +18,10 @@ import {
   fetchCopilotSessionMessages,
   type CopilotSessionListItem,
 } from '@/services/copilotService';
+import { sessionSidebarLabel } from '@/lib/chat/sessionDisplayLabel';
+import { runSessionMetaIfNeeded, toMetaMessages, shouldApplySessionRenameTitle } from '@/lib/chat/sessionMetaClient';
+import SessionSummaryBanner from '@/components/chat/SessionSummaryBanner';
+import { getStoredSessionMetaTitle, setStoredSessionMetaTitle, setStoredSessionSummary } from '@/lib/chat/sessionSummaryStorage';
 import CopilotChatMarkdown from '@/components/ask-me/CopilotChatMarkdown';
 
 type ChatRole = 'user' | 'assistant';
@@ -63,6 +67,7 @@ export default function AskMeChat() {
   const [sessionBusy, setSessionBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<ChatLine[]>(messages);
 
   useEffect(() => {
     sessionIdRef.current = sessionId;
@@ -98,7 +103,11 @@ export default function AskMeChat() {
         const tb = b.created_at ? Date.parse(b.created_at) : 0;
         return tb - ta;
       });
-      setSessions(rows);
+      const merged = rows.map((r) => {
+        const t = getStoredSessionMetaTitle(r.id, 'copilot');
+        return t ? { ...r, name: t } : r;
+      });
+      setSessions(merged);
     } catch (e) {
       if (!options?.silent) {
         toastRef.current.showError('Could not load chat history.');
@@ -127,10 +136,7 @@ export default function AskMeChat() {
     if (!userId) return null;
     setSessionBusy(true);
     try {
-      const created = await createCopilotSession({
-        userId,
-        name: `Ask me · ${new Date().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`,
-      });
+      const created = await createCopilotSession({ userId });
       const sid = getCopilotSessionId(created);
       if (!sid) throw new Error('No session id returned from server.');
       sessionIdRef.current = sid;
@@ -152,10 +158,7 @@ export default function AskMeChat() {
     }
     setSessionBusy(true);
     try {
-      const created = await createCopilotSession({
-        userId,
-        name: `Ask me · ${new Date().toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`,
-      });
+      const created = await createCopilotSession({ userId });
       const sid = getCopilotSessionId(created);
       if (!sid) throw new Error('No session id returned from server.');
       sessionIdRef.current = sid;
@@ -194,6 +197,10 @@ export default function AskMeChat() {
       setSessionBusy(false);
     }
   };
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -277,6 +284,27 @@ export default function AskMeChat() {
           content: reply || 'No reply text was returned.',
         },
       ]);
+
+      const sidMeta = sessionIdRef.current;
+      setTimeout(() => {
+        if (!sidMeta || !userId) return;
+        const lines = messagesRef.current.filter((m) => m.role === 'user' || m.role === 'assistant');
+        const uCount = lines.filter((m) => m.role === 'user').length;
+        runSessionMetaIfNeeded({
+          sessionId: sidMeta,
+          userMessageCount: uCount,
+          messages: toMetaMessages(lines.map((m) => ({ role: m.role, content: m.content }))),
+          apply: async (meta) => {
+            if (shouldApplySessionRenameTitle(meta.title)) {
+              setSessions((prev) => prev.map((s) => (s.id === sidMeta ? { ...s, name: meta.title } : s)));
+              setStoredSessionMetaTitle(sidMeta, meta.title, 'copilot');
+            }
+            if (meta.summary) {
+              setStoredSessionSummary(sidMeta, meta.summary, 'copilot');
+            }
+          },
+        });
+      }, 0);
     } catch (e: unknown) {
       const msg = getErrorMessage(e);
       toast.showError(msg);
@@ -346,9 +374,9 @@ export default function AskMeChat() {
                       : 'bg-white text-slate-900 ring-1 ring-[#C2D642]/40 shadow-sm'
                     : `${textSecondary} hover:bg-black/10 dark:hover:bg-white/10 hover:text-[#C2D642]`
                 }`}
-                title={s.name}
+                title={sessionSidebarLabel(s.name, s.id)}
               >
-                {s.name}
+                {sessionSidebarLabel(s.name, s.id)}
               </button>
             );
           })}
@@ -374,6 +402,13 @@ export default function AskMeChat() {
             </p>
           </div>
         </header>
+
+        <SessionSummaryBanner
+          sessionId={sessionId}
+          kind="copilot"
+          isDark={isDark}
+          className="mx-4 mt-2 shrink-0"
+        />
 
         <div className={`flex-1 overflow-y-auto custom-scrollbar px-4 py-4 space-y-4 min-h-0 ${isDark ? 'bg-[#0a0d10]' : 'bg-slate-50/50'}`}>
           {messages.map((m) => (

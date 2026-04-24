@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { ThemeType } from '../../types';
 import {
@@ -8,12 +8,14 @@ import {
   Download,
   Loader2,
   Image as ImageIcon,
+  Search,
+  ChevronDown,
 } from 'lucide-react';
 import DatePickerInput from '../ui/DatePickerInput';
 import { masterDataAPI, teamsAPI, dprAPI } from '../../services/api';
 import { useToast } from '../../contexts/ToastContext';
 import { API_BASE_URL } from '../../services/apiClient';
-import { computeWorkProgressBalanceQty } from '../../utils/workProgress';
+import { computeWorkProgressBalanceQty, parseLocaleNumericInput, parseLocaleNumber } from '../../utils/workProgress';
 
 interface Project {
   id: string | number;
@@ -48,12 +50,88 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [dprDetails, setDprDetails] = useState<any>(null);
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [projectSearch, setProjectSearch] = useState('');
+  const projectMenuRef = useRef<HTMLDivElement>(null);
+  const projectSearchInputRef = useRef<HTMLInputElement>(null);
+  const [employeeMenuOpen, setEmployeeMenuOpen] = useState(false);
+  const [employeeSearch, setEmployeeSearch] = useState('');
+  const employeeMenuRef = useRef<HTMLDivElement>(null);
+  const employeeSearchInputRef = useRef<HTMLInputElement>(null);
 
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
   const textSecondary = isDark ? 'text-slate-400' : 'text-slate-600';
   const bgPrimary = isDark ? 'bg-[#0a0a0a]' : 'bg-white';
+
+  const filteredProjects = useMemo(() => {
+    const q = projectSearch.trim().toLowerCase();
+    const sorted = [...projects].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    if (!q) return sorted;
+    return sorted.filter((p) => String(p.name).toLowerCase().includes(q));
+  }, [projects, projectSearch]);
+
+  const selectedProjectLabel = useMemo(() => {
+    if (!selectedProject) return 'Select Project';
+    const p = projects.find((x) => String(x.id) === String(selectedProject));
+    return p?.name?.trim() || 'Select Project';
+  }, [projects, selectedProject]);
+
+  useEffect(() => {
+    if (!projectMenuOpen) {
+      setProjectSearch('');
+      return;
+    }
+    const t = window.setTimeout(() => projectSearchInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [projectMenuOpen]);
+
+  useEffect(() => {
+    if (!projectMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = projectMenuRef.current;
+      if (el && !el.contains(e.target as Node)) setProjectMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [projectMenuOpen]);
+
+  const filteredEmployees = useMemo(() => {
+    const q = employeeSearch.trim().toLowerCase();
+    const sorted = [...employees].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    if (!q) return sorted;
+    return sorted.filter((e) => {
+      const name = String(e.name).toLowerCase();
+      const email = String(e.email ?? '').toLowerCase();
+      return name.includes(q) || email.includes(q);
+    });
+  }, [employees, employeeSearch]);
+
+  const selectedEmployeeLabel = useMemo(() => {
+    if (!selectedEmployee) return 'Select Employee';
+    const e = employees.find((x) => String(x.id) === String(selectedEmployee));
+    return e?.name?.trim() || 'Select Employee';
+  }, [employees, selectedEmployee]);
+
+  useEffect(() => {
+    if (!employeeMenuOpen) {
+      setEmployeeSearch('');
+      return;
+    }
+    const t = window.setTimeout(() => employeeSearchInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [employeeMenuOpen]);
+
+  useEffect(() => {
+    if (!employeeMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = employeeMenuRef.current;
+      if (el && !el.contains(e.target as Node)) setEmployeeMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [employeeMenuOpen]);
 
   // URL params: project, user, date
   useEffect(() => {
@@ -217,9 +295,12 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
   };
 
   const formatNum = (n: any) => {
-    const v = Number(n);
-    return isNaN(v) ? '-' : v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const v = typeof n === 'number' ? n : parseLocaleNumericInput(n);
+    if (!Number.isFinite(v)) return '0.00';
+    return v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   };
+
+  const rowNum = (value: unknown, fallback: number): number => parseLocaleNumber(value, fallback);
 
   // Extract arrays from dpr-details
   const activities = (() => {
@@ -320,35 +401,241 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
       {/* Filter Form */}
       <div className={`rounded-xl border ${cardClass} p-4`}>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+          <div className="min-w-0 sm:col-span-2 lg:col-span-1">
+            <label htmlFor="dpr-report-project-button" className={`block text-sm font-bold mb-2 ${textPrimary}`}>
               Project <span className="text-red-500">*</span>
             </label>
-            <select
-              value={selectedProject}
-              onChange={(e) => setSelectedProject(e.target.value)}
-              className={`w-full px-4 py-2.5 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-            >
-              <option value="">Select Project</option>
-              {projects.map((p) => (
-                <option key={String(p.id)} value={String(p.id)}>{p.name}</option>
-              ))}
-            </select>
+            <div className="relative" ref={projectMenuRef}>
+              <button
+                id="dpr-report-project-button"
+                type="button"
+                onClick={() => setProjectMenuOpen((o) => !o)}
+                className={`w-full flex items-center justify-between gap-2 px-4 py-2.5 rounded-lg text-sm border text-left ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                aria-expanded={projectMenuOpen}
+                aria-haspopup="listbox"
+                aria-label="Select project"
+              >
+                <span className="truncate">{selectedProjectLabel}</span>
+                <ChevronDown
+                  className={`w-4 h-4 shrink-0 opacity-70 transition-transform ${projectMenuOpen ? 'rotate-180' : ''}`}
+                  aria-hidden
+                />
+              </button>
+              {projectMenuOpen ? (
+                <div
+                  role="listbox"
+                  aria-label="Projects"
+                  className={`absolute left-0 right-0 z-50 mt-1 rounded-lg border shadow-xl overflow-hidden flex flex-col ${
+                    isDark ? 'bg-slate-900 border-slate-600' : 'bg-white border-slate-200'
+                  }`}
+                >
+                  <div
+                    className={`p-2 border-b shrink-0 ${isDark ? 'border-slate-600 bg-slate-900/95' : 'border-slate-200 bg-slate-50'}`}
+                  >
+                    <div className="relative">
+                      <Search
+                        className={`absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none ${textSecondary}`}
+                        aria-hidden
+                      />
+                      <input
+                        ref={projectSearchInputRef}
+                        type="search"
+                        autoComplete="off"
+                        placeholder="Search projects…"
+                        value={projectSearch}
+                        onChange={(e) => setProjectSearch(e.target.value)}
+                        onKeyDown={(e) => e.stopPropagation()}
+                        className={`w-full pl-9 pr-3 py-2 rounded-md border text-sm ${
+                          isDark
+                            ? 'bg-slate-800 border-slate-600 text-slate-100 placeholder-slate-500'
+                            : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+                        }`}
+                        aria-label="Search project list"
+                      />
+                    </div>
+                  </div>
+                  <ul className="overflow-y-auto max-h-56 py-1">
+                    <li>
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={selectedProject === ''}
+                        onClick={() => {
+                          setSelectedProject('');
+                          setProjectMenuOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
+                          selectedProject === ''
+                            ? isDark
+                              ? 'bg-[#C2D642]/20 text-[#C2D642]'
+                              : 'bg-[#6B8E23]/15 text-[#6B8E23]'
+                            : isDark
+                              ? 'text-slate-200 hover:bg-slate-800'
+                              : 'text-slate-800 hover:bg-slate-100'
+                        }`}
+                      >
+                        Select Project
+                      </button>
+                    </li>
+                    {filteredProjects.map((p) => {
+                      const idStr = String(p.id);
+                      const selected = selectedProject === idStr;
+                      return (
+                        <li key={idStr}>
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={selected}
+                            onClick={() => {
+                              setSelectedProject(idStr);
+                              setProjectMenuOpen(false);
+                            }}
+                            className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors truncate ${
+                              selected
+                                ? isDark
+                                  ? 'bg-[#C2D642]/20 text-[#C2D642]'
+                                  : 'bg-[#6B8E23]/15 text-[#6B8E23]'
+                                : isDark
+                                  ? 'text-slate-200 hover:bg-slate-800'
+                                  : 'text-slate-800 hover:bg-slate-100'
+                            }`}
+                            title={p.name}
+                          >
+                            {p.name}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {filteredProjects.length === 0 && projectSearch.trim() ? (
+                    <p className={`px-3 py-2 text-sm border-t ${isDark ? 'border-slate-600 text-slate-400' : 'border-slate-200 text-slate-600'}`}>
+                      No matching projects
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
           </div>
-          <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>
+          <div className="min-w-0 sm:col-span-2 lg:col-span-1">
+            <label htmlFor="dpr-report-employee-button" className={`block text-sm font-bold mb-2 ${textPrimary}`}>
               Employee <span className="text-slate-400">(optional)</span>
             </label>
-            <select
-              value={selectedEmployee}
-              onChange={(e) => setSelectedEmployee(e.target.value)}
-              className={`w-full px-4 py-2.5 rounded-lg text-sm border ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
-            >
-              <option value="">Select Employee</option>
-              {employees.map((e) => (
-                <option key={String(e.id)} value={String(e.id)}>{e.name}</option>
-              ))}
-            </select>
+            <div className="relative" ref={employeeMenuRef}>
+              <button
+                id="dpr-report-employee-button"
+                type="button"
+                onClick={() => setEmployeeMenuOpen((o) => !o)}
+                className={`w-full flex items-center justify-between gap-2 px-4 py-2.5 rounded-lg text-sm border text-left ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                aria-expanded={employeeMenuOpen}
+                aria-haspopup="listbox"
+                aria-label="Select employee"
+              >
+                <span className="truncate">{selectedEmployeeLabel}</span>
+                <ChevronDown
+                  className={`w-4 h-4 shrink-0 opacity-70 transition-transform ${employeeMenuOpen ? 'rotate-180' : ''}`}
+                  aria-hidden
+                />
+              </button>
+              {employeeMenuOpen ? (
+                <div
+                  role="listbox"
+                  aria-label="Employees"
+                  className={`absolute left-0 right-0 z-50 mt-1 rounded-lg border shadow-xl overflow-hidden flex flex-col ${
+                    isDark ? 'bg-slate-900 border-slate-600' : 'bg-white border-slate-200'
+                  }`}
+                >
+                  <div
+                    className={`p-2 border-b shrink-0 ${isDark ? 'border-slate-600 bg-slate-900/95' : 'border-slate-200 bg-slate-50'}`}
+                  >
+                    <div className="relative">
+                      <Search
+                        className={`absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none ${textSecondary}`}
+                        aria-hidden
+                      />
+                      <input
+                        ref={employeeSearchInputRef}
+                        type="search"
+                        autoComplete="off"
+                        placeholder="Search employees…"
+                        value={employeeSearch}
+                        onChange={(e) => setEmployeeSearch(e.target.value)}
+                        onKeyDown={(e) => e.stopPropagation()}
+                        className={`w-full pl-9 pr-3 py-2 rounded-md border text-sm ${
+                          isDark
+                            ? 'bg-slate-800 border-slate-600 text-slate-100 placeholder-slate-500'
+                            : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+                        }`}
+                        aria-label="Search employee list"
+                      />
+                    </div>
+                  </div>
+                  <ul className="overflow-y-auto max-h-56 py-1">
+                    <li>
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={selectedEmployee === ''}
+                        onClick={() => {
+                          setSelectedEmployee('');
+                          setEmployeeMenuOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
+                          selectedEmployee === ''
+                            ? isDark
+                              ? 'bg-[#C2D642]/20 text-[#C2D642]'
+                              : 'bg-[#6B8E23]/15 text-[#6B8E23]'
+                            : isDark
+                              ? 'text-slate-200 hover:bg-slate-800'
+                              : 'text-slate-800 hover:bg-slate-100'
+                        }`}
+                      >
+                        Select Employee
+                      </button>
+                    </li>
+                    {filteredEmployees.map((e) => {
+                      const idStr = String(e.id);
+                      const selected = selectedEmployee === idStr;
+                      const subtitle = e.email?.trim();
+                      return (
+                        <li key={idStr}>
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={selected}
+                            onClick={() => {
+                              setSelectedEmployee(idStr);
+                              setEmployeeMenuOpen(false);
+                            }}
+                            className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
+                              selected
+                                ? isDark
+                                  ? 'bg-[#C2D642]/20 text-[#C2D642]'
+                                  : 'bg-[#6B8E23]/15 text-[#6B8E23]'
+                                : isDark
+                                  ? 'text-slate-200 hover:bg-slate-800'
+                                  : 'text-slate-800 hover:bg-slate-100'
+                            }`}
+                            title={subtitle ? `${e.name} · ${subtitle}` : e.name}
+                          >
+                            <span className="block truncate">{e.name}</span>
+                            {subtitle ? (
+                              <span className={`block truncate text-xs font-normal ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                                {subtitle}
+                              </span>
+                            ) : null}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {filteredEmployees.length === 0 && employeeSearch.trim() ? (
+                    <p className={`px-3 py-2 text-sm border-t ${isDark ? 'border-slate-600 text-slate-400' : 'border-slate-200 text-slate-600'}`}>
+                      No matching employees
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
           </div>
           <div>
             <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Date <span className="text-red-500">*</span></label>
@@ -406,12 +693,19 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
                   const act = r?.activities ?? r?.activites ?? r;
                   const name = (typeof act === 'string' ? act : (act?.activities ?? act?.name ?? r?.activity_name)) ?? '-';
                   const unit = (typeof act === 'object' ? act?.unit : null) ?? r?.unit ?? '-';
-                  const estQty = Number(r?.est_qty ?? r?.estimate_qty ?? r?.qty ?? r?.quantity ?? 0);
-                  const rate = Number(r?.est_rate ?? r?.rate ?? r?.rate_per_unit ?? 0);
-                  const amount = Number(r?.est_amount ?? r?.amount ?? estQty * rate);
-                  const completedQty = Number(r?.completed_qty ?? r?.qty ?? r?.quantity ?? 0);
-                  const estAmtCompletion = Number(r?.est_amount_completion ?? completedQty * rate);
-                  const pct = Number(r?.completion ?? (estQty > 0 ? (completedQty / estQty) * 100 : 0));
+                  const estQty = rowNum(r?.est_qty ?? r?.estimate_qty ?? r?.qty ?? r?.quantity, 0);
+                  const rate = rowNum(r?.est_rate ?? r?.rate ?? r?.rate_per_unit, 0);
+                  const amountRaw = parseLocaleNumericInput(r?.est_amount ?? r?.amount);
+                  const amount = Number.isFinite(amountRaw) ? amountRaw : estQty * rate;
+                  const completedQty = rowNum(r?.completed_qty ?? r?.qty ?? r?.quantity, 0);
+                  const estAmtRaw = parseLocaleNumericInput(r?.est_amount_completion);
+                  const estAmtCompletion = Number.isFinite(estAmtRaw) ? estAmtRaw : completedQty * rate;
+                  const pctRaw = parseLocaleNumericInput(r?.completion);
+                  const pct = Number.isFinite(pctRaw)
+                    ? pctRaw
+                    : estQty > 0
+                      ? (completedQty / estQty) * 100
+                      : 0;
                   const balance = computeWorkProgressBalanceQty(estQty, completedQty);
                   const remarks = r?.remarkes ?? r?.remarks ?? '';
                   return (
@@ -459,7 +753,7 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
                   const name = (typeof mat === 'string' ? mat : (mat?.name ?? r?.material_name ?? r?.materials_name)) ?? '-';
                   const spec = (typeof mat === 'object' ? mat?.specification : null) ?? r?.specification ?? '-';
                   const unit = (typeof mat === 'object' ? mat?.unit : null) ?? r?.unit ?? '-';
-                  const qty = Number(r?.qty_used ?? r?.qty ?? r?.quantity ?? 0);
+                  const qty = rowNum(r?.qty_used ?? r?.qty ?? r?.quantity, 0);
                   const workDetails = r?.work_details ?? r?.activities?.activities ?? r?.activities?.name ?? r?.activity_name ?? '-';
                   const remarks = r?.remarkes ?? r?.remarks ?? '';
                   return (
@@ -503,14 +797,14 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
                   const lab = r?.labours ?? r?.labour ?? r;
                   const details = r?.labour_details ?? (lab?.type && lab?.category ? `${lab.type} - ${lab.category}` : (lab?.name ?? r?.labour_name)) ?? '-';
                   const unit = (typeof lab === 'object' ? lab?.unit : null) ?? r?.unit ?? '-';
-                  const qty = Number(r?.qty ?? r?.quantity ?? 0);
-                  const otQty = Number(r?.ot_qty ?? r?.overtime_qty ?? 0);
+                  const qty = rowNum(r?.qty ?? r?.quantity, 0);
+                  const otQty = rowNum(r?.ot_qty ?? r?.overtime_qty, 0);
                   const contractor = (() => {
                     const v = r?.labour_contractor ?? r?.vendors ?? r?.vendor ?? r?.contractor;
                     if (!v) return '-';
                     return typeof v === 'string' ? v : (v?.name ?? v?.registration_name ?? '-');
                   })();
-                  const rate = Number(r?.rate ?? r?.rate_per_unit ?? 0);
+                  const rate = rowNum(r?.rate ?? r?.rate_per_unit, 0);
                   const remarks = r?.remarkes ?? r?.remarks ?? '';
                   return (
                     <tr key={i} className={`border-t border-inherit ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'}`}>
@@ -555,13 +849,13 @@ const DPRReportView: React.FC<DPRReportViewProps> = ({ theme }) => {
                   const name = r?.machinery_names ?? (typeof asset === 'object' ? asset?.name : null) ?? r?.asset_name ?? '-';
                   const spec = (typeof asset === 'object' ? asset?.specification : null) ?? r?.specification ?? '-';
                   const unit = (typeof asset === 'object' ? asset?.unit : null) ?? r?.unit ?? '-';
-                  const qty = Number(r?.quantity ?? r?.qty ?? 0);
+                  const qty = rowNum(r?.quantity ?? r?.qty, 0);
                   const contractor = (() => {
                     const v = r?.contractor ?? r?.vendors ?? r?.vendor;
                     if (!v) return '-';
                     return typeof v === 'string' ? v : (v?.name ?? v?.registration_name ?? '-');
                   })();
-                  const rate = Number(r?.rate ?? r?.rate_per_unit ?? 0);
+                  const rate = rowNum(r?.rate ?? r?.rate_per_unit, 0);
                   const remarks = r?.remarkes ?? r?.remarks ?? '';
                   return (
                     <tr key={i} className={`border-t border-inherit ${isDark ? 'hover:bg-slate-800/30' : 'hover:bg-slate-50'}`}>

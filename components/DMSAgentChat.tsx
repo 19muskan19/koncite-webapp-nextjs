@@ -11,11 +11,14 @@ import {
   createSession,
   listSessions as listDmsSessions,
   getSession as getDmsSession,
-  renameSession as renameDmsSession,
   sendMessage as sendDmsAiMessage,
   getSessionIdFromResponse,
   AGENT_DOC_MGMT,
 } from '../services/dmsAiService';
+import { sessionSidebarLabel } from '@/lib/chat/sessionDisplayLabel';
+import { runSessionMetaIfNeeded, toMetaMessages, shouldApplySessionRenameTitle } from '@/lib/chat/sessionMetaClient';
+import SessionSummaryBanner from '@/components/chat/SessionSummaryBanner';
+import { getStoredSessionMetaTitle, setStoredSessionMetaTitle, setStoredSessionSummary } from '@/lib/chat/sessionSummaryStorage';
 import {
   Bot,
   Send,
@@ -27,7 +30,11 @@ import {
   Square,
   Pencil,
   ArrowLeft,
+  Loader2,
 } from 'lucide-react';
+
+/** Placeholder for assistant message while the API is in flight (replaced with Copilot-style inline Thinking UI). */
+const PENDING_ASSISTANT_CONTENT = '…';
 
 interface ChatMessage {
   id: string;
@@ -60,7 +67,7 @@ function getUserInitial(user: { name?: string; email?: string } | null): string 
 }
 
 const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
-  const toast = useToast();
+  const { showError, showSuccess } = useToast();
   const router = useRouter();
   const { user } = useUser();
   const userInitial = getUserInitial(user);
@@ -86,10 +93,15 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatMessagesEndRef = useRef<HTMLDivElement>(null);
+  const chatMessagesRef = useRef<ChatMessage[]>(chatMessages);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    chatMessagesRef.current = chatMessages;
+  }, [chatMessages]);
 
   const isDark = theme === 'dark';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
@@ -149,7 +161,8 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
           chat_history?: unknown[];
         }) => {
           const id = String(s.session_id ?? s.id ?? '');
-          const preview = (s.name as string) || 'New session';
+          const storedTitle = getStoredSessionMetaTitle(id, 'ai');
+          const preview = (storedTitle && storedTitle.trim()) || String(s.name ?? '').trim();
           const time = formatSessionTime(s.created_at as string) || '--';
           const rawMessages = s.messages ?? s.chat_history ?? [];
           const msgs: ChatMessage[] = Array.isArray(rawMessages)
@@ -213,12 +226,12 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
         (err as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message ??
         (err as { message?: string })?.message ??
         'Failed to load sessions';
-      toast.showError(msg);
+      showError(msg);
       setChatSessions([]);
     } finally {
       setChatSessionsLoading(false);
     }
-  }, [toast, parseSessionMessages]);
+  }, [showError, parseSessionMessages]);
 
   useEffect(() => {
     loadDmsSessions();
@@ -266,25 +279,6 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
     }
   };
 
-  const handleRenameDmsSession = async (e: React.MouseEvent, sessionId: string, currentName: string) => {
-    e.stopPropagation();
-    const newName = window.prompt('Rename session', currentName || 'New session');
-    if (newName === null || newName.trim() === '' || newName.trim() === currentName) return;
-    try {
-      await renameDmsSession(sessionId, newName.trim());
-      setChatSessions((prev) =>
-        prev.map((s) => (s.id === sessionId ? { ...s, preview: newName.trim() } : s))
-      );
-      toast.showSuccess('Session renamed');
-    } catch (err: unknown) {
-      const msg =
-        (err as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message ??
-        (err as { message?: string })?.message ??
-        'Failed to rename session';
-      toast.showError(msg);
-    }
-  };
-
   useEffect(() => {
     getChatContext(projectId)
       .then(() => setChatError(null))
@@ -324,7 +318,7 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
       setRecordingTime(0);
       recordingTimerRef.current = setInterval(() => setRecordingTime((prev) => prev + 1), 1000);
     } catch {
-      toast.showError('Unable to access microphone. Please check your permissions.');
+      showError('Unable to access microphone. Please check your permissions.');
     }
   };
 
@@ -382,7 +376,7 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
     const placeholderId = `ai-${Date.now()}`;
     setChatMessages((prev) => [
       ...prev,
-      { id: placeholderId, role: 'assistant', content: '…', timestamp: formatSessionTime() },
+      { id: placeholderId, role: 'assistant', content: PENDING_ASSISTANT_CONTENT, timestamp: formatSessionTime() },
     ]);
 
     try {
@@ -395,7 +389,7 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
         const currentTime = formatSessionTime();
         const newSession = {
           id: sessionId,
-          preview: (sessionRes as { name?: string }).name ?? `DMS Chat - ${new Date().toLocaleDateString()}`,
+          preview: String((sessionRes as { name?: string }).name ?? '').trim(),
           time: currentTime,
           messages: [],
         };
@@ -413,16 +407,31 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
       setChatMessages((prev) =>
         prev.map((m) => (m.id === placeholderId ? { ...m, content: replyText } : m))
       );
-      const previewText = messageContent || (hasFiles ? 'Files attached' : '');
-      if (previewText) {
-        setChatSessions((prev) =>
-          prev.map((s) =>
-            s.id === sessionId
-              ? { ...s, preview: previewText.slice(0, 30) + (previewText.length > 30 ? '...' : ''), time: currentTime }
-              : s
-          )
-        );
-      }
+      // Keep sidebar title from server / session-meta rename, not from the latest user line.
+      setChatSessions((prev) =>
+        prev.map((s) => (s.id === sessionId ? { ...s, time: currentTime } : s))
+      );
+
+      const sidForMeta = sessionId;
+      setTimeout(() => {
+        const lines = chatMessagesRef.current.filter((m) => m.role === 'user' || m.role === 'assistant');
+        const uCount = lines.filter((m) => m.role === 'user').length;
+        if (!sidForMeta) return;
+        runSessionMetaIfNeeded({
+          sessionId: sidForMeta,
+          userMessageCount: uCount,
+          messages: toMetaMessages(lines.map((m) => ({ role: m.role, content: m.content }))),
+          apply: async (meta) => {
+            if (shouldApplySessionRenameTitle(meta.title)) {
+              setChatSessions((p) => p.map((s) => (s.id === sidForMeta ? { ...s, preview: meta.title } : s)));
+              setStoredSessionMetaTitle(sidForMeta, meta.title, 'ai');
+            }
+            if (meta.summary) {
+              setStoredSessionSummary(sidForMeta, meta.summary, 'ai');
+            }
+          },
+        });
+      }, 0);
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message ??
@@ -432,7 +441,7 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
         prev.map((m) => (m.id === placeholderId ? { ...m, content: `Error: ${msg}` } : m))
       );
       setChatError(msg);
-      toast.showError(msg);
+      showError(msg);
     } finally {
       setChatSending(false);
     }
@@ -448,7 +457,7 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
       const currentTime = formatSessionTime();
       const newSession = {
         id: sessionId,
-        preview: (sessionRes as { name?: string }).name ?? `DMS Chat - ${new Date().toLocaleDateString()}`,
+        preview: String((sessionRes as { name?: string }).name ?? '').trim(),
         time: currentTime,
         messages: [],
       };
@@ -464,14 +473,14 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
       ]);
       setChatInput('');
       setAttachedFiles([]);
-      toast.showSuccess('New chat session started');
+      showSuccess('New chat session started');
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message ??
         (err as { message?: string })?.message ??
         'Failed to create session';
       setChatError(msg);
-      toast.showError(msg);
+      showError(msg);
     } finally {
       setChatCreatingSession(false);
     }
@@ -574,19 +583,9 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
                       session.id === dmsSessionId ? 'text-[#C2D642]' : textPrimary
                     }`}
                   >
-                    {session.preview}
+                    {sessionSidebarLabel(session.preview, session.id)}
                   </p>
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    <button
-                      onClick={(e) => handleRenameDmsSession(e, session.id, session.preview)}
-                      className={`p-1 rounded hover:opacity-80 transition-opacity min-w-[28px] min-h-[28px] flex items-center justify-center ${textSecondary} hover:text-[#C2D642] touch-manipulation`}
-                      title="Rename session"
-                      aria-label="Rename session"
-                    >
-                      <Pencil className="w-2.5 h-2.5" />
-                    </button>
-                    <span className={`text-[9px] font-bold ${textSecondary}`}>{session.time}</span>
-                  </div>
+                  <span className={`text-[9px] font-bold flex-shrink-0 ${textSecondary}`}>{session.time}</span>
                 </div>
               </div>
             ))}
@@ -649,6 +648,13 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
           </div>
         </div>
 
+        <SessionSummaryBanner
+          sessionId={dmsSessionId}
+          kind="ai"
+          isDark={isDark}
+          className="mx-2 sm:mx-3 md:mx-4 mt-2 shrink-0"
+        />
+
         <div className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-2 py-3 sm:px-4 sm:py-5 md:px-6 md:py-6 space-y-1.5 sm:space-y-2 custom-scrollbar pb-6 sm:pb-8 md:pb-10 lg:pb-6 ${chatAreaBg}`}>
           {chatMessages.length === 1 && chatMessages[0].role === 'assistant' && chatMessages[0].content.includes("Hello! I'm your AI assistant") ? (
             <div className="flex flex-col items-center justify-center min-h-[160px] sm:min-h-[200px] md:min-h-[280px] text-center px-3 sm:px-4">
@@ -686,15 +692,28 @@ const DMSAgentChat: React.FC<DMSAgentChatProps> = ({ theme, projectId }) => {
                       : 'bg-white text-slate-900 border border-slate-200 shadow-sm'
                   }`}
                 >
-                  <ChatMarkdownViewer
-                    content={message.content}
-                    isDark={isDark}
-                    role={message.role}
-                    onOptionClick={message.role === 'assistant' ? (text) => handleSendChatMessage(text) : undefined}
-                    className={`text-xs sm:text-xs md:text-sm font-normal break-words leading-relaxed ${
-                      message.role === 'user' ? `font-chat-user ${textPrimary}` : `font-chat-ai ${textPrimary}`
-                    }`}
-                  />
+                  {message.role === 'assistant' && message.content === PENDING_ASSISTANT_CONTENT ? (
+                    <div
+                      className={`inline-flex items-center gap-2 ${
+                        isDark ? 'text-slate-200' : 'text-slate-600'
+                      }`}
+                      role="status"
+                      aria-live="polite"
+                    >
+                      <Loader2 className="w-4 h-4 flex-shrink-0 animate-spin text-[#C2D642]" />
+                      <span className="text-xs sm:text-sm font-medium">Thinking…</span>
+                    </div>
+                  ) : (
+                    <ChatMarkdownViewer
+                      content={message.content}
+                      isDark={isDark}
+                      role={message.role}
+                      onOptionClick={message.role === 'assistant' ? (text) => handleSendChatMessage(text) : undefined}
+                      className={`text-xs sm:text-xs md:text-sm font-normal break-words leading-relaxed ${
+                        message.role === 'user' ? `font-chat-user ${textPrimary}` : `font-chat-ai ${textPrimary}`
+                      }`}
+                    />
+                  )}
                 </div>
                 <div className={`flex items-center justify-between gap-2 mt-0.5 ${message.role === 'user' ? 'flex-row-reverse' : ''}`}>
                   <p className={`text-[9px] md:text-[10px] font-bold ${textSecondary}`}>{message.timestamp}</p>

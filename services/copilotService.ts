@@ -14,6 +14,7 @@
 
 import apiClient, { getAuthToken } from './apiClient';
 import { extractReplyFromResponse, type ChatResponse } from './aiAgentService';
+import { getSessionIdFromResponse } from './dmsAiService';
 
 export const COPILOT_AGENT = 'copilot' as const;
 
@@ -39,10 +40,7 @@ export interface CopilotSessionResponse {
 }
 
 export function getCopilotSessionId(res: CopilotSessionResponse | unknown): string {
-  if (!res || typeof res !== 'object') return '';
-  const r = res as Record<string, unknown>;
-  const id = r.session_id ?? r.id;
-  return id != null ? String(id) : '';
+  return getSessionIdFromResponse(res);
 }
 
 /** @deprecated Use `COPILOT_SESSIONS_PATH` — same value; kept for imports. */
@@ -110,7 +108,7 @@ export function parseCopilotSessionList(raw: unknown): CopilotSessionListItem[] 
     }
     rows.push({
       id: String(id),
-      name: String(o.name ?? o.title ?? `Chat ${i + 1}`).trim() || `Chat ${i + 1}`,
+      name: String(o.name ?? o.title ?? '').trim() || String(id),
       ...(typeof o.created_at === 'string' ? { created_at: o.created_at } : {}),
       ...(typeof o.agent === 'string' ? { agent: o.agent } : {}),
     });
@@ -212,15 +210,32 @@ export async function fetchCopilotSessionMessages(sessionId: string, userId: num
   return extractCopilotChatTurns(data);
 }
 
+/** Strip control chars and cap length so generated titles do not break API validation. */
+export function sanitizeCopilotSessionName(name: string): string {
+  const s = String(name ?? '')
+    .replace(/[\u0000-\u001F\u007F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return s.slice(0, 255);
+}
+
+/**
+ * PUT /ai-agent/sessions/{id}/rename — same contract as `dmsAiService.renameSession`.
+ * With Bearer auth, send `{ name }` only. Without token, include `user_id` in the JSON body
+ * (not as a query param), matching `postCopilotChat` / `appendUserIdIfNeeded`.
+ */
 export async function renameCopilotSession(
   sessionId: string,
   name: string,
   userId: number
 ): Promise<unknown> {
+  const body: Record<string, unknown> = {
+    name: sanitizeCopilotSessionName(name),
+  };
+  appendUserIdIfNeeded(body, userId);
   const { data } = await apiClient.put(
     `${COPILOT_SESSIONS_PATH}/${encodeURIComponent(sessionId)}/rename`,
-    { name },
-    { params: { user_id: userId } }
+    body
   );
   return data;
 }

@@ -15,6 +15,8 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Menu,
+  X,
   Loader2,
 } from 'lucide-react';
 import { ThemeType } from '@/types';
@@ -170,6 +172,7 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
   ]);
   const [aiInput, setAiInput] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
+  /** Task views sidebar: expanded by default; user can collapse. On small screens, expanded = fixed drawer + backdrop (does not shrink main column). */
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [companyUsers, setCompanyUsers] = useState<TaskFormDataUser[]>([]);
   /** Task row from GET /tasks/{uuid} — status modal opens only after load succeeds. */
@@ -177,13 +180,6 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
   /** Task row from GET /tasks/{uuid} for edit modal — form hydrates from this only. */
   const [editModalTask, setEditModalTask] = useState<Task | null>(null);
   const [editModalLoading, setEditModalLoading] = useState(false);
-
-  useEffect(() => {
-    const checkScreen = () => {
-      if (window.innerWidth < 640) setSidebarCollapsed(true);
-    };
-    checkScreen();
-  }, []);
 
   const loadTasks = useCallback(async (): Promise<Task[]> => {
     setLoading(true);
@@ -431,7 +427,7 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
   };
 
   /** Edit: open details for everyone. Update (status): assignee only. */
-  const renderTaskActions = (t: Task, compact: boolean) => {
+  const renderTaskActions = (t: Task, compact: boolean, belowComments = false) => {
     const assignee = taskIsAssignedToMe(t, myCompanyUserId, myNameNorm);
     const sz = compact ? 'text-[10px] px-1.5 py-0.5' : 'text-xs px-2.5 py-1.5';
     const base =
@@ -446,11 +442,13 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
       ? `${base} ${sz} border border-rose-500/40 text-rose-400 hover:bg-rose-500/15`
       : `${base} ${sz} border border-rose-300 text-rose-600 hover:bg-rose-50`;
 
+    const pad = belowComments ? '' : compact ? 'mt-1' : 'pt-1 sm:pt-0';
+
     return (
       <div
         role="group"
         aria-label="Task actions"
-        className={`flex flex-wrap items-center gap-1.5 shrink-0 ${compact ? 'mt-1' : 'pt-1 sm:pt-0'}`}
+        className={`flex flex-wrap items-center gap-1.5 shrink-0 ${pad}`}
         onClick={(e) => e.stopPropagation()}
       >
         <button
@@ -547,22 +545,26 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
 
   const renderList = () => (
     <>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
-        <div className={`p-4 rounded-xl border ${cardClass} border-l-4 border-l-indigo-500`}>
-          <div className={`text-2xl font-black ${textPrimary}`}>{filteredTasks.length}</div>
-          <div className={`text-xs ${textSecondary}`}>Total Tasks</div>
+      <div className="grid grid-cols-2 gap-2 xs:gap-3 sm:gap-4 mb-5">
+        <div className={`min-w-0 p-3 xs:p-4 rounded-xl border ${cardClass} border-l-4 border-l-indigo-500`}>
+          <div className={`text-xl xs:text-2xl font-black tabular-nums ${textPrimary}`}>{filteredTasks.length}</div>
+          <div className={`text-[10px] xs:text-xs ${textSecondary} leading-snug`}>Total Tasks</div>
         </div>
-        <div className={`p-4 rounded-xl border ${cardClass} border-l-4 border-l-amber-500`}>
-          <div className={`text-2xl font-black ${textPrimary}`}>{filteredTasks.filter((t) => t.status === 'in_progress').length}</div>
-          <div className={`text-xs ${textSecondary}`}>In Progress</div>
+        <div className={`min-w-0 p-3 xs:p-4 rounded-xl border ${cardClass} border-l-4 border-l-amber-500`}>
+          <div className={`text-xl xs:text-2xl font-black tabular-nums ${textPrimary}`}>
+            {filteredTasks.filter((t) => t.status === 'in_progress').length}
+          </div>
+          <div className={`text-[10px] xs:text-xs ${textSecondary} leading-snug`}>In Progress</div>
         </div>
-        <div className={`p-4 rounded-xl border ${cardClass} border-l-4 border-l-rose-500`}>
-          <div className={`text-2xl font-black ${textPrimary}`}>{overdueCount}</div>
-          <div className={`text-xs ${textSecondary}`}>Overdue</div>
+        <div className={`min-w-0 p-3 xs:p-4 rounded-xl border ${cardClass} border-l-4 border-l-rose-500`}>
+          <div className={`text-xl xs:text-2xl font-black tabular-nums ${textPrimary}`}>{overdueCount}</div>
+          <div className={`text-[10px] xs:text-xs ${textSecondary} leading-snug`}>Overdue</div>
         </div>
-        <div className={`p-4 rounded-xl border ${cardClass} border-l-4 border-l-emerald-500`}>
-          <div className={`text-2xl font-black ${textPrimary}`}>{filteredTasks.filter((t) => t.status === 'done').length}</div>
-          <div className={`text-xs ${textSecondary}`}>Completed</div>
+        <div className={`min-w-0 p-3 xs:p-4 rounded-xl border ${cardClass} border-l-4 border-l-emerald-500`}>
+          <div className={`text-xl xs:text-2xl font-black tabular-nums ${textPrimary}`}>
+            {filteredTasks.filter((t) => t.status === 'done').length}
+          </div>
+          <div className={`text-[10px] xs:text-xs ${textSecondary} leading-snug`}>Completed</div>
         </div>
       </div>
       <div className="flex flex-wrap gap-2 mb-4">
@@ -630,14 +632,10 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
                     <div className="flex-1 min-w-0">
                       <div className={`text-lg font-semibold mb-1 leading-snug ${textPrimary}`}>{t.title}</div>
                       {(() => {
-                        const { body, comments } = splitDescriptionAndStatusComments(t.description);
-                        const hasDesc = !!body || comments.length > 0;
-                        if (!hasDesc) return null;
+                        const { body } = splitDescriptionAndStatusComments(t.description);
+                        if (!body) return null;
                         return (
-                          <div className="mb-2 space-y-2">
-                            {body ? <div className={`text-xs line-clamp-3 whitespace-pre-wrap ${textSecondary}`}>{body}</div> : null}
-                            <TaskCommentsBlock description={t.description} theme={theme} variant="list" maxVisible={3} />
-                          </div>
+                          <div className={`text-xs mb-2 line-clamp-3 whitespace-pre-wrap ${textSecondary}`}>{body}</div>
                         );
                       })()}
                       <div className="flex flex-wrap items-center gap-2">
@@ -647,20 +645,9 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
                         }`}>{t.priority}</span>
                         {t.assigned_to && <NamePill name={t.assigned_to} label="to" />}
                         {t.assigned_by && <NamePill name={t.assigned_by} label="by" />}
-                        {t.due_date && (
-                          <span className={`text-[10px] ${ov ? 'text-rose-500 font-medium' : textSecondary}`}>
-                            {ov ? '⚠ ' : ''}{fmtDate(t.due_date)}
-                          </span>
-                        )}
                       </div>
                     </div>
-                    <div className="hidden sm:flex shrink-0 sm:self-start sm:pt-0">{renderTaskActions(t, false)}</div>
                   </div>
-                </div>
-                <div
-                  className={`sm:hidden pt-2.5 border-t border-dashed ${isDark ? 'border-slate-600/50' : 'border-slate-200'}`}
-                >
-                  {renderTaskActions(t, false)}
                 </div>
                 {t.remark?.trim() ? (
                   <div className={`rounded-lg border px-2.5 py-2 text-xs ${isDark ? 'border-violet-500/35 bg-violet-500/10 text-slate-200' : 'border-violet-200 bg-violet-50/80 text-slate-800'}`}>
@@ -668,6 +655,17 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
                     <p className={`whitespace-pre-wrap ${textSecondary}`}>{t.remark.trim()}</p>
                   </div>
                 ) : null}
+                <TaskCommentsBlock description={t.description} theme={theme} variant="list" maxVisible={3} className="mt-1" />
+                <div
+                  className={`flex flex-col gap-2 pt-2.5 mt-1 border-t border-dashed ${isDark ? 'border-slate-600/50' : 'border-slate-200'}`}
+                >
+                  {t.due_date ? (
+                    <span className={`text-xs ${ov ? 'text-rose-500 font-medium' : textSecondary}`}>
+                      {ov ? '⚠ ' : ''}Due {fmtDate(t.due_date)}
+                    </span>
+                  ) : null}
+                  {renderTaskActions(t, false, true)}
+                </div>
               </div>
             );
           })
@@ -709,7 +707,6 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
                           if (!body) return null;
                           return <div className={`text-[11px] mb-1 line-clamp-2 ${textSecondary}`}>{body}</div>;
                         })()}
-                        <TaskCommentsBlock description={t.description} theme={theme} variant="compact" maxVisible={2} className="mb-2" />
                         <div className="flex items-center gap-2 mb-1">
                           <span className={`px-1.5 py-0.5 rounded text-[10px] ${
                             t.priority === 'urgent' ? 'bg-rose-500/20 text-rose-400' : t.priority === 'high' ? 'bg-amber-500/20 text-amber-400' : 'bg-indigo-500/20 text-indigo-400'
@@ -718,14 +715,19 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
                         <div className={`text-[10px] ${textSecondary} leading-relaxed`}>
                           to: {t.assigned_to || '—'}<br />by: {t.assigned_by || '—'}
                         </div>
-                        {t.due_date && <div className={`text-[10px] mt-1 ${ov ? 'text-rose-500' : textSecondary}`}>Due {fmtDate(t.due_date)}</div>}
-                        {renderTaskActions(t, true)}
                         {t.remark?.trim() ? (
                           <div className={`mt-2 rounded-md border px-2 py-1.5 text-[11px] ${isDark ? 'border-violet-500/35 bg-violet-500/10 text-slate-200' : 'border-violet-200 bg-violet-50/80 text-slate-800'}`}>
                             <span className={`font-bold uppercase text-[9px] ${isDark ? 'text-violet-300' : 'text-violet-700'}`}>Remark · </span>
                             <span className={textSecondary}>{t.remark.trim()}</span>
                           </div>
                         ) : null}
+                        <TaskCommentsBlock description={t.description} theme={theme} variant="compact" maxVisible={2} className="mt-2" />
+                        <div className={`flex flex-col gap-1.5 pt-2 mt-1 border-t ${isDark ? 'border-slate-600/60' : 'border-slate-200'}`}>
+                          {t.due_date ? (
+                            <div className={`text-[10px] ${ov ? 'text-rose-500' : textSecondary}`}>Due {fmtDate(t.due_date)}</div>
+                          ) : null}
+                          {renderTaskActions(t, true, true)}
+                        </div>
                       </div>
                     );
                   })
@@ -860,6 +862,9 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
         } else {
           setCurrentLayout(id as LayoutType);
         }
+        if (typeof window !== 'undefined' && window.matchMedia('(max-width: 639px)').matches) {
+          setSidebarCollapsed(true);
+        }
       }}
       className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-colors ${
         (currentView === id || currentLayout === id) ? 'bg-[#C2D642]/15 text-[#C2D642] border border-[#C2D642]/30' : isDark ? 'text-slate-400 hover:bg-slate-800 hover:text-slate-200' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
@@ -874,46 +879,60 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
   return (
     <div className="space-y-4 sm:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <div className={`p-2.5 rounded-xl flex-shrink-0 ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
-            <ClipboardList className="w-6 h-6 text-[#C2D642]" />
+        <div className="flex flex-col gap-3 min-w-0">
+          <div className="flex items-center gap-3">
+            <div className={`p-2.5 rounded-xl flex-shrink-0 ${isDark ? 'bg-[#C2D642]/10' : 'bg-[#C2D642]/5'}`}>
+              <ClipboardList className="w-6 h-6 text-[#C2D642]" />
+            </div>
+            <div>
+              <h1 className={`text-xl sm:text-2xl font-black tracking-tight ${textPrimary}`}>Task Management</h1>
+              <p className={`text-[10px] sm:text-[11px] font-bold uppercase tracking-widest ${textSecondary}`}>Team task manager</p>
+            </div>
           </div>
-          <div>
-            <h1 className={`text-xl sm:text-2xl font-black tracking-tight ${textPrimary}`}>Task Management</h1>
-            <p className={`text-[10px] sm:text-[11px] font-bold uppercase tracking-widest ${textSecondary}`}>Team task manager</p>
-          </div>
+          {sidebarCollapsed ? (
+            <button
+              type="button"
+              onClick={() => setSidebarCollapsed(false)}
+              className={`self-start inline-flex items-center justify-center p-2.5 rounded-lg border ${
+                isDark
+                  ? 'border-slate-600 text-[#C2D642] hover:bg-slate-800/80'
+                  : 'border-slate-200 text-[#5a7a1e] hover:bg-slate-100'
+              }`}
+              aria-label="Open views menu"
+              title="Views and layout"
+            >
+              <Menu className="w-5 h-5" strokeWidth={2.25} />
+            </button>
+          ) : null}
         </div>
       </div>
 
-      <div className="flex gap-4 min-h-[calc(100vh-12rem)] relative">
-        {/* Backdrop - close sidebar when clicking outside on mobile */}
+      <div className="flex gap-3 sm:gap-4 min-h-[calc(100vh-12rem)] relative">
+        {/* No collapsed rail: when open, drawer + light overlay on small screens only. */}
         {!sidebarCollapsed && (
-          <div
-            className="fixed inset-0 bg-black/40 z-10 max-sm:block sm:hidden"
-            onClick={() => setSidebarCollapsed(true)}
-            aria-hidden="true"
-          />
-        )}
-        {/* Sidebar - in flow when collapsed; overlays only when expanded on small screens */}
-        <aside
-          className={`flex-shrink-0 transition-all overflow-hidden flex flex-col min-h-0
-            ${sidebarCollapsed ? 'w-10' : 'w-56'}
-            max-sm:top-0 max-sm:bottom-0 max-sm:left-0 max-sm:z-20
-            ${!sidebarCollapsed ? 'max-sm:absolute max-sm:shadow-xl' : ''}`}
-        >
-          <div className={`flex-1 flex flex-col min-h-0 transition-all ${sidebarCollapsed ? 'rounded-none border-0 bg-transparent p-0 justify-center' : `rounded-xl border p-3 ${cardClass}`}`}>
-            <div className={`flex items-center flex-shrink-0 ${sidebarCollapsed ? 'justify-center' : 'justify-between mb-3'}`}>
-              {!sidebarCollapsed && <span className={`text-[10px] font-bold uppercase tracking-wider ${textSecondary}`}>Views</span>}
-              <button
-                onClick={() => setSidebarCollapsed((s) => !s)}
-                className={`p-2 rounded-lg ${sidebarCollapsed ? 'text-[#C2D642] hover:opacity-80' : isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}
-                aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-              >
-                {sidebarCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-4 h-4" />}
-              </button>
-            </div>
-            {!sidebarCollapsed && (
-              <>
+          <>
+            <button
+              type="button"
+              className="fixed left-0 right-0 top-14 bottom-0 z-[32] bg-black/40 sm:hidden"
+              onClick={() => setSidebarCollapsed(true)}
+              aria-label="Close views menu"
+            />
+            <aside
+              className={`flex-shrink-0 flex flex-col min-h-0 overflow-hidden w-[min(17.5rem,calc(100vw-1.5rem))] sm:w-56 max-sm:fixed max-sm:left-0 max-sm:top-14 max-sm:bottom-0 max-sm:z-[33] max-sm:pt-2 max-sm:pb-[max(0.75rem,env(safe-area-inset-bottom))] max-sm:pl-[max(0.5rem,env(safe-area-inset-left))] max-sm:shadow-2xl transition-[width] duration-200 ease-out`}
+            >
+              <div className={`flex-1 flex flex-col min-h-0 h-full overflow-hidden rounded-xl border p-3 max-sm:h-full max-sm:min-h-0 ${cardClass}`}>
+                <div className="flex items-center gap-2 flex-shrink-0 justify-between mb-3 min-h-[2.5rem]">
+                  <span className={`text-[10px] font-bold uppercase tracking-wider ${textSecondary} truncate`}>Views</span>
+                  <button
+                    type="button"
+                    onClick={() => setSidebarCollapsed(true)}
+                    className={`flex items-center justify-center shrink-0 w-9 h-9 sm:w-10 sm:h-10 rounded-lg border border-[#C2D642]/40 bg-[#C2D642]/10 text-[#C2D642] hover:bg-[#C2D642]/20 ${isDark ? 'border-[#C2D642]/35' : ''}`}
+                    aria-label="Close views sidebar"
+                    title="Close panel"
+                  >
+                    <X className="w-5 h-5" strokeWidth={2.25} />
+                  </button>
+                </div>
                 <div className="flex-1 min-h-0 overflow-y-auto">
                   {navItem('all', 'All Tasks', <LayoutList className="w-4 h-4" />, badgeAll)}
                   {navItem('assigned-to', 'Assigned to Me', <Inbox className="w-4 h-4" />, badgeToMe)}
@@ -925,10 +944,10 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
                   {navItem('calendar', 'Calendar', <Calendar className="w-4 h-4" />)}
                   {navItem('ai', 'AI Assistant', <Sparkles className="w-4 h-4" />)}
                 </div>
-              </>
-            )}
-          </div>
-        </aside>
+              </div>
+            </aside>
+          </>
+        )}
 
         {/* Main content */}
         <div className="flex-1 min-w-0">
