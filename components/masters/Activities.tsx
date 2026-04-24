@@ -12,7 +12,7 @@ import {
   buildActivitiesWorkbook,
   collectUnitLabelsFromMasters,
   formatActivitySheetDate,
-  formatActivityDateMonthYear,
+  formatActivityDateDdMmYyyy,
 } from '@/lib/exportActivitiesXlsx';
 import { resolveActivityUnitName, resolveActivityUnitId } from '@/lib/activityUnitResolve';
 import {
@@ -805,12 +805,12 @@ const Activities: React.FC<ActivitiesProps> = ({ theme }) => {
                     <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary} ${!isHeading ? 'text-xs' : ''}`}>
                       {(row.type || '').toLowerCase() === 'heading'
                         ? ''
-                        : formatActivityDateMonthYear(row.startDate || row.start_date)}
+                        : formatActivityDateDdMmYyyy(row.startDate || row.start_date)}
                     </td>
                     <td className={`px-4 py-4 text-sm font-bold align-middle ${textPrimary} ${!isHeading ? 'text-xs' : ''}`}>
                       {(row.type || '').toLowerCase() === 'heading'
                         ? ''
-                        : formatActivityDateMonthYear(row.endDate || row.end_date)}
+                        : formatActivityDateDdMmYyyy(row.endDate || row.end_date)}
                     </td>
                     <td className="px-4 py-4 text-right align-middle">
                       <div className="flex items-center justify-end gap-2">
