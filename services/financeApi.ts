@@ -7,14 +7,16 @@ import {
   financeSummary,
   financeTimeseries,
   financeBookTransaction,
-  financePatchTransaction,
   financeGetTransaction,
+  financeCreatePayment,
   distinctPartiesFromRows,
   distinctProjectsFromRows,
   summaryTrendsFromTimeseries,
   expenseDistributionFromSummary,
   financeErrorMessage,
   type FinanceTransactionRow,
+  type FinancePaymentMethod,
+  type FinanceCreatePaymentPayload,
 } from './financeHttpApi';
 import {
   FINANCE_DEFAULT_ITEM,
@@ -27,6 +29,20 @@ function num(v: unknown): number {
   if (v == null || v === '') return 0;
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
+}
+
+/** Maps AI Finance UI payment labels to POST /finance/transactions/.../payments `payment_method`. */
+export function mapUiPaymentModeToApi(mode: string): FinancePaymentMethod {
+  const k = mode.trim().toLowerCase();
+  const map: Record<string, FinancePaymentMethod> = {
+    cash: 'cash',
+    upi: 'upi',
+    'bank transfer': 'bank_transfer',
+    cheque: 'cheque',
+    'credit card': 'credit_card',
+    other: 'other',
+  };
+  return map[k] ?? 'other';
 }
 
 export interface DashboardStats {
@@ -289,31 +305,43 @@ export const financeAPI = {
     date: string;
     mode: string;
     reference?: string;
+    receipt_azure_path?: string | null;
+    gateway?: Pick<
+      FinanceCreatePaymentPayload,
+      'gateway_provider' | 'gateway_order_id' | 'gateway_payment_id' | 'gateway_status'
+    >;
   }): Promise<void> => {
     let row: FinanceTransactionRow;
     try {
       row = await financeGetTransaction(payload.transactionId);
     } catch {
-      throw new Error('Could not load transaction to update payment');
+      throw new Error('Could not load transaction to record payment');
     }
-    const currentPaid = num(row.paid_amount);
-    const total = num(row.total_amount);
-    const nextPaid = Math.min(total, currentPaid + payload.amount);
-    let nextStatus: string | undefined;
-    if (nextPaid >= total) nextStatus = 'paid';
-    else if (nextPaid > 0) nextStatus = 'partial';
+    const txnRef =
+      row.uuid != null && String(row.uuid).trim() !== ''
+        ? String(row.uuid)
+        : String(row.id ?? payload.transactionId);
 
-    const remarkNote = [payload.reference, payload.mode, payload.date].filter(Boolean).join(' · ');
-    const prevRemarks = row.remarks_narration?.trim() ?? '';
-    const remarks_narration = prevRemarks
-      ? `${prevRemarks}\n[Paid +${payload.amount} ${remarkNote}]`
-      : `[Paid +${payload.amount} ${remarkNote}]`;
+    const body: FinanceCreatePaymentPayload = {
+      amount: payload.amount,
+      payment_date: payload.date.slice(0, 10),
+      payment_method: mapUiPaymentModeToApi(payload.mode),
+      reference_remarks: payload.reference?.trim() ? payload.reference.trim() : null,
+      receipt_azure_path: payload.receipt_azure_path ?? null,
+    };
+    const g = payload.gateway;
+    if (g && (g.gateway_provider || g.gateway_order_id || g.gateway_payment_id || g.gateway_status)) {
+      body.gateway_provider = g.gateway_provider ?? null;
+      body.gateway_order_id = g.gateway_order_id ?? null;
+      body.gateway_payment_id = g.gateway_payment_id ?? null;
+      body.gateway_status = g.gateway_status ?? null;
+    }
 
-    await financePatchTransaction(payload.transactionId, {
-      paid_amount: nextPaid,
-      ...(nextStatus ? { status: nextStatus } : {}),
-      remarks_narration,
-    });
+    try {
+      await financeCreatePayment(txnRef, body);
+    } catch (e) {
+      throw new Error(financeErrorMessage(e));
+    }
   },
 
   createTransaction: async (payload: Partial<Transaction>): Promise<Transaction> => {

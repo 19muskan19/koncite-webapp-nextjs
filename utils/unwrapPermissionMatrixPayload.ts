@@ -12,6 +12,14 @@ export function coercePermissionActions(value: unknown): string[] {
     return [value.trim()];
   }
   if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const o = value as Record<string, unknown>;
+    /** Laravel may send { view: 1, add: 1, edit: 1, delete: 1 } or { view: true, ... } */
+    const asFlags = Object.entries(o).filter(
+      ([, v]) => v === true || v === 1 || v === '1' || v === 'true'
+    );
+    if (asFlags.length > 0) {
+      return asFlags.map(([k]) => String(k).trim()).filter((s) => s.length > 0);
+    }
     return Object.values(value)
       .map((x) => String(x).trim())
       .filter((s) => s.length > 0);
@@ -52,7 +60,8 @@ export function unwrapPermissionMatrixPayload(data: unknown): {
       d.user_permissions != null ||
       d.userPermissions != null ||
       d.normalized_permissions != null ||
-      d.normalizedPermissions != null;
+      d.normalizedPermissions != null ||
+      d.permissions != null;
 
     if (hasMenus || hasPermPayload) {
       const menusTree = d.menus_tree ?? d.menusTree ?? (Array.isArray(d.menus) ? d.menus : []);
@@ -62,7 +71,8 @@ export function unwrapPermissionMatrixPayload(data: unknown): {
         d.user_permissions,
         d.userPermissions,
         d.normalized_permissions,
-        d.normalizedPermissions
+        d.normalizedPermissions,
+        d.permissions
       );
       return { menusTree, permissionsByMenu };
     }

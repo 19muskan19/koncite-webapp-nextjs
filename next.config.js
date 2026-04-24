@@ -2,6 +2,8 @@
 const nextConfig = {
   reactStrictMode: true,
   eslint: { ignoreDuringBuilds: true },
+  /** Avoid webpack bundling issues with the OpenAI SDK in server/API route chunks. */
+  serverExternalPackages: ['openai'],
   images: {
     domains: ['ui-avatars.com', 'picsum.photos', 'staging.koncite.com'],
   },

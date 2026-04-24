@@ -10,13 +10,15 @@ import {
   createSession,
   getSession,
   sendMessage,
-  renameSession,
   extractReplyFromResponse,
   getSessionIdFromResponse,
-  getDefaultDprSessionName,
   AGENT_DOC_MGMT,
   type AiSession,
 } from '@/services/dmsAiService';
+import { sessionSidebarLabel } from '@/lib/chat/sessionDisplayLabel';
+import { runSessionMetaIfNeeded, toMetaMessages, shouldApplySessionRenameTitle } from '@/lib/chat/sessionMetaClient';
+import SessionSummaryBanner from '@/components/chat/SessionSummaryBanner';
+import { getStoredSessionMetaTitle, setStoredSessionMetaTitle, setStoredSessionSummary } from '@/lib/chat/sessionSummaryStorage';
 import { listAgentSessions, getAgentForWorkspace } from '@/services/aiAgentService';
 import {
   Bot,
@@ -29,6 +31,7 @@ import {
   Square,
   Pencil,
   ChevronDown,
+  Loader2,
 } from 'lucide-react';
 
 interface Message {
@@ -64,7 +67,7 @@ function getUserInitial(user: { name?: string; email?: string } | null): string 
 }
 
 const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
-  const toast = useToast();
+  const { showError, showSuccess } = useToast();
   const router = useRouter();
   const pathname = usePathname();
   const { user } = useUser();
@@ -93,13 +96,20 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
   const [recordingTime, setRecordingTime] = useState<number>(0);
   const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [aiState, setAiState] = useState<'thinking' | 'ready' | 'error'>('ready');
+  /** True only while waiting for the assistant reply after a user send (inline Thinking row in thread; visible on mobile). */
+  const [awaitingAssistantReply, setAwaitingAssistantReply] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<Message[]>(messages);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
   
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'bg-[#2d2d2d] border-[#404040]' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
@@ -155,7 +165,8 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
       });
       const mapped = list.map((s: AiSession & { chat_history?: unknown[] }) => {
         const id = String(s.session_id ?? s.id ?? '');
-        const preview = (s.name as string) || 'New session';
+        const storedTitle = getStoredSessionMetaTitle(id, 'ai');
+        const preview = (storedTitle && storedTitle.trim()) || String(s.name ?? '').trim();
         const time = formatSessionTime(s.created_at as string) || '--';
         const rawMessages = s.messages ?? s.chat_history ?? [];
         const msgs: Message[] = Array.isArray(rawMessages)
@@ -196,12 +207,12 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
         ?? (err as { message?: string })?.message ?? 'Failed to load sessions';
-      toast.showError(msg);
+      showError(msg);
       setSessions([]);
       setCurrentSessionId('');
       setMessages([]);
     }
-  }, [toast, selectedAgent]);
+  }, [showError, selectedAgent]);
 
   useEffect(() => {
     setCurrentSessionId('');
@@ -220,16 +231,11 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
     }
   }, [messages, currentSessionId]);
 
-  const getDefaultSessionName = () => {
-    if (selectedAgent === 'inventory') return 'Inventory Chat';
-    return getDefaultDprSessionName();
-  };
-
   const handleNewSession = async () => {
     setAiState('thinking');
     try {
       const agent = getAgentForWorkspace(selectedAgent === 'dpr' ? 'DPR' : 'Inventory');
-      const res = await createSession(getDefaultSessionName(), agent);
+      const res = await createSession(undefined, agent);
       const sessionId = getSessionIdFromResponse(res);
       if (!sessionId) {
         throw new Error('Could not create session');
@@ -237,7 +243,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
       const currentTime = formatSessionTime() || new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
       const newSession = {
         id: sessionId,
-        preview: (res as { name?: string }).name ?? getDefaultSessionName(),
+        preview: String((res as { name?: string }).name ?? '').trim(),
         time: currentTime,
         messages: [],
       };
@@ -246,11 +252,11 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
       setMessages([]);
       setInputMessage('');
       setAttachedFiles([]);
-      toast.showSuccess('New session created');
+      showSuccess('New session created');
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
         ?? (err as { message?: string })?.message ?? 'Failed to create session';
-      toast.showError(msg);
+      showError(msg);
     } finally {
       setAiState('ready');
     }
@@ -264,23 +270,6 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
     return parseSessionMessages(sess, sessionId);
   }, []);
 
-  const handleRenameSession = async (e: React.MouseEvent, sessionId: string, currentName: string) => {
-    e.stopPropagation();
-    const newName = window.prompt('Rename session', currentName || 'New session');
-    if (newName === null || newName.trim() === '' || newName.trim() === currentName) return;
-    try {
-      await renameSession(sessionId, newName.trim());
-      setSessions(prev =>
-        prev.map(s => (s.id === sessionId ? { ...s, preview: newName.trim() } : s))
-      );
-      toast.showSuccess('Session renamed');
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
-        ?? (err as { message?: string })?.message ?? 'Failed to rename session';
-      toast.showError(msg);
-    }
-  };
-
   const handleSessionClick = async (sessionId: string) => {
     setCurrentSessionId(sessionId);
     setAiState('thinking');
@@ -293,7 +282,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
         ?? (err as { message?: string })?.message ?? 'Failed to load chat history';
-      toast.showError(msg);
+      showError(msg);
       setMessages([]);
     } finally {
       setAiState('ready');
@@ -310,7 +299,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, awaitingAssistantReply]);
 
   // Auto-scroll when AI response arrives (aiState goes from thinking to ready)
   useEffect(() => {
@@ -345,22 +334,29 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
     if (!optionContent && filesToInclude === undefined) setAttachedFiles([]);
 
     setAiState('thinking');
+    setAwaitingAssistantReply(true);
 
     let sessionId = currentSessionId;
     const agent = getAgentForWorkspace(selectedAgent === 'dpr' ? 'DPR' : 'Inventory');
     if (!sessionId || !sessions.some(s => s.id === sessionId)) {
       try {
-        const res = await createSession(getDefaultSessionName(), agent);
+        const res = await createSession(undefined, agent);
         sessionId = getSessionIdFromResponse(res);
         if (!sessionId) throw new Error('No session ID');
         setCurrentSessionId(sessionId);
-        const newSession = { id: sessionId, preview: (res as { name?: string }).name ?? getDefaultSessionName(), time: currentTime, messages: [] };
+        const newSession = {
+          id: sessionId,
+          preview: String((res as { name?: string }).name ?? '').trim(),
+          time: currentTime,
+          messages: [],
+        };
         setSessions(prev => [newSession, ...prev]);
       } catch (err: unknown) {
         const msg = (err as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
           ?? (err as { message?: string })?.message ?? 'Failed to create session';
-        toast.showError(msg);
+        showError(msg);
         setAiState('ready');
+        setAwaitingAssistantReply(false);
         return;
       }
     }
@@ -379,14 +375,36 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
         timestamp: formatSessionTime(),
       };
       setMessages(prev => [...prev, aiMsg]);
-      const previewText = messageContent || (hasFiles ? (filesToSend.some(f => f.name.includes('voice-recording')) ? 'Voice message' : `${filesToSend.length} file(s) attached`) : '');
+      // Do not set sidebar preview from the last user message — that overwrites real session names.
+      // Preview updates from server rename after session-meta, or from initial load / new session.
       setSessions(prev =>
-        prev.map(s => (s.id === sessionId ? { ...s, preview: previewText.slice(0, 20) + (previewText.length > 20 ? '...' : ''), time: currentTime } : s))
+        prev.map((s) => (s.id === sessionId ? { ...s, time: currentTime } : s))
       );
+
+      const sidForMeta = sessionId;
+      setTimeout(() => {
+        const lines = messagesRef.current.filter((m) => m.role === 'user' || m.role === 'assistant');
+        const uCount = lines.filter((m) => m.role === 'user').length;
+        if (!sidForMeta) return;
+        runSessionMetaIfNeeded({
+          sessionId: sidForMeta,
+          userMessageCount: uCount,
+          messages: toMetaMessages(lines.map((m) => ({ role: m.role, content: m.content }))),
+          apply: async (meta) => {
+            if (shouldApplySessionRenameTitle(meta.title)) {
+              setSessions((p) => p.map((s) => (s.id === sidForMeta ? { ...s, preview: meta.title } : s)));
+              setStoredSessionMetaTitle(sidForMeta, meta.title, 'ai');
+            }
+            if (meta.summary) {
+              setStoredSessionSummary(sidForMeta, meta.summary, 'ai');
+            }
+          },
+        });
+      }, 0);
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
         ?? (err as { message?: string })?.message ?? 'Failed to send message';
-      toast.showError(msg);
+      showError(msg);
       const errorMsg: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
@@ -395,6 +413,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
       };
       setMessages(prev => [...prev, errorMsg]);
     } finally {
+      setAwaitingAssistantReply(false);
       setAiState('ready');
     }
   };
@@ -472,7 +491,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
       }, 1000);
     } catch (error) {
       console.error('Error accessing microphone:', error);
-      toast.showError('Unable to access microphone. Please check your permissions.');
+      showError('Unable to access microphone. Please check your permissions.');
     }
   };
 
@@ -590,18 +609,10 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
                 } border`}
               >
                 <div className="flex items-center justify-between gap-1.5">
-                  <p className={`text-xs font-bold flex-1 min-w-0 truncate ${session.id === currentSessionId ? 'text-[#C2D642]' : textPrimary}`}>{session.preview}</p>
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    <button
-                      onClick={(e) => handleRenameSession(e, session.id, session.preview)}
-                      className={`p-1 rounded hover:opacity-80 transition-opacity min-w-[28px] min-h-[28px] flex items-center justify-center ${textSecondary} hover:text-[#C2D642] touch-manipulation`}
-                      title="Rename session"
-                      aria-label="Rename session"
-                    >
-                      <Pencil className="w-2.5 h-2.5" />
-                    </button>
-                    <span className={`text-[9px] font-bold ${textSecondary}`}>{session.time}</span>
-                  </div>
+                  <p className={`text-xs font-bold flex-1 min-w-0 truncate ${session.id === currentSessionId ? 'text-[#C2D642]' : textPrimary}`}>
+                    {sessionSidebarLabel(session.preview, session.id)}
+                  </p>
+                  <span className={`text-[9px] font-bold flex-shrink-0 ${textSecondary}`}>{session.time}</span>
                 </div>
               </div>
             ))}
@@ -670,6 +681,13 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
           </div> */}
         </div>
 
+        <SessionSummaryBanner
+          sessionId={currentSessionId || null}
+          kind="ai"
+          isDark={isDark}
+          className="mx-2 sm:mx-3 md:mx-4 mt-2 shrink-0"
+        />
+
         {/* Messages Area */}
         <div className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-2 sm:p-3 md:p-4 lg:p-6 pb-6 sm:pb-8 md:pb-10 lg:pb-6 space-y-1.5 sm:space-y-2 custom-scrollbar ${isDark ? 'bg-[#1e1e1e]' : 'bg-slate-50'}`}>
           {messages.length === 0 && (
@@ -725,6 +743,25 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
               )}
             </div>
           ))}
+          {awaitingAssistantReply && (
+            <div className="flex gap-2 md:gap-3 justify-start">
+              <div className="w-7 h-7 md:w-8 md:h-8 bg-[#C2D642] rounded-lg flex items-center justify-center flex-shrink-0" aria-hidden>
+                <Bot className="w-4 h-4 md:w-5 md:h-5 text-white" />
+              </div>
+              <div className="max-w-[85%] xs:max-w-[80%] sm:max-w-[65%] md:max-w-[60%] min-w-0">
+                <div
+                  className={`inline-flex items-center gap-2 rounded-lg sm:rounded-xl px-3 py-2.5 sm:px-3.5 ${
+                    isDark ? 'bg-[#2d2d2d] border border-slate-600/50 text-slate-200' : 'bg-white text-slate-600 border border-slate-200 shadow-sm'
+                  }`}
+                  role="status"
+                  aria-live="polite"
+                >
+                  <Loader2 className="w-4 h-4 flex-shrink-0 animate-spin text-[#C2D642]" />
+                  <span className="text-xs sm:text-sm font-medium">Thinking…</span>
+                </div>
+              </div>
+            </div>
+          )}
           <div ref={messagesEndRef} />
         </div>
 

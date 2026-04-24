@@ -227,15 +227,6 @@ const AppContent: React.FC = () => {
       ] 
     },
     { 
-      id: ViewType.PR_MANAGEMENT, 
-      label: 'PR MANAGEMENT', 
-      icon: ClipboardCheck, 
-      children: [
-        { label: 'PR Approval Manage', id: ViewType.PR_APPROVAL_MANAGE },
-        { label: 'PR', id: ViewType.PR }
-      ] 
-    },
-    { 
       id: ViewType.WORK_PROGRESS_REPORTS, 
       label: 'WORK PROGRESS REPORTS', 
       icon: BarChart3, 
@@ -397,7 +388,6 @@ const AppContent: React.FC = () => {
               ViewType.MANAGE_TEAMS,
               ViewType.USER_ROLES_PERMISSIONS,
               ViewType.PROJECT_PERMISSIONS,
-              ViewType.PR_MANAGEMENT,
               ViewType.PR_APPROVAL_MANAGE,
               ViewType.PR,
               ViewType.REPORTS,

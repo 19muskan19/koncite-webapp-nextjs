@@ -7,6 +7,19 @@ interface ErrorResponseData {
   [key: string]: any;
 }
 
+/** AbortController or legacy cancel — not an application error; do not log as failure. */
+export function isRequestCanceled(error: unknown): boolean {
+  if (typeof (axios as any).isCancel === 'function' && (axios as any).isCancel(error)) {
+    return true;
+  }
+  const e = error as { code?: string; name?: string; message?: string };
+  if (e?.code === 'ERR_CANCELED' || e?.name === 'CanceledError' || e?.name === 'AbortError') {
+    return true;
+  }
+  const m = String(e?.message ?? '').toLowerCase();
+  return m === 'canceled' || m === 'cancelled';
+}
+
 // API Base URL Configuration
 // In browser: use /api-proxy to avoid CORS (Next.js rewrites proxy to backend). Server-side: use backend URL directly.
 const isBrowser = typeof window !== 'undefined';
@@ -91,6 +104,9 @@ apiClient.interceptors.request.use(
 apiClient.interceptors.response.use(
   (response) => response,
   (error: AxiosError) => {
+    if (isRequestCanceled(error)) {
+      return Promise.reject(error);
+    }
     if (error.response) {
       // Handle different error status codes
       switch (error.response.status) {

@@ -71,6 +71,9 @@ import { useUser } from '@/contexts/UserContext';
 
 type TabType = 'dashboard' | 'punch' | 'staff' | 'contractor' | 'pay';
 
+/** Face enrollment / re-enroll: exactly this many photos (no more, no fewer for submit). */
+const ENROLL_FACE_MAX_PHOTOS = 2;
+
 /** Labour row from Masters (for contractor rate picker) */
 interface RateLabourPick {
   id: string;
@@ -917,7 +920,12 @@ interface PayApiUnpaidRow {
   labourCountUnit: 'day' | 'hour';
   otHours: number;
   overtimeQtyUnit: 'day' | 'hour';
+  /** Remaining due (e.g. API `balance_amount`); used for pay selection and pro‑rata split. */
   amount: number;
+  /** Full entry amount before payments (e.g. `total_amount`); for display. */
+  entryTotal: number | null;
+  /** Already paid against the entry; for display. Inferred as total − balance when needed. */
+  paidAmount: number | null;
   vendorsId: number | string | null;
 }
 
@@ -940,9 +948,31 @@ function parsePayUnpaidEntry(raw: Record<string, unknown>): PayApiUnpaidRow | nu
   const vid = raw.vendors_id ?? raw.vendor_id ?? (raw.vendor as { id?: unknown } | undefined)?.id ?? null;
   const vendorsId = vid != null && vid !== '' ? (typeof vid === 'number' ? vid : String(vid)) : null;
 
-  let amount = Number(
-    raw.remaining_amount ?? raw.amount_due ?? raw.outstanding ?? raw.unpaid_amount ?? raw.total_amount ?? 0
-  );
+  const toNum = (v: unknown): number | null => {
+    if (v == null || v === '') return null;
+    const x = typeof v === 'number' ? v : Number(v);
+    return Number.isFinite(x) ? x : null;
+  };
+
+  let amount = 0;
+  {
+    const bal = toNum(raw.balance_amount);
+    const rem = toNum(raw.remaining_amount ?? raw.amount_due ?? raw.outstanding ?? raw.unpaid_amount);
+    const totalAmt = toNum(raw.total_amount);
+    const paidAmt = toNum(raw.paid_amount);
+    if (bal != null) {
+      amount = bal;
+    } else if (rem != null) {
+      amount = rem;
+    } else if (totalAmt != null) {
+      const p = paidAmt ?? 0;
+      amount = totalAmt - (Number.isFinite(p) && p > 0 ? p : 0);
+      if (amount < 0) amount = 0;
+    } else {
+      amount = 0;
+    }
+  }
+
   const cats =
     (raw.labour_categories as unknown[]) ?? (raw.labourCategories as unknown[]) ?? (raw.categories as unknown[]) ?? [];
   let category = '—';
@@ -959,7 +989,9 @@ function parsePayUnpaidEntry(raw: Record<string, unknown>): PayApiUnpaidRow | nu
         (typeof line0.labour_name === 'string' ? line0.labour_name : null) ??
         '—'
     );
-    const hc = Number(line0.head_count ?? line0.workers_count ?? line0.manpower_count ?? 0);
+    const hc = Number(
+      line0.head_count ?? line0.workers_count ?? line0.manpower_count ?? line0.day_labour_count ?? 0
+    );
     if (Number.isFinite(hc)) headCount = hc;
     const qtyU = String(line0.day_labour_count_unit ?? line0.day_unit ?? 'day').toLowerCase();
     labourCountUnit = qtyU === 'hour' || qtyU === 'hr' ? 'hour' : 'day';
@@ -971,12 +1003,32 @@ function parsePayUnpaidEntry(raw: Record<string, unknown>): PayApiUnpaidRow | nu
     if (!Number.isFinite(amount) || amount === 0) {
       amount = cats.reduce<number>((s, li) => {
         const line = li as Record<string, unknown>;
-        const a = Number(line.line_total ?? line.amount ?? line.total ?? 0);
+        const a = Number(
+          line.line_total_amount ?? line.line_total ?? line.amount ?? line.total ?? 0
+        );
         return s + (Number.isFinite(a) ? a : 0);
       }, 0);
     }
   }
   if (!Number.isFinite(amount)) amount = 0;
+
+  let entryTotal: number | null = toNum(raw.total_amount);
+  if (entryTotal == null && Array.isArray(cats) && cats.length > 0) {
+    const sum = cats.reduce<number>((s, li) => {
+      const line = li as Record<string, unknown>;
+      const a = Number(
+        line.line_total_amount ?? line.line_total ?? line.amount ?? line.total ?? 0
+      );
+      return s + (Number.isFinite(a) ? a : 0);
+    }, 0);
+    if (sum > 0) entryTotal = sum;
+  }
+  if (entryTotal == null) entryTotal = amount;
+
+  let paidAmount: number | null = toNum(raw.paid_amount);
+  if (paidAmount == null && entryTotal != null && amount != null) {
+    paidAmount = Math.max(0, entryTotal - amount);
+  }
 
   return {
     uuid,
@@ -989,6 +1041,8 @@ function parsePayUnpaidEntry(raw: Record<string, unknown>): PayApiUnpaidRow | nu
     otHours,
     overtimeQtyUnit,
     amount,
+    entryTotal,
+    paidAmount,
     vendorsId,
   };
 }
@@ -1075,6 +1129,21 @@ function unwrapLabourPaymentDetail(payload: unknown): Record<string, unknown> | 
   return p;
 }
 
+function formatItemLabourNames(row: Record<string, unknown>): string {
+  const names = row.labour_names;
+  if (Array.isArray(names) && names.length > 0) {
+    const joined = names
+      .map((n) => (n != null ? String(n).trim() : ''))
+      .filter(Boolean)
+      .join(', ');
+    if (joined) return joined;
+  }
+  if (row.labour_name != null && String(row.labour_name).trim() !== '') {
+    return String(row.labour_name);
+  }
+  return '—';
+}
+
 function LabourPaymentDetailContent({
   payload,
   textPrimary,
@@ -1110,11 +1179,7 @@ function LabourPaymentDetailContent({
           ? 'bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30'
           : `${isDark ? 'bg-slate-700/50' : 'bg-slate-100'} ${textSecondary} border-inherit`;
 
-  const hasCashfree =
-    d.cashfree_transfer_id != null ||
-    d.cashfree_beneficiary_id != null ||
-    d.cashfree_transfer_status != null ||
-    d.cashfree_status_code != null;
+  const hasCashfree = d.cashfree_transfer_status != null || d.cashfree_status_code != null;
 
   const subtleCard = isDark ? 'bg-slate-800/60' : 'bg-slate-50';
 
@@ -1139,16 +1204,6 @@ function LabourPaymentDetailContent({
         </div>
         <dl className="space-y-0 divide-y divide-inherit/80">
           <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 py-2.5 first:pt-0">
-            <dt className={`text-xs font-bold uppercase tracking-wide shrink-0 sm:w-36 ${textSecondary}`}>Payment UUID</dt>
-            <dd className={`text-xs font-mono break-all ${textPrimary}`}>{d.uuid != null ? String(d.uuid) : '—'}</dd>
-          </div>
-          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 py-2.5">
-            <dt className={`text-xs font-bold uppercase tracking-wide shrink-0 sm:w-36 ${textSecondary}`}>Idempotency key</dt>
-            <dd className={`text-xs font-mono break-all ${textPrimary}`}>
-              {d.idempotency_key != null ? String(d.idempotency_key) : '—'}
-            </dd>
-          </div>
-          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 py-2.5">
             <dt className={`text-xs font-bold uppercase tracking-wide shrink-0 sm:w-36 ${textSecondary}`}>Mode</dt>
             <dd className={`text-sm ${textPrimary}`}>
               {d.payment_mode != null ? String(d.payment_mode) : '—'}
@@ -1183,27 +1238,12 @@ function LabourPaymentDetailContent({
       <div className={`rounded-xl border ${borderClass} p-4 ${subtleCard}`}>
         <p className={`text-xs font-bold uppercase tracking-wide ${textSecondary} mb-2`}>Contractor</p>
         <p className={`text-base font-bold ${textPrimary}`}>{contractorName}</p>
-        {contractor?.uuid != null ? (
-          <p className={`text-xs font-mono mt-1 break-all ${textSecondary}`}>{String(contractor.uuid)}</p>
-        ) : null}
       </div>
 
       {hasCashfree ? (
         <div className={`rounded-xl border ${borderClass} p-4 ${subtleCard}`}>
           <p className={`text-xs font-bold uppercase tracking-wide ${textSecondary} mb-3`}>Cashfree (if applicable)</p>
           <dl className="space-y-2 text-sm">
-            {d.cashfree_transfer_id != null ? (
-              <div className="flex justify-between gap-2">
-                <span className={textSecondary}>Transfer ID</span>
-                <span className={`font-mono text-xs break-all ${textPrimary}`}>{String(d.cashfree_transfer_id)}</span>
-              </div>
-            ) : null}
-            {d.cashfree_beneficiary_id != null ? (
-              <div className="flex justify-between gap-2">
-                <span className={textSecondary}>Beneficiary</span>
-                <span className={`font-mono text-xs break-all ${textPrimary}`}>{String(d.cashfree_beneficiary_id)}</span>
-              </div>
-            ) : null}
             {d.cashfree_transfer_status != null ? (
               <div className="flex justify-between gap-2">
                 <span className={textSecondary}>Transfer status</span>
@@ -1226,11 +1266,12 @@ function LabourPaymentDetailContent({
           <p className={`text-sm ${textSecondary}`}>No line items.</p>
         ) : (
           <div className={`overflow-x-auto rounded-xl border ${borderClass}`}>
-            <table className="w-full min-w-[640px] text-sm">
+            <table className="w-full min-w-[720px] text-sm">
               <thead className={isDark ? 'bg-slate-800/80' : 'bg-slate-100'}>
                 <tr className={`border-b ${borderClass}`}>
                   <th className={`text-left py-2.5 px-3 font-bold ${textSecondary}`}>Work date</th>
                   <th className={`text-left py-2.5 px-3 font-bold ${textSecondary}`}>Project</th>
+                  <th className={`text-left py-2.5 px-3 font-bold ${textSecondary}`}>Labour</th>
                   <th className={`text-right py-2.5 px-3 font-bold ${textSecondary}`}>Entry total</th>
                   <th className={`text-right py-2.5 px-3 font-bold ${textSecondary}`}>Allocated</th>
                 </tr>
@@ -1246,17 +1287,23 @@ function LabourPaymentDetailContent({
                         : row.project_name != null
                           ? String(row.project_name)
                           : '—';
-                  const wid = row.labour_entry_uuid != null ? String(row.labour_entry_uuid) : '';
+                  const labourLabel = formatItemLabourNames(row);
+                  const rowKey =
+                    row.labour_entry_uuid != null
+                      ? String(row.labour_entry_uuid)
+                      : row.id != null
+                        ? String(row.id)
+                        : `item-${i}`;
                   return (
-                    <tr key={wid || `item-${i}`} className={`border-b ${borderClass} last:border-0`}>
+                    <tr key={rowKey} className={`border-b ${borderClass} last:border-0`}>
                       <td className={`py-2.5 px-3 whitespace-nowrap ${textPrimary}`}>
                         {row.work_date != null ? String(row.work_date) : '—'}
                       </td>
                       <td className={`py-2.5 px-3 min-w-[140px] ${textPrimary}`}>
                         <span className="font-medium">{projectName}</span>
-                        {wid ? (
-                          <span className={`block text-[10px] font-mono mt-0.5 break-all ${textSecondary}`}>{wid}</span>
-                        ) : null}
+                      </td>
+                      <td className={`py-2.5 px-3 min-w-[120px] ${textPrimary}`}>
+                        <span className="font-medium">{labourLabel}</span>
                       </td>
                       <td className={`py-2.5 px-3 text-right tabular-nums font-medium ${textPrimary}`}>
                         {formatInrLabourPayment(row.entry_total_amount)}
@@ -1399,6 +1446,47 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   const staffCameraRef = useRef<HTMLVideoElement>(null);
   const staffStreamRef = useRef<MediaStream | null>(null);
   const staffFilterDropdownRef = useRef<HTMLDivElement>(null);
+  const [addProfileProjectMenuOpen, setAddProfileProjectMenuOpen] = useState(false);
+  const [addProfileProjectSearch, setAddProfileProjectSearch] = useState('');
+  const addProfileProjectMenuRef = useRef<HTMLDivElement>(null);
+  const addProfileProjectSearchInputRef = useRef<HTMLInputElement>(null);
+
+  const addProfileFilteredProjects = useMemo(() => {
+    const q = addProfileProjectSearch.trim().toLowerCase();
+    if (!q) return projects;
+    return projects.filter((p) => String(p.name).toLowerCase().includes(q));
+  }, [projects, addProfileProjectSearch]);
+
+  const addProfileProjectLabel = useMemo(() => {
+    if (!staffFormData.project_id.trim()) return '— Select project —';
+    return projects.find((p) => String(p.id) === String(staffFormData.project_id))?.name ?? '— Select project —';
+  }, [projects, staffFormData.project_id]);
+
+  useEffect(() => {
+    if (!showAddProfileModal) {
+      setAddProfileProjectMenuOpen(false);
+      setAddProfileProjectSearch('');
+    }
+  }, [showAddProfileModal]);
+
+  useEffect(() => {
+    if (!addProfileProjectMenuOpen) {
+      setAddProfileProjectSearch('');
+      return;
+    }
+    const t = window.setTimeout(() => addProfileProjectSearchInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [addProfileProjectMenuOpen]);
+
+  useEffect(() => {
+    if (!addProfileProjectMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = addProfileProjectMenuRef.current;
+      if (el && !el.contains(e.target as Node)) setAddProfileProjectMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [addProfileProjectMenuOpen]);
 
   // === CONTRACTOR TAB ===
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -1511,6 +1599,14 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   const [logFilterContractor, setLogFilterContractor] = useState<string>('');
   const [logFilterDate, setLogFilterDate] = useState<string>(new Date().toISOString().slice(0, 10));
   const [logShowAllDates, setLogShowAllDates] = useState(false);
+  const [localLogProjectMenuOpen, setLocalLogProjectMenuOpen] = useState(false);
+  const [localLogProjectSearch, setLocalLogProjectSearch] = useState('');
+  const localLogProjectMenuRef = useRef<HTMLDivElement>(null);
+  const localLogProjectSearchInputRef = useRef<HTMLInputElement>(null);
+  const [localLogContractorMenuOpen, setLocalLogContractorMenuOpen] = useState(false);
+  const [localLogContractorSearch, setLocalLogContractorSearch] = useState('');
+  const localLogContractorMenuRef = useRef<HTMLDivElement>(null);
+  const localLogContractorSearchInputRef = useRef<HTMLInputElement>(null);
 
   /** One grid row per labour line — matches spreadsheet-style logs (Project, Contractor, Category, Count, Unit, OT). */
   const serverLabourLogRows = useMemo(() => {
@@ -1635,6 +1731,14 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   const [dashboardProject, setDashboardProject] = useState<string>('All');
   const [payProject, setPayProject] = useState<string>('');
   const [payContractor, setPayContractor] = useState<string>('');
+  const [payProjectMenuOpen, setPayProjectMenuOpen] = useState(false);
+  const [payProjectSearch, setPayProjectSearch] = useState('');
+  const payProjectMenuRef = useRef<HTMLDivElement>(null);
+  const payProjectSearchInputRef = useRef<HTMLInputElement>(null);
+  const [payContractorMenuOpen, setPayContractorMenuOpen] = useState(false);
+  const [payContractorSearch, setPayContractorSearch] = useState('');
+  const payContractorMenuRef = useRef<HTMLDivElement>(null);
+  const payContractorSearchInputRef = useRef<HTMLInputElement>(null);
   const [payPeriodFilter, setPayPeriodFilter] = useState<'all' | 'weekly' | 'fortnight' | 'monthly'>('all');
   const [selectedPayEntryIds, setSelectedPayEntryIds] = useState<Set<string>>(new Set());
   /** Server labour entry UUIDs (Pay tab when logged in). */
@@ -1652,6 +1756,78 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   /** Regenerated when opening the payment modal and when the amount field changes (API manual payment idempotency). */
   const paymentIdempotencyKeyRef = useRef<string | null>(null);
   const [dataVersion, setDataVersion] = useState(0);
+
+  const localLogProjectOptions = useMemo(
+    () =>
+      [
+        ...new Set([
+          ...getContractorEntries().map((e) => e.projectName),
+          ...getWorkers().map((w) => w.projectName),
+          ...contractorProjects.map((p) => p.name),
+        ]),
+      ]
+        .filter((x): x is string => Boolean(x))
+        .sort((a, b) => a.localeCompare(b)),
+    [dataVersion, contractorProjects]
+  );
+
+  const localLogContractorOptions = useMemo(
+    () =>
+      [...new Set([...getContractorEntries().map((e) => e.contractorName), ...vendors.map((v) => v.name)])]
+        .filter((x): x is string => Boolean(x))
+        .sort((a, b) => a.localeCompare(b)),
+    [dataVersion, vendors]
+  );
+
+  const localLogFilteredProjectChoices = useMemo(() => {
+    const q = localLogProjectSearch.trim().toLowerCase();
+    if (!q) return localLogProjectOptions;
+    return localLogProjectOptions.filter((p) => p.toLowerCase().includes(q));
+  }, [localLogProjectOptions, localLogProjectSearch]);
+
+  const localLogFilteredContractorChoices = useMemo(() => {
+    const q = localLogContractorSearch.trim().toLowerCase();
+    if (!q) return localLogContractorOptions;
+    return localLogContractorOptions.filter((c) => c.toLowerCase().includes(q));
+  }, [localLogContractorOptions, localLogContractorSearch]);
+
+  useEffect(() => {
+    if (!localLogProjectMenuOpen) {
+      setLocalLogProjectSearch('');
+      return;
+    }
+    const t = window.setTimeout(() => localLogProjectSearchInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [localLogProjectMenuOpen]);
+
+  useEffect(() => {
+    if (!localLogProjectMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = localLogProjectMenuRef.current;
+      if (el && !el.contains(e.target as Node)) setLocalLogProjectMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [localLogProjectMenuOpen]);
+
+  useEffect(() => {
+    if (!localLogContractorMenuOpen) {
+      setLocalLogContractorSearch('');
+      return;
+    }
+    const t = window.setTimeout(() => localLogContractorSearchInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [localLogContractorMenuOpen]);
+
+  useEffect(() => {
+    if (!localLogContractorMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = localLogContractorMenuRef.current;
+      if (el && !el.contains(e.target as Node)) setLocalLogContractorMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [localLogContractorMenuOpen]);
 
   const [payUnpaidRows, setPayUnpaidRows] = useState<PayApiUnpaidRow[]>([]);
   const [payUnpaidLoading, setPayUnpaidLoading] = useState(false);
@@ -1692,6 +1868,74 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
     return Number.isFinite(n) ? n : v.id;
   }, [payContractor, vendors]);
 
+  const payProjectOptions = useMemo(
+    () =>
+      contractorProjects
+        .map((p) => p.name)
+        .filter((x): x is string => Boolean(x))
+        .sort((a, b) => a.localeCompare(b)),
+    [contractorProjects]
+  );
+
+  const payContractorOptions = useMemo(
+    () =>
+      vendors
+        .map((v) => v.name)
+        .filter((x): x is string => Boolean(x))
+        .sort((a, b) => a.localeCompare(b)),
+    [vendors]
+  );
+
+  const payFilteredProjectChoices = useMemo(() => {
+    const q = payProjectSearch.trim().toLowerCase();
+    if (!q) return payProjectOptions;
+    return payProjectOptions.filter((p) => p.toLowerCase().includes(q));
+  }, [payProjectOptions, payProjectSearch]);
+
+  const payFilteredContractorChoices = useMemo(() => {
+    const q = payContractorSearch.trim().toLowerCase();
+    if (!q) return payContractorOptions;
+    return payContractorOptions.filter((c) => c.toLowerCase().includes(q));
+  }, [payContractorOptions, payContractorSearch]);
+
+  useEffect(() => {
+    if (!payProjectMenuOpen) {
+      setPayProjectSearch('');
+      return;
+    }
+    const t = window.setTimeout(() => payProjectSearchInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [payProjectMenuOpen]);
+
+  useEffect(() => {
+    if (!payProjectMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = payProjectMenuRef.current;
+      if (el && !el.contains(e.target as Node)) setPayProjectMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [payProjectMenuOpen]);
+
+  useEffect(() => {
+    if (!payContractorMenuOpen) {
+      setPayContractorSearch('');
+      return;
+    }
+    const t = window.setTimeout(() => payContractorSearchInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [payContractorMenuOpen]);
+
+  useEffect(() => {
+    if (!payContractorMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = payContractorMenuRef.current;
+      if (el && !el.contains(e.target as Node)) setPayContractorMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [payContractorMenuOpen]);
+
   /** Dashboard: server attendance report */
   const [attReportFrom, setAttReportFrom] = useState(() => {
     const d = new Date();
@@ -1702,6 +1946,40 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   const [attReportProjectId, setAttReportProjectId] = useState('');
   const [attReportRows, setAttReportRows] = useState<any[]>([]);
   const [attReportLoading, setAttReportLoading] = useState(false);
+  const [attReportProjectMenuOpen, setAttReportProjectMenuOpen] = useState(false);
+  const [attReportProjectSearch, setAttReportProjectSearch] = useState('');
+  const attReportProjectMenuRef = useRef<HTMLDivElement>(null);
+  const attReportProjectSearchInputRef = useRef<HTMLInputElement>(null);
+
+  const attReportFilteredProjects = useMemo(() => {
+    const q = attReportProjectSearch.trim().toLowerCase();
+    if (!q) return contractorProjects;
+    return contractorProjects.filter((p) => String(p.name).toLowerCase().includes(q));
+  }, [contractorProjects, attReportProjectSearch]);
+
+  const attReportProjectLabel = useMemo(() => {
+    if (!attReportProjectId.trim()) return 'All';
+    return contractorProjects.find((p) => String(p.id) === String(attReportProjectId))?.name ?? 'All';
+  }, [contractorProjects, attReportProjectId]);
+
+  useEffect(() => {
+    if (!attReportProjectMenuOpen) {
+      setAttReportProjectSearch('');
+      return;
+    }
+    const t = window.setTimeout(() => attReportProjectSearchInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [attReportProjectMenuOpen]);
+
+  useEffect(() => {
+    if (!attReportProjectMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = attReportProjectMenuRef.current;
+      if (el && !el.contains(e.target as Node)) setAttReportProjectMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [attReportProjectMenuOpen]);
 
   // Reset staff page when search or filter changes
   useEffect(() => {
@@ -2546,6 +2824,11 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
   const staffTabFaceRows: FaceAttendeeRow[] = useMemo(() => filteredFaceAttendees, [filteredFaceAttendees]);
 
   const staffTableLoading = faceAttendeesLoading;
+  const staffTotalPages = Math.max(1, Math.ceil(staffTabFaceRows.length / PAGINATION_PAGE_SIZE));
+
+  useEffect(() => {
+    setStaffPage((p) => Math.min(p, staffTotalPages));
+  }, [staffTotalPages]);
 
   const handleAddProfileSubmit = async () => {
     const { name, project_id, designation, worker_type, profile_images, email, mobile } = staffFormData;
@@ -2624,8 +2907,8 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
       toast.showWarning('Re-enrollment is only available for your own account or to a super-admin/manager.');
       return;
     }
-    if (enrollImages.length < 2) {
-      toast.showWarning('Capture at least 2 live frames from the camera (varying angle/light).');
+    if (enrollImages.length !== ENROLL_FACE_MAX_PHOTOS) {
+      toast.showWarning(`Capture exactly ${ENROLL_FACE_MAX_PHOTOS} photos using the camera below.`);
       return;
     }
     setIsSubmittingEnroll(true);
@@ -3073,7 +3356,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   {labourEntryFormOptionsLoading && (
                     <div className={`flex items-center gap-2 text-sm ${textSecondary}`}>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      Loading form-options…
+                      Loading choices…
                     </div>
                   )}
                  
@@ -3426,7 +3709,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                       className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg font-bold bg-[#6B8E23] text-white hover:bg-[#5a7a1e] disabled:opacity-50"
                     >
                       {isSubmittingLabourEntry ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
-                      Submit (POST /labour-entries)
+                      Submit to server
                     </button>
                     {showAddLabourEntryModal && (
                       <button
@@ -3462,14 +3745,21 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
         </div>
       </div>
 
-      {/* Tabs */}
+      {/* Tabs — scroll horizontally on narrow widths so labels (e.g. Punch) are not truncated */}
       <div className={`rounded-xl border ${borderClass} overflow-hidden ${isDark ? 'bg-slate-800/30' : 'bg-slate-50'}`}>
-        <div className="flex flex-wrap sm:flex-nowrap border-b border-inherit">
+        <div
+          className="flex flex-nowrap overflow-x-auto overscroll-x-contain border-b border-inherit [scrollbar-width:thin]"
+          role="tablist"
+          aria-label="Workforce sections"
+        >
           {tabs.map((tab) => (
             <button
               key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex-1 min-w-0 flex items-center justify-center gap-2 sm:gap-3 px-3 sm:px-6 py-3 sm:py-4 text-sm font-bold transition-colors ${
+              className={`flex shrink-0 items-center justify-center gap-2 sm:gap-3 px-4 sm:px-6 py-3 sm:py-4 text-sm font-bold transition-colors ${
                 activeTab === tab.id
                   ? isDark
                     ? 'text-[#C2D642] bg-slate-700/50 border-b-2 border-[#C2D642]'
@@ -3477,8 +3767,8 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   : `${textSecondary} hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5`
               }`}
             >
-              <tab.icon className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
-              <span className="truncate">{tab.label}</span>
+              <tab.icon className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
+              <span className="whitespace-nowrap">{tab.label}</span>
             </button>
           ))}
         </div>
@@ -3509,20 +3799,118 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                       className={`px-3 py-2 rounded-lg border ${borderClass} ${textPrimary} text-sm ${isDark ? 'bg-slate-800' : 'bg-white'}`}
                     />
                   </div>
-                  <div className="min-w-[160px]">
-                    <label className={`block text-xs font-bold ${textSecondary} mb-1`}>Project (optional)</label>
-                    <select
-                      value={attReportProjectId}
-                      onChange={(e) => setAttReportProjectId(e.target.value)}
-                      className={`w-full px-3 py-2 rounded-lg border ${borderClass} ${textPrimary} text-sm ${isDark ? 'bg-slate-800' : 'bg-white'}`}
-                    >
-                      <option value="">All</option>
-                      {contractorProjects.map((p) => (
-                        <option key={String(p.id)} value={String(p.id)}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
+                  <div className="min-w-[160px] max-w-[min(100%,280px)]">
+                    <label htmlFor="att-report-project-button" className={`block text-xs font-bold ${textSecondary} mb-1`}>
+                      Project (optional)
+                    </label>
+                    <div className="relative" ref={attReportProjectMenuRef}>
+                      <button
+                        id="att-report-project-button"
+                        type="button"
+                        onClick={() => setAttReportProjectMenuOpen((o) => !o)}
+                        className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg border ${borderClass} ${textPrimary} text-sm ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                        aria-expanded={attReportProjectMenuOpen}
+                        aria-haspopup="listbox"
+                        aria-label="Filter attendance report by project"
+                      >
+                        <span className="truncate text-left">{attReportProjectLabel}</span>
+                        <ChevronDown
+                          className={`w-4 h-4 shrink-0 opacity-70 transition-transform ${attReportProjectMenuOpen ? 'rotate-180' : ''}`}
+                          aria-hidden
+                        />
+                      </button>
+                      {attReportProjectMenuOpen ? (
+                        <div
+                          role="listbox"
+                          aria-label="Projects"
+                          className={`absolute left-0 right-0 z-50 mt-1 rounded-lg border shadow-xl overflow-hidden flex flex-col ${
+                            isDark ? 'bg-slate-900 border-slate-600' : 'bg-white border-slate-200'
+                          }`}
+                        >
+                          <div
+                            className={`p-2 border-b shrink-0 ${isDark ? 'border-slate-600 bg-slate-900/95' : 'border-slate-200 bg-slate-50'}`}
+                          >
+                            <div className="relative">
+                              <Search
+                                className={`absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none ${textSecondary}`}
+                                aria-hidden
+                              />
+                              <input
+                                ref={attReportProjectSearchInputRef}
+                                type="search"
+                                autoComplete="off"
+                                placeholder="Search projects…"
+                                value={attReportProjectSearch}
+                                onChange={(e) => setAttReportProjectSearch(e.target.value)}
+                                onKeyDown={(e) => e.stopPropagation()}
+                                className={`w-full pl-9 pr-3 py-2 rounded-md border text-sm ${
+                                  isDark
+                                    ? 'bg-slate-800 border-slate-600 text-slate-100 placeholder-slate-500'
+                                    : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+                                }`}
+                                aria-label="Search project list"
+                              />
+                            </div>
+                          </div>
+                          <ul className="overflow-y-auto max-h-56 py-1">
+                            <li>
+                              <button
+                                type="button"
+                                role="option"
+                                aria-selected={attReportProjectId === ''}
+                                onClick={() => {
+                                  setAttReportProjectId('');
+                                  setAttReportProjectMenuOpen(false);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
+                                  attReportProjectId === ''
+                                    ? isDark
+                                      ? 'bg-[#C2D642]/20 text-[#C2D642]'
+                                      : 'bg-[#6B8E23]/15 text-[#6B8E23]'
+                                    : isDark
+                                      ? 'text-slate-200 hover:bg-slate-800'
+                                      : 'text-slate-800 hover:bg-slate-100'
+                                }`}
+                              >
+                                All
+                              </button>
+                            </li>
+                            {attReportFilteredProjects.map((p) => {
+                              const idStr = String(p.id);
+                              const selected = idStr === attReportProjectId;
+                              return (
+                                <li key={idStr}>
+                                  <button
+                                    type="button"
+                                    role="option"
+                                    aria-selected={selected}
+                                    onClick={() => {
+                                      setAttReportProjectId(idStr);
+                                      setAttReportProjectMenuOpen(false);
+                                    }}
+                                    className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors truncate ${
+                                      selected
+                                        ? isDark
+                                          ? 'bg-[#C2D642]/20 text-[#C2D642]'
+                                          : 'bg-[#6B8E23]/15 text-[#6B8E23]'
+                                        : isDark
+                                          ? 'text-slate-200 hover:bg-slate-800'
+                                          : 'text-slate-800 hover:bg-slate-100'
+                                    }`}
+                                    title={p.name}
+                                  >
+                                    {p.name}
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                          {attReportFilteredProjects.length === 0 && attReportProjectSearch.trim() ? (
+                            <p className={`px-3 py-2 text-sm border-t ${borderClass} ${textSecondary}`}>No matching projects</p>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                   <button
                     type="button"
@@ -3573,6 +3961,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                 textSecondary={textSecondary}
                 borderClass={borderClass}
                 projects={contractorProjects}
+                companyId={companyId ?? undefined}
               />
             </div>
           )}
@@ -3591,14 +3980,14 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   <p className="font-bold text-amber-700 dark:text-amber-400 mb-1">Face attendance not ready</p>
                   <p className={textSecondary}>{faceSetupError}</p>
                   <p className={`mt-2 text-xs ${textSecondary}`}>
-                    Run Azure face setup for the company first. Punch actions may return errors until setup succeeds.
+                    Complete face attendance setup for your company first (usually an admin step). Punch may not work until that is done.
                   </p>
                 </div>
               )}
               {!faceSetupLoading && faceSetupOk === true && user?.id != null && companyId != null && (
                 <div className={`flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between text-xs ${textSecondary}`}>
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-semibold text-inherit">Your face (GET /face/check):</span>
+                    <span className="font-semibold text-inherit">Your face enrollment:</span>
                     {punchSelfFaceCheck?.loading ? (
                       <span>Checking…</span>
                     ) : punchSelfFaceCheck?.is_enrolled ? (
@@ -3757,16 +4146,15 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   )}
                 </div>
                 <p className={`text-xs ${textSecondary} mb-4`}>
-                  From <strong className="font-semibold text-inherit">status-today</strong>
                   {punchType === 'punch_in' ? (
                     <>
-                      : <code className="text-[10px] opacity-80">data.punch_in</code>. Session punch-ins on this device are
-                      merged below.
+                      Today&apos;s <strong className="font-semibold text-inherit">check-ins</strong> from the server are listed
+                      below. Check-ins you record in this session on this device are merged into the same list.
                     </>
                   ) : (
                     <>
-                      : <code className="text-[10px] opacity-80">data.punch_out</code>. Session punch-outs on this device are
-                      merged below.
+                      Today&apos;s <strong className="font-semibold text-inherit">check-outs</strong> from the server are listed
+                      below. Check-outs you record in this session on this device are merged into the same list.
                     </>
                   )}
                 </p>
@@ -3948,10 +4336,11 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   </div>
                 </div>
                 <button
+                  type="button"
                   onClick={() => setShowAddProfileModal(true)}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg font-bold text-sm bg-[#6B8E23] hover:bg-[#5a7a1e] text-white"
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-bold text-sm bg-[#6B8E23] hover:bg-[#5a7a1e] text-white w-fit shrink-0 self-start sm:self-auto"
                 >
-                  <UserPlus className="w-4 h-4" />
+                  <UserPlus className="w-4 h-4 shrink-0" />
                   Add field worker
                 </button>
               </div>
@@ -3978,7 +4367,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                       <tr>
                         <td colSpan={5} className={`py-8 text-center ${textSecondary}`}>
                           {staffFilter === 'own_labor'
-                            ? 'No own labour profiles in this filter (add field workers or check GET /face/attendees).'
+                            ? 'No field workers in this list yet. Add a field worker or refresh — attendance roster loads from the server.'
                             : 'No company users in this filter.'}
                         </td>
                       </tr>
@@ -4006,7 +4395,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                                       type="button"
                                       title={
                                         canFirstEnroll
-                                          ? 'First-time face enrollment (POST /face/enroll): add at least 2 live samples in the next step.'
+                                          ? 'First-time enrollment: capture exactly two photos in the next step.'
                                           : a.subjectType === 'workforce_profile'
                                             ? 'Only managers (or users with enroll permissions) can enroll field workers.'
                                             : 'You can only enroll your own account unless you are a manager.'
@@ -4044,7 +4433,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                                       type="button"
                                       title={
                                         canReenroll
-                                          ? 'Replace face enrollment (POST /face/re-enroll) with new live samples.'
+                                          ? 'Replace the current face enrollment with new live camera samples.'
                                           : a.subjectType === 'workforce_profile'
                                             ? 'Re-enroll for field workers requires a manager or super-admin.'
                                             : 'You can only re-enroll your own account unless you are a manager.'
@@ -4083,31 +4472,36 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   </tbody>
                 </table>
               </div>
-              {staffTabFaceRows.length > PAGINATION_PAGE_SIZE && (
-                <div className={`flex flex-wrap items-center justify-between gap-2 mt-3 py-2 ${textSecondary} text-sm`}>
-                  <span>
-                    Showing {((staffPage - 1) * PAGINATION_PAGE_SIZE) + 1}-
+              {!staffTableLoading && staffTabFaceRows.length > 0 && (
+                <div
+                  className={`flex flex-wrap items-center justify-between gap-3 mt-3 px-2 sm:px-0 py-2 rounded-lg border ${borderClass} ${isDark ? 'bg-slate-800/40' : 'bg-slate-50/80'}`}
+                >
+                  <span className={`text-sm ${textSecondary}`}>
+                    Showing {((staffPage - 1) * PAGINATION_PAGE_SIZE) + 1}–
                     {Math.min(staffPage * PAGINATION_PAGE_SIZE, staffTabFaceRows.length)} of {staffTabFaceRows.length}
+                    {staffTotalPages > 1 ? (
+                      <span className="ml-2 opacity-75">({PAGINATION_PAGE_SIZE} per page)</span>
+                    ) : null}
                   </span>
                   <div className="flex items-center gap-2">
                     <button
+                      type="button"
                       onClick={() => setStaffPage((p) => Math.max(1, p - 1))}
                       disabled={staffPage <= 1}
                       className="p-1.5 rounded-lg border border-inherit hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed"
+                      aria-label="Previous page"
                     >
                       <ChevronLeft className="w-4 h-4" />
                     </button>
-                    <span className="font-medium">
-                      Page {staffPage} of {Math.ceil(staffTabFaceRows.length / PAGINATION_PAGE_SIZE) || 1}
+                    <span className={`text-sm font-medium tabular-nums ${textPrimary}`}>
+                      Page {staffPage} of {staffTotalPages}
                     </span>
                     <button
-                      onClick={() =>
-                        setStaffPage((p) =>
-                          Math.min(Math.ceil(staffTabFaceRows.length / PAGINATION_PAGE_SIZE), p + 1)
-                        )
-                      }
-                      disabled={staffPage >= Math.ceil(staffTabFaceRows.length / PAGINATION_PAGE_SIZE)}
+                      type="button"
+                      onClick={() => setStaffPage((p) => Math.min(staffTotalPages, p + 1))}
+                      disabled={staffPage >= staffTotalPages}
                       className="p-1.5 rounded-lg border border-inherit hover:bg-black/5 dark:hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed"
+                      aria-label="Next page"
                     >
                       <ChevronRight className="w-4 h-4" />
                     </button>
@@ -4150,8 +4544,8 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   <Loader2 className="w-6 h-6 animate-spin text-[#6B8E23]" />
                 ) : apiContractorRates.length === 0 ? (
                   <p className={`text-sm ${textSecondary}`}>
-                    No rate rows from the server. Offline rows below are not synced here until you create rates via
-                    the API (or this app&apos;s rate modal) — empty GET responses are normal if none exist yet.
+                    No contractor rates on the server yet. Add rates using <strong className="font-semibold text-inherit">Manage Rates</strong> here,
+                    or in Masters. Until rates exist, nothing will appear in this list.
                   </p>
                 ) : (
                   <div className="overflow-x-auto max-h-56 overflow-y-auto rounded-lg border border-inherit">
@@ -4230,8 +4624,8 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   <Loader2 className="w-6 h-6 animate-spin text-[#6B8E23]" />
                 ) : apiLabourEntries.length === 0 ? (
                   <p className={`text-sm ${textSecondary}`}>
-                    No labour entries in this date range on the server. Local logs are browser-only; submit with
-                    &quot;Add Log&quot; (POST /labour-entries) to persist to the backend.
+                    No labour entries in this date range on the server. Drafts in your browser are not saved until you use{' '}
+                    <strong className="font-semibold text-inherit">Add Log</strong> and submit.
                   </p>
                 ) : (
                   <div className="overflow-x-auto max-h-[28rem] overflow-y-auto rounded-lg border border-inherit">
@@ -4283,37 +4677,228 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
               {/* Filters: Project, Contractor, Date */}
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
                 <div>
-                  <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Project</label>
-                  <select
-                    value={logFilterProject}
-                    onChange={(e) => setLogFilterProject(e.target.value)}
-                    className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
-                  >
-                    <option value="">All</option>
-                    {[...new Set([
-                      ...getContractorEntries().map((e) => e.projectName),
-                      ...getWorkers().map((w) => w.projectName),
-                      ...contractorProjects.map((p) => p.name),
-                    ])].filter(Boolean).sort().map((p) => (
-                      <option key={p} value={p}>{p}</option>
-                    ))}
-                  </select>
+                  <label htmlFor="local-log-project-button" className={`block text-sm font-bold ${textPrimary} mb-1`}>
+                    Project
+                  </label>
+                  <div className="relative" ref={localLogProjectMenuRef}>
+                    <button
+                      id="local-log-project-button"
+                      type="button"
+                      onClick={() => setLocalLogProjectMenuOpen((o) => !o)}
+                      className={`w-full flex items-center justify-between gap-2 px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                      aria-expanded={localLogProjectMenuOpen}
+                      aria-haspopup="listbox"
+                      aria-label="Filter logs by project"
+                    >
+                      <span className="truncate text-left">{logFilterProject || 'All'}</span>
+                      <ChevronDown
+                        className={`w-4 h-4 shrink-0 opacity-70 transition-transform ${localLogProjectMenuOpen ? 'rotate-180' : ''}`}
+                        aria-hidden
+                      />
+                    </button>
+                    {localLogProjectMenuOpen ? (
+                      <div
+                        role="listbox"
+                        aria-label="Projects"
+                        className={`absolute left-0 right-0 z-[60] mt-1 rounded-lg border shadow-xl overflow-hidden flex flex-col ${
+                          isDark ? 'bg-slate-900 border-slate-600' : 'bg-white border-slate-200'
+                        }`}
+                      >
+                        <div
+                          className={`p-2 border-b shrink-0 ${isDark ? 'border-slate-600 bg-slate-900/95' : 'border-slate-200 bg-slate-50'}`}
+                        >
+                          <div className="relative">
+                            <Search
+                              className={`absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none ${textSecondary}`}
+                              aria-hidden
+                            />
+                            <input
+                              ref={localLogProjectSearchInputRef}
+                              type="search"
+                              autoComplete="off"
+                              placeholder="Search projects…"
+                              value={localLogProjectSearch}
+                              onChange={(e) => setLocalLogProjectSearch(e.target.value)}
+                              onKeyDown={(e) => e.stopPropagation()}
+                              className={`w-full pl-9 pr-3 py-2 rounded-md border text-sm ${
+                                isDark
+                                  ? 'bg-slate-800 border-slate-600 text-slate-100 placeholder-slate-500'
+                                  : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+                              }`}
+                              aria-label="Search project list"
+                            />
+                          </div>
+                        </div>
+                        <ul className="overflow-y-auto max-h-56 py-1">
+                          <li>
+                            <button
+                              type="button"
+                              role="option"
+                              aria-selected={logFilterProject === ''}
+                              onClick={() => {
+                                setLogFilterProject('');
+                                setLocalLogProjectMenuOpen(false);
+                              }}
+                              className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
+                                logFilterProject === ''
+                                  ? isDark
+                                    ? 'bg-[#C2D642]/20 text-[#C2D642]'
+                                    : 'bg-[#6B8E23]/15 text-[#6B8E23]'
+                                  : isDark
+                                    ? 'text-slate-200 hover:bg-slate-800'
+                                    : 'text-slate-800 hover:bg-slate-100'
+                              }`}
+                            >
+                              All
+                            </button>
+                          </li>
+                          {localLogFilteredProjectChoices.map((p) => {
+                            const selected = logFilterProject === p;
+                            return (
+                              <li key={p}>
+                                <button
+                                  type="button"
+                                  role="option"
+                                  aria-selected={selected}
+                                  onClick={() => {
+                                    setLogFilterProject(p);
+                                    setLocalLogProjectMenuOpen(false);
+                                  }}
+                                  className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors truncate ${
+                                    selected
+                                      ? isDark
+                                        ? 'bg-[#C2D642]/20 text-[#C2D642]'
+                                        : 'bg-[#6B8E23]/15 text-[#6B8E23]'
+                                      : isDark
+                                        ? 'text-slate-200 hover:bg-slate-800'
+                                        : 'text-slate-800 hover:bg-slate-100'
+                                  }`}
+                                  title={p}
+                                >
+                                  {p}
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                        {localLogFilteredProjectChoices.length === 0 && localLogProjectSearch.trim() ? (
+                          <p className={`px-3 py-2 text-sm border-t ${borderClass} ${textSecondary}`}>No matching projects</p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
                 <div>
-                  <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Contractor</label>
-                  <select
-                    value={logFilterContractor}
-                    onChange={(e) => setLogFilterContractor(e.target.value)}
-                    className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
-                  >
-                    <option value="">All</option>
-                    {[...new Set([
-                      ...getContractorEntries().map((e) => e.contractorName),
-                      ...vendors.map((v) => v.name),
-                    ])].filter(Boolean).sort().map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
+                  <label htmlFor="local-log-contractor-button" className={`block text-sm font-bold ${textPrimary} mb-1`}>
+                    Contractor
+                  </label>
+                  <div className="relative" ref={localLogContractorMenuRef}>
+                    <button
+                      id="local-log-contractor-button"
+                      type="button"
+                      onClick={() => setLocalLogContractorMenuOpen((o) => !o)}
+                      className={`w-full flex items-center justify-between gap-2 px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                      aria-expanded={localLogContractorMenuOpen}
+                      aria-haspopup="listbox"
+                      aria-label="Filter logs by contractor"
+                    >
+                      <span className="truncate text-left">{logFilterContractor || 'All'}</span>
+                      <ChevronDown
+                        className={`w-4 h-4 shrink-0 opacity-70 transition-transform ${localLogContractorMenuOpen ? 'rotate-180' : ''}`}
+                        aria-hidden
+                      />
+                    </button>
+                    {localLogContractorMenuOpen ? (
+                      <div
+                        role="listbox"
+                        aria-label="Contractors"
+                        className={`absolute left-0 right-0 z-[60] mt-1 rounded-lg border shadow-xl overflow-hidden flex flex-col ${
+                          isDark ? 'bg-slate-900 border-slate-600' : 'bg-white border-slate-200'
+                        }`}
+                      >
+                        <div
+                          className={`p-2 border-b shrink-0 ${isDark ? 'border-slate-600 bg-slate-900/95' : 'border-slate-200 bg-slate-50'}`}
+                        >
+                          <div className="relative">
+                            <Search
+                              className={`absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none ${textSecondary}`}
+                              aria-hidden
+                            />
+                            <input
+                              ref={localLogContractorSearchInputRef}
+                              type="search"
+                              autoComplete="off"
+                              placeholder="Search contractors…"
+                              value={localLogContractorSearch}
+                              onChange={(e) => setLocalLogContractorSearch(e.target.value)}
+                              onKeyDown={(e) => e.stopPropagation()}
+                              className={`w-full pl-9 pr-3 py-2 rounded-md border text-sm ${
+                                isDark
+                                  ? 'bg-slate-800 border-slate-600 text-slate-100 placeholder-slate-500'
+                                  : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+                              }`}
+                              aria-label="Search contractor list"
+                            />
+                          </div>
+                        </div>
+                        <ul className="overflow-y-auto max-h-56 py-1">
+                          <li>
+                            <button
+                              type="button"
+                              role="option"
+                              aria-selected={logFilterContractor === ''}
+                              onClick={() => {
+                                setLogFilterContractor('');
+                                setLocalLogContractorMenuOpen(false);
+                              }}
+                              className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
+                                logFilterContractor === ''
+                                  ? isDark
+                                    ? 'bg-[#C2D642]/20 text-[#C2D642]'
+                                    : 'bg-[#6B8E23]/15 text-[#6B8E23]'
+                                  : isDark
+                                    ? 'text-slate-200 hover:bg-slate-800'
+                                    : 'text-slate-800 hover:bg-slate-100'
+                              }`}
+                            >
+                              All
+                            </button>
+                          </li>
+                          {localLogFilteredContractorChoices.map((c) => {
+                            const selected = logFilterContractor === c;
+                            return (
+                              <li key={c}>
+                                <button
+                                  type="button"
+                                  role="option"
+                                  aria-selected={selected}
+                                  onClick={() => {
+                                    setLogFilterContractor(c);
+                                    setLocalLogContractorMenuOpen(false);
+                                  }}
+                                  className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors truncate ${
+                                    selected
+                                      ? isDark
+                                        ? 'bg-[#C2D642]/20 text-[#C2D642]'
+                                        : 'bg-[#6B8E23]/15 text-[#6B8E23]'
+                                      : isDark
+                                        ? 'text-slate-200 hover:bg-slate-800'
+                                        : 'text-slate-800 hover:bg-slate-100'
+                                  }`}
+                                  title={c}
+                                >
+                                  {c}
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                        {localLogFilteredContractorChoices.length === 0 && localLogContractorSearch.trim() ? (
+                          <p className={`px-3 py-2 text-sm border-t ${borderClass} ${textSecondary}`}>No matching contractors</p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
                 <div>
                   <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Date</label>
@@ -4430,44 +5015,230 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
             <div className="space-y-6">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl">
                 <div>
-                  <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Project</label>
-                  <select
-                    value={payProject}
-                    onChange={(e) => setPayProject(e.target.value)}
-                    disabled={contractorDataLoading}
-                    className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'} disabled:opacity-60`}
-                  >
-                    <option value="">All</option>
-                    {contractorProjects
-                      .filter((p) => p.name)
-                      .slice()
-                      .sort((a, b) => a.name.localeCompare(b.name))
-                      .map((p) => (
-                        <option key={String(p.id)} value={p.name}>
-                          {p.name}
-                        </option>
-                      ))}
-                  </select>
+                  <label htmlFor="pay-project-filter-button" className={`block text-sm font-bold ${textPrimary} mb-1`}>
+                    Project
+                  </label>
+                  <div className="relative" ref={payProjectMenuRef}>
+                    <button
+                      id="pay-project-filter-button"
+                      type="button"
+                      disabled={contractorDataLoading}
+                      onClick={() => !contractorDataLoading && setPayProjectMenuOpen((o) => !o)}
+                      className={`w-full flex items-center justify-between gap-2 px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'} disabled:opacity-60 disabled:cursor-not-allowed`}
+                      aria-expanded={payProjectMenuOpen}
+                      aria-haspopup="listbox"
+                      aria-label="Filter pay by project"
+                    >
+                      <span className="truncate text-left">{payProject || 'All'}</span>
+                      <ChevronDown
+                        className={`w-4 h-4 shrink-0 opacity-70 transition-transform ${payProjectMenuOpen ? 'rotate-180' : ''}`}
+                        aria-hidden
+                      />
+                    </button>
+                    {payProjectMenuOpen ? (
+                      <div
+                        role="listbox"
+                        aria-label="Projects"
+                        className={`absolute left-0 right-0 z-[60] mt-1 rounded-lg border shadow-xl overflow-hidden flex flex-col ${
+                          isDark ? 'bg-slate-900 border-slate-600' : 'bg-white border-slate-200'
+                        }`}
+                      >
+                        <div
+                          className={`p-2 border-b shrink-0 ${isDark ? 'border-slate-600 bg-slate-900/95' : 'border-slate-200 bg-slate-50'}`}
+                        >
+                          <div className="relative">
+                            <Search
+                              className={`absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none ${textSecondary}`}
+                              aria-hidden
+                            />
+                            <input
+                              ref={payProjectSearchInputRef}
+                              type="search"
+                              autoComplete="off"
+                              placeholder="Search projects…"
+                              value={payProjectSearch}
+                              onChange={(e) => setPayProjectSearch(e.target.value)}
+                              onKeyDown={(e) => e.stopPropagation()}
+                              className={`w-full pl-9 pr-3 py-2 rounded-md border text-sm ${
+                                isDark
+                                  ? 'bg-slate-800 border-slate-600 text-slate-100 placeholder-slate-500'
+                                  : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+                              }`}
+                              aria-label="Search project list"
+                            />
+                          </div>
+                        </div>
+                        <ul className="overflow-y-auto max-h-56 py-1">
+                          <li>
+                            <button
+                              type="button"
+                              role="option"
+                              aria-selected={payProject === ''}
+                              onClick={() => {
+                                setPayProject('');
+                                setPayProjectMenuOpen(false);
+                              }}
+                              className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
+                                payProject === ''
+                                  ? isDark
+                                    ? 'bg-[#C2D642]/20 text-[#C2D642]'
+                                    : 'bg-[#6B8E23]/15 text-[#6B8E23]'
+                                  : isDark
+                                    ? 'text-slate-200 hover:bg-slate-800'
+                                    : 'text-slate-800 hover:bg-slate-100'
+                              }`}
+                            >
+                              All
+                            </button>
+                          </li>
+                          {payFilteredProjectChoices.map((p) => {
+                            const selected = payProject === p;
+                            return (
+                              <li key={p}>
+                                <button
+                                  type="button"
+                                  role="option"
+                                  aria-selected={selected}
+                                  onClick={() => {
+                                    setPayProject(p);
+                                    setPayProjectMenuOpen(false);
+                                  }}
+                                  className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors truncate ${
+                                    selected
+                                      ? isDark
+                                        ? 'bg-[#C2D642]/20 text-[#C2D642]'
+                                        : 'bg-[#6B8E23]/15 text-[#6B8E23]'
+                                      : isDark
+                                        ? 'text-slate-200 hover:bg-slate-800'
+                                        : 'text-slate-800 hover:bg-slate-100'
+                                  }`}
+                                  title={p}
+                                >
+                                  {p}
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                        {payFilteredProjectChoices.length === 0 && payProjectSearch.trim() ? (
+                          <p className={`px-3 py-2 text-sm border-t ${borderClass} ${textSecondary}`}>No matching projects</p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
                 <div>
-                  <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Contractor</label>
-                  <select
-                    value={payContractor}
-                    onChange={(e) => setPayContractor(e.target.value)}
-                    disabled={contractorDataLoading}
-                    className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'} disabled:opacity-60`}
-                  >
-                    <option value="">All</option>
-                    {vendors
-                      .filter((v) => v.name)
-                      .slice()
-                      .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
-                      .map((v) => (
-                        <option key={String(v.id)} value={v.name}>
-                          {v.name}
-                        </option>
-                      ))}
-                  </select>
+                  <label htmlFor="pay-contractor-filter-button" className={`block text-sm font-bold ${textPrimary} mb-1`}>
+                    Contractor
+                  </label>
+                  <div className="relative" ref={payContractorMenuRef}>
+                    <button
+                      id="pay-contractor-filter-button"
+                      type="button"
+                      disabled={contractorDataLoading}
+                      onClick={() => !contractorDataLoading && setPayContractorMenuOpen((o) => !o)}
+                      className={`w-full flex items-center justify-between gap-2 px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'} disabled:opacity-60 disabled:cursor-not-allowed`}
+                      aria-expanded={payContractorMenuOpen}
+                      aria-haspopup="listbox"
+                      aria-label="Filter pay by contractor"
+                    >
+                      <span className="truncate text-left">{payContractor || 'All'}</span>
+                      <ChevronDown
+                        className={`w-4 h-4 shrink-0 opacity-70 transition-transform ${payContractorMenuOpen ? 'rotate-180' : ''}`}
+                        aria-hidden
+                      />
+                    </button>
+                    {payContractorMenuOpen ? (
+                      <div
+                        role="listbox"
+                        aria-label="Contractors"
+                        className={`absolute left-0 right-0 z-[60] mt-1 rounded-lg border shadow-xl overflow-hidden flex flex-col ${
+                          isDark ? 'bg-slate-900 border-slate-600' : 'bg-white border-slate-200'
+                        }`}
+                      >
+                        <div
+                          className={`p-2 border-b shrink-0 ${isDark ? 'border-slate-600 bg-slate-900/95' : 'border-slate-200 bg-slate-50'}`}
+                        >
+                          <div className="relative">
+                            <Search
+                              className={`absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none ${textSecondary}`}
+                              aria-hidden
+                            />
+                            <input
+                              ref={payContractorSearchInputRef}
+                              type="search"
+                              autoComplete="off"
+                              placeholder="Search contractors…"
+                              value={payContractorSearch}
+                              onChange={(e) => setPayContractorSearch(e.target.value)}
+                              onKeyDown={(e) => e.stopPropagation()}
+                              className={`w-full pl-9 pr-3 py-2 rounded-md border text-sm ${
+                                isDark
+                                  ? 'bg-slate-800 border-slate-600 text-slate-100 placeholder-slate-500'
+                                  : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+                              }`}
+                              aria-label="Search contractor list"
+                            />
+                          </div>
+                        </div>
+                        <ul className="overflow-y-auto max-h-56 py-1">
+                          <li>
+                            <button
+                              type="button"
+                              role="option"
+                              aria-selected={payContractor === ''}
+                              onClick={() => {
+                                setPayContractor('');
+                                setPayContractorMenuOpen(false);
+                              }}
+                              className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
+                                payContractor === ''
+                                  ? isDark
+                                    ? 'bg-[#C2D642]/20 text-[#C2D642]'
+                                    : 'bg-[#6B8E23]/15 text-[#6B8E23]'
+                                  : isDark
+                                    ? 'text-slate-200 hover:bg-slate-800'
+                                    : 'text-slate-800 hover:bg-slate-100'
+                              }`}
+                            >
+                              All
+                            </button>
+                          </li>
+                          {payFilteredContractorChoices.map((c) => {
+                            const selected = payContractor === c;
+                            return (
+                              <li key={c}>
+                                <button
+                                  type="button"
+                                  role="option"
+                                  aria-selected={selected}
+                                  onClick={() => {
+                                    setPayContractor(c);
+                                    setPayContractorMenuOpen(false);
+                                  }}
+                                  className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors truncate ${
+                                    selected
+                                      ? isDark
+                                        ? 'bg-[#C2D642]/20 text-[#C2D642]'
+                                        : 'bg-[#6B8E23]/15 text-[#6B8E23]'
+                                      : isDark
+                                        ? 'text-slate-200 hover:bg-slate-800'
+                                        : 'text-slate-800 hover:bg-slate-100'
+                                  }`}
+                                  title={c}
+                                >
+                                  {c}
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                        {payFilteredContractorChoices.length === 0 && payContractorSearch.trim() ? (
+                          <p className={`px-3 py-2 text-sm border-t ${borderClass} ${textSecondary}`}>No matching contractors</p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               </div>
               {(() => {
@@ -4592,7 +5363,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                           </button>
                         </div>
                         <div className="overflow-x-auto rounded-lg border border-inherit max-h-[28rem] overflow-y-auto">
-                          <table className="w-full min-w-[860px]">
+                          <table className="w-full min-w-[1000px]">
                             <thead className={`sticky top-0 z-[1] ${isDark ? 'bg-slate-800' : 'bg-slate-100'}`}>
                               <tr className={`border-b ${borderClass}`}>
                                 <th className="text-left py-2 px-2 text-xs font-bold w-8" />
@@ -4604,13 +5375,15 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                                 <th className={`text-left py-2 px-2 text-xs font-bold ${textSecondary}`}>Unit</th>
                                 <th className={`text-left py-2 px-2 text-xs font-bold ${textSecondary}`}>OT</th>
                                 <th className={`text-left py-2 px-2 text-xs font-bold ${textSecondary}`}>OT unit</th>
-                                <th className={`text-right py-2 px-2 text-xs font-bold ${textSecondary}`}>Amount</th>
+                                <th className={`text-right py-2 px-2 text-xs font-bold ${textSecondary}`}>Entry total</th>
+                                <th className={`text-right py-2 px-2 text-xs font-bold ${textSecondary}`}>Paid</th>
+                                <th className={`text-right py-2 px-2 text-xs font-bold ${textSecondary}`}>Balance</th>
                               </tr>
                             </thead>
                             <tbody>
                               {unpaid.length === 0 ? (
                                 <tr>
-                                  <td colSpan={10} className={`py-6 text-center text-sm ${textSecondary}`}>
+                                  <td colSpan={12} className={`py-6 text-center text-sm ${textSecondary}`}>
                                     No unpaid labour entries
                                   </td>
                                 </tr>
@@ -4648,7 +5421,23 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                                     <td className={`py-2 px-2 text-sm ${textSecondary}`}>
                                       {e.overtimeQtyUnit === 'hour' ? 'Hrs' : 'Days'}
                                     </td>
-                                    <td className={`py-2 px-2 text-sm font-bold text-right ${textPrimary}`}>
+                                    <td className={`py-2 px-2 text-sm text-right tabular-nums ${textPrimary}`}>
+                                      {e.entryTotal != null
+                                        ? `₹${e.entryTotal.toLocaleString('en-IN')}`
+                                        : '—'}
+                                    </td>
+                                    <td className={`py-2 px-2 text-sm text-right tabular-nums ${textSecondary}`}>
+                                      {e.paidAmount != null
+                                        ? `₹${e.paidAmount.toLocaleString('en-IN')}`
+                                        : '—'}
+                                    </td>
+                                    <td
+                                      className={`py-2 px-2 text-sm font-bold text-right tabular-nums ${
+                                        e.amount > 0
+                                          ? 'text-amber-600 dark:text-amber-400'
+                                          : textPrimary
+                                      }`}
+                                    >
                                       ₹{e.amount.toLocaleString('en-IN')}
                                     </td>
                                   </tr>
@@ -5049,12 +5838,14 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
         </div>
       )}
 
-      {/* Enroll face — POST /face/enroll */}
+      {/* Enroll / re-enroll face modal */}
       {showEnrollModal && enrollTarget && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4 bg-black/70 overflow-y-auto">
-          <div className={`w-full max-w-lg rounded-2xl overflow-hidden ${cardClass} border ${borderClass}`}>
-            <div className="p-4 border-b border-inherit flex items-center justify-between">
-              <span className={`font-bold ${textPrimary}`}>
+          <div
+            className={`w-full max-w-lg rounded-2xl overflow-hidden ${cardClass} border ${borderClass} flex flex-col max-h-[min(92vh,40rem)]`}
+          >
+            <div className="p-4 border-b border-inherit flex items-center justify-between gap-3 shrink-0">
+              <span className={`font-bold ${textPrimary} min-w-0 truncate`}>
                 {userMaySubmitReEnroll(user as Record<string, unknown> | null, enrollTarget, reEnrollOk)
                   ? 'Re-enroll'
                   : 'Enroll face'}{' '}
@@ -5066,59 +5857,61 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   setShowEnrollModal(false);
                   setEnrollTarget(null);
                   setEnrollImages([]);
+                  setEnrollConsent(false);
                 }}
-                className="p-1 hover:opacity-70"
+                className={`shrink-0 p-2 rounded-lg border ${borderClass} ${isDark ? 'hover:bg-white/10' : 'hover:bg-black/5'}`}
+                aria-label="Close"
               >
-                <X className="w-5 h-5" />
+                <X className={`w-5 h-5 ${textSecondary}`} />
               </button>
             </div>
-            <div className="p-4 space-y-4">
+            <div className="p-4 space-y-4 overflow-y-auto min-h-0 flex-1">
               <p className={`text-xs ${textSecondary}`}>
-                GET /face/check —{' '}
+                <span className="font-semibold text-inherit">Enrollment status:</span>{' '}
                 {enrollFaceCheck?.loading
-                  ? 'Verifying…'
+                  ? 'Checking…'
                   : enrollFaceCheck?.error
                     ? enrollFaceCheck.error
                     : enrollFaceCheck
-                      ? `enrolled: ${enrollFaceCheck.is_enrolled ? 'yes' : 'no'}${enrollFaceCheck.face_count != null ? ` · face samples: ${enrollFaceCheck.face_count}` : ''}`
+                      ? enrollFaceCheck.is_enrolled
+                        ? `Enrolled${enrollFaceCheck.face_count != null ? ` · ${enrollFaceCheck.face_count} sample(s)` : ''}`
+                        : 'Not enrolled yet'
                       : '—'}
               </p>
-              <p className={`text-sm ${textSecondary}`}>
+              <p className={`text-sm ${textSecondary} space-y-2`}>
                 {!userMaySubmitReEnroll(user as Record<string, unknown> | null, enrollTarget, reEnrollOk) && (
-                  <span className="block mb-1.5">
-                    Submits <span className="font-semibold text-inherit">POST /face/enroll</span> with{' '}
-                    <span className="font-mono text-[11px]">company_id</span>,{' '}
-                    <span className="font-mono text-[11px]">subject_type</span>,{' '}
-                    <span className="font-mono text-[11px]">subject_id</span>,{' '}
-                    <span className="font-mono text-[11px]">images[]</span> (≥2), optional{' '}
-                    <span className="font-mono text-[11px]">consent</span>.
+                  <span className="block">
+                    When you submit, your photos are saved for attendance check-in and check-out.
                   </span>
                 )}
-                Use the live camera: capture at least two frames (different angles work best). Same subject as{' '}
-                {enrollTarget.subjectType.replace('_', ' ')} #{enrollTarget.subjectId}. Up to 8 samples.
+                <span className="block">
+                  <strong className={`font-semibold ${textPrimary}`}>How to enroll:</strong> Use the camera twice to take{' '}
+                  <strong className="font-semibold text-inherit">two</strong> clear photos in good light, facing the camera.
+                  Then tap <strong className="font-semibold text-inherit">Submit enrollment</strong>.
+                </span>
                 {userMaySubmitReEnroll(user as Record<string, unknown> | null, enrollTarget, reEnrollOk) && (
-                  <span className="block mt-1 text-amber-600 dark:text-amber-400">
-                    Re-enroll replaces your existing enrollment with new samples (managers can do this for any subject).
+                  <span className="block text-amber-600 dark:text-amber-400">
+                    Updating enrollment replaces the previous photos with the new ones you capture here.
                   </span>
                 )}
               </p>
-              {enrollImages.length >= 8 ? (
-                <p className={`text-xs ${textSecondary}`}>Maximum 8 captures. Remove one below to add another, or submit.</p>
+              {enrollImages.length >= ENROLL_FACE_MAX_PHOTOS ? (
+                <p className={`text-xs ${textSecondary}`}>
+                  Both photos captured. Remove one below to retake it, or submit.
+                </p>
               ) : (
                 <div key={`${enrollTarget.subjectType}-${enrollTarget.subjectId}`}>
                   <CameraCapture
                     isDark={isDark}
                     label={
                       enrollImages.length === 0
-                        ? 'Capture 1st frame'
-                        : enrollImages.length === 1
-                          ? 'Capture 2nd frame (required)'
-                          : `Add frame ${enrollImages.length + 1} (optional)`
+                        ? 'Capture 1st photo'
+                        : 'Capture 2nd photo'
                     }
                     onCapture={(dataUrl) => {
                       try {
                         const file = dataUrlToJpegFile(dataUrl, `enroll-${Date.now()}.jpg`);
-                        setEnrollImages((prev) => [...prev, file].slice(0, 8));
+                        setEnrollImages((prev) => [...prev, file].slice(0, ENROLL_FACE_MAX_PHOTOS));
                       } catch {
                         toast.showWarning('Could not process capture — try again');
                       }
@@ -5129,7 +5922,11 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
               {enrollImages.length > 0 && (
                 <div className="space-y-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className={`text-xs ${textSecondary}`}>{enrollImages.length} capture(s) — need at least 2 to submit</p>
+                    <p className={`text-xs ${textSecondary}`}>
+                      {enrollImages.length === ENROLL_FACE_MAX_PHOTOS
+                        ? `${ENROLL_FACE_MAX_PHOTOS} photos — ready to submit`
+                        : `${enrollImages.length} of ${ENROLL_FACE_MAX_PHOTOS} — capture the next photo above`}
+                    </p>
                     <button
                       type="button"
                       className={`text-xs font-bold underline ${textPrimary}`}
@@ -5170,7 +5967,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                 <button
                   type="button"
                   onClick={handleEnrollSubmit}
-                  disabled={isSubmittingEnroll || enrollImages.length < 2}
+                  disabled={isSubmittingEnroll || enrollImages.length !== ENROLL_FACE_MAX_PHOTOS}
                   className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg font-bold bg-[#6B8E23] text-white disabled:opacity-50"
                 >
                   {isSubmittingEnroll ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
@@ -5182,6 +5979,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                     setShowEnrollModal(false);
                     setEnrollTarget(null);
                     setEnrollImages([]);
+                    setEnrollConsent(false);
                   }}
                   className="px-4 py-2.5 rounded-lg font-bold border border-inherit"
                 >
@@ -5193,7 +5991,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
         </div>
       )}
 
-      {/* Add field worker — POST /workforce-profiles */}
+      {/* Add field worker profile */}
       {showAddProfileModal && (
         <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-3 sm:p-4 bg-black/70 overflow-y-auto">
           <div className={`w-full max-w-lg rounded-2xl overflow-hidden my-4 sm:my-8 ${cardClass} border ${borderClass}`}>
@@ -5220,7 +6018,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
             </div>
             <div className="p-4 space-y-4">
               <p className={`text-xs ${textSecondary}`}>
-                Creates a field profile via POST /workforce-profiles (not a full login). Use Company Users / Teams for accounts with passwords.
+                Creates a field worker profile for attendance (not a full login account). Use Company Users / Teams if this person needs a password to sign in.
               </p>
               <div>
                 <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Full Name *</label>
@@ -5233,19 +6031,117 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                 />
               </div>
               <div>
-                <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Project Name *</label>
-                <select
-                  value={staffFormData.project_id}
-                  onChange={(e) => setStaffFormData((p) => ({ ...p, project_id: e.target.value }))}
-                  className={`w-full px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
-                >
-                  <option value="">— Select project —</option>
-                  {projects.map((pr) => (
-                    <option key={pr.id} value={pr.id}>
-                      {pr.name}
-                    </option>
-                  ))}
-                </select>
+                <label htmlFor="add-profile-project-button" className={`block text-sm font-bold ${textPrimary} mb-1`}>
+                  Project Name *
+                </label>
+                <div className="relative" ref={addProfileProjectMenuRef}>
+                  <button
+                    id="add-profile-project-button"
+                    type="button"
+                    onClick={() => setAddProfileProjectMenuOpen((o) => !o)}
+                    className={`w-full flex items-center justify-between gap-2 px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                    aria-expanded={addProfileProjectMenuOpen}
+                    aria-haspopup="listbox"
+                    aria-label="Select project"
+                  >
+                    <span className="truncate text-left">{addProfileProjectLabel}</span>
+                    <ChevronDown
+                      className={`w-4 h-4 shrink-0 opacity-70 transition-transform ${addProfileProjectMenuOpen ? 'rotate-180' : ''}`}
+                      aria-hidden
+                    />
+                  </button>
+                  {addProfileProjectMenuOpen ? (
+                    <div
+                      role="listbox"
+                      aria-label="Projects"
+                      className={`absolute left-0 right-0 z-[60] mt-1 rounded-lg border shadow-xl overflow-hidden flex flex-col ${
+                        isDark ? 'bg-slate-900 border-slate-600' : 'bg-white border-slate-200'
+                      }`}
+                    >
+                      <div
+                        className={`p-2 border-b shrink-0 ${isDark ? 'border-slate-600 bg-slate-900/95' : 'border-slate-200 bg-slate-50'}`}
+                      >
+                        <div className="relative">
+                          <Search
+                            className={`absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none ${textSecondary}`}
+                            aria-hidden
+                          />
+                          <input
+                            ref={addProfileProjectSearchInputRef}
+                            type="search"
+                            autoComplete="off"
+                            placeholder="Search projects…"
+                            value={addProfileProjectSearch}
+                            onChange={(e) => setAddProfileProjectSearch(e.target.value)}
+                            onKeyDown={(e) => e.stopPropagation()}
+                            className={`w-full pl-9 pr-3 py-2 rounded-md border text-sm ${
+                              isDark
+                                ? 'bg-slate-800 border-slate-600 text-slate-100 placeholder-slate-500'
+                                : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+                            }`}
+                            aria-label="Search project list"
+                          />
+                        </div>
+                      </div>
+                      <ul className="overflow-y-auto max-h-56 py-1">
+                        <li>
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={staffFormData.project_id === ''}
+                            onClick={() => {
+                              setStaffFormData((p) => ({ ...p, project_id: '' }));
+                              setAddProfileProjectMenuOpen(false);
+                            }}
+                            className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
+                              staffFormData.project_id === ''
+                                ? isDark
+                                  ? 'bg-[#C2D642]/20 text-[#C2D642]'
+                                  : 'bg-[#6B8E23]/15 text-[#6B8E23]'
+                                : isDark
+                                  ? 'text-slate-200 hover:bg-slate-800'
+                                  : 'text-slate-800 hover:bg-slate-100'
+                            }`}
+                          >
+                            — Select project —
+                          </button>
+                        </li>
+                        {addProfileFilteredProjects.map((pr) => {
+                          const idStr = String(pr.id);
+                          const selected = idStr === String(staffFormData.project_id);
+                          return (
+                            <li key={idStr}>
+                              <button
+                                type="button"
+                                role="option"
+                                aria-selected={selected}
+                                onClick={() => {
+                                  setStaffFormData((p) => ({ ...p, project_id: idStr }));
+                                  setAddProfileProjectMenuOpen(false);
+                                }}
+                                className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors truncate ${
+                                  selected
+                                    ? isDark
+                                      ? 'bg-[#C2D642]/20 text-[#C2D642]'
+                                      : 'bg-[#6B8E23]/15 text-[#6B8E23]'
+                                    : isDark
+                                      ? 'text-slate-200 hover:bg-slate-800'
+                                      : 'text-slate-800 hover:bg-slate-100'
+                                }`}
+                                title={pr.name}
+                              >
+                                {pr.name}
+                              </button>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                      {addProfileFilteredProjects.length === 0 && addProfileProjectSearch.trim() ? (
+                        <p className={`px-3 py-2 text-sm border-t ${borderClass} ${textSecondary}`}>No matching projects</p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
               </div>
               <div>
                 <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Designation *</label>
@@ -5585,7 +6481,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
         </div>
       )}
 
-      {/* Labour payment detail — GET /labour-payments/{uuid} */}
+      {/* Labour payment detail modal */}
       {payDetailModalUuid && (
         <div className="fixed inset-0 z-[55] flex items-center justify-center p-3 sm:p-4 bg-black/70 overflow-y-auto">
           <div
@@ -5622,25 +6518,36 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
         </div>
       )}
 
-      {/* Add contractor labour rate — GET form-options + POST contractor-labor-rates */}
+      {/* Add contractor labour rate modal */}
       {showRatesModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/70 overflow-y-auto">
-          <div className={`w-full max-w-md rounded-2xl overflow-hidden ${cardClass} border ${borderClass}`}>
-            <div className="p-4 border-b border-inherit flex items-center justify-between">
-              <span className={`font-bold ${textPrimary}`}>Add contractor labour rate</span>
+        <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center p-0 sm:p-4 bg-black/70 overflow-hidden sm:overflow-y-auto overscroll-contain">
+          <div
+            className={`w-full sm:max-w-lg lg:max-w-xl max-h-[min(95dvh,100vh)] sm:max-h-[min(92vh,900px)] rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col ${cardClass} border ${borderClass} shadow-xl sm:m-auto`}
+          >
+            <div
+              className={`p-4 sm:p-5 border-b border-inherit flex items-start justify-between gap-3 shrink-0 ${isDark ? 'bg-slate-900/80' : 'bg-inherit'}`}
+            >
+              <span className={`text-base sm:text-lg font-bold ${textPrimary} leading-snug pr-2 min-w-0`}>
+                Add contractor labour rate
+              </span>
               <button
                 type="button"
                 onClick={() => {
                   setShowRatesModal(false);
                   setRatesLabourDropdownOpen(false);
                   setRatesLabourSearch('');
+                  setRatesFieldErrors({});
                 }}
-                className="p-1 hover:opacity-70"
+                className={`shrink-0 p-2 rounded-lg border border-transparent ${textPrimary} hover:bg-black/10 dark:hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#6B8E23]/60`}
+                aria-label="Close and cancel"
+                title="Close"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className={`p-4 space-y-4 relative ${rateFormOptionsLoading ? 'pointer-events-none opacity-60' : ''}`}>
+            <div
+              className={`p-4 sm:p-5 space-y-4 relative overflow-y-auto flex-1 min-h-0 overscroll-contain ${rateFormOptionsLoading ? 'pointer-events-none opacity-60' : ''}`}
+            >
               {rateFormOptionsLoading && (
                 <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/10 rounded-lg">
                   <Loader2 className="w-8 h-8 animate-spin text-[#6B8E23]" />
@@ -5667,7 +6574,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                 )}
                 {!rateFormOptionsLoading && rateFormOptions.projects.length === 0 && (
                   <p className={`text-xs mt-1 ${textSecondary}`}>
-                    No projects in form-options. Check allocation or contact admin.
+                    No projects available. Check your project allocation or contact an admin.
                   </p>
                 )}
               </div>
@@ -5788,9 +6695,9 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   <p className="text-xs text-red-500 mt-1">{ratesFieldErrors.labours_id}</p>
                 )}
               </div>
-              <div>
+              <div className="min-w-0">
                 <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Daily rate amount *</label>
-                <div className="flex gap-2">
+                <div className="flex flex-col gap-2 xs:flex-row xs:items-stretch">
                   <input
                     type="number"
                     min="0"
@@ -5798,14 +6705,14 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                     value={ratesFormData.daily_rate}
                     onChange={(e) => setRatesFormData((p) => ({ ...p, daily_rate: e.target.value }))}
                     placeholder="Amount"
-                    className={`flex-1 px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                    className={`w-full min-w-0 flex-1 px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
                   />
                   <select
                     value={ratesFormData.daily_rate_unit}
                     onChange={(e) =>
                       setRatesFormData((p) => ({ ...p, daily_rate_unit: e.target.value as 'day' | 'hour' }))
                     }
-                    className={`w-28 px-2 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                    className={`w-full xs:w-28 xs:shrink-0 px-2 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
                   >
                     <option value="day">day</option>
                     <option value="hour">hour</option>
@@ -5815,9 +6722,9 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   <p className="text-xs text-red-500 mt-1">{ratesFieldErrors.daily_rate_amount}</p>
                 )}
               </div>
-              <div>
+              <div className="min-w-0">
                 <label className={`block text-sm font-bold ${textPrimary} mb-1`}>Overtime rate amount</label>
-                <div className="flex gap-2">
+                <div className="flex flex-col gap-2 xs:flex-row xs:items-stretch">
                   <input
                     type="number"
                     min="0"
@@ -5825,14 +6732,14 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                     value={ratesFormData.overtime_rate}
                     onChange={(e) => setRatesFormData((p) => ({ ...p, overtime_rate: e.target.value }))}
                     placeholder="0"
-                    className={`flex-1 px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                    className={`w-full min-w-0 flex-1 px-4 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
                   />
                   <select
                     value={ratesFormData.overtime_unit}
                     onChange={(e) =>
                       setRatesFormData((p) => ({ ...p, overtime_unit: e.target.value as 'day' | 'hour' }))
                     }
-                    className={`w-28 px-2 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
+                    className={`w-full xs:w-28 xs:shrink-0 px-2 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'}`}
                   >
                     <option value="hour">hour</option>
                     <option value="day">day</option>
@@ -5890,16 +6797,7 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                   className={`w-full px-3 py-2 rounded-lg border ${borderClass} ${textPrimary} ${isDark ? 'bg-slate-800' : 'bg-white'} text-sm`}
                 />
               </div>
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={handleStoreRate}
-                  disabled={isSubmittingRate || rateFormOptionsLoading}
-                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg font-bold bg-[#6B8E23] text-white disabled:opacity-50"
-                >
-                  {isSubmittingRate ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
-                  Save rate
-                </button>
+              <div className="flex flex-col-reverse sm:flex-row gap-2 pt-4 mt-2 border-t border-inherit sm:border-t-0 sm:pt-2 sm:mt-0">
                 <button
                   type="button"
                   onClick={() => {
@@ -5908,9 +6806,18 @@ const WorkforceManagement: React.FC<WorkforceManagementProps> = ({ theme }) => {
                     setRatesLabourSearch('');
                     setRatesFieldErrors({});
                   }}
-                  className="px-4 py-2.5 rounded-lg font-bold border border-inherit"
+                  className="w-full sm:w-auto sm:min-w-[7rem] px-4 py-2.5 rounded-lg font-bold border border-inherit shrink-0"
                 >
                   Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleStoreRate}
+                  disabled={isSubmittingRate || rateFormOptionsLoading}
+                  className="w-full sm:flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg font-bold bg-[#6B8E23] text-white disabled:opacity-50"
+                >
+                  {isSubmittingRate ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
+                  Save rate
                 </button>
               </div>
             </div>

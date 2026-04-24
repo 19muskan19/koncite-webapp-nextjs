@@ -47,6 +47,7 @@ interface ReportRow {
   name: string;
   specification: string;
   unit: string;
+  openingStock: number;
   totalInward: number;
   totalIssue: number;
   availableStock: number;
@@ -132,22 +133,12 @@ const ProjectStockStatementReport: React.FC<ProjectStockStatementReportProps> = 
           const spec = mat?.specification ?? item?.specification ?? '-';
           const unit = mat?.unit ?? item?.unit ?? (mat?.units?.unit ?? '-');
           const cls = mat?.class ?? item?.class ?? item?.class_of_materials ?? '';
+          const openingStock = Number(item?.opening_stock ?? item?.openingStock ?? 0);
           const totalInward = Number(item?.total_inward ?? item?.totalInward ?? 0);
-          const totalIssueApi = Number(item?.total_issue ?? item?.totalIssue ?? 0);
+          const totalIssue = Number(item?.total_issue ?? item?.totalIssue ?? 0);
           const availRaw = item?.available_stock ?? item?.availableStock;
-          const hasExplicitAvail = availRaw != null && availRaw !== '';
-          // Backend may send gross issues in total_issue while available_stock already nets returns.
-          // Show net issue = inward − available so Total Issue matches stock math (same as user expectation).
-          let totalIssue: number;
-          let availableStock: number;
-          if (hasExplicitAvail) {
-            availableStock = Number(availRaw);
-            const netIssue = totalInward - availableStock;
-            totalIssue = Number.isFinite(netIssue) ? Math.max(0, netIssue) : totalIssueApi;
-          } else {
-            totalIssue = totalIssueApi;
-            availableStock = totalInward - totalIssue;
-          }
+          const availableStock =
+            availRaw != null && availRaw !== '' ? Number(availRaw) : NaN;
           rows.push({
             id: `${item?.id ?? i}-${rows.length}`,
             ...(dataType === 'materials' ? { class: typeof cls === 'object' ? (cls?.name ?? '-') : (cls ?? '-') } : {}),
@@ -155,6 +146,7 @@ const ProjectStockStatementReport: React.FC<ProjectStockStatementReportProps> = 
             name,
             specification: typeof spec === 'object' ? (spec?.name ?? '-') : (spec ?? '-'),
             unit: typeof unit === 'object' ? (unit?.unit ?? unit?.name ?? '-') : (unit ?? '-'),
+            openingStock,
             totalInward,
             totalIssue,
             availableStock,
@@ -186,6 +178,7 @@ const ProjectStockStatementReport: React.FC<ProjectStockStatementReportProps> = 
               name,
               specification: typeof spec === 'object' ? (spec?.name ?? '-') : (spec ?? '-'),
               unit: typeof unit === 'object' ? (unit?.unit ?? unit?.name ?? '-') : (unit ?? '-'),
+              openingStock: qty,
               totalInward: qty,
               totalIssue: 0,
               availableStock: qty,
@@ -220,8 +213,8 @@ const ProjectStockStatementReport: React.FC<ProjectStockStatementReportProps> = 
 
   const isMaterials = activeTab === 'materials';
   const colKeys = isMaterials
-    ? ['class', 'code', 'name', 'specification', 'unit', 'totalInward', 'totalIssue', 'availableStock']
-    : ['code', 'name', 'specification', 'unit', 'totalInward', 'totalIssue', 'availableStock'];
+    ? ['class', 'code', 'name', 'specification', 'unit', 'openingStock', 'totalInward', 'totalIssue', 'availableStock']
+    : ['code', 'name', 'specification', 'unit', 'openingStock', 'totalInward', 'totalIssue', 'availableStock'];
 
   const filteredAndSorted = useMemo(() => {
     let out = tableData.filter(
@@ -251,15 +244,15 @@ const ProjectStockStatementReport: React.FC<ProjectStockStatementReportProps> = 
   useEffect(() => setCurrentPage(1), [tableSearch, sortConfig]);
 
   const headers = isMaterials
-    ? ['Sl.no', 'Class', 'Code', 'Name', 'Specification', 'Unit', 'Total Inward', 'Total Issue', 'Available Stock']
-    : ['Sl.no', 'Code', 'Name', 'Specification', 'Unit', 'Total Inward', 'Total Issue', 'Available Stock'];
+    ? ['Sl.no', 'Class', 'Code', 'Name', 'Specification', 'Unit', 'Opening Stock', 'Total Inward', 'Total Issue', 'Available Stock']
+    : ['Sl.no', 'Code', 'Name', 'Specification', 'Unit', 'Opening Stock', 'Total Inward', 'Total Issue', 'Available Stock'];
 
-  const rightAlignKeys = ['totalInward', 'totalIssue', 'availableStock'];
+  const rightAlignKeys = ['openingStock', 'totalInward', 'totalIssue', 'availableStock'];
 
   const handleExport = (format: string) => {
     const rows = filteredAndSorted.map((r, idx) => {
       const base = isMaterials ? [idx + 1, r.class ?? '-', r.code, r.name, r.specification, r.unit] : [idx + 1, r.code, r.name, r.specification, r.unit];
-      return [...base, formatNum(r.totalInward), formatNum(r.totalIssue), formatNum(r.availableStock)];
+      return [...base, formatNum(r.openingStock), formatNum(r.totalInward), formatNum(r.totalIssue), formatNum(r.availableStock)];
     });
     if (format === 'Copy') {
       const text = [headers.join('\t'), ...rows.map((row) => row.join('\t'))].join('\n');
@@ -319,7 +312,7 @@ const ProjectStockStatementReport: React.FC<ProjectStockStatementReportProps> = 
             const base = isMaterials
               ? [String(idx + 1), r.class ?? '-', r.code, r.name, r.specification, r.unit]
               : [String(idx + 1), r.code, r.name, r.specification, r.unit];
-            return [...base, formatNum(r.totalInward), formatNum(r.totalIssue), formatNum(r.availableStock)];
+            return [...base, formatNum(r.openingStock), formatNum(r.totalInward), formatNum(r.totalIssue), formatNum(r.availableStock)];
           });
           autoTable(doc, {
             head: tableHeaders,
@@ -367,7 +360,7 @@ ${headerRow}
         const base = isMaterials
           ? `<tr><td>${idx + 1}</td><td>${r.class ?? '-'}</td><td>${r.code}</td><td>${r.name}</td><td>${r.specification}</td><td>${r.unit}</td>`
           : `<tr><td>${idx + 1}</td><td>${r.code}</td><td>${r.name}</td><td>${r.specification}</td><td>${r.unit}</td>`;
-        return `${base}<td>${formatNum(r.totalInward)}</td><td>${formatNum(r.totalIssue)}</td><td>${formatNum(r.availableStock)}</td></tr>`;
+        return `${base}<td>${formatNum(r.openingStock)}</td><td>${formatNum(r.totalInward)}</td><td>${formatNum(r.totalIssue)}</td><td>${formatNum(r.availableStock)}</td></tr>`;
       }).join('')}</tbody></table>
 </body></html>`;
       const w = window.open('', '_blank');
@@ -385,6 +378,7 @@ ${headerRow}
     name: 'Name',
     specification: 'Specification',
     unit: 'Unit',
+    openingStock: 'Opening Stock',
     totalInward: 'Total Inward',
     totalIssue: 'Total Issue',
     availableStock: 'Available Stock',
@@ -482,7 +476,7 @@ ${headerRow}
             </div>
           )}
           <div className="overflow-x-auto table-responsive">
-            <table className="w-full min-w-[800px] text-sm">
+            <table className="w-full min-w-[920px] text-sm">
               <thead className={isDark ? 'bg-slate-800/50' : 'bg-slate-50'}>
                 <tr>
                   <th className={`px-4 py-3 font-bold ${textPrimary} text-left`}>Sl.no</th>
@@ -505,6 +499,7 @@ ${headerRow}
                     <td className={`px-4 py-3 ${textPrimary}`}>{row.name}</td>
                     <td className={`px-4 py-3 ${textSecondary}`}>{row.specification}</td>
                     <td className={`px-4 py-3 ${textSecondary}`}>{row.unit}</td>
+                    <td className={`px-4 py-3 text-right ${textPrimary}`}>{formatNum(row.openingStock)}</td>
                     <td className={`px-4 py-3 text-right ${textPrimary}`}>{formatNum(row.totalInward)}</td>
                     <td className={`px-4 py-3 text-right ${textPrimary}`}>{formatNum(row.totalIssue)}</td>
                     <td className={`px-4 py-3 text-right ${textPrimary}`}>{formatNum(row.availableStock)}</td>

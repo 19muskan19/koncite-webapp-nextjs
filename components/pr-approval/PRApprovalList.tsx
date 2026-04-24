@@ -15,6 +15,8 @@ import {
   rowRequestNo,
   rowStatusLabel,
   rowUuid,
+  rowMaterialRequestId,
+  rowListKey,
   listRowMatchesSearch,
   isPrListRowPending,
 } from './prApprovalHelpers';
@@ -42,8 +44,8 @@ const PRApprovalList: React.FC<PRApprovalListProps> = ({ theme }) => {
   const [rows, setRows] = useState<PrListRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [confirm, setConfirm] = useState<null | { action: 'approve' | 'reject'; uuid: string }>(null);
-  const [busyUuid, setBusyUuid] = useState<string | null>(null);
+  const [confirm, setConfirm] = useState<null | { action: 'approve' | 'reject'; materialRequestId: number }>(null);
+  const [busyMaterialRequestId, setBusyMaterialRequestId] = useState<number | null>(null);
   const [page, setPage] = useState(1);
 
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
@@ -75,11 +77,12 @@ const PRApprovalList: React.FC<PRApprovalListProps> = ({ theme }) => {
     void load();
   }, [load]);
 
-  const navigableRows = useMemo(() => rows.filter((r) => rowUuid(r)), [rows]);
+  /** Rows with uuid (detail link) and/or material_request_id (approve/reject API). */
+  const listRows = useMemo(() => rows.filter((r) => rowListKey(r) != null), [rows]);
 
   const filteredRows = useMemo(() => {
-    return navigableRows.filter((r) => listRowMatchesSearch(r, search));
-  }, [navigableRows, search]);
+    return listRows.filter((r) => listRowMatchesSearch(r, search));
+  }, [listRows, search]);
 
   const totalFiltered = filteredRows.length;
   const totalPages = Math.max(1, Math.ceil(totalFiltered / PAGE_SIZE) || 1);
@@ -99,23 +102,19 @@ const PRApprovalList: React.FC<PRApprovalListProps> = ({ theme }) => {
 
   const runDecision = async () => {
     if (!confirm) return;
-    const { uuid, action } = confirm;
-    setBusyUuid(uuid);
+    const { materialRequestId, action } = confirm;
+    setBusyMaterialRequestId(materialRequestId);
     try {
-      if (action === 'approve') {
-        await prApprovalAPI.approve(uuid);
-        toast.showSuccess('Purchase request approved.');
-      } else {
-        await prApprovalAPI.reject(uuid);
-        toast.showSuccess('Purchase request rejected.');
-      }
+      const status = action === 'approve' ? 1 : 2;
+      await prApprovalAPI.updatePendingStatus(materialRequestId, status);
+      toast.showSuccess(action === 'approve' ? 'Purchase request approved.' : 'Purchase request rejected.');
       setConfirm(null);
       await load();
     } catch (e: unknown) {
       const msg = e && typeof e === 'object' && 'message' in e ? String((e as Error).message) : 'Request failed';
       toast.showError(msg);
     } finally {
-      setBusyUuid(null);
+      setBusyMaterialRequestId(null);
     }
   };
 
@@ -146,12 +145,12 @@ const PRApprovalList: React.FC<PRApprovalListProps> = ({ theme }) => {
             <div className="flex justify-center py-20">
               <Loader2 className="w-10 h-10 animate-spin text-[#C2D642]" />
             </div>
-          ) : rows.length > 0 && navigableRows.length === 0 ? (
+          ) : rows.length > 0 && listRows.length === 0 ? (
             <p className={cn('text-sm px-6 py-12 text-center', textSecondary)}>
-              PRs loaded but none include a <code className="text-[11px]">uuid</code> for navigation. Check the API
-              response.
+              PRs loaded but none include a <code className="text-[11px]">uuid</code> or identifiable{' '}
+              <code className="text-[11px]">material_request_id</code>. Check the API response.
             </p>
-          ) : navigableRows.length === 0 ? (
+          ) : listRows.length === 0 ? (
             <p className={cn('text-sm px-6 py-12 text-center', textSecondary)}>No purchase requests found.</p>
           ) : filteredRows.length === 0 ? (
             <p className={cn('text-sm px-6 py-12 text-center', textSecondary)}>No rows match your search.</p>
@@ -169,20 +168,30 @@ const PRApprovalList: React.FC<PRApprovalListProps> = ({ theme }) => {
                   </thead>
                   <tbody>
                     {pagedRows.map((row) => {
-                    const id = rowUuid(row)!;
+                    const rowKey = rowListKey(row)!;
+                    const detailUuid = rowUuid(row);
+                    const materialRequestId = rowMaterialRequestId(row);
                     const pending = isPrListRowPending(row);
-                    const actionsLocked = !!confirm || busyUuid !== null;
+                    const actionsLocked = !!confirm || busyMaterialRequestId !== null;
+                    const canOpenDetail = !!detailUuid;
                     return (
                       <tr
-                        key={id}
-                        role="button"
-                        tabIndex={0}
-                        className={cn('border-b cursor-pointer transition-colors', tdClass, rowHover)}
-                        onClick={() => router.push(`/pr-approval/${encodeURIComponent(id)}`)}
+                        key={rowKey}
+                        role={canOpenDetail ? 'button' : undefined}
+                        tabIndex={canOpenDetail ? 0 : undefined}
+                        className={cn(
+                          'border-b transition-colors',
+                          tdClass,
+                          canOpenDetail ? cn('cursor-pointer', rowHover) : ''
+                        )}
+                        onClick={() => {
+                          if (detailUuid) router.push(`/pr-approval/${encodeURIComponent(detailUuid)}`);
+                        }}
                         onKeyDown={(e) => {
+                          if (!detailUuid) return;
                           if (e.key === 'Enter' || e.key === ' ') {
                             e.preventDefault();
-                            router.push(`/pr-approval/${encodeURIComponent(id)}`);
+                            router.push(`/pr-approval/${encodeURIComponent(detailUuid)}`);
                           }
                         }}
                       >
@@ -197,30 +206,40 @@ const PRApprovalList: React.FC<PRApprovalListProps> = ({ theme }) => {
                             <div className="flex flex-wrap gap-1.5 items-center">
                               <button
                                 type="button"
-                                disabled={actionsLocked}
+                                disabled={actionsLocked || materialRequestId == null}
                                 className={cn(
                                   'text-xs font-bold px-2.5 py-1 rounded shadow-sm transition-colors disabled:opacity-50',
                                   'bg-[#C2D642] text-slate-900 hover:bg-[#b8cc3a]'
                                 )}
+                                title={materialRequestId == null ? 'Missing material request id for this row' : undefined}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setConfirm({ action: 'approve', uuid: id });
+                                  if (materialRequestId == null) {
+                                    toast.showError('Cannot approve: missing material request id.');
+                                    return;
+                                  }
+                                  setConfirm({ action: 'approve', materialRequestId });
                                 }}
                               >
                                 Approve
                               </button>
                               <button
                                 type="button"
-                                disabled={actionsLocked}
+                                disabled={actionsLocked || materialRequestId == null}
                                 className={cn(
                                   'text-xs font-bold px-2.5 py-1 rounded shadow-sm transition-colors disabled:opacity-50',
                                   isDark
                                     ? 'bg-rose-900 text-rose-100 hover:bg-rose-800 border border-rose-700'
                                     : 'bg-rose-700 text-white hover:bg-rose-800'
                                 )}
+                                title={materialRequestId == null ? 'Missing material request id for this row' : undefined}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  setConfirm({ action: 'reject', uuid: id });
+                                  if (materialRequestId == null) {
+                                    toast.showError('Cannot reject: missing material request id.');
+                                    return;
+                                  }
+                                  setConfirm({ action: 'reject', materialRequestId });
                                 }}
                               >
                                 Reject
@@ -285,8 +304,9 @@ const PRApprovalList: React.FC<PRApprovalListProps> = ({ theme }) => {
         </div>
 
         <p className={cn('text-xs mt-4', textSecondary)}>
-          Select a row to open details. Pending rows can be approved or rejected here.
-          <code className="text-[11px]">uuid</code>.
+          Select a row with a link to open details. Pending rows use Approve / Reject (POST{' '}
+          <code className="text-[11px]">inventory/pending-approval-update-status</code>
+          ).
         </p>
       </div>
 
@@ -296,7 +316,7 @@ const PRApprovalList: React.FC<PRApprovalListProps> = ({ theme }) => {
           role="dialog"
           aria-modal="true"
           aria-labelledby="pr-confirm-title"
-          onClick={() => !busyUuid && setConfirm(null)}
+          onClick={() => !busyMaterialRequestId && setConfirm(null)}
         >
           <div
             className={cn('rounded-xl border max-w-md w-full p-6 shadow-xl', cardClass)}
@@ -318,13 +338,13 @@ const PRApprovalList: React.FC<PRApprovalListProps> = ({ theme }) => {
                   isDark ? 'border-slate-500 text-slate-200 hover:bg-slate-700' : 'border-slate-300 text-slate-800 hover:bg-slate-50'
                 )}
                 onClick={() => setConfirm(null)}
-                disabled={!!busyUuid}
+                disabled={!!busyMaterialRequestId}
               >
                 Cancel
               </button>
               <button
                 type="button"
-                disabled={!!busyUuid}
+                disabled={!!busyMaterialRequestId}
                 className={cn(
                   'px-4 py-2 rounded-lg text-sm font-bold text-white transition-colors disabled:opacity-50',
                   confirm.action === 'approve'
@@ -335,7 +355,7 @@ const PRApprovalList: React.FC<PRApprovalListProps> = ({ theme }) => {
                 )}
                 onClick={() => void runDecision()}
               >
-                {busyUuid ? (
+                {busyMaterialRequestId != null ? (
                   <span className="inline-flex items-center gap-2">
                     <Loader2 className="w-4 h-4 animate-spin" />
                     Working…

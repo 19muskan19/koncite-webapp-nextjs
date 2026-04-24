@@ -187,27 +187,28 @@ const TeamMemberPermissionsModal: React.FC<Props> = ({
   const [matrix, setMatrix] = useState<Record<string, CrudFlags>>({});
   const [saving, setSaving] = useState(false);
 
-  /** Only reset matrix when opening a different user/role (not on parent re-renders / new object refs). */
-  const matrixInitKeyRef = useRef<string | null>(null);
+  /** Stable hash of server matrix so we re-apply when permissions/menus load (not only when user id matches). */
+  const teamPermissionSeed = useMemo(() => {
+    if (!isTeamApi || !teamPermissionApi) return null;
+    return [
+      String(teamPermissionApi.updateId),
+      String(entityId),
+      JSON.stringify(teamPermissionApi.permissionsByMenu ?? {}),
+      JSON.stringify(teamPermissionApi.menusTree ?? null),
+    ].join('\u0000');
+  }, [isTeamApi, teamPermissionApi, entityId]);
+
+  const teamApiRef = useRef(teamPermissionApi);
+  teamApiRef.current = teamPermissionApi;
 
   useEffect(() => {
-    const initKey =
-      isTeamApi && teamPermissionApi != null
-        ? `api:${teamPermissionApi.updateId}:${entityId}`
-        : `local:${storageNamespace}:${entityId}`;
-
-    if (matrixInitKeyRef.current === initKey) {
-      return;
-    }
-    matrixInitKeyRef.current = initKey;
-
-    if (isTeamApi && teamPermissionApi) {
-      setMatrix(
-        buildCrudMatrixFromMenusTreeAndPermissionMap(
-          teamPermissionApi.menusTree,
-          teamPermissionApi.permissionsByMenu
-        )
-      );
+    if (teamPermissionSeed != null) {
+      const api = teamApiRef.current;
+      if (api) {
+        setMatrix(
+          buildCrudMatrixFromMenusTreeAndPermissionMap(api.menusTree, api.permissionsByMenu)
+        );
+      }
       return;
     }
 
@@ -237,7 +238,7 @@ const TeamMemberPermissionsModal: React.FC<Props> = ({
     const initial: Record<string, CrudFlags> = {};
     for (const r of staticRows) initial[r.key] = emptyCrud();
     setMatrix(initial);
-  }, [isTeamApi, teamPermissionApi, entityId, storageNamespace, staticRows]);
+  }, [teamPermissionSeed, isTeamApi, entityId, storageNamespace, staticRows]);
 
   const toggleCrud = useCallback(
     (rowKey: string, field: (typeof CRUD_KEYS)[number]) => {

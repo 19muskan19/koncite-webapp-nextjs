@@ -42,6 +42,7 @@ import { useSidebar } from '../../contexts/SidebarContext';
 import { masterDataAPI, teamsAPI, safetyAPI, hinderanceAPI, dprAPI, activitiesHistoryAPI, labourHistoryAPI, materialsHistoryAPI, assetsHistoryAPI } from '../../services/api';
 import { getLogoUrl } from '@/utils/imageUtils';
 import { getTodayDateString } from '@/utils/dateUtils';
+import { parseLocaleNumber } from '../../utils/workProgress';
 
 interface Project {
   id: string;
@@ -1274,7 +1275,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
         numericId: Number.isFinite(numericActId) ? numericActId : undefined,
         name: String(name || 'Activity'),
         unit: r?.unit ?? act?.unit ?? (matchedActivity?.unit ?? ''),
-        quantity: Number(qty) || 0,
+        quantity: parseLocaleNumber(qty, 0),
         contractor: contractor || undefined,
         remarks: remarks || undefined,
         images: parseImages(r)
@@ -1386,7 +1387,7 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           name: mat?.name ?? r?.material_name ?? r?.materials_name ?? matchedMaterial?.name ?? '',
           specification: mat?.specification ?? r?.specification ?? matchedMaterial?.specification ?? '',
           unit: mat?.unit ?? r?.unit ?? matchedMaterial?.unit ?? '',
-          quantity: Number(r?.qty ?? r?.quantity ?? 0),
+          quantity: parseLocaleNumber(r?.qty ?? r?.quantity, 0),
           activity: r?.activities?.activities ?? r?.activities?.name ?? r?.activity_name ?? '',
           remarks: r?.remarkes ?? r?.remarks ?? ''
         });
@@ -1455,11 +1456,11 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           numericId: Number(labId) || undefined,
           type: lab?.type ?? r?.type ?? matchedLabour?.type ?? '',
           category: lab?.category ?? r?.category ?? matchedLabour?.category ?? '',
-          quantity: Number(r?.qty ?? r?.quantity ?? 0),
-          overtimeQuantity: Number(r?.ot_qty ?? r?.overtime_qty ?? 0),
+          quantity: parseLocaleNumber(r?.qty ?? r?.quantity, 0),
+          overtimeQuantity: parseLocaleNumber(r?.ot_qty ?? r?.overtime_qty, 0),
           activity: r?.activities?.activities ?? r?.activities?.name ?? r?.activity_name ?? '',
           contractor: getContractor(r?.vendors ?? r?.vendor ?? r?.vendors_id ?? r?.contractor),
-          ratePerUnit: Number(r?.rate_per_unit ?? r?.rate ?? 0),
+          ratePerUnit: parseLocaleNumber(r?.rate_per_unit ?? r?.rate, 0),
           remarks: r?.remarkes ?? r?.remarks ?? ''
         });
       }
@@ -1527,10 +1528,10 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
           numericId: Number(assetId) || undefined,
           code: asset?.code ?? r?.code ?? matchedAsset?.code ?? '',
           name: asset?.name ?? r?.asset_name ?? matchedAsset?.name ?? '',
-          quantity: Number(r?.qty ?? r?.quantity ?? 0),
+          quantity: parseLocaleNumber(r?.qty ?? r?.quantity, 0),
           activity: r?.activities?.activities ?? r?.activities?.name ?? r?.activity_name ?? '',
           contractor: getContractor(r?.vendors ?? r?.vendor ?? r?.vendors_id ?? r?.contractor),
-          ratePerUnit: Number(r?.rate_per_unit ?? r?.rate ?? 0),
+          ratePerUnit: parseLocaleNumber(r?.rate_per_unit ?? r?.rate, 0),
           remarks: r?.remarkes ?? r?.remarks ?? ''
         });
       }
@@ -5150,14 +5151,24 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                     </p>
                   </div>
                   <button
+                    type="button"
                     onClick={handleAddSafetyEntry}
-                    className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap flex-shrink-0 w-fit ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white'} shadow-md`}
+                    className={`hidden md:flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap flex-shrink-0 w-fit ml-auto ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white'} shadow-md`}
                   >
                     <Plus className="w-4 h-4 flex-shrink-0" /> Add New
                   </button>
                 </div>
               </div>
-              <div className="px-6 pt-6 pb-8">
+              <div className="px-6 pt-4 sm:pt-6 pb-8">
+              <div className="flex justify-end mb-3 md:hidden">
+                <button
+                  type="button"
+                  onClick={handleAddSafetyEntry}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white'} shadow-md`}
+                >
+                  <Plus className="w-4 h-4 flex-shrink-0" /> Add New
+                </button>
+              </div>
               {isLoadingSafety ? (
                 <div className={`flex items-center justify-center py-12 ${textSecondary}`}>
                   <Loader2 className="w-8 h-8 animate-spin" />
@@ -5314,14 +5325,24 @@ const DPR: React.FC<DPRProps> = ({ theme }) => {
                     </p>
                   </div>
                   <button
+                    type="button"
                     onClick={handleAddHindranceEntry}
-                    className={`flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap flex-shrink-0 w-fit ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white'} shadow-md`}
+                    className={`hidden md:flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap flex-shrink-0 w-fit ml-auto ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white'} shadow-md`}
                   >
                     <Plus className="w-4 h-4 flex-shrink-0" /> Add New
                   </button>
                 </div>
               </div>
-              <div className="px-6 pt-6 pb-8">
+              <div className="px-6 pt-4 sm:pt-6 pb-8">
+              <div className="flex justify-end mb-3 md:hidden">
+                <button
+                  type="button"
+                  onClick={handleAddHindranceEntry}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${isDark ? 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white' : 'bg-[#C2D642] hover:bg-[#C2D642]/90 text-white'} shadow-md`}
+                >
+                  <Plus className="w-4 h-4 flex-shrink-0" /> Add New
+                </button>
+              </div>
               {isLoadingHindrance ? (
                 <div className={`flex items-center gap-2 py-8 ${textSecondary}`}>
                   <Loader2 className="w-5 h-5 animate-spin flex-shrink-0" />

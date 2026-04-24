@@ -30,6 +30,40 @@ import { masterDataAPI, goodsReturnAPI } from '@/services/api';
 import CreateWarehouseModal from '@/components/masters/Modals/CreateWarehouseModal';
 import { getTodayDateString } from '@/utils/dateUtils';
 import { copyPdfUrl } from '@/utils/pdfUtils';
+import { isInventoryQuantityZeroish } from '@/utils/inventoryQuantityInput';
+
+/** Issue line id for POST /return-goods-details-add — read from common API shapes. */
+function extractInvIssuesDetailsId(row: unknown): string | number | null {
+  if (row == null || typeof row !== 'object') return null;
+  const o = row as Record<string, unknown>;
+  const nestedIssue = o.inv_issue_details;
+  const nestedIssues = o.inv_issues_details;
+  const v =
+    o.inv_issues_details_id ??
+    o.inv_issue_details_id ??
+    o.inv_issues_detail_id ??
+    o.inv_issue_detail_id ??
+    o.issue_details_id ??
+    o.issue_detail_id ??
+    (typeof nestedIssue === 'object' && nestedIssue != null
+      ? (nestedIssue as Record<string, unknown>).inv_issues_details_id ?? (nestedIssue as Record<string, unknown>).id
+      : undefined) ??
+    (typeof nestedIssues === 'object' && nestedIssues != null
+      ? (nestedIssues as Record<string, unknown>).id ?? (nestedIssues as Record<string, unknown>).inv_issues_details_id
+      : undefined) ??
+    (o.pivot as Record<string, unknown> | undefined)?.inv_issues_details_id;
+  if (v == null || v === '') return null;
+  return typeof v === 'object' && v !== null && 'id' in (v as object) ? (v as { id: unknown }).id as string | number : (v as string | number);
+}
+
+function normalizeIssueLineIdForApi(value: string | number | null | undefined): number | string | null {
+  if (value == null) return null;
+  const s = String(value).trim();
+  if (s === '') return null;
+  const n = Number(s);
+  if (Number.isFinite(n) && !Number.isNaN(n)) return n;
+  return value;
+}
 
 type GoodsReturnStep = 'stores' | 'assetReturn' | 'details' | 'success';
 
@@ -64,6 +98,8 @@ interface MaterialItem {
   specification?: string;
   unit?: string;
   stock?: string | number;
+  /** Issue line id from issue-material-list (return); sent on return-goods-details-add */
+  inv_issues_details_id?: string | number;
 }
 
 interface ReturnDetailItem {
@@ -81,6 +117,8 @@ interface ReturnDetailItem {
   activities_id?: string | number;
   activityName?: string;
   id?: string | number | null;
+  /** Source issue detail line id — required by POST /return-goods-details-add when returning against an issue */
+  inv_issues_details_id?: string | number | null;
 }
 
 export default function GoodsReturnFlow({
@@ -288,6 +326,11 @@ export default function GoodsReturnFlow({
               activities_id: d.activities_id ?? d.activity_id,
               activityName: d.activities?.name ?? d.activity_name ?? '',
               id: d.return_goods_details_id ?? d.id ?? null,
+              inv_issues_details_id:
+                extractInvIssuesDetailsId(d) ??
+                extractInvIssuesDetailsId(nestedDetail) ??
+                extractInvIssuesDetailsId(pivot) ??
+                null,
             };
           });
           setDetails(mapped);
@@ -556,6 +599,7 @@ export default function GoodsReturnFlow({
           specification: m.specification ?? '',
           unit: m.units?.unit ?? m.unit ?? '',
           stock: m.stock ?? m.stock_qty ?? '',
+          inv_issues_details_id: extractInvIssuesDetailsId(m) ?? undefined,
         }));
         setMaterials(transformed);
       })
@@ -854,6 +898,7 @@ export default function GoodsReturnFlow({
             activities_id: existing?.activities_id,
             activityName: existing?.activityName ?? '',
             id: existing?.id ?? null,
+            inv_issues_details_id: extractInvIssuesDetailsId(m) ?? existing?.inv_issues_details_id ?? null,
           };
         });
 
@@ -890,6 +935,11 @@ export default function GoodsReturnFlow({
             activities_id: existing?.activities_id ?? g.activities_id,
             activityName: existing?.activityName ?? g.activities?.name ?? '',
             id: existing?.id ?? g.return_goods_details_id ?? g.id ?? null,
+            inv_issues_details_id:
+              extractInvIssuesDetailsId(g) ??
+              extractInvIssuesDetailsId(g.inv_issue_details) ??
+              existing?.inv_issues_details_id ??
+              null,
           }];
         });
         if (detailItems.length === 0) {
@@ -939,19 +989,26 @@ export default function GoodsReturnFlow({
       }
       const payload = details
         .filter((d) => d.materials_id != null || d.materialNumericId != null)
-        .map((d) => ({
-          ...(d.id != null ? { id: d.id } : {}),
-          inv_return_goods_id: d.inv_return_goods_id ?? invReturnGoodsId,
-          projects_id: pId,
-          store_warehouses_id: storeNumericIds,
-          materials_id: d.materials_id ?? d.materialNumericId,
-          type: goodsType,
-          return_qty: d.return_qty,
-          stock_qty: d.stock_qty ?? 0,
-          price: d.price ?? 0,
-          remarkes: d.remarkes ?? '',
-          activities_id: d.activities_id ?? null,
-        }));
+        .map((d) => {
+          const issueLineId = extractInvIssuesDetailsId(d) ?? d.inv_issues_details_id;
+          const invIssuesDetailsId = normalizeIssueLineIdForApi(issueLineId);
+          const mid = d.materials_id ?? d.materialNumericId;
+          return {
+            ...(d.id != null ? { id: d.id } : {}),
+            inv_return_goods_id: d.inv_return_goods_id ?? invReturnGoodsId,
+            projects_id: pId,
+            store_warehouses_id: storeNumericIds,
+            materials_id: mid!,
+            type: goodsType,
+            return_qty: d.return_qty,
+            stock_qty: d.stock_qty ?? 0,
+            price: d.price ?? 0,
+            remarkes: d.remarkes ?? '',
+            activities_id: d.activities_id ?? null,
+            /** Required by API: links each return line to the source issue line. */
+            inv_issues_details_id: invIssuesDetailsId,
+          };
+        });
       if (payload.length === 0) {
         toast.showWarning('No valid items to save.');
         return;
@@ -1457,7 +1514,7 @@ export default function GoodsReturnFlow({
                               value={d.return_qty}
                               onChange={(e) => updateDetailQty(i, e.target.value)}
                               onFocus={() => {
-                                if (d.return_qty === 0 || d.return_qty === '0' || d.return_qty === '') {
+                                if (isInventoryQuantityZeroish(d.return_qty)) {
                                   updateDetailQty(i, '');
                                 }
                               }}

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { ThemeType } from '../../types';
 import { 
   Package,
@@ -12,12 +12,12 @@ import {
   Building2,
   Layers,
   Warehouse,
-  ChevronDown as ChevronDownIcon,
   Loader2,
 } from 'lucide-react';
 import DatePickerInput from '../ui/DatePickerInput';
 import { masterDataAPI } from '../../services/api';
 import { useToast } from '../../contexts/ToastContext';
+import { parseLocaleNumber } from '../../utils/workProgress';
 
 interface Project {
   id: string | number;
@@ -50,8 +50,9 @@ interface MaterialUsedVsStoreIssueProps {
 }
 
 const formatNum = (n: any) => {
-  const v = Number(n);
-  return isNaN(v) ? '-' : v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const v = parseLocaleNumber(n, NaN);
+  if (!Number.isFinite(v)) return '0.00';
+  return v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
 const MaterialUsedVsStoreIssue: React.FC<MaterialUsedVsStoreIssueProps> = ({ theme }) => {
@@ -70,7 +71,19 @@ const MaterialUsedVsStoreIssue: React.FC<MaterialUsedVsStoreIssueProps> = ({ the
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
   const [entriesPerPage] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
-  
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+  const [projectSearch, setProjectSearch] = useState('');
+  const projectMenuRef = useRef<HTMLDivElement>(null);
+  const projectSearchInputRef = useRef<HTMLInputElement>(null);
+  const [subprojectMenuOpen, setSubprojectMenuOpen] = useState(false);
+  const [subprojectSearch, setSubprojectSearch] = useState('');
+  const subprojectMenuRef = useRef<HTMLDivElement>(null);
+  const subprojectSearchInputRef = useRef<HTMLInputElement>(null);
+  const [storeMenuOpen, setStoreMenuOpen] = useState(false);
+  const [storeSearch, setStoreSearch] = useState('');
+  const storeMenuRef = useRef<HTMLDivElement>(null);
+  const storeSearchInputRef = useRef<HTMLInputElement>(null);
+
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
   const textPrimary = isDark ? 'text-slate-100' : 'text-slate-900';
@@ -134,6 +147,102 @@ const MaterialUsedVsStoreIssue: React.FC<MaterialUsedVsStoreIssueProps> = ({ the
     load();
   }, [selectedProject, projects]);
 
+  const filteredProjects = useMemo(() => {
+    const q = projectSearch.trim().toLowerCase();
+    const sorted = [...projects].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    if (!q) return sorted;
+    return sorted.filter((p) => String(p.name).toLowerCase().includes(q));
+  }, [projects, projectSearch]);
+
+  const filteredSubprojects = useMemo(() => {
+    const q = subprojectSearch.trim().toLowerCase();
+    const sorted = [...subprojects].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    if (!q) return sorted;
+    return sorted.filter((s) => String(s.name).toLowerCase().includes(q));
+  }, [subprojects, subprojectSearch]);
+
+  const filteredStores = useMemo(() => {
+    const q = storeSearch.trim().toLowerCase();
+    const sorted = [...stores].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    if (!q) return sorted;
+    return sorted.filter((s) => String(s.name).toLowerCase().includes(q));
+  }, [stores, storeSearch]);
+
+  const selectedProjectLabel = useMemo(() => {
+    if (!selectedProject) return '---select project---';
+    const p = projects.find((x) => String(x.id) === String(selectedProject));
+    return p?.name?.trim() || '---select project---';
+  }, [projects, selectedProject]);
+
+  const selectedSubProjectLabel = useMemo(() => {
+    if (!selectedSubProject) return 'Select Sub Project';
+    const s = subprojects.find((x) => String(x.id) === String(selectedSubProject));
+    return s?.name?.trim() || 'Select Sub Project';
+  }, [subprojects, selectedSubProject]);
+
+  const selectedStoreLabel = useMemo(() => {
+    if (!selectedStore) return 'Select Store';
+    const s = stores.find((x) => String(x.id) === String(selectedStore));
+    return s?.name?.trim() || 'Select Store';
+  }, [stores, selectedStore]);
+
+  useEffect(() => {
+    if (!projectMenuOpen) {
+      setProjectSearch('');
+      return;
+    }
+    const t = window.setTimeout(() => projectSearchInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [projectMenuOpen]);
+
+  useEffect(() => {
+    if (!projectMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = projectMenuRef.current;
+      if (el && !el.contains(e.target as Node)) setProjectMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [projectMenuOpen]);
+
+  useEffect(() => {
+    if (!subprojectMenuOpen) {
+      setSubprojectSearch('');
+      return;
+    }
+    const t = window.setTimeout(() => subprojectSearchInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [subprojectMenuOpen]);
+
+  useEffect(() => {
+    if (!subprojectMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = subprojectMenuRef.current;
+      if (el && !el.contains(e.target as Node)) setSubprojectMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [subprojectMenuOpen]);
+
+  useEffect(() => {
+    if (!storeMenuOpen) {
+      setStoreSearch('');
+      return;
+    }
+    const t = window.setTimeout(() => storeSearchInputRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [storeMenuOpen]);
+
+  useEffect(() => {
+    if (!storeMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = storeMenuRef.current;
+      if (el && !el.contains(e.target as Node)) setStoreMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [storeMenuOpen]);
+
   const loadReportData = useCallback(async () => {
     if (!selectedProject || !selectedSubProject || !selectedStore || !fromDate || !toDate) {
       setTableData([]);
@@ -155,15 +264,18 @@ const MaterialUsedVsStoreIssue: React.FC<MaterialUsedVsStoreIssueProps> = ({ the
       });
       const rows: ReportRow[] = (arr ?? []).map((r: any, i: number) => {
         const code = r?.code ?? '-';
+        const issueQty = parseLocaleNumber(r?.issue_qty, 0);
+        const dprQty = parseLocaleNumber(r?.dpr_qty, 0);
+        const variation = parseLocaleNumber(r?.variation, issueQty - dprQty);
         return {
           id: `${code}-${i}`,
           code,
           name: r?.name ?? '-',
           specification: r?.specification ?? '-',
           unit: r?.unit ?? '-',
-          issueQty: Number(r?.issue_qty ?? 0),
-          dprQty: Number(r?.dpr_qty ?? 0),
-          variation: Number(r?.variation ?? 0),
+          issueQty,
+          dprQty,
+          variation,
         };
       });
       setTableData(rows);
@@ -233,49 +345,350 @@ const MaterialUsedVsStoreIssue: React.FC<MaterialUsedVsStoreIssueProps> = ({ the
       {/* Filter Form */}
       <div className={`rounded-xl border ${cardClass} p-4`}>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-          <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Project <span className="text-red-500">*</span></label>
-            <div className="relative">
-              <Building2 className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} z-10`} />
-              <select
-                value={selectedProject}
-                onChange={(e) => setSelectedProject(e.target.value)}
-                className={`w-full pl-10 pr-10 py-2 rounded-lg text-sm border appearance-none cursor-pointer ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+          <div className="min-w-0">
+            <label htmlFor="material-used-vs-store-project" className={`block text-sm font-bold mb-2 ${textPrimary}`}>Project <span className="text-red-500">*</span></label>
+            <div className="relative" ref={projectMenuRef}>
+              <Building2 className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} z-10 pointer-events-none`} />
+              <button
+                id="material-used-vs-store-project"
+                type="button"
+                onClick={() => setProjectMenuOpen((o) => !o)}
+                className={`relative w-full flex items-center pl-10 pr-10 py-2 rounded-lg text-sm border text-left ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+                aria-expanded={projectMenuOpen}
+                aria-haspopup="listbox"
+                aria-label="Select project"
               >
-                <option value="">---select project---</option>
-                {projects.map((p) => <option key={String(p.id)} value={String(p.id)}>{p.name}</option>)}
-              </select>
-              <ChevronDownIcon className={`absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
+                <span className="min-w-0 flex-1 truncate pr-1">{selectedProjectLabel}</span>
+                <ChevronDown
+                  className={`pointer-events-none absolute right-3 top-1/2 size-[1.125rem] -translate-y-1/2 shrink-0 opacity-80 transition-transform duration-200 ${projectMenuOpen ? 'rotate-180' : ''}`}
+                  strokeWidth={2.25}
+                  aria-hidden
+                />
+              </button>
+              {projectMenuOpen ? (
+                <div
+                  role="listbox"
+                  aria-label="Projects"
+                  className={`absolute left-0 right-0 z-50 mt-1 rounded-lg border shadow-xl overflow-hidden flex flex-col ${
+                    isDark ? 'bg-slate-900 border-slate-600' : 'bg-white border-slate-200'
+                  }`}
+                >
+                  <div className={`p-2 border-b shrink-0 ${isDark ? 'border-slate-600 bg-slate-900/95' : 'border-slate-200 bg-slate-50'}`}>
+                    <div className="relative">
+                      <Search className={`absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none ${textSecondary}`} aria-hidden />
+                      <input
+                        ref={projectSearchInputRef}
+                        type="search"
+                        autoComplete="off"
+                        placeholder="Search projects…"
+                        value={projectSearch}
+                        onChange={(e) => setProjectSearch(e.target.value)}
+                        onKeyDown={(e) => e.stopPropagation()}
+                        className={`w-full pl-9 pr-3 py-2 rounded-md border text-sm ${
+                          isDark
+                            ? 'bg-slate-800 border-slate-600 text-slate-100 placeholder-slate-500'
+                            : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+                        }`}
+                        aria-label="Search project list"
+                      />
+                    </div>
+                  </div>
+                  <ul className="overflow-y-auto max-h-56 py-1">
+                    <li>
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={selectedProject === ''}
+                        onClick={() => {
+                          setSelectedProject('');
+                          setProjectMenuOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
+                          selectedProject === ''
+                            ? isDark
+                              ? 'bg-[#C2D642]/25 text-[#C2D642]'
+                              : 'bg-[#C2D642]/15 text-[#6B7F2A]'
+                            : isDark
+                              ? 'text-slate-200 hover:bg-slate-800'
+                              : 'text-slate-800 hover:bg-slate-100'
+                        }`}
+                      >
+                        ---select project---
+                      </button>
+                    </li>
+                    {filteredProjects.map((p) => {
+                      const idStr = String(p.id);
+                      const selected = selectedProject === idStr;
+                      return (
+                        <li key={idStr}>
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={selected}
+                            onClick={() => {
+                              setSelectedProject(idStr);
+                              setProjectMenuOpen(false);
+                            }}
+                            className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors truncate ${
+                              selected
+                                ? isDark
+                                  ? 'bg-[#C2D642]/25 text-[#C2D642]'
+                                  : 'bg-[#C2D642]/15 text-[#6B7F2A]'
+                                : isDark
+                                  ? 'text-slate-200 hover:bg-slate-800'
+                                  : 'text-slate-800 hover:bg-slate-100'
+                            }`}
+                            title={p.name}
+                          >
+                            {p.name}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {filteredProjects.length === 0 && projectSearch.trim() ? (
+                    <p className={`px-3 py-2 text-sm border-t ${isDark ? 'border-slate-600 text-slate-400' : 'border-slate-200 text-slate-600'}`}>
+                      No matching projects
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
-          <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Sub Project <span className="text-red-500">*</span></label>
-            <div className="relative">
-              <Layers className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} z-10`} />
-              <select
-                value={selectedSubProject}
-                onChange={(e) => setSelectedSubProject(e.target.value)}
-                className={`w-full pl-10 pr-10 py-2 rounded-lg text-sm border appearance-none cursor-pointer ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+          <div className="min-w-0">
+            <label htmlFor="material-used-vs-store-subproject" className={`block text-sm font-bold mb-2 ${textPrimary}`}>Sub Project <span className="text-red-500">*</span></label>
+            <div className="relative" ref={subprojectMenuRef}>
+              <Layers className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} z-10 pointer-events-none`} />
+              <button
+                id="material-used-vs-store-subproject"
+                type="button"
+                onClick={() => selectedProject && setSubprojectMenuOpen((o) => !o)}
+                disabled={!selectedProject}
+                className={`relative w-full flex items-center pl-10 pr-10 py-2 rounded-lg text-sm border text-left ${
+                  isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
+                } focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50 disabled:cursor-not-allowed`}
+                aria-expanded={subprojectMenuOpen}
+                aria-haspopup="listbox"
+                aria-label="Select sub project"
               >
-                <option value="">Select Sub Project</option>
-                {subprojects.map((s) => <option key={String(s.id)} value={String(s.id)}>{s.name}</option>)}
-              </select>
-              <ChevronDownIcon className={`absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
+                <span className="min-w-0 flex-1 truncate pr-1">{selectedProject ? selectedSubProjectLabel : 'Select a project first'}</span>
+                <ChevronDown
+                  className={`pointer-events-none absolute right-3 top-1/2 size-[1.125rem] -translate-y-1/2 shrink-0 opacity-80 transition-transform duration-200 ${subprojectMenuOpen ? 'rotate-180' : ''}`}
+                  strokeWidth={2.25}
+                  aria-hidden
+                />
+              </button>
+              {subprojectMenuOpen && selectedProject ? (
+                <div
+                  role="listbox"
+                  aria-label="Sub projects"
+                  className={`absolute left-0 right-0 z-50 mt-1 rounded-lg border shadow-xl overflow-hidden flex flex-col ${
+                    isDark ? 'bg-slate-900 border-slate-600' : 'bg-white border-slate-200'
+                  }`}
+                >
+                  <div className={`p-2 border-b shrink-0 ${isDark ? 'border-slate-600 bg-slate-900/95' : 'border-slate-200 bg-slate-50'}`}>
+                    <div className="relative">
+                      <Search className={`absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none ${textSecondary}`} aria-hidden />
+                      <input
+                        ref={subprojectSearchInputRef}
+                        type="search"
+                        autoComplete="off"
+                        placeholder="Search sub projects…"
+                        value={subprojectSearch}
+                        onChange={(e) => setSubprojectSearch(e.target.value)}
+                        onKeyDown={(e) => e.stopPropagation()}
+                        className={`w-full pl-9 pr-3 py-2 rounded-md border text-sm ${
+                          isDark
+                            ? 'bg-slate-800 border-slate-600 text-slate-100 placeholder-slate-500'
+                            : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+                        }`}
+                        aria-label="Search sub project list"
+                      />
+                    </div>
+                  </div>
+                  <ul className="overflow-y-auto max-h-56 py-1">
+                    <li>
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={selectedSubProject === ''}
+                        onClick={() => {
+                          setSelectedSubProject('');
+                          setSubprojectMenuOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
+                          selectedSubProject === ''
+                            ? isDark
+                              ? 'bg-[#C2D642]/25 text-[#C2D642]'
+                              : 'bg-[#C2D642]/15 text-[#6B7F2A]'
+                            : isDark
+                              ? 'text-slate-200 hover:bg-slate-800'
+                              : 'text-slate-800 hover:bg-slate-100'
+                        }`}
+                      >
+                        Select Sub Project
+                      </button>
+                    </li>
+                    {filteredSubprojects.map((s) => {
+                      const idStr = String(s.id);
+                      const selected = selectedSubProject === idStr;
+                      return (
+                        <li key={idStr}>
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={selected}
+                            onClick={() => {
+                              setSelectedSubProject(idStr);
+                              setSubprojectMenuOpen(false);
+                            }}
+                            className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors truncate ${
+                              selected
+                                ? isDark
+                                  ? 'bg-[#C2D642]/25 text-[#C2D642]'
+                                  : 'bg-[#C2D642]/15 text-[#6B7F2A]'
+                                : isDark
+                                  ? 'text-slate-200 hover:bg-slate-800'
+                                  : 'text-slate-800 hover:bg-slate-100'
+                            }`}
+                            title={s.name}
+                          >
+                            {s.name}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {filteredSubprojects.length === 0 && subprojectSearch.trim() ? (
+                    <p className={`px-3 py-2 text-sm border-t ${isDark ? 'border-slate-600 text-slate-400' : 'border-slate-200 text-slate-600'}`}>
+                      No matching sub projects
+                    </p>
+                  ) : null}
+                  {subprojects.length === 0 && !subprojectSearch.trim() ? (
+                    <p className={`px-3 py-2 text-sm border-t ${isDark ? 'border-slate-600 text-slate-400' : 'border-slate-200 text-slate-600'}`}>
+                      No sub projects for this project
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
-          <div>
-            <label className={`block text-sm font-bold mb-2 ${textPrimary}`}>Store <span className="text-red-500">*</span></label>
-            <div className="relative">
-              <Warehouse className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} z-10`} />
-              <select
-                value={selectedStore}
-                onChange={(e) => setSelectedStore(e.target.value)}
-                className={`w-full pl-10 pr-10 py-2 rounded-lg text-sm border appearance-none cursor-pointer ${isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'} focus:ring-2 focus:ring-[#C2D642]/20 outline-none`}
+          <div className="min-w-0">
+            <label htmlFor="material-used-vs-store-store" className={`block text-sm font-bold mb-2 ${textPrimary}`}>Store <span className="text-red-500">*</span></label>
+            <div className="relative" ref={storeMenuRef}>
+              <Warehouse className={`absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary} z-10 pointer-events-none`} />
+              <button
+                id="material-used-vs-store-store"
+                type="button"
+                onClick={() => selectedProject && setStoreMenuOpen((o) => !o)}
+                disabled={!selectedProject}
+                className={`relative w-full flex items-center pl-10 pr-10 py-2 rounded-lg text-sm border text-left ${
+                  isDark ? 'bg-slate-800/50 border-slate-700 text-slate-100' : 'bg-white border-slate-200 text-slate-900'
+                } focus:ring-2 focus:ring-[#C2D642]/20 outline-none disabled:opacity-50 disabled:cursor-not-allowed`}
+                aria-expanded={storeMenuOpen}
+                aria-haspopup="listbox"
+                aria-label="Select store"
               >
-                <option value="">Select Store</option>
-                {stores.map((s) => <option key={String(s.id)} value={String(s.id)}>{s.name}</option>)}
-              </select>
-              <ChevronDownIcon className={`absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 ${textSecondary}`} />
+                <span className="min-w-0 flex-1 truncate pr-1">{selectedProject ? selectedStoreLabel : 'Select a project first'}</span>
+                <ChevronDown
+                  className={`pointer-events-none absolute right-3 top-1/2 size-[1.125rem] -translate-y-1/2 shrink-0 opacity-80 transition-transform duration-200 ${storeMenuOpen ? 'rotate-180' : ''}`}
+                  strokeWidth={2.25}
+                  aria-hidden
+                />
+              </button>
+              {storeMenuOpen && selectedProject ? (
+                <div
+                  role="listbox"
+                  aria-label="Stores"
+                  className={`absolute left-0 right-0 z-50 mt-1 rounded-lg border shadow-xl overflow-hidden flex flex-col ${
+                    isDark ? 'bg-slate-900 border-slate-600' : 'bg-white border-slate-200'
+                  }`}
+                >
+                  <div className={`p-2 border-b shrink-0 ${isDark ? 'border-slate-600 bg-slate-900/95' : 'border-slate-200 bg-slate-50'}`}>
+                    <div className="relative">
+                      <Search className={`absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none ${textSecondary}`} aria-hidden />
+                      <input
+                        ref={storeSearchInputRef}
+                        type="search"
+                        autoComplete="off"
+                        placeholder="Search stores…"
+                        value={storeSearch}
+                        onChange={(e) => setStoreSearch(e.target.value)}
+                        onKeyDown={(e) => e.stopPropagation()}
+                        className={`w-full pl-9 pr-3 py-2 rounded-md border text-sm ${
+                          isDark
+                            ? 'bg-slate-800 border-slate-600 text-slate-100 placeholder-slate-500'
+                            : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+                        }`}
+                        aria-label="Search store list"
+                      />
+                    </div>
+                  </div>
+                  <ul className="overflow-y-auto max-h-56 py-1">
+                    <li>
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={selectedStore === ''}
+                        onClick={() => {
+                          setSelectedStore('');
+                          setStoreMenuOpen(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors ${
+                          selectedStore === ''
+                            ? isDark
+                              ? 'bg-[#C2D642]/25 text-[#C2D642]'
+                              : 'bg-[#C2D642]/15 text-[#6B7F2A]'
+                            : isDark
+                              ? 'text-slate-200 hover:bg-slate-800'
+                              : 'text-slate-800 hover:bg-slate-100'
+                        }`}
+                      >
+                        Select Store
+                      </button>
+                    </li>
+                    {filteredStores.map((s) => {
+                      const idStr = String(s.id);
+                      const selected = selectedStore === idStr;
+                      return (
+                        <li key={idStr}>
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={selected}
+                            onClick={() => {
+                              setSelectedStore(idStr);
+                              setStoreMenuOpen(false);
+                            }}
+                            className={`w-full text-left px-3 py-2 text-sm font-medium transition-colors truncate ${
+                              selected
+                                ? isDark
+                                  ? 'bg-[#C2D642]/25 text-[#C2D642]'
+                                  : 'bg-[#C2D642]/15 text-[#6B7F2A]'
+                                : isDark
+                                  ? 'text-slate-200 hover:bg-slate-800'
+                                  : 'text-slate-800 hover:bg-slate-100'
+                            }`}
+                            title={s.name}
+                          >
+                            {s.name}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  {filteredStores.length === 0 && storeSearch.trim() ? (
+                    <p className={`px-3 py-2 text-sm border-t ${isDark ? 'border-slate-600 text-slate-400' : 'border-slate-200 text-slate-600'}`}>
+                      No matching stores
+                    </p>
+                  ) : null}
+                  {stores.length === 0 && !storeSearch.trim() ? (
+                    <p className={`px-3 py-2 text-sm border-t ${isDark ? 'border-slate-600 text-slate-400' : 'border-slate-200 text-slate-600'}`}>
+                      No stores for this project
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
           <div>

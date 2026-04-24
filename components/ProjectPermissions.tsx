@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { ThemeType } from '../types';
 import { ShieldCheck, Plus, Search, Trash2, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
-import { projectAllocationAPI, teamsAPI } from '../services/api';
+import { projectAllocationAPI } from '../services/api';
 import { useToast } from '../contexts/ToastContext';
 
 interface ProjectPermission {
@@ -90,10 +90,7 @@ const ProjectPermissions: React.FC<ProjectPermissionsProps> = ({ theme }) => {
   const loadAddFormData = useCallback(async () => {
     setIsFormLoading(true);
     try {
-      const [addFormData, teamList] = await Promise.all([
-        projectAllocationAPI.getAddFormData(),
-        teamsAPI.getTeamsList(),
-      ]);
+      const addFormData = await projectAllocationAPI.getProjectAllocationAddForm();
       const projList = addFormData?.projects ?? [];
       setProjects(
         (projList || []).map((p: any) => ({
@@ -102,9 +99,9 @@ const ProjectPermissions: React.FC<ProjectPermissionsProps> = ({ theme }) => {
           project_name: p.project_name ?? p.name ?? '-',
         }))
       );
-      const teamMembers = Array.isArray(teamList) ? teamList : [];
+      const formUsers = Array.isArray(addFormData?.users) ? addFormData.users : [];
       setUsers(
-        teamMembers.map((u: any) => ({
+        formUsers.map((u: any) => ({
           id: u.id ?? u.company_user_id ?? u.user_id,
           uuid: u.uuid ?? u.user_uuid,
           name: u.name ?? u.user?.name ?? u.user_name ?? u.email ?? '-',

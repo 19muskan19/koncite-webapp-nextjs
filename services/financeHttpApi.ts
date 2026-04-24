@@ -192,6 +192,45 @@ export async function financeDeleteTransaction(identifier: string): Promise<{ id
   return pickEnvelopeData<{ id?: number; uuid?: string }>(raw);
 }
 
+/** Allowed values for POST .../payments (backend validator). */
+export type FinancePaymentMethod =
+  | 'cash'
+  | 'upi'
+  | 'bank_transfer'
+  | 'cheque'
+  | 'other'
+  | 'credit_card';
+
+/** Body for POST /finance/transactions/{txn_uuid}/payments */
+export interface FinanceCreatePaymentPayload {
+  amount: number;
+  payment_date: string;
+  payment_method: FinancePaymentMethod;
+  reference_remarks?: string | null;
+  receipt_azure_path?: string | null;
+  gateway_provider?: string | null;
+  gateway_order_id?: string | null;
+  gateway_payment_id?: string | null;
+  gateway_status?: string | null;
+}
+
+/**
+ * Record a payment against a transaction.
+ * POST /finance/transactions/{txn_uuid}/payments
+ */
+export async function financeCreatePayment(
+  txnUuid: string,
+  body: FinanceCreatePaymentPayload
+): Promise<unknown> {
+  const { data: raw } = await apiClient.post<unknown>(
+    `/finance/transactions/${encodeURIComponent(String(txnUuid).trim())}/payments`,
+    body,
+    { headers: { 'Content-Type': 'application/json' } }
+  );
+  assertFinanceEnvelopeOk(raw);
+  return pickEnvelopeData(raw);
+}
+
 /** Unique projects from a listing (for filter dropdowns). */
 export function distinctProjectsFromRows(rows: FinanceTransactionRow[]): Array<{ id: string; name: string }> {
   const map = new Map<string, string>();

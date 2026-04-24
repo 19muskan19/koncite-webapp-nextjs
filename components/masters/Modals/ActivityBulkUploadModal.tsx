@@ -5,7 +5,13 @@ import { ThemeType } from '@/types';
 import { X, Loader2, Upload, Download } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { masterDataAPI } from '@/services/api';
-import * as XLSX from 'xlsx';
+import {
+  buildActivitiesWorkbook,
+  collectUnitLabelsFromMasters,
+  formatActivitySheetDate,
+} from '@/lib/exportActivitiesXlsx';
+import { buildUnitsListFromMasters, resolveActivityUnitName } from '@/lib/activityUnitResolve';
+import { buildActivityExportRowsWithSrNo } from '@/lib/activitiesTree';
 
 const ACCEPTED_TYPES = '.xlsx,.xls,.csv';
 const MAX_SIZE_MB = 10;
@@ -34,6 +40,8 @@ interface ActivityItem {
   start_date?: string;
   endDate?: string;
   end_date?: string;
+  parent_id?: number | string | null;
+  heading?: number | string | null;
 }
 
 const ActivityBulkUploadModal: React.FC<ActivityBulkUploadModalProps> = ({
@@ -116,15 +124,24 @@ const ActivityBulkUploadModal: React.FC<ActivityBulkUploadModalProps> = ({
       const projectIdNum = project?.id ?? bulkProjectId;
       const subprojectIdNum = subproject?.id ?? (bulkSubprojectId || undefined);
 
-      const result = await masterDataAPI.getActivities(projectIdNum, subprojectIdNum);
+      const [result, masterUnits] = await Promise.all([
+        masterDataAPI.getActivities(projectIdNum, subprojectIdNum),
+        masterDataAPI.getUnits().catch(() => [] as any[]),
+      ]);
       const data = result?.data ?? result ?? [];
+      const masterList = Array.isArray(masterUnits) ? masterUnits : [];
+      const unitsList = buildUnitsListFromMasters(masterList);
+      const unitLabels = collectUnitLabelsFromMasters(masterList);
       const activities: ActivityItem[] = Array.isArray(data)
         ? data.map((a: any) => ({
             id: a.uuid || String(a.id),
+            uuid: a.uuid,
             numericId: a.id,
             type: a.type || '',
             name: a.activities || a.name || '',
-            unit: a.units?.unit || a.unit?.unit || a.unit || '',
+            parent_id: a.parent_id ?? a.heading,
+            heading: a.heading ?? a.parent_id,
+            unit: resolveActivityUnitName(a, unitsList),
             qty: a.qty ?? a.quantity ?? 0,
             rate: a.rate ?? 0,
             amount: a.amount ?? 0,
@@ -133,24 +150,20 @@ const ActivityBulkUploadModal: React.FC<ActivityBulkUploadModalProps> = ({
           }))
         : [];
 
-      const headers = ['Type', 'SL No', 'Activities', 'Units', 'Qty', 'Rate', 'Amount', 'Start Date (dd-mm-yyyy)', 'End Date (dd-mm-yyyy)', 'UUID'];
-      const rows = activities.map((a, idx) => [
-        (a.type || '').toLowerCase() === 'heading' ? 'heading' : 'activity',
-        idx + 1,
-        a.name || a.activities || '',
-        a.unit || '',
-        a.qty ?? '',
-        a.rate ?? '',
-        a.amount ?? '',
-        a.startDate || '',
-        a.endDate || '',
-        a.id || '',
+      const headers = ['Type', 'SL No', 'Activities', 'Units', 'Qty', 'Rate', 'Amount', 'Start Date (yyyy-mm-dd)', 'End Date (yyyy-mm-dd)'];
+      const rows = buildActivityExportRowsWithSrNo(activities).map(({ item, srNo }) => [
+        (item.type || '').toLowerCase() === 'heading' ? 'heading' : 'activity',
+        srNo,
+        item.name || item.activities || '',
+        item.unit || '',
+        item.qty ?? '',
+        item.rate ?? '',
+        item.amount ?? '',
+        formatActivitySheetDate(item.startDate),
+        formatActivitySheetDate(item.endDate),
       ]);
 
-      const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Activities');
-      const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      const excelBuffer = await buildActivitiesWorkbook(headers, rows, unitLabels);
       const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const link = document.createElement('a');
       const url = URL.createObjectURL(blob);
@@ -357,10 +370,10 @@ const ActivityBulkUploadModal: React.FC<ActivityBulkUploadModalProps> = ({
 
           <div className={`rounded-lg border p-4 ${isDark ? 'bg-slate-800/30 border-slate-600' : 'bg-slate-50 border-slate-200'}`}>
             <p className={`text-xs ${textSecondary}`}>
-              <strong className={textPrimary}>Export:</strong> Downloads activities for the selected project/subproject in Excel format (Type, Activities, Units, Qty, Rate, Amount, Start Date, End Date, UUID). Use as reference or edit and re-import.
+              <strong className={textPrimary}>Export:</strong> Excel includes Type, hierarchical SL No (1, 2 for headings; 1.1, 1.2 under heading 1), Activities, Units (Masters dropdown), Qty, Rate, Amount, and dates as <strong>yyyy-mm-dd</strong>. This matches the heading ↔ activity link from the project.
             </p>
             <p className={`text-xs ${textSecondary} mt-2`}>
-              <strong className={textPrimary}>Import:</strong> Upload Excel (.xlsx, .xls) or CSV file. Max {MAX_SIZE_MB}MB. Backend POST /api/activities-import must be implemented.
+              <strong className={textPrimary}>Import:</strong> Use the same SL No pattern so the server can relate activities to headings (e.g. 1.1 under heading 1). Max {MAX_SIZE_MB}MB. File is sent to POST /api/activities-import.
             </p>
           </div>
         </div>

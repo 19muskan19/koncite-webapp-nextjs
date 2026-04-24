@@ -9,7 +9,8 @@ export const AI_FINANCE_HEADER_SUBTITLE = 'Finance overview and transactions';
 /** Party name used when a transaction is created from the assistant and no party was extracted. */
 export const AI_FINANCE_ASSISTANT_PARTY_FALLBACK = 'Assistant entry';
 
-export const PAYMENT_MODES = ['Cash', 'Bank Transfer', 'Cheque', 'UPI', 'Credit Card'] as const;
+/** UI labels — mapped to API `payment_method`: cash | upi | bank_transfer | cheque | other | credit_card */
+export const PAYMENT_MODES = ['Cash', 'Bank Transfer', 'Cheque', 'UPI', 'Credit Card', 'Other'] as const;
 
 export type PaymentMode = (typeof PAYMENT_MODES)[number];
 

@@ -369,17 +369,15 @@ const Vendors: React.FC<VendorsProps> = ({ theme }) => {
   }, [openDropdownId]);
 
   const handleDownloadExcel = () => {
-    // Bulk upload format – edit and re-upload via Bulk Upload
-    const headers = ['Name', 'Type', 'Gst No', 'Address', 'Contact Person Name', 'Contact Person Phone', 'Contact Person Email', 'UUID'];
+    // Bulk upload format – edit and re-upload via Bulk Upload (GST and UUID are not in the template)
+    const headers = ['Name', 'Type', 'Address', 'Contact Person Name', 'Contact Person Phone', 'Contact Person Email'];
     const rows = filteredVendors.map((vendor) => [
       vendor.name,
       vendor.type || '',
-      vendor.gstNo || vendor.gst_no || '',
       vendor.address || '',
       vendor.contactPersonName || vendor.contact_person_name || '',
       vendor.phone || '',
       vendor.email || '',
-      vendor.uuid || '',
     ]);
 
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);

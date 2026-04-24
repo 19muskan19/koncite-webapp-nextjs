@@ -132,8 +132,6 @@ const TaskStatusUpdateModal: React.FC<TaskStatusUpdateModalProps> = ({
             })}
           </div>
 
-          <TaskCommentsBlock description={task.description} theme={theme} variant="modal" />
-
           <div>
             <label htmlFor="task-status-remark" className={`block text-xs font-medium uppercase tracking-wider mb-1.5 ${textMuted}`}>
               Comment <span className="normal-case font-normal text-[10px]">optional</span>
@@ -148,6 +146,8 @@ const TaskStatusUpdateModal: React.FC<TaskStatusUpdateModalProps> = ({
               className={`${fieldClass} resize-y min-h-[72px]`}
             />
           </div>
+
+          <TaskCommentsBlock description={task.description} theme={theme} variant="modal" />
 
           <div className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end pt-2">
             <button
