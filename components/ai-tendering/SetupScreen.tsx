@@ -202,32 +202,34 @@ export default function SetupScreen({
                 </div>
               ) : (
                 list.map((slot, i) => (
-                  <button
+                  <div
                     key={slot.id}
-                    type="button"
-                    onClick={() => selectSlot(doc, slot)}
-                    className={`flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left transition-colors ${
+                    className={`flex w-full items-stretch rounded-lg border transition-colors ${
                       s.slot?.id === slot.id
                         ? 'border-[#f0b429]/50 bg-[#f0b429]/10'
                         : 'border-white/[0.06] bg-[#111720] hover:border-[#00c9a7]/50'
                     }`}
                   >
-                    <span>{DOC_ICONS[doc]}</span>
-                    <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-[#e2eaf5]">{slot.name}</span>
-                    <span className="shrink-0 text-[9px] text-[#2a3d52]">
-                      {slot.date} · {slot.size}
-                    </span>
                     <button
                       type="button"
-                      className="shrink-0 rounded-full border border-[#2a3d52] px-1.5 text-[9px] text-[#2a3d52] hover:border-red-400 hover:text-red-400"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteSlot(doc, i);
-                      }}
+                      onClick={() => selectSlot(doc, slot)}
+                      className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left text-inherit hover:bg-white/[0.02]"
+                    >
+                      <span>{DOC_ICONS[doc]}</span>
+                      <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-[#e2eaf5]">{slot.name}</span>
+                      <span className="shrink-0 text-[9px] text-[#2a3d52]">
+                        {slot.date} · {slot.size}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${slot.name}`}
+                      className="shrink-0 self-center rounded-full border border-[#2a3d52] px-1.5 text-[9px] text-[#2a3d52] hover:border-red-400 hover:text-red-400"
+                      onClick={() => deleteSlot(doc, i)}
                     >
                       ✕
                     </button>
-                  </button>
+                  </div>
                 ))
               )}
             </div>

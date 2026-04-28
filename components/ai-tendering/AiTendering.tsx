@@ -58,7 +58,52 @@ export default function AiTendering() {
     else showSuccess(message);
   };
 
+  /** Upload or Saved tab selected but nothing attached yet — avoid falling back to defaults silently. */
+  function docSelectionError(s: DocSelection, label: string): string | null {
+    if (s.source === 'upload' && !s.file) return `${label}: attach a file, or switch to Default / Saved.`;
+    if (s.source === 'saved' && !s.slot) return `${label}: pick a saved file, or switch to Default / Upload.`;
+    return null;
+  }
+
+  /** Real file attached (Upload) or entry selected from Saved — not built-in Default. */
+  function hasProvidedDoc(s: DocSelection): boolean {
+    return (s.source === 'upload' && !!s.file) || (s.source === 'saved' && !!s.slot);
+  }
+
   const runAnalysis = async () => {
+    const vBoq = docSelectionError(sel.boq, 'BOQ');
+    const vKb = docSelectionError(sel.kb, 'Rate analysis / KB');
+    const vDsr = docSelectionError(sel.dsr, 'DSR');
+    const firstErr = vBoq ?? vKb ?? vDsr;
+    if (firstErr) {
+      showError(firstErr);
+      return;
+    }
+
+    if (tenderType === 'GOVERNMENT') {
+      if (!hasProvidedDoc(sel.boq)) {
+        showError('Government mode: BOQ must be Upload or Saved (built-in Default is not enough).');
+        return;
+      }
+      if (!hasProvidedDoc(sel.kb)) {
+        showError('Government mode: Rate analysis / KB must be Upload or Saved (built-in Default is not enough).');
+        return;
+      }
+      if (!hasProvidedDoc(sel.dsr)) {
+        showError('Government mode: DSR reference must be Upload or Saved (built-in Default is not enough).');
+        return;
+      }
+    } else {
+      if (!hasProvidedDoc(sel.boq)) {
+        showError('Private mode: BOQ must be Upload or Saved (built-in Default is not enough).');
+        return;
+      }
+      if (!hasProvidedDoc(sel.kb)) {
+        showError('Private mode: Rate analysis / KB must be Upload or Saved (built-in Default is not enough).');
+        return;
+      }
+    }
+
     setErrMsg(null);
     setRunning(true);
     setProgressOn(true);
@@ -84,6 +129,7 @@ export default function AiTendering() {
       const fd = new FormData();
       fd.append('tender_type', tenderType);
       fd.append('use_ai', 'false');
+      fd.append('ai_sample', 'false');
       fd.append('boq_source', boqDoc.source);
       fd.append('kb_source', kbDoc.source);
       fd.append('dsr_source', dsrDoc.source);
@@ -92,7 +138,9 @@ export default function AiTendering() {
       if (kbDoc.source === 'upload' && kbDoc.file) fd.append('kb_file', kbDoc.file);
       else if (kbDoc.source === 'saved' && kbDoc.slot) fd.append('kb_data', kbDoc.slot.dataUrl);
       if (dsrDoc.source === 'upload' && dsrDoc.file) fd.append('dsr_file', dsrDoc.file);
+      else if (dsrDoc.source === 'saved' && dsrDoc.slot) fd.append('dsr_data', dsrDoc.slot.dataUrl);
 
+      // POST /api/tender/process — full tender pipeline (same-origin: /api-proxy/tender/process)
       const data = await postProcessTender(fd);
       await anim([4, 5], 280);
       setProgressOn(false);
@@ -105,17 +153,10 @@ export default function AiTendering() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Request failed';
       setErrMsg(
-        `Server error: ${msg}\n\nDocs queued: BOQ: ${boqDoc.label} | KB: ${kbDoc.label}\n\nLoading demo data instead…`
+        `Analysis failed: ${msg}\n\nDocs: BOQ ${boqDoc.label} · KB ${kbDoc.label}${dsrDoc.label ? ` · DSR ${dsrDoc.label}` : ''}`
       );
-      await new Promise((r) => setTimeout(r, 400));
       setProgressOn(false);
-      setResult({
-        ...TENDER_DEMO_DATA,
-        tender_type: tenderType,
-        _docInfo: { boq: boqDoc.label, kb: kbDoc.label, dsr: dsrDoc.label },
-      });
-      setView('results');
-      showSuccess('Demo loaded (server offline)');
+      showError(`Analysis failed — ${msg}`);
     } finally {
       setRunning(false);
       setProgressOn(false);
@@ -236,13 +277,7 @@ export default function AiTendering() {
           </>
         )}
         {view === 'results' && result && (
-          <AnalysisDashboard
-            data={result}
-            onBack={backToSetup}
-            onImmersive={() => setImmersiveOpen(true)}
-            tenderType={tenderType}
-            showToast={showToast}
-          />
+          <AnalysisDashboard data={result} onBack={backToSetup} onImmersive={() => setImmersiveOpen(true)} />
         )}
       </div>
 
