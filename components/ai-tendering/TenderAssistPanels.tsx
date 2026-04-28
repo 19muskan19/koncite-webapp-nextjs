@@ -1,13 +1,12 @@
 'use client';
 
 import React from 'react';
-import type { DsrRateRow, TenderCategoriesResponse, TenderStatusResponse, TenderType } from './types';
+import type { DsrRateRow, TenderCategoriesResponse, TenderStatusResponse } from './types';
 import {
   downloadOutputUrl,
   fetchDsrRates,
   fetchTenderCategories,
   fetchTenderStatus,
-  postTenderChat,
   resolveTenderAssetUrl,
 } from './api';
 
@@ -15,7 +14,7 @@ interface TenderHealthIndicatorsProps {
   className?: string;
 }
 
-/** Polls GET /api/ai-tendering/status for header badges. */
+/** Polls GET `/api/tender/status` → browser `/api-proxy/tender/status` for header badges. */
 export function TenderHealthIndicators({ className = '' }: TenderHealthIndicatorsProps) {
   const [st, setSt] = React.useState<TenderStatusResponse | null>(null);
   const [offline, setOffline] = React.useState(false);
@@ -99,7 +98,7 @@ interface DsrBrowseModalProps {
   showToast: (message: string, type?: 'success' | 'error') => void;
 }
 
-/** GET /api/ai-tendering/dsr-rates & /api/ai-tendering/categories */
+/** GET `/api/tender/dsr-rates` & `/api/tender/categories` */
 export function DsrBrowseModal({ open, onClose, showToast }: DsrBrowseModalProps) {
   const [tab, setTab] = React.useState<'rates' | 'categories'>('rates');
   const [q, setQ] = React.useState('');
@@ -241,110 +240,6 @@ export function DsrBrowseModal({ open, onClose, showToast }: DsrBrowseModalProps
           )}
         </div>
       </div>
-    </div>
-  );
-}
-
-interface TenderSessionChatProps {
-  sessionId: string | undefined;
-  tenderType: TenderType;
-  showToast: (message: string, type?: 'success' | 'error') => void;
-}
-
-/** POST /api/ai-tendering/chat — stateful assistant for the processed tender */
-export function TenderSessionChat({ sessionId, tenderType, showToast }: TenderSessionChatProps) {
-  const [open, setOpen] = React.useState(false);
-  const [localSid, setLocalSid] = React.useState<string | undefined>(sessionId);
-  const [input, setInput] = React.useState('');
-  const [pending, setPending] = React.useState(false);
-  const [messages, setMessages] = React.useState<Array<{ role: 'user' | 'assistant'; text: string }>>([]);
-
-  React.useEffect(() => {
-    setLocalSid(sessionId);
-  }, [sessionId]);
-
-  const send = async () => {
-    const text = input.trim();
-    if (!text) return;
-    if (!localSid) {
-      showToast('No session id — run a server analysis first', 'error');
-      return;
-    }
-    setInput('');
-    setMessages((m) => [...m, { role: 'user', text }]);
-    setPending(true);
-    try {
-      const res = await postTenderChat({
-        message: text,
-        session_id: localSid,
-        tender_type: tenderType,
-      });
-      setLocalSid(res.session_id);
-      setMessages((m) => [...m, { role: 'assistant', text: res.reply }]);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Chat failed';
-      showToast(msg, 'error');
-      setMessages((m) => [...m, { role: 'assistant', text: `Error: ${msg}` }]);
-    } finally {
-      setPending(false);
-    }
-  };
-
-  if (!sessionId) return null;
-
-  return (
-    <div className="fixed bottom-4 right-4 z-40 flex max-w-md flex-col items-end gap-2">
-      {open && (
-        <div className="flex max-h-[min(420px,50vh)] w-full flex-col rounded-2xl border border-[#4fa3ff]/25 bg-[#0c1018] shadow-xl">
-          <div className="flex items-center justify-between border-b border-white/[0.06] px-3 py-2">
-            <span className="font-mono text-[11px] text-[#4fa3ff]">Tender assistant</span>
-            <button type="button" onClick={() => setOpen(false)} className="text-[11px] text-[#5c7a99] hover:text-white">
-              ✕
-            </button>
-          </div>
-          <div className="custom-scrollbar flex-1 space-y-2 overflow-y-auto px-3 py-2 text-[12px]">
-            {!messages.length ? (
-              <p className="text-[#5c7a99]">Ask about this tender, BOQ, or optimisation.</p>
-            ) : (
-              messages.map((line, i) => (
-                <div
-                  key={i}
-                  className={`rounded-lg px-2 py-1.5 ${
-                    line.role === 'user' ? 'ml-4 bg-[#172030] text-[#e2eaf5]' : 'mr-4 bg-[#111]/80 text-[#c8d8e8]'
-                  }`}
-                >
-                  {line.text}
-                </div>
-              ))
-            )}
-            {pending ? <div className="font-mono text-[10px] text-[#5c7a99]">Thinking…</div> : null}
-          </div>
-          <div className="flex gap-2 border-t border-white/[0.06] p-2">
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && void send()}
-              placeholder="Message…"
-              className="min-w-0 flex-1 rounded-lg border border-white/10 bg-[#111720] px-2 py-2 text-sm"
-            />
-            <button
-              type="button"
-              onClick={() => void send()}
-              disabled={pending}
-              className="rounded-lg bg-[#4fa3ff]/90 px-3 py-2 text-sm font-semibold text-[#060910] disabled:opacity-50"
-            >
-              Send
-            </button>
-          </div>
-        </div>
-      )}
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="rounded-full border border-[#4fa3ff]/40 bg-[#0c1018] px-4 py-2 text-[12px] font-semibold text-[#4fa3ff] shadow-lg"
-      >
-        💬 Tender AI
-      </button>
     </div>
   );
 }
