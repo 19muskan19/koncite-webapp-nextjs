@@ -15,6 +15,7 @@ import {
   YAxis,
 } from 'recharts';
 import type { BoqItemRow, TenderAnalysisResponse, TenderType } from './types';
+import { openProcessDownload, TenderSessionChat } from './TenderAssistPanels';
 import { buildCategoryBreakdownFromItems, countConf, fmt, fmtL, getFinancials, itemSaving, normalizeItems, toL, trunc } from './utils';
 
 const PAL = ['#f0b429', '#00c9a7', '#4fa3ff', '#f06060', '#a78bfa', '#fb923c', '#34d399', '#60a5fa', '#f472b6', '#facc15'];
@@ -27,9 +28,11 @@ interface AnalysisDashboardProps {
   data: TenderAnalysisResponse;
   onBack: () => void;
   onImmersive: () => void;
+  tenderType: TenderType;
+  showToast: (message: string, type?: 'success' | 'error') => void;
 }
 
-export default function AnalysisDashboard({ data, onBack, onImmersive }: AnalysisDashboardProps) {
+export default function AnalysisDashboard({ data, onBack, onImmersive, tenderType, showToast }: AnalysisDashboardProps) {
   const items = React.useMemo(() => normalizeItems(data), [data]);
   const f = React.useMemo(() => getFinancials(data, items), [data, items]);
   const ttype = (data.tender_type ?? 'PRIVATE') as TenderType;
@@ -107,9 +110,10 @@ export default function AnalysisDashboard({ data, onBack, onImmersive }: Analysi
   }, [items, tableFilter]);
 
   const soc = data.schedule_of_credit;
+  const canDownloadXlsx = !!(data.download_url || data.output_file);
 
   return (
-    <div className="pt-7 text-[#e2eaf5]">
+    <div className="relative pt-7 text-[#e2eaf5]">
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="text-3xl font-black leading-tight tracking-wide text-white sm:text-4xl md:text-5xl">
@@ -130,6 +134,16 @@ export default function AnalysisDashboard({ data, onBack, onImmersive }: Analysi
           >
             ← New Analysis
           </button>
+          {canDownloadXlsx ? (
+            <button
+              type="button"
+              onClick={() => openProcessDownload(data)}
+              className="rounded-xl border border-[#00c9a7]/35 bg-[#00c9a7]/10 px-3 py-2 text-[11px] font-semibold text-[#00c9a7]"
+              title="From /api/ai-tendering/process (download_url or output_file)"
+            >
+              ⬇ Excel output
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={onImmersive}
@@ -453,6 +467,8 @@ export default function AnalysisDashboard({ data, onBack, onImmersive }: Analysi
           </div>
         </div>
       ) : null}
+
+      <TenderSessionChat sessionId={data.session_id} tenderType={tenderType} showToast={showToast} />
     </div>
   );
 }

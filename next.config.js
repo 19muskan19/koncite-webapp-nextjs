@@ -10,6 +10,10 @@ const nextConfig = {
   // Mitigate ChunkLoadError (loading chunk app/layout timeout) - use Turbopack in dev
   experimental: {
     optimizePackageImports: ['lucide-react', 'recharts'],
+    /** Serial static generation helps avoid flaky missing-manifest errors on Windows when collecting page data. */
+    staticGenerationMaxConcurrency: 1,
+    workerThreads: false,
+    staticGenerationRetryCount: 2,
   },
   // Proxy API requests through Next.js to avoid CORS when frontend and backend are different origins
   async rewrites() {

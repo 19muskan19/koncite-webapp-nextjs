@@ -4,6 +4,7 @@ import React from 'react';
 import { useToast } from '@/contexts/ToastContext';
 import type { DocKind, DocSelection, TenderType } from './types';
 import { postProcessTender } from './api';
+import { DsrBrowseModal, TenderHealthIndicators } from './TenderAssistPanels';
 import { TENDER_DEMO_DATA } from './demoData';
 import { loadMemory, saveMemory, type MemoryStore } from './memory';
 import AnalysisDashboard from './AnalysisDashboard';
@@ -41,6 +42,7 @@ export default function AiTendering() {
   const [libraryOpen, setLibraryOpen] = React.useState(false);
   const [libraryTab, setLibraryTab] = React.useState<TenderType>('GOVERNMENT');
   const [immersiveOpen, setImmersiveOpen] = React.useState(false);
+  const [dsrOpen, setDsrOpen] = React.useState(false);
 
   React.useEffect(() => {
     saveMemory(mem);
@@ -150,16 +152,12 @@ export default function AiTendering() {
           </div>
           <div>
             <div className="bg-gradient-to-r from-[#f0b429] to-white bg-clip-text text-lg font-black tracking-wider text-transparent">
-              KONCITE AI
+              Ai-Tendering
             </div>
-            <div className="font-mono text-[10px] tracking-wider text-[#5c7a99]">TENDERING INTELLIGENCE v4.0</div>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-[#111720] px-2.5 py-1 font-mono text-[10px] text-[#5c7a99]">
-            <span className="h-1.5 w-1.5 rounded-full bg-[#00c9a7] shadow-[0_0_8px_#00c9a7]" />
-            Engine Ready
-          </span>
+          <TenderHealthIndicators />
           <span className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-[#111720] px-2.5 py-1 font-mono text-[10px] text-[#5c7a99]">
             📅 {new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
           </span>
@@ -169,6 +167,13 @@ export default function AiTendering() {
             className="rounded-lg border border-white/10 px-3 py-1 text-[11px] text-[#5c7a99] hover:text-[#e2eaf5]"
           >
             📚 Doc Library
+          </button>
+          <button
+            type="button"
+            onClick={() => setDsrOpen(true)}
+            className="rounded-lg border border-white/10 px-3 py-1 text-[11px] text-[#5c7a99] hover:text-[#e2eaf5]"
+          >
+            📖 DSR &amp; categories
           </button>
         </div>
       </header>
@@ -231,14 +236,22 @@ export default function AiTendering() {
           </>
         )}
         {view === 'results' && result && (
-          <AnalysisDashboard data={result} onBack={backToSetup} onImmersive={() => setImmersiveOpen(true)} />
+          <AnalysisDashboard
+            data={result}
+            onBack={backToSetup}
+            onImmersive={() => setImmersiveOpen(true)}
+            tenderType={tenderType}
+            showToast={showToast}
+          />
         )}
       </div>
 
       <footer className="border-t border-white/[0.055] py-4 text-center font-mono text-[10px] text-[#2a3d52]">
-        KONCITE AI TENDERING SYSTEM v4.0 — Private + Government + Immersive Dashboard
+        Ai-Tendering — Private + Government + Immersive Dashboard
         {result?.project_info?.name ? ` · ${result.project_info.name}` : ''}
       </footer>
+
+      <DsrBrowseModal open={dsrOpen} onClose={() => setDsrOpen(false)} showToast={showToast} />
 
       {libraryOpen && (
         <div className="fixed inset-0 z-[90] flex items-start justify-center overflow-y-auto bg-black/70 p-4 pt-16">

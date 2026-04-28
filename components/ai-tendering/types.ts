@@ -81,6 +81,10 @@ export interface TenderAnalysisResponse {
   items?: BoqItemRow[];
   boq_items?: BoqItemRow[];
   schedule_of_credit?: ScheduleOfCreditRow[];
+  /** Returned by `/api/ai-tendering/process` for follow-up chat and downloads. */
+  session_id?: string;
+  download_url?: string;
+  output_file?: string;
   _docInfo?: { boq?: string; kb?: string; dsr?: string };
 }
 
@@ -107,9 +111,55 @@ export interface OutputFileMeta {
   modified?: string;
   size_kb?: number;
   size_mb?: number;
+  /** When provided by `/api/ai-tendering/outputs` or `/api/ai-tendering/output-files`. */
+  download_url?: string;
 }
 
 export interface OutputFilesResponse {
   files?: OutputFileMeta[];
   output_dir?: string;
+}
+
+/** GET `/api/ai-tendering/status` */
+export interface TenderStatusResponse {
+  status?: string;
+  engine?: boolean;
+  dsr_rates_loaded?: boolean;
+  azure_openai_configured?: boolean;
+}
+
+/** GET `/api/ai-tendering/outputs` */
+export interface TenderOutputsListResponse {
+  files?: OutputFileMeta[];
+}
+
+/** POST `/api/ai-tendering/chat` */
+export interface TenderChatRequest {
+  message: string;
+  session_id?: string;
+  tender_type?: TenderType;
+}
+
+export interface TenderChatResponse {
+  reply: string;
+  session_id: string;
+  context?: unknown;
+}
+
+/** GET `/api/ai-tendering/dsr-rates` */
+export interface DsrRateRow {
+  description: string;
+  unit: string;
+  rate: number;
+  chapter?: string;
+}
+
+export interface DsrRatesResponse {
+  rates?: DsrRateRow[];
+}
+
+/** GET `/api/ai-tendering/categories` */
+export interface TenderCategoriesResponse {
+  categories?: string[];
+  total?: number;
 }
