@@ -20,7 +20,7 @@ export const SIDEBAR_PERMISSION_TREE: SidebarPermissionNode[] = [
   {
     key: 'pre-construction',
     label: 'Pre Construction',
-    children: [{ key: 'pre-construction-ai-tendering', label: 'AI-Tendering' }],
+    children: [{ key: 'pre-construction-ai-tendering', label: 'Ai-Tendering' }],
   },
   {
     key: 'operations',

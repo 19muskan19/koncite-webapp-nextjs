@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 const routeTitles: Record<string, string> = {
   '/': 'KONCITE - Construction Platform',
   '/dashboard': 'Dashboard - KONCITE',
-  '/pre-construction/ai-tendering': 'AI-Tendering - KONCITE',
+  '/pre-construction/ai-tendering': 'Ai-Tendering - KONCITE',
   '/document-management': 'Document Management - KONCITE',
   '/ai-finance': 'AI Finance - KONCITE',
   '/askme': 'Ask me - KONCITE',

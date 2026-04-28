@@ -109,7 +109,7 @@ const BASE_SIDEBAR_NAV_ITEMS: NavItem[] = [
     menuSlug: 'pre-construction',
     children: [
       {
-        label: 'AI-Tendering',
+        label: 'Ai-Tendering',
         id: 'PRE_CONSTRUCTION_AI_TENDERING',
         path: '/pre-construction/ai-tendering',
         menuSlug: 'pre-construction-ai-tendering',

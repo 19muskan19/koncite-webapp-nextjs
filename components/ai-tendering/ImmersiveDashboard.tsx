@@ -15,7 +15,7 @@ import {
   YAxis,
 } from 'recharts';
 import type { ImmersiveData, OutputFileMeta, TenderAnalysisResponse, TenderType } from './types';
-import { downloadOutputUrl, fetchOutputFiles, getTenderApiBase, serveOutputUrl } from './api';
+import { downloadOutputUrl, fetchOutputFiles, getTenderApiBase, resolveTenderAssetUrl, serveOutputUrl } from './api';
 import { buildImmersiveFromAnalysis } from './immersiveData';
 import {
   exportBoqCsv,
@@ -103,12 +103,18 @@ export default function ImmersiveDashboard({
     showToast('Loaded session data', 'success');
   };
 
-  const openServerFile = async (name: string) => {
+  const resolveOpenUrl = React.useCallback((f: OutputFileMeta) => {
+    if (f.download_url) return resolveTenderAssetUrl(f.download_url) ?? serveOutputUrl(f.name);
+    return serveOutputUrl(f.name);
+  }, []);
+
+  const openServerFile = async (f: OutputFileMeta) => {
+    const name = f.name;
     setSelectedServerFile(name);
     setState('loading');
     setLoadLabel('Fetching file from server…');
     try {
-      const url = serveOutputUrl(name);
+      const url = resolveOpenUrl(f);
       const data = await fetchWorkbookAsImmersive(url, name);
       setImData(data);
       setImFile(null);
@@ -214,7 +220,7 @@ export default function ImmersiveDashboard({
                     </span>
                     <button
                       type="button"
-                      onClick={() => openServerFile(f.name)}
+                      onClick={() => void openServerFile(f)}
                       className="rounded-lg border border-[#a78bfa]/40 px-2 py-1 text-[11px] text-[#a78bfa]"
                     >
                       🔮 Open
@@ -273,6 +279,12 @@ export default function ImmersiveDashboard({
           data={imData}
           selectedServerFile={selectedServerFile}
           imFile={imFile}
+          resolveServerDownload={() => {
+            if (!selectedServerFile) return null;
+            const f = serverFiles.find((x) => x.name === selectedServerFile);
+            if (f?.download_url) return resolveTenderAssetUrl(f.download_url) ?? downloadOutputUrl(selectedServerFile);
+            return downloadOutputUrl(selectedServerFile);
+          }}
           onBrowse={() => setState('browser')}
           onClose={onClose}
           tableFilter={tableFilter}
@@ -289,6 +301,7 @@ function ImmersiveDashBody({
   data,
   selectedServerFile,
   imFile,
+  resolveServerDownload,
   onBrowse,
   onClose,
   tableFilter,
@@ -299,6 +312,7 @@ function ImmersiveDashBody({
   data: ImmersiveData;
   selectedServerFile: string | null;
   imFile: File | null;
+  resolveServerDownload: () => string | null;
   onBrowse: () => void;
   onClose: () => void;
   tableFilter: 'all' | 'high' | 'med' | 'low' | 'savings';
@@ -330,7 +344,8 @@ function ImmersiveDashBody({
 
   const downloadOriginal = () => {
     if (selectedServerFile) {
-      window.open(downloadOutputUrl(selectedServerFile), '_blank');
+      const href = resolveServerDownload();
+      if (href) window.open(href, '_blank');
       showToast('Downloading…', 'success');
       return;
     }
