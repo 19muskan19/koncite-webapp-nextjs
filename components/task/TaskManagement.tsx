@@ -266,6 +266,17 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
     ? allTasks.filter((t) => taskIsAssignedByMe(t, myCompanyUserId, myNameNorm)).length
     : '—';
 
+  /** Create task: "Assigned by" is always the logged-in user (shown read-only in TaskModal). */
+  const taskCreateAssignedBy = useMemo(() => {
+    if (!user?.name?.trim()) return null;
+    const uid = companyUserIdFromProfile(user);
+    if (uid != null) {
+      const match = companyUsers.find((u) => Number(u.id) === Number(uid));
+      return { userId: String(uid), name: match?.name ?? user.name };
+    }
+    return { userId: '', name: user.name };
+  }, [user, companyUsers]);
+
   const openCreateModal = () => {
     setEditingId(null);
     setEditModalTask(null);
@@ -1002,6 +1013,7 @@ const TaskManagement: React.FC<TaskManagementProps> = ({ theme }) => {
         companyUsers={companyUsers}
         canSaveChanges={modalCanSaveChanges}
         isLoadingDetail={!!editingId && (editModalLoading || !editModalTask)}
+        autoAssignedBy={editingId ? null : taskCreateAssignedBy}
       />
 
       <TaskStatusUpdateModal

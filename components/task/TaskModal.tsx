@@ -32,6 +32,11 @@ interface TaskModalProps {
   canSaveChanges?: boolean;
   /** Edit mode: parent is fetching GET /tasks/{uuid}. */
   isLoadingDetail?: boolean;
+  /**
+   * Create mode: "Assigned by" is the logged-in user (read-only).
+   * `userId` empty + `name` set → submit uses `assigned_by` string only.
+   */
+  autoAssignedBy?: { userId: string; name: string } | null;
 }
 
 const emptyForm = (): TaskFormData => ({
@@ -61,6 +66,7 @@ const TaskModal: React.FC<TaskModalProps> = ({
   companyUsers,
   canSaveChanges = true,
   isLoadingDetail = false,
+  autoAssignedBy = null,
 }) => {
   const isDark = theme === 'dark';
   const cardClass = isDark ? 'card-dark' : 'card-light';
@@ -74,8 +80,13 @@ const TaskModal: React.FC<TaskModalProps> = ({
   React.useEffect(() => {
     if (!isOpen) return;
     if (isEditing && isLoadingDetail) return;
-    setForm({ ...emptyForm(), ...mergedInitial });
-  }, [isOpen, editingId, mergedInitial, isEditing, isLoadingDetail]);
+    const base: TaskFormData = { ...emptyForm(), ...mergedInitial };
+    if (!isEditing && autoAssignedBy?.name) {
+      base.assigned_by = autoAssignedBy.name;
+      base.assigned_by_user_id = autoAssignedBy.userId ?? '';
+    }
+    setForm(base);
+  }, [isOpen, editingId, mergedInitial, isEditing, isLoadingDetail, autoAssignedBy]);
 
   const setAssignToFromUserId = (idStr: string) => {
     const u = idStr ? companyUsers.find((x) => String(x.id) === idStr) : undefined;
@@ -104,7 +115,10 @@ const TaskModal: React.FC<TaskModalProps> = ({
     }
     const title = form.title.trim();
     if (!title) return;
-    if (!form.assigned_to_user_id || !form.assigned_by_user_id) return;
+    if (!form.assigned_to_user_id) return;
+    const hasAssignedBy =
+      !!form.assigned_by_user_id || !!form.assigned_by?.trim();
+    if (!hasAssignedBy) return;
     onSubmit(form);
   };
 
@@ -197,7 +211,15 @@ const TaskModal: React.FC<TaskModalProps> = ({
                 <label className={`block text-xs font-medium uppercase tracking-wider mb-1.5 ${textSecondary}`}>
                   Assigned By * <span className="normal-case font-normal text-[10px]">staff</span>
                 </label>
-                {companyUsers.length === 0 ? (
+                {autoAssignedBy?.name ? (
+                  <input
+                    type="text"
+                    readOnly
+                    value={form.assigned_by || autoAssignedBy.name}
+                    title="Set from your login"
+                    className={`${selectClass} opacity-90 cursor-default`}
+                  />
+                ) : companyUsers.length === 0 ? (
                   <p className={`text-xs ${textSecondary}`}>No staff loaded. Check Teams list under User Management.</p>
                 ) : (
                   <select
