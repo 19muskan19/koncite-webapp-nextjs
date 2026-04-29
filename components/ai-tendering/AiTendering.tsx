@@ -27,6 +27,19 @@ function getEffectiveDoc(
   return { source: 'default', label: 'default' };
 }
 
+/** FastAPI `process` only accepts `boq_file` (multipart), not `boq_data` — convert Saved-slot data URLs. */
+function dataUrlToFile(dataUrl: string, filename: string): File {
+  const parts = dataUrl.split(',');
+  if (parts.length < 2) throw new Error('Invalid saved file (missing data)');
+  const mimeMatch = parts[0].match(/:(.*?);/);
+  const mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
+  const binary = atob(parts[1]);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+  return new File([bytes], filename, { type: mime });
+}
+
 export default function AiTendering() {
   const { showSuccess, showError } = useToast();
   const [tenderType, setTenderType] = React.useState<TenderType>('PRIVATE');
@@ -65,44 +78,13 @@ export default function AiTendering() {
     return null;
   }
 
-  /** Real file attached (Upload) or entry selected from Saved — not built-in Default. */
-  function hasProvidedDoc(s: DocSelection): boolean {
-    return (s.source === 'upload' && !!s.file) || (s.source === 'saved' && !!s.slot);
-  }
-
   const runAnalysis = async () => {
     const vBoq = docSelectionError(sel.boq, 'BOQ');
-    const vKb = docSelectionError(sel.kb, 'Rate analysis / KB');
-    const vDsr = docSelectionError(sel.dsr, 'DSR');
-    const firstErr = vBoq ?? vKb ?? vDsr;
-    if (firstErr) {
-      showError(firstErr);
+    if (vBoq) {
+      showError(vBoq);
       return;
     }
-
-    if (tenderType === 'GOVERNMENT') {
-      if (!hasProvidedDoc(sel.boq)) {
-        showError('Government mode: BOQ must be Upload or Saved (built-in Default is not enough).');
-        return;
-      }
-      if (!hasProvidedDoc(sel.kb)) {
-        showError('Government mode: Rate analysis / KB must be Upload or Saved (built-in Default is not enough).');
-        return;
-      }
-      if (!hasProvidedDoc(sel.dsr)) {
-        showError('Government mode: DSR reference must be Upload or Saved (built-in Default is not enough).');
-        return;
-      }
-    } else {
-      if (!hasProvidedDoc(sel.boq)) {
-        showError('Private mode: BOQ must be Upload or Saved (built-in Default is not enough).');
-        return;
-      }
-      if (!hasProvidedDoc(sel.kb)) {
-        showError('Private mode: Rate analysis / KB must be Upload or Saved (built-in Default is not enough).');
-        return;
-      }
-    }
+    // KB/DSR paths come from `server.py` (PRIV_DEFAULT_KB etc.) — UI tabs are informational.
 
     setErrMsg(null);
     setRunning(true);
@@ -129,24 +111,22 @@ export default function AiTendering() {
       const fd = new FormData();
       fd.append('tender_type', tenderType);
       fd.append('use_ai', 'false');
-      fd.append('ai_sample', 'false');
-      fd.append('boq_source', boqDoc.source);
-      fd.append('kb_source', kbDoc.source);
-      fd.append('dsr_source', dsrDoc.source);
-      if (boqDoc.source === 'upload' && boqDoc.file) fd.append('boq_file', boqDoc.file);
-      else if (boqDoc.source === 'saved' && boqDoc.slot) fd.append('boq_data', boqDoc.slot.dataUrl);
-      if (kbDoc.source === 'upload' && kbDoc.file) fd.append('kb_file', kbDoc.file);
-      else if (kbDoc.source === 'saved' && kbDoc.slot) fd.append('kb_data', kbDoc.slot.dataUrl);
-      if (dsrDoc.source === 'upload' && dsrDoc.file) fd.append('dsr_file', dsrDoc.file);
-      else if (dsrDoc.source === 'saved' && dsrDoc.slot) fd.append('dsr_data', dsrDoc.slot.dataUrl);
-
-      // POST /api/tender/process — full tender pipeline (same-origin: /api-proxy/tender/process)
+      if (boqDoc.source === 'upload' && boqDoc.file) {
+        fd.append('boq_file', boqDoc.file);
+      } else if (boqDoc.source === 'saved' && boqDoc.slot) {
+        fd.append('boq_file', dataUrlToFile(boqDoc.slot.dataUrl, boqDoc.slot.name));
+      }
+      // POST tender process — same-origin `/api-proxy/tender/process` (see `api.ts` + `next.config.js`)
       const data = await postProcessTender(fd);
       await anim([4, 5], 280);
       setProgressOn(false);
       setResult({
         ...data,
-        _docInfo: { boq: boqDoc.label, kb: kbDoc.label, dsr: dsrDoc.label },
+        _docInfo: {
+          boq: boqDoc.label,
+          kb: kbDoc.source !== 'default' ? `${kbDoc.label} (UI; KB path is on server)` : '(KB from server.py)',
+          dsr: dsrDoc.source !== 'default' ? `${dsrDoc.label} (UI; DSR path is on server)` : '(DSR from server.py)',
+        },
       });
       setView('results');
       showSuccess('Analysis complete ✓');
