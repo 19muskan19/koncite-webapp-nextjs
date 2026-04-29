@@ -346,7 +346,8 @@ const CreateCompanyModal: React.FC<CreateCompanyModalProps> = ({
                     type="file"
                     accept="image/*"
                     onChange={handleLogoChange}
-                    className="hidden"
+                    className="sr-only"
+                    tabIndex={-1}
                   />
                 </label>
               )}

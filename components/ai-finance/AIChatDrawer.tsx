@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useId } from 'react';
 import { Bot, Send, Paperclip, X, Loader2, Menu } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { useUser } from '@/contexts/UserContext';
@@ -135,6 +135,7 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
   const [sessionsPanelOpen, setSessionsPanelOpen] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const financeChatFileInputId = useId();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<ChatMessage[]>(messages);
   /** Proposal cards already persisted via Book or chat "confirm", to avoid double posts. */
@@ -694,18 +695,38 @@ export default function AIChatDrawer({ isOpen, onClose, isDark }: AIChatDrawerPr
                   !activeSessionId && 'opacity-60'
                 )}
               >
-                <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept="image/*,.pdf" className="hidden" />
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={!activeSessionId || processing}
-                  className={cn(
-                    'p-2 rounded-lg transition-colors flex-shrink-0 min-w-[40px] min-h-[40px] flex items-center justify-center',
-                    isDark ? 'hover:bg-[#404040]' : 'hover:bg-slate-100'
-                  )}
-                >
-                  <Paperclip className={cn('w-4 h-4', textSecondary)} />
-                </button>
+                <input
+                  id={financeChatFileInputId}
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileUpload}
+                  accept="image/*,.pdf"
+                  className="sr-only"
+                  tabIndex={-1}
+                  aria-label="Attach one invoice file (image or PDF)"
+                />
+                {!activeSessionId || processing ? (
+                  <span
+                    className={cn(
+                      'p-2 rounded-lg flex-shrink-0 min-w-[40px] min-h-[40px] flex items-center justify-center opacity-50 pointer-events-none',
+                      isDark ? 'hover:bg-[#404040]' : 'hover:bg-slate-100'
+                    )}
+                    aria-hidden
+                  >
+                    <Paperclip className={cn('w-4 h-4', textSecondary)} />
+                  </span>
+                ) : (
+                  <label
+                    htmlFor={financeChatFileInputId}
+                    className={cn(
+                      'p-2 rounded-lg transition-colors flex-shrink-0 min-w-[40px] min-h-[40px] flex items-center justify-center cursor-pointer',
+                      isDark ? 'hover:bg-[#404040]' : 'hover:bg-slate-100'
+                    )}
+                  >
+                    <Paperclip className={cn('w-4 h-4', textSecondary)} aria-hidden />
+                    <span className="sr-only">Attach one invoice file</span>
+                  </label>
+                )}
                 <input
                   type="text"
                   value={input}

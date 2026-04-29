@@ -1406,7 +1406,8 @@ const Companies: React.FC<CompaniesProps> = ({ theme }) => {
                           type="file"
                           accept="image/*"
                           onChange={handleLogoChange}
-                          className="hidden"
+                          className="sr-only"
+                          tabIndex={-1}
                         />
                       </label>
                     )}

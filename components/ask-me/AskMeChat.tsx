@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useRef, useState, useEffect, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useCallback, useId } from 'react';
 import { Bot, Paperclip, Send, X, Loader2, Plus } from 'lucide-react';
 import type { AxiosError } from 'axios';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -66,6 +66,7 @@ export default function AskMeChat() {
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [sessionBusy, setSessionBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const copilotFileInputId = useId();
   const bottomRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<ChatLine[]>(messages);
 
@@ -207,14 +208,9 @@ export default function AskMeChat() {
   }, [messages]);
 
   const handleFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const list = e.target.files;
-    if (!list?.length) return;
-    const next: PendingFile[] = [];
-    for (let i = 0; i < list.length; i++) {
-      const file = list[i];
-      next.push({ id: `${Date.now()}-${i}-${file.name}`, file });
-    }
-    setPendingFiles((prev) => [...prev, ...next]);
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPendingFiles([{ id: `${Date.now()}-${file.name}`, file }]);
     e.target.value = '';
   };
 
@@ -242,7 +238,7 @@ export default function AskMeChat() {
     const userParts: string[] = [];
     if (trimmed) userParts.push(trimmed);
     if (pendingFiles.length) {
-      userParts.push(`[Attached: ${pendingFiles.map((p) => p.file.name).join(', ')}]`);
+      userParts.push(`[Attached: ${pendingFiles[0].file.name}]`);
     }
     const userContent = userParts.join('\n\n');
 
@@ -257,7 +253,7 @@ export default function AskMeChat() {
 
     setSending(true);
     try {
-      const messageText = trimmed || (files.length ? 'Files attached.' : '');
+      const messageText = trimmed || (files.length ? 'File attached.' : '');
       if (process.env.NODE_ENV === 'development') {
         console.debug('[Ask me] POST', COPILOT_CHAT_PATH, { session_id: sid, hasFiles: files.length > 0 });
       }
@@ -266,7 +262,7 @@ export default function AskMeChat() {
         message: messageText,
         userId,
         agent: COPILOT_AGENT,
-        files: files.length ? files : undefined,
+        files: files.length ? [files[0]] : undefined,
       });
 
       const nextSid = getSessionIdFromCopilotChatResponse(res);
@@ -476,21 +472,38 @@ export default function AskMeChat() {
           )}
 
           <div className="flex items-end gap-2">
-            <input ref={fileInputRef} type="file" className="hidden" multiple onChange={handleFiles} />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={disabledComposer}
-              className={`shrink-0 p-2.5 rounded-xl border transition-colors disabled:opacity-40 ${
-                isDark
-                  ? 'border-slate-600 text-[#C2D642] hover:bg-slate-800'
-                  : 'border-slate-300 text-[#C2D642] hover:bg-slate-100'
-              }`}
-              aria-label="Attach file"
-              title="Attach file"
-            >
-              <Paperclip className="w-5 h-5" strokeWidth={2.25} />
-            </button>
+            <input
+              ref={fileInputRef}
+              id={copilotFileInputId}
+              type="file"
+              className="sr-only"
+              tabIndex={-1}
+              onChange={handleFiles}
+              aria-label="Attach one file for Copilot"
+            />
+            {disabledComposer ? (
+              <span
+                className={`shrink-0 p-2.5 rounded-xl border opacity-40 pointer-events-none ${
+                  isDark ? 'border-slate-600 text-[#C2D642]' : 'border-slate-300 text-[#C2D642]'
+                }`}
+                aria-hidden
+              >
+                <Paperclip className="w-5 h-5" strokeWidth={2.25} />
+              </span>
+            ) : (
+              <label
+                htmlFor={copilotFileInputId}
+                className={`shrink-0 p-2.5 rounded-xl border transition-colors cursor-pointer ${
+                  isDark
+                    ? 'border-slate-600 text-[#C2D642] hover:bg-slate-800'
+                    : 'border-slate-300 text-[#C2D642] hover:bg-slate-100'
+                }`}
+                title="Attach one file"
+              >
+                <Paperclip className="w-5 h-5" strokeWidth={2.25} aria-hidden />
+                <span className="sr-only">Attach one file</span>
+              </label>
+            )}
 
             <textarea
               value={input}

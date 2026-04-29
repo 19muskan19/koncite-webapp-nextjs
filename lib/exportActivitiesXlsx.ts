@@ -39,6 +39,29 @@ export function formatActivityDateMonthYear(value: unknown): string {
   return d.toLocaleString('en-IN', { month: 'short', year: 'numeric' });
 }
 
+/** Activities table grid: full date as dd-mm-yyyy. Empty / invalid / Excel zero dates show as "-". */
+export function formatActivityDateDdMmYyyy(value: unknown): string {
+  if (value == null) return '-';
+  const s = String(value).trim();
+  if (s === '') return '-';
+  if (s.startsWith('1899-12-30') || s.startsWith('1899-12-31')) return '-';
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  let d: Date;
+  if (iso) {
+    const y = Number(iso[1]);
+    const m = Number(iso[2]) - 1;
+    const day = Number(iso[3]);
+    d = new Date(y, m, day);
+  } else {
+    d = new Date(s);
+  }
+  if (Number.isNaN(d.getTime())) return '-';
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yyyy = String(d.getFullYear());
+  return `${dd}-${mm}-${yyyy}`;
+}
+
 /** Build unique, non-empty unit labels from API master unit rows. */
 export function collectUnitLabelsFromMasters(masters: unknown[] | null | undefined): string[] {
   const seen = new Set<string>();

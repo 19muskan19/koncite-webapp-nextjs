@@ -14,7 +14,7 @@ export function isValidLogoUrl(url: string | null | undefined): boolean {
   if (!trimmed) return false;
   const lower = trimmed.toLowerCase();
   // Reject bare "/logo" path with no file — these 404
-  if (lower.endsWith('/logo') || lower === 'https://staging.koncite.com/logo' || lower === 'http://staging.koncite.com/logo') return false;
+  if (lower.endsWith('/logo') || lower === 'https://koncite.com/logo' || lower === 'http://koncite.com/logo') return false;
   if (lower === 'logo' || lower === '/logo' || lower === '/logo/' || lower === 'logo/') return false;
   // Must look like an image URL (http(s) or data URL or path to image file)
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('data:')) return true;
@@ -86,7 +86,7 @@ export function getLogoUrl(
     const name = (displayName || 'U').trim() || 'U';
     return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=${backgroundColor}&color=fff&size=128`;
   }
-  // Use full logo URL directly when API returns it (e.g. https://staging.koncite.com/logo/177433419227.jpg)
+  // Use full logo URL directly when API returns it (e.g. https://koncite.com/logo/177433419227.jpg)
   if (logoStr.startsWith('https://') || logoStr.startsWith('http://')) {
     if (isValidLogoUrl(logoStr)) return logoStr;
   }

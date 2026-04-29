@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useId } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { ThemeType } from '../types';
 import ChatMarkdownViewer from './ChatMarkdownViewer';
@@ -98,6 +98,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
   const [aiState, setAiState] = useState<'thinking' | 'ready' | 'error'>('ready');
   /** True only while waiting for the assistant reply after a user send (inline Thinking row in thread; visible on mobile). */
   const [awaitingAssistantReply, setAwaitingAssistantReply] = useState(false);
+  const workspaceFileInputId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<Message[]>(messages);
@@ -320,7 +321,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
     let fullContent = messageContent;
     if (hasFiles) {
       const fileList = filesToSend.map(f => `📎 ${f.name} (${(f.size / 1024).toFixed(2)} KB)`).join('\n');
-      fullContent = messageContent ? `${messageContent}\n\n${fileList}` : (filesToSend.some(f => f.name.includes('voice-recording')) ? `🎤 Voice recording` : `Files attached:\n${fileList}`);
+      fullContent = messageContent ? `${messageContent}\n\n${fileList}` : (filesToSend.some(f => f.name.includes('voice-recording')) ? `🎤 Voice recording` : `File attached:\n${fileList}`);
     }
 
     const userMsg: Message = {
@@ -364,7 +365,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
     try {
       const response = await sendMessage(
         sessionId,
-        messageContent || 'Files attached.',
+        messageContent || 'File attached.',
         { agent, files: filesToSend.length > 0 ? filesToSend : undefined }
       );
       const replyText = extractReplyFromResponse(response);
@@ -422,7 +423,7 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
     const idx = messages.findIndex((m) => m.id === messageId);
     if (idx < 0 || messages[idx].role !== 'user') return;
     const msg = messages[idx];
-    const textOnly = msg.content.replace(/^Files attached:\s*\n?/i, '').replace(/\n?📎[^\n]+(\n|$)/g, '').trim() || msg.content;
+    const textOnly = msg.content.replace(/^File attached:\s*\n?/i, '').replace(/^Files attached:\s*\n?/i, '').replace(/\n?📎[^\n]+(\n|$)/g, '').trim() || msg.content;
     setInputMessage(textOnly);
     setMessages((prev) => prev.slice(0, idx));
     setAttachedFiles([]);
@@ -436,15 +437,9 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
     }
   };
 
-  const handleAttachClick = () => {
-    fileInputRef.current?.click();
-  };
-
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-      setAttachedFiles(prev => [...prev, ...Array.from(files)]);
-    }
+    const file = e.target.files?.[0];
+    if (file) setAttachedFiles([file]);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -791,20 +786,22 @@ const AIAgents: React.FC<AIAgentsProps> = ({ theme, initialAgent = 'dpr' }) => {
           <div className={`flex items-center gap-1 sm:gap-1.5 md:gap-2 p-2 sm:p-2.5 md:p-3 rounded-lg sm:rounded-xl border-2 ${isDark ? 'bg-[#2d2d2d] border-[#C2D642]/30' : 'bg-white border-[#C2D642]/30'}`}>
             <input
               ref={fileInputRef}
+              id={workspaceFileInputId}
               type="file"
-              multiple
               accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt"
               onChange={handleFileChange}
-              className="hidden"
+              className="sr-only"
+              tabIndex={-1}
+              aria-label="Attach one file for DPR or Inventory agent"
             />
-            <button
-              onClick={handleAttachClick}
-              className={`p-2 rounded-lg transition-colors flex-shrink-0 min-w-[40px] min-h-[40px] flex items-center justify-center touch-manipulation ${isDark ? 'hover:bg-[#404040]' : 'hover:bg-gray-100'}`}
-              title="Attach file"
-              aria-label="Attach file"
+            <label
+              htmlFor={workspaceFileInputId}
+              className={`p-2 rounded-lg transition-colors flex-shrink-0 min-w-[40px] min-h-[40px] flex items-center justify-center touch-manipulation cursor-pointer ${isDark ? 'hover:bg-[#404040]' : 'hover:bg-gray-100'}`}
+              title="Attach one file"
             >
-              <Paperclip className={`w-4 h-4 ${textSecondary}`} />
-            </button>
+              <Paperclip className={`w-4 h-4 ${textSecondary}`} aria-hidden />
+              <span className="sr-only">Attach one file</span>
+            </label>
             <input
               type="text"
               value={inputMessage}

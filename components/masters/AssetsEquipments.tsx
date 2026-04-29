@@ -1178,7 +1178,8 @@ const AssetsEquipments: React.FC<AssetsEquipmentsProps> = ({ theme }) => {
                             const file = e.target.files?.[0];
                             setOpeningStockForm(prev => ({ ...prev, file: file ?? null }));
                           }}
-                          className="hidden"
+                          className="sr-only"
+                          tabIndex={-1}
                         />
                         {openingStockForm.file ? openingStockForm.file.name : 'Choose file...'}
                         {openingStockForm.file && !isImportingOpeningStock && (

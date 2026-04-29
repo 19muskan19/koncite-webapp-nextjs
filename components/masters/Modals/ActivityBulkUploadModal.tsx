@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useId } from 'react';
 import { ThemeType } from '@/types';
 import { X, Loader2, Upload, Download } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
@@ -53,6 +53,7 @@ const ActivityBulkUploadModal: React.FC<ActivityBulkUploadModalProps> = ({
 }) => {
   const toast = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const activityBulkFileInputId = useId();
   const [bulkProjectId, setBulkProjectId] = useState<string>('');
   const [bulkSubprojectId, setBulkSubprojectId] = useState<string>('');
   const [subprojects, setSubprojects] = useState<Array<{ id: number; uuid: string; name: string }>>([]);
@@ -304,26 +305,47 @@ const ActivityBulkUploadModal: React.FC<ActivityBulkUploadModalProps> = ({
               )}
               <span>Export Activities Data</span>
             </button>
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={!canOperate || isImporting}
-              className={`flex items-center justify-center gap-2 px-4 py-4 rounded-xl text-sm font-bold transition-all ${
-                isDark ? 'bg-[#C2D642]/20 hover:bg-[#C2D642]/30 text-[#C2D642]' : 'bg-[#C2D642]/10 hover:bg-[#C2D642]/20 text-[#8B9A30]'
-              } disabled:opacity-50 disabled:cursor-not-allowed border ${isDark ? 'border-[#C2D642]/40' : 'border-[#C2D642]/30'}`}
-            >
-              {isImporting ? (
+            {isImporting ? (
+              <button
+                type="button"
+                disabled
+                className={`flex items-center justify-center gap-2 px-4 py-4 rounded-xl text-sm font-bold transition-all opacity-50 cursor-not-allowed border ${
+                  isDark ? 'bg-[#C2D642]/20 text-[#C2D642] border-[#C2D642]/40' : 'bg-[#C2D642]/10 text-[#8B9A30] border-[#C2D642]/30'
+                }`}
+              >
                 <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
+                <span>Import Activities Data</span>
+              </button>
+            ) : canOperate ? (
+              <label
+                htmlFor={activityBulkFileInputId}
+                className={`flex items-center justify-center gap-2 px-4 py-4 rounded-xl text-sm font-bold transition-all cursor-pointer ${
+                  isDark ? 'bg-[#C2D642]/20 hover:bg-[#C2D642]/30 text-[#C2D642]' : 'bg-[#C2D642]/10 hover:bg-[#C2D642]/20 text-[#8B9A30]'
+                } border ${isDark ? 'border-[#C2D642]/40' : 'border-[#C2D642]/30'}`}
+              >
                 <Download className="w-5 h-5" />
-              )}
-              <span>Import Activities Data</span>
-            </button>
+                <span>Import Activities Data</span>
+              </label>
+            ) : (
+              <button
+                type="button"
+                disabled
+                className={`flex items-center justify-center gap-2 px-4 py-4 rounded-xl text-sm font-bold transition-all opacity-50 cursor-not-allowed border ${
+                  isDark ? 'bg-[#C2D642]/20 text-[#C2D642] border-[#C2D642]/40' : 'bg-[#C2D642]/10 text-[#8B9A30] border-[#C2D642]/30'
+                }`}
+              >
+                <Download className="w-5 h-5" />
+                <span>Import Activities Data</span>
+              </button>
+            )}
           </div>
           <input
             ref={fileInputRef}
+            id={activityBulkFileInputId}
             type="file"
             accept={ACCEPTED_TYPES}
-            className="hidden"
+            className="sr-only"
+            tabIndex={-1}
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (file) {

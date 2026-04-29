@@ -1566,7 +1566,8 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                     type="file"
                     accept="image/*"
                     onChange={handleLogoChange}
-                    className="hidden"
+                    className="sr-only"
+                    tabIndex={-1}
                   />
                 </label>
               )}

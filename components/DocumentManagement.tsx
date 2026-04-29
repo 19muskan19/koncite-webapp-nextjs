@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useId } from 'react';
 import { useRouter } from 'next/navigation';
 import * as XLSX from 'xlsx';
 import { ThemeType } from '../types';
@@ -314,6 +314,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
   const [viewFileActiveSheet, setViewFileActiveSheet] = useState<string>('');
   const [viewFileLoading, setViewFileLoading] = useState(false);
   const uploadFileInputRef = React.useRef<HTMLInputElement>(null);
+  const dmsUploadFileInputId = useId();
   const dropZoneRef = React.useRef<HTMLDivElement>(null);
   const prevSelectedCountRef = React.useRef<number>(0);
   const lastFileClickRef = React.useRef<{ fileId: string; time: number } | null>(null);
@@ -1303,11 +1304,6 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
       const errorMessage = err.message || err.response?.data?.message || 'Failed to create folder';
       toast.showError(errorMessage);
     }
-  };
-
-  const handleUploadFiles = () => {
-    uploadFileInputRef.current?.click();
-    setShowNewDropdown(false);
   };
 
   // Helper function to convert File to base64
@@ -2769,25 +2765,28 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
                         Create Folder
                       </button>
                       {((currentPath[0] as string) !== 'shared') && (
-                        <button
-                          onClick={handleUploadFiles}
-                          className={`w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-bold transition-colors text-left ${
+                        <label
+                          htmlFor={dmsUploadFileInputId}
+                          onClick={() => setShowNewDropdown(false)}
+                          className={`w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-2.5 text-xs sm:text-sm font-bold transition-colors text-left cursor-pointer ${
                             isDark ? 'hover:bg-slate-700 text-slate-100' : 'hover:bg-slate-50 text-slate-900'
                           }`}
                         >
                           <Upload className="w-3.5 h-3.5 sm:w-4 sm:h-4 flex-shrink-0" />
                           Upload Files
-                        </button>
+                        </label>
                       )}
                     </div>
                   </div>
                 )}
                 <input
                   ref={uploadFileInputRef}
+                  id={dmsUploadFileInputId}
                   type="file"
                   multiple
                   onChange={handleFileUpload}
-                  className="hidden"
+                  className="sr-only"
+                  tabIndex={-1}
                 />
               </div>
             )}
@@ -3242,12 +3241,10 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
                         : 'Drag and drop files here or click "New" to get started'}
               </p>
               {!searchQuery && !isDragging && currentPath[0] !== 'shared' && currentPath[0] !== 'image-gallery' && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    uploadFileInputRef.current?.click();
-                  }}
-                  className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${
+                <label
+                  htmlFor={dmsUploadFileInputId}
+                  onClick={(e) => e.stopPropagation()}
+                  className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all cursor-pointer ${
                     isDark
                       ? 'bg-[#C2D642] hover:bg-[#A8B838] text-white'
                       : 'bg-[#C2D642] hover:bg-[#A8B838] text-white'
@@ -3255,7 +3252,7 @@ const DocumentManagement: React.FC<DocumentManagementProps> = ({ theme, initialP
                 >
                   <Upload className="w-4 h-4" />
                   Upload Files
-                </button>
+                </label>
               )}
             </div>
             )
