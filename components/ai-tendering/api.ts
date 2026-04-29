@@ -7,21 +7,10 @@ import type {
   TenderStatusResponse,
 } from './types';
 
-/**
- * Python FastAPI: `APIRouter(prefix="/api/tender")`.
- * Canonical examples (single `/` between `api` and `tender`; never `api//tender`):
- *   `{base}/tender/process` → https://staging.koncite.com/api/tender/process
- * Browser uses `/api-proxy/tender/...`; `next.config.js` rewrites to the same `{base}` as below.
- * Intentionally no `/chat` client (`POST /api/tender/chat` unused).
- */
 const TENDER_PREFIX = '/tender';
-
 const NEXT_PUBLIC_API_PROXY = '/api-proxy';
-
-/** Same default as `next.config.js` rewrites — staging API root (includes `/api`, no trailing slash). */
 const DEFAULT_STAGING_API_ROOT = 'https://staging.koncite.com/api';
 
-/** Join absolute root + pathname without duplicate slashes (`.../api/` + `/tender/...`). */
 function joinApiRoot(apiRootTrimmed: string, pathnameStartsWithSlash: string): string {
   const root = apiRootTrimmed.replace(/\/+$/, '');
   const path = pathnameStartsWithSlash.startsWith('/')
@@ -30,15 +19,16 @@ function joinApiRoot(apiRootTrimmed: string, pathnameStartsWithSlash: string): s
   return `${root}${path}`;
 }
 
-/** Must match proxy destination; prefer `NEXT_PUBLIC_API_URL` so SSR and rewrites agree. */
 function getRemoteApiBase(): string {
   const raw = (
     process.env.NEXT_PUBLIC_API_URL ??
     process.env.NEXT_PUBLIC_API_BASE_URL ??
     process.env.NEXT_PUBLIC_AI_TENDER_API
   )?.trim();
-  if (raw) return raw.replace(/\/$/, '');
-  return DEFAULT_STAGING_API_ROOT;
+  if (!raw) return DEFAULT_STAGING_API_ROOT;
+  let b = raw.replace(/\/+$/, '');
+  if (!/\/api$/i.test(b)) b = `${b}/api`;
+  return b;
 }
 
 export function getTenderApiBase(): string {
@@ -57,7 +47,29 @@ function tenderFetchUrl(path: string): string {
   return joinApiRoot(getRemoteApiBase(), pathFromApiRoot);
 }
 
-/** Resolve relative paths from process/download responses to proxied URLs. */
+function directApiProxyPath(path: string): string {
+  const p = path.startsWith('/') ? path : `/${path}`;
+  if (typeof window !== 'undefined') {
+    return `${NEXT_PUBLIC_API_PROXY}${p}`;
+  }
+  return joinApiRoot(getRemoteApiBase(), p);
+}
+
+/**
+ * FastAPI tender router is mounted at `/api/tender/*`. Proxied URLs must include `/tender`
+ * (e.g. `/api-proxy/tender/process` → `{api}/tender/process`).
+ * Opt out for legacy flat routes (`/api/process`): set NEXT_PUBLIC_TENDER_AUX_PREFIX=flat
+ */
+function tenderAuxPrefixes(): boolean {
+  const raw = String(process.env.NEXT_PUBLIC_TENDER_AUX_PREFIX ?? '').trim().toLowerCase();
+  if (raw === 'flat' || raw === '0' || raw === 'false' || raw === 'legacy') return false;
+  return true;
+}
+
+function statusOrProcessUrl(suffix: string): string {
+  return tenderAuxPrefixes() ? tenderFetchUrl(suffix) : directApiProxyPath(suffix);
+}
+
 export function resolveTenderAssetUrl(pathOrUrl: string | undefined): string | undefined {
   if (!pathOrUrl) return undefined;
   if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
@@ -78,7 +90,9 @@ export function resolveTenderAssetUrl(pathOrUrl: string | undefined): string | u
 
 async function parseBodyError(resp: Response): Promise<string> {
   const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-  const d = err as { detail?: unknown };
+  const d = err as { detail?: unknown; error?: unknown; message?: unknown };
+  if (typeof d.error === 'string' && d.error.trim()) return d.error.trim();
+  if (typeof d.message === 'string' && d.message.trim()) return d.message.trim();
   if (typeof d.detail === 'string') return d.detail;
   if (Array.isArray(d.detail)) {
     const msgs = (
@@ -98,45 +112,39 @@ async function parseBodyError(resp: Response): Promise<string> {
   return resp.statusText;
 }
 
-/** GET `/api/tender/status` */
 export async function fetchTenderStatus(): Promise<TenderStatusResponse> {
-  const resp = await fetch(tenderFetchUrl('/status'));
+  const resp = await fetch(statusOrProcessUrl('/status'));
   if (!resp.ok) throw new Error(await parseBodyError(resp));
   return resp.json() as Promise<TenderStatusResponse>;
 }
 
-/** POST `/api/tender/process` */
 export async function postProcessTender(fd: FormData): Promise<TenderAnalysisResponse> {
-  const resp = await fetch(tenderFetchUrl('/process'), { method: 'POST', body: fd });
+  const resp = await fetch(statusOrProcessUrl('/process'), { method: 'POST', body: fd });
   if (!resp.ok) throw new Error(await parseBodyError(resp));
   return resp.json() as Promise<TenderAnalysisResponse>;
 }
 
-/** GET `/api/tender/download/{filename}` */
 export function downloadOutputUrl(filename: string): string {
-  return tenderFetchUrl(`/download/${encodeURIComponent(filename)}`);
+  const q = `/download/${encodeURIComponent(filename)}`;
+  return tenderAuxPrefixes() ? tenderFetchUrl(q) : directApiProxyPath(q);
 }
 
-/** GET `/api/tender/serve-output/{filename}` */
 export function serveOutputUrl(filename: string): string {
   return tenderFetchUrl(`/serve-output/${encodeURIComponent(filename)}`);
 }
 
-/** GET `/api/tender/outputs` */
 export async function fetchTenderOutputs(): Promise<TenderOutputsListResponse> {
   const resp = await fetch(tenderFetchUrl('/outputs'));
   if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
   return resp.json() as Promise<TenderOutputsListResponse>;
 }
 
-/** GET `/api/tender/output-files` */
 export async function fetchOutputFiles(): Promise<OutputFilesResponse> {
   const resp = await fetch(tenderFetchUrl('/output-files'));
   if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
   return resp.json() as Promise<OutputFilesResponse>;
 }
 
-/** GET `/api/tender/dsr-rates` */
 export async function fetchDsrRates(query: string, topK = 10): Promise<DsrRatesResponse> {
   const q = new URLSearchParams();
   if (query.trim()) q.set('query', query.trim());
@@ -146,7 +154,6 @@ export async function fetchDsrRates(query: string, topK = 10): Promise<DsrRatesR
   return resp.json() as Promise<DsrRatesResponse>;
 }
 
-/** GET `/api/tender/categories` */
 export async function fetchTenderCategories(): Promise<TenderCategoriesResponse> {
   const resp = await fetch(tenderFetchUrl('/categories'));
   if (!resp.ok) throw new Error(await parseBodyError(resp));
